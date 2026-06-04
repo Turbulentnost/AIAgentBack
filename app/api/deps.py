@@ -1,5 +1,6 @@
 from __future__ import annotations
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -20,10 +21,11 @@ async def get_current_user(db: DbSession, token: Annotated[str | None, Depends(o
     if payload is None or "sub" not in payload:
         raise exc
     token_id = payload.get("jti")
-    if token_id:
-        session = await db.scalar(select(UserSession).where(UserSession.token_jti == token_id))
-        if session is not None and session.revoked_at is not None:
-            raise exc
+    if not token_id:
+        raise exc
+    session = await db.scalar(select(UserSession).where(UserSession.token_jti == token_id))
+    if session is None or session.revoked_at is not None or session.expires_at <= datetime.now(timezone.utc):
+        raise exc
     try:
         user_id = uuid.UUID(str(payload["sub"]))
     except ValueError as err:

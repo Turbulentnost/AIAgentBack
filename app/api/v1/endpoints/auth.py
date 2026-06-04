@@ -16,7 +16,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(db: DbSession, data: RegisterRequest) -> UserRead:
-    user = await AuthService(db).register(data)
+    try:
+        user = await AuthService(db).register(data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return await _user_read(db, user)
 
 

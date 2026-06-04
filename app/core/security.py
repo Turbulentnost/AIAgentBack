@@ -10,7 +10,14 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
+
+def validate_password_strength(password: str) -> None:
+    if len(password) < settings.PASSWORD_MIN_LENGTH:
+        raise ValueError(f"Пароль должен быть не короче {settings.PASSWORD_MIN_LENGTH} символов")
+
+
 def hash_password(password: str) -> str:
+    validate_password_strength(password)
     return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

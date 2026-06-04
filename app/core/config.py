@@ -8,16 +8,31 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     PROJECT_NAME: str = "Корпоративная платформа ИИ-агентов"
+    APP_VERSION: str = "0.1.0"
     API_V1_PREFIX: str = "/api/v1"
+    DOCS_URL: str = "/docs"
+    REDOC_URL: str = "/redoc"
     ENVIRONMENT: Literal["dev", "test", "ope", "prod"] = "dev"
     DEBUG: bool = True
+    SQLALCHEMY_ECHO: bool = False
     SECRET_KEY: str = "change_me"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
-    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    PASSWORD_MIN_LENGTH: int = 8
+    BACKEND_CORS_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.157:5173"
+    )
+    BACKEND_CORS_ALLOW_CREDENTIALS: bool = True
+    BACKEND_CORS_ALLOW_METHODS: str = "*"
+    BACKEND_CORS_ALLOW_HEADERS: str = "*"
 
     POSTGRES_HOST: str = "192.168.1.157"
     POSTGRES_PORT: int = 5432
@@ -49,15 +64,48 @@ class Settings(BaseSettings):
     LLM_DEFAULT_MODEL: str = "gpt-4.1"
     LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
+    @property
+    def cors_origins(self) -> list[str]:
+        return self._parse_csv(self.BACKEND_CORS_ORIGINS)
+
+    @property
+    def cors_allow_methods(self) -> list[str]:
+        return self._parse_csv(self.BACKEND_CORS_ALLOW_METHODS)
+
+    @property
+    def cors_allow_headers(self) -> list[str]:
+        return self._parse_csv(self.BACKEND_CORS_ALLOW_HEADERS)
+
+    def _parse_csv(self, value: str) -> list[str]:
+        return [item.strip() for item in value.split(",") if item.strip()]
+
     @computed_field
     @property
     def DATABASE_URL(self) -> str:
-        return str(PostgresDsn.build(scheme="postgresql+asyncpg", username=self.POSTGRES_USER, password=self.POSTGRES_PASSWORD, host=self.POSTGRES_HOST, port=self.POSTGRES_PORT, path=self.POSTGRES_DB))
+        return str(
+            PostgresDsn.build(
+                scheme="postgresql+asyncpg",
+                username=self.POSTGRES_USER,
+                password=self.POSTGRES_PASSWORD,
+                host=self.POSTGRES_HOST,
+                port=self.POSTGRES_PORT,
+                path=self.POSTGRES_DB,
+            )
+        )
 
     @computed_field
     @property
     def DATABASE_URL_SYNC(self) -> str:
-        return str(PostgresDsn.build(scheme="postgresql+psycopg", username=self.POSTGRES_USER, password=self.POSTGRES_PASSWORD, host=self.POSTGRES_HOST, port=self.POSTGRES_PORT, path=self.POSTGRES_DB))
+        return str(
+            PostgresDsn.build(
+                scheme="postgresql+psycopg",
+                username=self.POSTGRES_USER,
+                password=self.POSTGRES_PASSWORD,
+                host=self.POSTGRES_HOST,
+                port=self.POSTGRES_PORT,
+                path=self.POSTGRES_DB,
+            )
+        )
 
     @computed_field
     @property

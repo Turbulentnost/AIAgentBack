@@ -1,20 +1,56 @@
 from __future__ import annotations
 
 import uuid
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import DocumentType, SourceReliability
+from app.models.enums import DocumentProcessingStatus, DocumentType, SourceReliability, TextExtractStatus
 
 class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "documents"
     title: Mapped[str] = mapped_column(String(512), index=True)
+    original_filename: Mapped[str | None] = mapped_column(String(512))
+    content_type: Mapped[str | None] = mapped_column(String(128))
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
+    bucket_name: Mapped[str | None] = mapped_column(String(255))
+    object_name: Mapped[str | None] = mapped_column(String(1024), index=True)
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"),
+        index=True,
+    )
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"),
+        index=True,
+    )
+    document_type: Mapped[DocumentType] = mapped_column(default=DocumentType.OTHER, index=True)
+    processing_status: Mapped[DocumentProcessingStatus] = mapped_column(
+        default=DocumentProcessingStatus.UPLOADED,
+        index=True,
+    )
+    is_knowledge_base: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_indexed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    text_extract_status: Mapped[TextExtractStatus] = mapped_column(
+        default=TextExtractStatus.NOT_STARTED,
+        index=True,
+    )
+    extracted_text_object_name: Mapped[str | None] = mapped_column(String(1024))
+    pages_count: Mapped[int | None] = mapped_column(Integer)
+    checksum: Mapped[str | None] = mapped_column(String(128), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    source_url: Mapped[str | None] = mapped_column(String(2048))
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+
+    # Legacy fields kept for compatibility with existing API code and old rows.
     doc_type: Mapped[DocumentType] = mapped_column(default=DocumentType.OTHER, index=True)
     storage_key: Mapped[str | None] = mapped_column(String(1024))
     mime_type: Mapped[str | None] = mapped_column(String(128))
     doc_metadata: Mapped[dict | None] = mapped_column(JSONB)
-    department_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("departments.id", ondelete="SET NULL"))
+
     versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document", cascade="all, delete-orphan")
 
 class DocumentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):

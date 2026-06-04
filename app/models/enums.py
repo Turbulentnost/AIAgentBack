@@ -57,6 +57,20 @@ class DocumentType(str, enum.Enum):
     MEMO = "memo"
     OTHER = "other"
 
+class DocumentProcessingStatus(str, enum.Enum):
+    UPLOADED = "uploaded"
+    TEXT_EXTRACTION_PENDING = "text_extraction_pending"
+    TEXT_EXTRACTED = "text_extracted"
+    INDEXING_PENDING = "indexing_pending"
+    INDEXED = "indexed"
+    FAILED = "failed"
+
+class TextExtractStatus(str, enum.Enum):
+    NOT_STARTED = "not_started"
+    PROCESSING = "processing"
+    EXTRACTED = "extracted"
+    FAILED = "failed"
+
 class OpeDecision(str, enum.Enum):
     IMPLEMENT = "implement"
     REFINE = "refine"

@@ -32,3 +32,23 @@ class TaskRead(ORMModel):
     final_result: dict | None
     created_at: datetime
     updated_at: datetime
+
+
+class CeleryDebugRequest(BaseModel):
+    message: str = "ping"
+    payload: dict | None = None
+
+
+class CeleryTaskEnqueueResponse(BaseModel):
+    celery_task_id: str
+    status: str
+    queue: str
+
+
+class CeleryTaskStatusResponse(BaseModel):
+    celery_task_id: str
+    state: str
+    ready: bool
+    successful: bool | None = None
+    result: dict | list | str | int | float | bool | None = None
+    error: str | None = None
