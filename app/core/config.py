@@ -57,6 +57,19 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "documents"
     MINIO_USER_FILES_BUCKET: str = "ai-user-files"
     MINIO_SECURE: bool = False
+    DOCUMENT_MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024
+    DOCUMENT_ALLOWED_CONTENT_TYPES: str = (
+        "application/pdf,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+        "application/msword,"
+        "application/vnd.ms-excel,"
+        "text/plain,"
+        "text/csv,"
+        "image/png,"
+        "image/jpeg,"
+        "image/webp"
+    )
 
     LLM_GATEWAY_BASE_URL: str = "http://localhost:11434/v1"
     LLM_GATEWAY_API_KEY: str | None = None
@@ -75,6 +88,10 @@ class Settings(BaseSettings):
     @property
     def cors_allow_headers(self) -> list[str]:
         return self._parse_csv(self.BACKEND_CORS_ALLOW_HEADERS)
+
+    @property
+    def document_allowed_content_types(self) -> list[str]:
+        return self._parse_csv(self.DOCUMENT_ALLOWED_CONTENT_TYPES)
 
     def _parse_csv(self, value: str) -> list[str]:
         return [item.strip() for item in value.split(",") if item.strip()]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import hashlib
 import uuid
+from pathlib import PurePath
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.documents.processor import chunk_text, extract_text
@@ -8,6 +9,11 @@ from app.documents.storage import object_storage
 from app.models.document import Document, DocumentChunk, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
 from app.schemas.document import DocumentCreate
+
+
+class DocumentMetadataSaveError(RuntimeError):
+    pass
+
 
 class DocumentService:
     def __init__(self, db: AsyncSession) -> None:
@@ -22,11 +28,12 @@ class DocumentService:
         original_filename: str | None = None,
         uploaded_by_user_id: uuid.UUID | None = None,
     ) -> Document:
+        self.validate_upload(content, mime_type)
         document_id = uuid.uuid4()
         document_type = data.doc_type or data.document_type
         metadata = data.doc_metadata or data.metadata
-        safe_filename = original_filename or data.original_filename or f"{document_id}"
-        object_name = f"documents/{document_id}/{safe_filename}"
+        safe_filename = self._safe_filename(original_filename or data.original_filename or f"{document_id}")
+        object_name = f"documents/{document_type.value}/{document_id}/{safe_filename}"
         object_storage.put_object(object_name, content, mime_type)
 
         chunks: list[str] = []
@@ -37,70 +44,98 @@ class DocumentService:
         except Exception:
             text_extract_status = TextExtractStatus.FAILED
 
-        document = Document(
-            id=document_id,
-            title=data.title,
-            original_filename=original_filename or data.original_filename,
-            content_type=mime_type,
-            file_size=len(content),
-            bucket_name=object_storage.bucket,
-            object_name=object_name,
-            uploaded_by_user_id=uploaded_by_user_id,
-            department_id=data.department_id,
-            task_id=data.task_id,
-            document_type=document_type,
-            processing_status=DocumentProcessingStatus.UPLOADED,
-            is_knowledge_base=data.is_knowledge_base,
-            is_indexed=False,
-            text_extract_status=text_extract_status,
-            checksum=hashlib.sha256(content).hexdigest(),
-            version=1,
-            source_url=data.source_url,
-            metadata_=metadata,
-            # Legacy fields.
-            doc_type=document_type,
-            storage_key=object_name,
-            mime_type=mime_type,
-            doc_metadata=metadata,
-        )
-        self.db.add(document)
-        document_version = DocumentVersion(
-            document_id=document_id,
-            version_number=1,
-            version_label="v1",
-            original_filename=original_filename or data.original_filename,
-            content_type=mime_type,
-            file_size=len(content),
-            bucket_name=object_storage.bucket,
-            object_name=object_name,
-            uploaded_by_user_id=uploaded_by_user_id,
-            processing_status=DocumentProcessingStatus.UPLOADED,
-            text_extract_status=text_extract_status,
-            is_indexed=False,
-            checksum=document.checksum,
-            source_url=data.source_url,
-            metadata_=metadata,
-            storage_key=object_name,
-            is_current=True,
-        )
-        self.db.add(document_version)
-        await self.db.flush()
-
-        for index, chunk in enumerate(chunks):
-            self.db.add(
-                DocumentChunk(
-                    document_id=document_id,
-                    document_version_id=document_version.id,
-                    chunk_index=index,
-                    text=chunk,
-                    token_count=len(chunk.split()),
-                    qdrant_collection=settings.QDRANT_COLLECTION,
-                    embedding_model=settings.LLM_EMBEDDING_MODEL,
-                    is_indexed=False,
-                    metadata_={"source": "upload", "chunk_size": len(chunk)},
-                    content=chunk,
-                    chunk_metadata={"source": "upload", "chunk_size": len(chunk)},
-                )
+        try:
+            document = Document(
+                id=document_id,
+                title=data.title,
+                original_filename=original_filename or data.original_filename,
+                content_type=mime_type,
+                file_size=len(content),
+                bucket_name=object_storage.bucket,
+                object_name=object_name,
+                uploaded_by_user_id=uploaded_by_user_id,
+                department_id=data.department_id,
+                task_id=data.task_id,
+                document_type=document_type,
+                processing_status=DocumentProcessingStatus.UPLOADED,
+                is_knowledge_base=data.is_knowledge_base,
+                is_indexed=False,
+                text_extract_status=text_extract_status,
+                checksum=hashlib.sha256(content).hexdigest(),
+                version=1,
+                source_url=data.source_url,
+                metadata_=metadata,
+                # Legacy fields.
+                doc_type=document_type,
+                storage_key=object_name,
+                mime_type=mime_type,
+                doc_metadata=metadata,
             )
-        await self.db.flush()
-        return document
+            self.db.add(document)
+            document_version = DocumentVersion(
+                document_id=document_id,
+                version_number=1,
+                version_label="v1",
+                original_filename=original_filename or data.original_filename,
+                content_type=mime_type,
+                file_size=len(content),
+                bucket_name=object_storage.bucket,
+                object_name=object_name,
+                uploaded_by_user_id=uploaded_by_user_id,
+                processing_status=DocumentProcessingStatus.UPLOADED,
+                text_extract_status=text_extract_status,
+                is_indexed=False,
+                checksum=document.checksum,
+                source_url=data.source_url,
+                metadata_=metadata,
+                storage_key=object_name,
+                is_current=True,
+            )
+            self.db.add(document_version)
+            await self.db.flush()
+
+            for index, chunk in enumerate(chunks):
+                self.db.add(
+                    DocumentChunk(
+                        document_id=document_id,
+                        document_version_id=document_version.id,
+                        chunk_index=index,
+                        text=chunk,
+                        token_count=len(chunk.split()),
+                        qdrant_collection=settings.QDRANT_COLLECTION,
+                        embedding_model=settings.LLM_EMBEDDING_MODEL,
+                        is_indexed=False,
+                        metadata_={"source": "upload", "chunk_size": len(chunk)},
+                        content=chunk,
+                        chunk_metadata={"source": "upload", "chunk_size": len(chunk)},
+                    )
+                )
+            await self.db.flush()
+            return document
+        except Exception as exc:
+            await self.db.rollback()
+            try:
+                object_storage.delete_object(object_name)
+            except Exception as cleanup_exc:
+                raise DocumentMetadataSaveError(
+                    "Файл загружен в MinIO, но метаданные не сохранились в PostgreSQL. "
+                    "Автоматически удалить объект из MinIO не удалось; нужна очистка вручную."
+                ) from cleanup_exc
+            raise DocumentMetadataSaveError(
+                "Файл загружен в MinIO, но метаданные не сохранились в PostgreSQL. "
+                "Загруженный объект удалён из MinIO."
+            ) from exc
+
+    def validate_upload(self, content: bytes, mime_type: str) -> None:
+        if not content:
+            raise ValueError("Файл пустой")
+        if len(content) > settings.DOCUMENT_MAX_UPLOAD_SIZE_BYTES:
+            raise ValueError(
+                f"Файл превышает максимальный размер {settings.DOCUMENT_MAX_UPLOAD_SIZE_BYTES} байт"
+            )
+        if mime_type not in settings.document_allowed_content_types:
+            raise ValueError(f"Тип файла не разрешён: {mime_type}")
+
+    def _safe_filename(self, filename: str) -> str:
+        name = PurePath(filename).name.strip().replace("\\", "_").replace("/", "_")
+        return name or "document"
