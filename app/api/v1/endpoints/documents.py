@@ -5,11 +5,12 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, UploadFile
 from app.api.deps import CurrentUser, DbSession
 from app.knowledge_base.retriever import retriever
-from app.models.document import DocumentVersion
+from app.models.document import DocumentChunk, DocumentVersion
 from app.models.enums import DocumentType
 from app.schemas.document import (
     ChunkSearchHit,
     ChunkSearchQuery,
+    DocumentChunkRead,
     DocumentCreate,
     DocumentRead,
     DocumentVersionRead,
@@ -58,5 +59,15 @@ async def list_document_versions(db: DbSession, document_id: uuid.UUID):
         select(DocumentVersion)
         .where(DocumentVersion.document_id == document_id)
         .order_by(DocumentVersion.version_number.desc(), DocumentVersion.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.get("/versions/{document_version_id}/chunks", response_model=list[DocumentChunkRead])
+async def list_document_version_chunks(db: DbSession, document_version_id: uuid.UUID):
+    result = await db.execute(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_version_id == document_version_id)
+        .order_by(DocumentChunk.chunk_index.asc())
     )
     return list(result.scalars().all())

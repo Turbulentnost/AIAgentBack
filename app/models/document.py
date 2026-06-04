@@ -53,6 +53,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     doc_metadata: Mapped[dict | None] = mapped_column(JSONB)
 
     versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
 
 class DocumentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "document_versions"
@@ -95,11 +96,27 @@ class DocumentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "document_chunks"
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        index=True,
+    )
     document_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id", ondelete="CASCADE"), index=True)
     chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str | None] = mapped_column(Text)
+    page_number: Mapped[int | None] = mapped_column(Integer, index=True)
+    section_title: Mapped[str | None] = mapped_column(String(512))
+    token_count: Mapped[int | None] = mapped_column(Integer)
+    qdrant_collection: Mapped[str | None] = mapped_column(String(255))
+    qdrant_point_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(255))
+    is_indexed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+
+    # Legacy fields kept for compatibility with earlier RAG code.
     content: Mapped[str] = mapped_column(Text)
     vector_id: Mapped[str | None] = mapped_column(String(128), index=True)
     chunk_metadata: Mapped[dict | None] = mapped_column(JSONB)
+    document: Mapped[Document | None] = relationship(back_populates="chunks")
     document_version: Mapped[DocumentVersion] = relationship(back_populates="chunks")
 
 class SourceReference(UUIDPrimaryKeyMixin, TimestampMixin, Base):

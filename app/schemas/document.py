@@ -79,6 +79,29 @@ class DocumentVersionRead(ORMModel):
     created_at: datetime
     updated_at: datetime
 
+
+class DocumentChunkRead(ORMModel):
+    id: uuid.UUID
+    document_id: uuid.UUID | None
+    document_version_id: uuid.UUID
+    chunk_index: int
+    text: str | None
+    page_number: int | None
+    section_title: str | None
+    token_count: int | None
+    qdrant_collection: str | None
+    qdrant_point_id: str | None
+    embedding_model: str | None
+    is_indexed: bool
+    metadata_: dict | None = Field(default=None, serialization_alias="metadata")
+
+    # Legacy fields kept during transition.
+    content: str
+    vector_id: str | None
+    chunk_metadata: dict | None
+    created_at: datetime
+    updated_at: datetime
+
 class ChunkSearchQuery(BaseModel):
     query: str
     top_k: int = 5

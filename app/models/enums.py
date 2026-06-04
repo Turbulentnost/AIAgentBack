@@ -21,6 +21,13 @@ class TaskStatus(str, enum.Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+class TaskStepStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
 class ConfidenceLevel(str, enum.Enum):
     HIGH = "high"
     MEDIUM = "medium"
