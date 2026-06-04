@@ -1,4 +1,4 @@
 from app.integrations.minio.client import get_minio_client
-from app.integrations.minio.service import MinioObjectService
+from app.integrations.minio.service import MinioObjectError, MinioObjectService
 
-__all__ = ["MinioObjectService", "get_minio_client"]
+__all__ = ["MinioObjectError", "MinioObjectService", "get_minio_client"]
