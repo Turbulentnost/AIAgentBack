@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.agents.common.schemas import AgentResult, BaseAgentInput, Finding
 from app.agents.task_compliting_agent import config
+from app.agents.task_compliting_agent.dataset import extract_comment_text
 
 CommentPresence = Literal["empty", "present"]
 AssessmentStatus = Literal[
@@ -19,7 +20,7 @@ AssessmentStatus = Literal[
 
 
 class TaskCompletingInput(BaseAgentInput):
-    task_text: str = ""
+    task_name: str = ""
     comment_text: str = ""
 
     @model_validator(mode="before")
@@ -27,17 +28,13 @@ class TaskCompletingInput(BaseAgentInput):
     def normalize_payload(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        task_text = data.get("task_text")
-        if not task_text:
-            task_text = data.get("task_description") or data.get("task") or ""
+        task_name = data.get("task_name")
+        if not task_name:
+            task_name = data.get("task_text") or data.get("task_description") or data.get("task") or ""
         comment_text = data.get("comment_text")
         if comment_text is None:
-            execution_result = data.get("execution_result")
-            if isinstance(execution_result, dict):
-                comment_text = execution_result.get("raw", "")
-            elif isinstance(execution_result, str):
-                comment_text = execution_result
-        data["task_text"] = str(task_text or "").strip()
+            comment_text = extract_comment_text(data.get("execution_result"))
+        data["task_name"] = str(task_name or "").strip()
         data["comment_text"] = str(comment_text or "").strip()
         return data
 

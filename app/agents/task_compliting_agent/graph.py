@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -10,14 +8,15 @@ from app.agents.common.state import BaseAgentState
 from app.agents.task_compliting_agent import config
 from app.agents.task_compliting_agent.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from app.agents.task_compliting_agent.schemas import TaskCompletingAssessment
+from app.agents.task_compliting_agent.json_parse import extract_assessment_from_llm_text
+from app.agents.task_compliting_agent.llm_client import chat_completion
 from app.core.logging import get_logger
-from app.llm.gateway import llm_gateway
 
 logger = get_logger(__name__)
 
 
 class TaskCompletingState(BaseAgentState, total=False):
-    task_text: str
+    task_name: str
     comment_text: str
     assessment: dict
 
@@ -38,32 +37,19 @@ def _empty_assessment() -> TaskCompletingAssessment:
     )
 
 
-def _extract_json_payload(content: str) -> dict[str, Any]:
-    text = content.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
-    if fenced:
-        text = fenced.group(1)
-    else:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            text = text[start : end + 1]
-    return json.loads(text)
-
-
 async def prepare_input(state: TaskCompletingState) -> dict:
-    task_text = str(state.get("task_text", "")).strip()
+    task_name = str(state.get("task_name", "")).strip()
     comment_text = str(state.get("comment_text", "")).strip()
     logger.info(
         "task_compliting.prepare_input",
         task_id=state.get("task_id"),
         has_comment=bool(comment_text),
     )
-    return {"task_text": task_text, "comment_text": comment_text}
+    return {"task_name": task_name, "comment_text": comment_text}
 
 
 async def evaluate_comment(state: TaskCompletingState) -> dict:
-    task_text = str(state.get("task_text", "")).strip()
+    task_name = str(state.get("task_name", "")).strip()
     comment_text = str(state.get("comment_text", "")).strip()
 
     if not comment_text:
@@ -75,15 +61,18 @@ async def evaluate_comment(state: TaskCompletingState) -> dict:
         {
             "role": "user",
             "content": USER_PROMPT_TEMPLATE.format(
-                task_text=task_text,
+                task_name=task_name,
                 comment_text=comment_text,
             ),
         },
     ]
     try:
-        response = await llm_gateway.chat(messages, model=config.DEFAULT_MODEL)
-        content = str(response["choices"][0]["message"]["content"])
-        payload = _extract_json_payload(content)
+        response = await chat_completion(messages, model=config.DEFAULT_MODEL)
+        message = response["choices"][0]["message"]
+        payload = extract_assessment_from_llm_text(
+            message.get("content"),
+            message.get("reasoning_content"),
+        )
         assessment = TaskCompletingAssessment.model_validate(payload)
     except Exception as exc:
         logger.exception("task_compliting.evaluate_comment.failed", error=str(exc))

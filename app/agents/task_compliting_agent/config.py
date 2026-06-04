@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from app.agents.task_compliting_agent.agent_settings import agent_settings
+
 AGENT_ID = "task_compliting_agent"
 AGENT_NAME = "Агент контроля исполнения задач"
 AGENT_VERSION = "1.0.0"
-DEFAULT_MODEL = "gpt-4.1"
+DEFAULT_MODEL = agent_settings.LLM_DEFAULT_MODEL
 CONFIDENCE_THRESHOLD = 0.75
 
 COMMENT_PRESENCE_EMPTY = "empty"

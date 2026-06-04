@@ -48,7 +48,7 @@ class TaskCompletingAgent(BaseAgent):
                 "task_id": data.task_id,
                 "document_ids": data.document_ids,
                 "user_id": data.user_id,
-                "task_text": data.task_text,
+                "task_name": data.task_name,
                 "comment_text": data.comment_text,
                 "findings": [],
             }
@@ -76,16 +76,20 @@ class TaskCompletingAgent(BaseAgent):
 
 async def run_task_compliting_agent(
     task_id: str,
-    task_text: str,
+    task_name: str,
     comment_text: str = "",
+    *,
+    execution_result: dict[str, str | None] | None = None,
 ) -> AgentResult:
     logger.info("task_compliting.run", task_id=task_id)
     agent = TaskCompletingAgent()
-    return await agent.run(
-        {
-            "task_id": task_id,
-            "task_text": task_text,
-            "comment_text": comment_text,
-            "document_ids": [],
-        }
-    )
+    payload: dict = {
+        "task_id": task_id,
+        "task_name": task_name,
+        "document_ids": [],
+    }
+    if execution_result is not None:
+        payload["execution_result"] = execution_result
+    else:
+        payload["comment_text"] = comment_text
+    return await agent.run(payload)
