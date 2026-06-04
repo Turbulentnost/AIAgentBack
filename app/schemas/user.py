@@ -18,6 +18,24 @@ class UserCreate(BaseModel):
     role_id: uuid.UUID | None = None
 
 
+class UserAgentGrantCreate(BaseModel):
+    agent_id: uuid.UUID
+    access_level: str = Field(default="run", max_length=64)
+    can_run: bool = True
+    can_view_results: bool = True
+    can_approve: bool = False
+    can_configure: bool = False
+    expires_at: datetime | None = None
+
+
+class AdminUserCreate(UserCreate):
+    is_active: bool = True
+    is_verified: bool = True
+    is_superuser: bool = False
+    must_change_password: bool = True
+    agent_access: list[UserAgentGrantCreate] = Field(default_factory=list)
+
+
 class UserUpdate(BaseModel):
     email: EmailStr | None = None
     username: str | None = Field(default=None, max_length=128)
@@ -31,6 +49,7 @@ class UserUpdate(BaseModel):
     role_id: uuid.UUID | None = None
     is_active: bool | None = None
     is_verified: bool | None = None
+    must_change_password: bool | None = None
 
 
 class UserRead(ORMModel):
@@ -46,6 +65,7 @@ class UserRead(ORMModel):
     is_active: bool
     is_superuser: bool
     is_verified: bool
+    must_change_password: bool
     department_id: uuid.UUID | None
     role_id: uuid.UUID | None
     avatar_bucket: str | None = None
@@ -65,3 +85,4 @@ class Token(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    new_password: str | None = None
