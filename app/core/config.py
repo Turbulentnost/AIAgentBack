@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=("../infrastructure/.env", ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = "knowledge_base"
+    QDRANT_VECTOR_SIZE: int = 1024
 
     MINIO_ENDPOINT: str = "192.168.1.157:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -73,13 +74,22 @@ class Settings(BaseSettings):
         "image/webp"
     )
 
-    LLM_GATEWAY_BASE_URL: str = "http://localhost:11434/v1"
+    LLM_GATEWAY_BASE_URL: str = ""
     LLM_GATEWAY_API_KEY: str | None = None
+    OPENAI_API_KEY_CLAUDE: str | None = None
     OPENAI_API_KEY: str | None = None
-    LLM_DEFAULT_MODEL: str = "gpt-4.1"
-    LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    VISION_LM_STUDIO_BASE_URL: str = "http://172.18.0.1:1234/v1"
-    VISION_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
+    LLM_DEFAULT_MODEL: str = ""
+    LLM_EMBEDDING_MODEL: str = ""
+    VISION_LM_STUDIO_BASE_URL: str = ""
+    VISION_LM_STUDIO_MODEL: str = ""
+    EMBEDDINGS_PROVIDER: str = "local"
+    EMBEDDINGS_MODEL: str = "BAAI/bge-m3"
+    EMBEDDINGS_VECTOR_SIZE: int = 1024
+    EMBEDDINGS_DEVICE: str = "cuda"
+    EMBEDDINGS_BATCH_SIZE: int = 16
+    EMBEDDINGS_TIMEOUT_SECONDS: int = 60
+    EMBEDDINGS_ALLOW_CPU_FALLBACK: bool = False
+    EMBEDDINGS_MAX_TEXT_LENGTH: int = 20000
 
     @property
     def cors_origins(self) -> list[str]:

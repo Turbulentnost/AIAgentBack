@@ -36,6 +36,7 @@ def process_document(self, document_id: str) -> dict[str, Any]:
     from app.services.document_processing.parsers.docx_parser import DocxParsingError, DocxParsingService
     from app.services.document_processing.parsers.imageparser import ImageParsingError, ImageParsingService
     from app.services.document_processing.parsers.pdf_parser import PdfParsingError, PdfParsingService
+    from app.services.document_processing.parsers.xlsx_parser import XlsxParsingError, XlsxParsingService
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
@@ -57,6 +58,8 @@ def process_document(self, document_id: str) -> dict[str, Any]:
                     result = await PdfParsingService(db).parse_document(document_id=document_uuid)
                 elif "word" in content_type or "docx" in content_type:
                     result = await DocxParsingService(db).parse_document(document_id=document_uuid)
+                elif "sheet" in content_type or "excel" in content_type or "xlsx" in content_type:
+                    result = await XlsxParsingService(db).parse_document(document_id=document_uuid)
                 elif content_type.startswith("image/"):
                     result = await ImageParsingService(db).parse_document(document_id=document_uuid)
                 else:
@@ -85,7 +88,7 @@ def process_document(self, document_id: str) -> dict[str, Any]:
                     "extracted_text_object_name": result.extracted_text_object_name,
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
-            except (PdfParsingError, ImageParsingError, DocxParsingError) as exc:
+            except (PdfParsingError, ImageParsingError, DocxParsingError, XlsxParsingError) as exc:
                 await db.commit()
                 return {
                     "celery_task_id": self.request.id,
@@ -112,7 +115,49 @@ def run_agent(self, agent_id: str, task_id: str, input_payload: dict | None = No
 
 @celery_app.task(name="index_document", bind=True, max_retries=3)
 def index_document(self, document_id: str) -> dict[str, Any]:
-    return _placeholder_result(self.request.id, "index_document", document_id=document_id)
+    import asyncio
+    import uuid
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.document_processing.indexing import QdrantIndexingError, QdrantIndexingService
+    from app.services.embeddings import (
+        EmbeddingBatchError,
+        EmbeddingConfigurationError,
+        EmbeddingProviderUnavailableError,
+        EmbeddingVectorSizeMismatchError,
+    )
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await QdrantIndexingService(db).index_document(uuid.UUID(document_id))
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "index_document",
+                    "status": "completed",
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    **result,
+                }
+            except (
+                QdrantIndexingError,
+                EmbeddingBatchError,
+                EmbeddingConfigurationError,
+                EmbeddingProviderUnavailableError,
+                EmbeddingVectorSizeMismatchError,
+                ValueError,
+            ) as exc:
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "index_document",
+                    "document_id": document_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return asyncio.run(_run())
 
 
 @celery_app.task(name="generate_report", bind=True, max_retries=3)

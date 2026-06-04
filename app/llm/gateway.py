@@ -5,7 +5,11 @@ from app.core.config import settings
 class LLMGateway:
     def __init__(self) -> None:
         self.base_url = settings.LLM_GATEWAY_BASE_URL.rstrip("/")
-        self.api_key = settings.LLM_GATEWAY_API_KEY or settings.OPENAI_API_KEY
+        self.api_key = (
+            settings.LLM_GATEWAY_API_KEY
+            or settings.OPENAI_API_KEY_CLAUDE
+            or settings.OPENAI_API_KEY
+        )
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:

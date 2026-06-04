@@ -8,14 +8,18 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.documents.processor import chunk_text
 from app.documents.storage import object_storage
-from app.models.document import Document, DocumentChunk, DocumentVersion
+from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
+from app.services.document_processing.chunking import DocumentChunkingService, ParsedBlock
+from app.services.document_processing.concurrency import (
+    run_async_document_task,
+    run_blocking_document_task,
+)
 
 
 class ImageParsingError(RuntimeError):
@@ -61,10 +65,11 @@ class ImageParsingService:
             raise ImageParsingError(f"Документ не является поддерживаемым изображением: {content_type}")
 
         try:
-            image_data = object_storage.get_object(document.object_name)
+            image_data = await run_blocking_document_task(object_storage.get_object, document.object_name)
             response = await self._extract_with_vision(image_data, content_type)
             text, quality_notes = self._parse_vision_response(response)
-            extracted_text_object_name = self._save_extraction_result(
+            extracted_text_object_name = await run_blocking_document_task(
+                self._save_extraction_result,
                 document=document,
                 document_version=document_version,
                 text=text,
@@ -152,10 +157,13 @@ class ImageParsingService:
             "temperature": 0,
             "max_tokens": 4096,
         }
-        async with httpx.AsyncClient(timeout=180) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        async def _request() -> dict[str, Any]:
+            async with httpx.AsyncClient(timeout=180) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                return response.json()
+
+        data = await run_async_document_task(_request)
         return str(data["choices"][0]["message"]["content"])
 
     def _parse_vision_response(self, response: str) -> tuple[str, str | None]:
@@ -218,32 +226,26 @@ class ImageParsingService:
         document_version.extracted_text_object_name = result.extracted_text_object_name
         document_version.metadata_ = self._merge_metadata(document_version.metadata_, result)
 
-        await self.db.execute(delete(DocumentChunk).where(DocumentChunk.document_version_id == document_version.id))
-        for index, chunk in enumerate(chunk_text(result.text)):
-            self.db.add(
-                DocumentChunk(
-                    document_id=document.id,
-                    document_version_id=document_version.id,
-                    chunk_index=index,
-                    text=chunk,
+        await DocumentChunkingService(self.db).replace_chunks(
+            document_id=document.id,
+            document_version_id=document_version.id,
+            blocks=[
+                ParsedBlock(
+                    text=result.text,
+                    block_type="image_ocr",
                     page_number=1,
-                    token_count=len(chunk.split()),
-                    qdrant_collection=settings.QDRANT_COLLECTION,
-                    embedding_model=settings.LLM_EMBEDDING_MODEL,
-                    is_indexed=False,
-                    metadata_={
-                        "source": "imageparser",
+                    metadata={
                         "extraction_method": result.extraction_method,
                         "quality_notes": result.quality_notes,
                     },
-                    content=chunk,
-                    chunk_metadata={
-                        "source": "imageparser",
-                        "extraction_method": result.extraction_method,
-                    },
                 )
-            )
-        await self.db.flush()
+            ],
+            source="imageparser",
+            base_metadata={
+                "extraction_method": result.extraction_method,
+                "quality_notes": result.quality_notes,
+            },
+        )
 
     async def _mark_failed(
         self,
