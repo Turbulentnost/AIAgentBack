@@ -161,6 +161,7 @@ def _require_admin(user) -> None:
 
 
 async def _user_read(db: DbSession, user) -> UserRead:
+    await db.refresh(user)
     data = UserRead.model_validate(user).model_dump()
     data["avatar_url"] = ProfileImageService(db).build_avatar_url(user)
     return UserRead(**data)

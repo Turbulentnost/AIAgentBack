@@ -64,6 +64,7 @@ async def current_user(db: DbSession, current_user: CurrentUser) -> UserRead:
 
 
 async def _user_read(db: DbSession, user: User) -> UserRead:
+    await db.refresh(user)
     data = UserRead.model_validate(user).model_dump()
     data["avatar_url"] = ProfileImageService(db).build_avatar_url(user)
     return UserRead(**data)

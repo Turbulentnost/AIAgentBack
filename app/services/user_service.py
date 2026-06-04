@@ -53,8 +53,16 @@ class UserService:
             values["email"] = values["email"].lower()
         for key, value in values.items():
             setattr(user, key, value)
-        if not user.full_name:
-            user.full_name = self._build_full_name(values)
+        if "full_name" not in values:
+            rebuilt = self._build_full_name(
+                {
+                    "last_name": user.last_name,
+                    "first_name": user.first_name,
+                    "middle_name": user.middle_name,
+                }
+            )
+            if rebuilt:
+                user.full_name = rebuilt
         await self.db.flush()
         return user
 
