@@ -19,24 +19,24 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
-    POSTGRES_HOST: str = "postgres"
+    POSTGRES_HOST: str = "192.168.1.157"
     POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str = "platform"
-    POSTGRES_PASSWORD: str = "platform"
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "1234"
     POSTGRES_DB: str = "ai_agents"
 
-    REDIS_HOST: str = "redis"
+    REDIS_HOST: str = "192.168.1.157"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
 
-    QDRANT_HOST: str = "qdrant"
+    QDRANT_HOST: str = "192.168.1.157"
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = "knowledge_base"
 
-    MINIO_ENDPOINT: str = "minio:9000"
+    MINIO_ENDPOINT: str = "192.168.1.157:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "documents"
