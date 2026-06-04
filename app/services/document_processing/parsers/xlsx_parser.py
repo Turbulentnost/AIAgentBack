@@ -12,13 +12,13 @@ from typing import Any
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.documents.storage import object_storage
-from app.models.document import Document, DocumentChunk, DocumentVersion
+from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
+from app.services.document_processing.chunking import DocumentChunkingService, ParsedBlock
 
 
 class XlsxParsingError(RuntimeError):
@@ -335,25 +335,17 @@ class XlsxParsingService:
         document_version.extracted_text_object_name = result.extracted_text_object_name
         document_version.metadata_ = self._merge_metadata(document_version.metadata_, result)
 
-        await self.db.execute(delete(DocumentChunk).where(DocumentChunk.document_version_id == document_version.id))
-        chunk_index = 0
-        for sheet in result.sheets:
-            if not sheet.text.strip():
-                continue
-            self.db.add(
-                DocumentChunk(
-                    document_id=document.id,
-                    document_version_id=document_version.id,
-                    chunk_index=chunk_index,
+        await DocumentChunkingService(self.db).replace_chunks(
+            document_id=document.id,
+            document_version_id=document_version.id,
+            blocks=[
+                ParsedBlock(
                     text=sheet.text,
+                    block_type="sheet",
                     section_title=sheet.sheet_name,
-                    token_count=len(sheet.text.split()),
-                    qdrant_collection=settings.QDRANT_COLLECTION,
-                    embedding_model=settings.LLM_EMBEDDING_MODEL,
-                    is_indexed=False,
-                    metadata_={
-                        "source": "xlsx_parser",
-                        "extraction_method": result.extraction_method,
+                    sheet_name=sheet.sheet_name,
+                    cell_range=sheet.range_ref,
+                    metadata={
                         "sheet_name": sheet.sheet_name,
                         "sheet_index": sheet.sheet_index,
                         "range_ref": sheet.range_ref,
@@ -364,17 +356,14 @@ class XlsxParsingService:
                         "formulas_count": sheet.formulas_count,
                         "comments_count": sheet.comments_count,
                         "is_hidden": sheet.is_hidden,
-                    },
-                    content=sheet.text,
-                    chunk_metadata={
-                        "source": "xlsx_parser",
-                        "sheet_name": sheet.sheet_name,
-                        "range_ref": sheet.range_ref,
+                        "error": sheet.error,
                     },
                 )
-            )
-            chunk_index += 1
-        await self.db.flush()
+                for sheet in result.sheets
+            ],
+            source="xlsx_parser",
+            base_metadata={"extraction_method": result.extraction_method},
+        )
 
     async def _mark_failed(
         self,

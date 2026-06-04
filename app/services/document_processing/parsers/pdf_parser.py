@@ -10,14 +10,13 @@ from typing import Any
 import fitz
 import httpx
 from sqlalchemy import select
-from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.documents.processor import chunk_text
 from app.documents.storage import object_storage
-from app.models.document import Document, DocumentChunk, DocumentVersion
+from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
+from app.services.document_processing.chunking import DocumentChunkingService, ParsedBlock
 
 
 class PdfParsingError(RuntimeError):
@@ -326,32 +325,31 @@ class PdfParsingService:
         document_version.extracted_text_object_name = result.extracted_text_object_name
         document_version.metadata_ = self._merge_metadata(document_version.metadata_, result)
 
-        await self.db.execute(delete(DocumentChunk).where(DocumentChunk.document_version_id == document_version.id))
-        for index, chunk in enumerate(chunk_text(result.text)):
-            self.db.add(
-                DocumentChunk(
-                    document_id=document.id,
-                    document_version_id=document_version.id,
-                    chunk_index=index,
-                    text=chunk,
-                    token_count=len(chunk.split()),
-                    qdrant_collection=settings.QDRANT_COLLECTION,
-                    embedding_model=settings.LLM_EMBEDDING_MODEL,
-                    is_indexed=False,
-                    metadata_={
-                        "source": "pdf_parser",
-                        "extraction_method": result.extraction_method,
-                        "requires_ocr": result.requires_ocr,
-                        "ocr_used": result.ocr_used,
-                    },
-                    content=chunk,
-                    chunk_metadata={
-                        "source": "pdf_parser",
-                        "extraction_method": result.extraction_method,
+        await DocumentChunkingService(self.db).replace_chunks(
+            document_id=document.id,
+            document_version_id=document_version.id,
+            blocks=[
+                ParsedBlock(
+                    text=page.text,
+                    block_type="page",
+                    page_number=page.page_number,
+                    metadata={
+                        "page_number": page.page_number,
+                        "method": page.method,
+                        "has_images": page.has_images,
+                        "requires_ocr": page.requires_ocr,
+                        "error": page.error,
                     },
                 )
-            )
-        await self.db.flush()
+                for page in result.pages
+            ],
+            source="pdf_parser",
+            base_metadata={
+                "extraction_method": result.extraction_method,
+                "requires_ocr": result.requires_ocr,
+                "ocr_used": result.ocr_used,
+            },
+        )
 
     async def _mark_failed(
         self,

@@ -8,19 +8,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from docx import Document as DocxDocument
-from docx.oxml.ns import qn
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
 from docx.table import Table
 from docx.text.paragraph import Paragraph
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.documents.processor import chunk_text
 from app.documents.storage import object_storage
-from app.models.document import Document, DocumentChunk, DocumentVersion
+from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
+from app.services.document_processing.chunking import DocumentChunkingService, ParsedBlock
 
 
 class DocxParsingError(RuntimeError):
@@ -265,74 +263,31 @@ class DocxParsingService:
         document_version.extracted_text_object_name = result.extracted_text_object_name
         document_version.metadata_ = self._merge_metadata(document_version.metadata_, result)
 
-        await self.db.execute(delete(DocumentChunk).where(DocumentChunk.document_version_id == document_version.id))
-        for index, chunk in enumerate(self._chunk_blocks(result.blocks)):
-            self.db.add(
-                DocumentChunk(
-                    document_id=document.id,
-                    document_version_id=document_version.id,
-                    chunk_index=index,
-                    text=chunk["text"],
-                    section_title=chunk.get("section_title"),
-                    token_count=len(chunk["text"].split()),
-                    qdrant_collection=settings.QDRANT_COLLECTION,
-                    embedding_model=settings.LLM_EMBEDDING_MODEL,
-                    is_indexed=False,
-                    metadata_={
-                        "source": "docx_parser",
-                        "extraction_method": result.extraction_method,
-                        "block_types": chunk["block_types"],
-                        "section_title": chunk.get("section_title"),
-                        "table_indexes": chunk["table_indexes"],
-                        "images_count": result.images_count,
-                    },
-                    content=chunk["text"],
-                    chunk_metadata={
-                        "source": "docx_parser",
-                        "extraction_method": result.extraction_method,
-                        "block_types": chunk["block_types"],
+        await DocumentChunkingService(self.db).replace_chunks(
+            document_id=document.id,
+            document_version_id=document_version.id,
+            blocks=[
+                ParsedBlock(
+                    text=block.text,
+                    block_type=block.block_type,
+                    section_title=block.section_title,
+                    metadata={
+                        "block_index": block.block_index,
+                        "block_type": block.block_type,
+                        "style": block.style,
+                        "section_title": block.section_title,
+                        "table_index": block.table_index,
+                        "rows": block.rows,
                     },
                 )
-            )
-        await self.db.flush()
-
-    def _chunk_blocks(self, blocks: list[DocxBlock], max_chars: int = 1200) -> list[dict[str, Any]]:
-        chunks: list[dict[str, Any]] = []
-        current_text: list[str] = []
-        current_types: set[str] = set()
-        current_tables: list[int] = []
-        current_section: str | None = None
-
-        def flush() -> None:
-            if not current_text:
-                return
-            chunks.append(
-                {
-                    "text": "\n\n".join(current_text),
-                    "block_types": sorted(current_types),
-                    "table_indexes": current_tables.copy(),
-                    "section_title": current_section,
-                }
-            )
-
-        for block in blocks:
-            block_text = block.text.strip()
-            if not block_text:
-                continue
-            if current_text and sum(len(item) for item in current_text) + len(block_text) > max_chars:
-                flush()
-                current_text = []
-                current_types = set()
-                current_tables = []
-                current_section = block.section_title
-            if current_section is None:
-                current_section = block.section_title
-            current_text.append(block_text)
-            current_types.add(block.block_type)
-            if block.table_index is not None:
-                current_tables.append(block.table_index)
-        flush()
-        return chunks or [{"text": "", "block_types": [], "table_indexes": [], "section_title": None}]
+                for block in result.blocks
+            ],
+            source="docx_parser",
+            base_metadata={
+                "extraction_method": result.extraction_method,
+                "images_count": result.images_count,
+            },
+        )
 
     async def _mark_failed(
         self,
