@@ -115,7 +115,49 @@ def run_agent(self, agent_id: str, task_id: str, input_payload: dict | None = No
 
 @celery_app.task(name="index_document", bind=True, max_retries=3)
 def index_document(self, document_id: str) -> dict[str, Any]:
-    return _placeholder_result(self.request.id, "index_document", document_id=document_id)
+    import asyncio
+    import uuid
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.document_processing.indexing import QdrantIndexingError, QdrantIndexingService
+    from app.services.embeddings import (
+        EmbeddingBatchError,
+        EmbeddingConfigurationError,
+        EmbeddingProviderUnavailableError,
+        EmbeddingVectorSizeMismatchError,
+    )
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await QdrantIndexingService(db).index_document(uuid.UUID(document_id))
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "index_document",
+                    "status": "completed",
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    **result,
+                }
+            except (
+                QdrantIndexingError,
+                EmbeddingBatchError,
+                EmbeddingConfigurationError,
+                EmbeddingProviderUnavailableError,
+                EmbeddingVectorSizeMismatchError,
+                ValueError,
+            ) as exc:
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "index_document",
+                    "document_id": document_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return asyncio.run(_run())
 
 
 @celery_app.task(name="generate_report", bind=True, max_retries=3)

@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION: str = "knowledge_base"
+    QDRANT_VECTOR_SIZE: int = 1024
 
     MINIO_ENDPOINT: str = "192.168.1.157:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -81,6 +82,14 @@ class Settings(BaseSettings):
     LLM_EMBEDDING_MODEL: str = ""
     VISION_LM_STUDIO_BASE_URL: str = ""
     VISION_LM_STUDIO_MODEL: str = ""
+    EMBEDDINGS_PROVIDER: str = "local"
+    EMBEDDINGS_MODEL: str = "BAAI/bge-m3"
+    EMBEDDINGS_VECTOR_SIZE: int = 1024
+    EMBEDDINGS_DEVICE: str = "cuda"
+    EMBEDDINGS_BATCH_SIZE: int = 16
+    EMBEDDINGS_TIMEOUT_SECONDS: int = 60
+    EMBEDDINGS_ALLOW_CPU_FALLBACK: bool = False
+    EMBEDDINGS_MAX_TEXT_LENGTH: int = 20000
 
     @property
     def cors_origins(self) -> list[str]:

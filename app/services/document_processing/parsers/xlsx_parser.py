@@ -19,6 +19,7 @@ from app.documents.storage import object_storage
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
 from app.services.document_processing.chunking import DocumentChunkingService, ParsedBlock
+from app.services.document_processing.concurrency import run_blocking_document_task
 
 
 class XlsxParsingError(RuntimeError):
@@ -87,13 +88,14 @@ class XlsxParsingService:
             raise XlsxParsingError(f"Документ не является поддерживаемым XLSX: {content_type}")
 
         try:
-            xlsx_data = object_storage.get_object(document.object_name)
-            sheets = self._extract_sheets(xlsx_data)
+            xlsx_data = await run_blocking_document_task(object_storage.get_object, document.object_name)
+            sheets = await run_blocking_document_task(self._extract_sheets, xlsx_data)
             if not any(sheet.rows for sheet in sheets):
                 raise XlsxParsingError("В XLSX не найдено заполненных данных")
 
             full_text = "\n\n".join(sheet.text for sheet in sheets if sheet.text.strip())
-            extracted_text_object_name = self._save_extraction_result(
+            extracted_text_object_name = await run_blocking_document_task(
+                self._save_extraction_result,
                 document=document,
                 document_version=document_version,
                 sheets=sheets,

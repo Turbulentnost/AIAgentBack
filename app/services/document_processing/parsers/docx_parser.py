@@ -19,6 +19,7 @@ from app.documents.storage import object_storage
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
 from app.services.document_processing.chunking import DocumentChunkingService, ParsedBlock
+from app.services.document_processing.concurrency import run_blocking_document_task
 
 
 class DocxParsingError(RuntimeError):
@@ -81,10 +82,11 @@ class DocxParsingService:
             raise DocxParsingError(f"Документ не является поддерживаемым DOCX: {content_type}")
 
         try:
-            docx_data = object_storage.get_object(document.object_name)
-            blocks, images_count = self._extract_blocks(docx_data)
+            docx_data = await run_blocking_document_task(object_storage.get_object, document.object_name)
+            blocks, images_count = await run_blocking_document_task(self._extract_blocks, docx_data)
             full_text = self._build_full_text(blocks)
-            extracted_text_object_name = self._save_extraction_result(
+            extracted_text_object_name = await run_blocking_document_task(
+                self._save_extraction_result,
                 document=document,
                 document_version=document_version,
                 blocks=blocks,
