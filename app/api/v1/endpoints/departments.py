@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import uuid
+
+from fastapi import APIRouter, HTTPException, status
+
+from app.api.deps import CurrentUser, DbSession
+from app.schemas.department import DepartmentCreate, DepartmentRead, DepartmentUpdate
+from app.services.audit_service import AuditService
+from app.services.user_service import DepartmentService
+
+router = APIRouter(prefix="/departments", tags=["departments"])
+
+
+@router.get("", response_model=list[DepartmentRead])
+async def list_departments(db: DbSession, current_user: CurrentUser, limit: int = 100, offset: int = 0):
+    return await DepartmentService(db).list(limit, offset)
+
+
+@router.post("", response_model=DepartmentRead, status_code=status.HTTP_201_CREATED)
+async def create_department(db: DbSession, current_user: CurrentUser, data: DepartmentCreate):
+    _require_admin(current_user)
+    department = await DepartmentService(db).create(data)
+    await AuditService(db).log(
+        action="departments.create",
+        actor_id=current_user.id,
+        resource_type="department",
+        resource_id=str(department.id),
+    )
+    return department
+
+
+@router.patch("/{department_id}", response_model=DepartmentRead)
+async def update_department(
+    db: DbSession,
+    current_user: CurrentUser,
+    department_id: uuid.UUID,
+    data: DepartmentUpdate,
+):
+    _require_admin(current_user)
+    service = DepartmentService(db)
+    department = await service.get(department_id)
+    if department is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Подразделение не найдено")
+    updated = await service.update(department, data)
+    await AuditService(db).log(
+        action="departments.update",
+        actor_id=current_user.id,
+        resource_type="department",
+        resource_id=str(department.id),
+        payload=data.model_dump(exclude_unset=True),
+    )
+    return updated
+
+
+def _require_admin(user) -> None:
+    if not user.is_superuser:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")

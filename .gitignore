@@ -1,0 +1,14 @@
+# Backend
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+.env.*
+!.env.example
+alembic/versions/*.py
+!alembic/versions/.gitkeep
