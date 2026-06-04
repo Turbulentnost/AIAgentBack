@@ -5,9 +5,17 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, UploadFile
 from app.api.deps import CurrentUser, DbSession
 from app.knowledge_base.retriever import retriever
+from app.models.document import DocumentVersion
 from app.models.enums import DocumentType
-from app.schemas.document import ChunkSearchHit, ChunkSearchQuery, DocumentCreate, DocumentRead
+from app.schemas.document import (
+    ChunkSearchHit,
+    ChunkSearchQuery,
+    DocumentCreate,
+    DocumentRead,
+    DocumentVersionRead,
+)
 from app.services.document_service import DocumentService
+from sqlalchemy import select
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.post("", response_model=DocumentRead)
@@ -42,3 +50,13 @@ async def upload_document(
 async def search_knowledge_base(query: ChunkSearchQuery):
     hits = await retriever.retrieve(query.query, top_k=query.top_k)
     return [ChunkSearchHit(content=h.get("payload", {}).get("content", ""), score=h.get("score", 0.0), metadata=h.get("payload")) for h in hits]
+
+
+@router.get("/{document_id}/versions", response_model=list[DocumentVersionRead])
+async def list_document_versions(db: DbSession, document_id: uuid.UUID):
+    result = await db.execute(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == document_id)
+        .order_by(DocumentVersion.version_number.desc(), DocumentVersion.created_at.desc())
+    )
+    return list(result.scalars().all())

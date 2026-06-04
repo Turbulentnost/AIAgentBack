@@ -49,6 +49,36 @@ class DocumentRead(ORMModel):
     created_at: datetime
     updated_at: datetime
 
+
+class DocumentVersionRead(ORMModel):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    version_number: int
+    version_label: str
+    original_filename: str | None
+    content_type: str | None
+    file_size: int | None
+    bucket_name: str | None
+    object_name: str | None
+    uploaded_by_user_id: uuid.UUID | None
+    uploaded_at: datetime
+    processing_status: DocumentProcessingStatus
+    text_extract_status: TextExtractStatus
+    extracted_text_object_name: str | None
+    is_indexed: bool
+    qdrant_collection: str | None
+    qdrant_points_count: int | None
+    checksum: str | None
+    pages_count: int | None
+    source_url: str | None
+    metadata_: dict | None = Field(default=None, serialization_alias="metadata")
+
+    # Legacy fields kept during transition.
+    storage_key: str | None
+    is_current: bool
+    created_at: datetime
+    updated_at: datetime
+
 class ChunkSearchQuery(BaseModel):
     query: str
     top_k: int = 5

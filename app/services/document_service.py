@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.documents.processor import chunk_text, extract_text
 from app.documents.storage import object_storage
-from app.models.document import Document
+from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
 from app.schemas.document import DocumentCreate
 
@@ -62,5 +62,26 @@ class DocumentService:
             doc_metadata=metadata,
         )
         self.db.add(document)
+        self.db.add(
+            DocumentVersion(
+                document_id=document_id,
+                version_number=1,
+                version_label="v1",
+                original_filename=original_filename or data.original_filename,
+                content_type=mime_type,
+                file_size=len(content),
+                bucket_name=object_storage.bucket,
+                object_name=object_name,
+                uploaded_by_user_id=uploaded_by_user_id,
+                processing_status=DocumentProcessingStatus.UPLOADED,
+                text_extract_status=text_extract_status,
+                is_indexed=False,
+                checksum=document.checksum,
+                source_url=data.source_url,
+                metadata_=metadata,
+                storage_key=object_name,
+                is_current=True,
+            )
+        )
         await self.db.flush()
         return document

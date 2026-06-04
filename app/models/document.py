@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, Text
+from datetime import datetime
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -56,10 +57,39 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class DocumentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "document_versions"
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    version_number: Mapped[int] = mapped_column(Integer, default=1, index=True)
     version_label: Mapped[str] = mapped_column(String(64))
+    original_filename: Mapped[str | None] = mapped_column(String(512))
+    content_type: Mapped[str | None] = mapped_column(String(128))
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
+    bucket_name: Mapped[str | None] = mapped_column(String(255))
+    object_name: Mapped[str | None] = mapped_column(String(1024), index=True)
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    processing_status: Mapped[DocumentProcessingStatus] = mapped_column(
+        default=DocumentProcessingStatus.UPLOADED,
+        index=True,
+    )
+    text_extract_status: Mapped[TextExtractStatus] = mapped_column(
+        default=TextExtractStatus.NOT_STARTED,
+        index=True,
+    )
+    extracted_text_object_name: Mapped[str | None] = mapped_column(String(1024))
+    is_indexed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    qdrant_collection: Mapped[str | None] = mapped_column(String(255))
+    qdrant_points_count: Mapped[int | None] = mapped_column(Integer)
+    checksum: Mapped[str | None] = mapped_column(String(128), index=True)
+    pages_count: Mapped[int | None] = mapped_column(Integer)
+    source_url: Mapped[str | None] = mapped_column(String(2048))
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+
+    # Legacy fields kept for compatibility with earlier version API.
     storage_key: Mapped[str | None] = mapped_column(String(1024))
     status: Mapped[SourceReliability] = mapped_column(default=SourceReliability.NEEDS_CHECK)
-    is_current: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     document: Mapped[Document] = relationship(back_populates="versions")
     chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document_version", cascade="all, delete-orphan")
 
