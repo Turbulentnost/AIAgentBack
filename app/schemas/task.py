@@ -17,6 +17,45 @@ class AgentResult(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     data_confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
     requires_human_review: bool = False
+
+
+class TaskResultCreate(BaseModel):
+    agent_id: uuid.UUID | None = None
+    status: str = "completed"
+    conclusion: str | None = None
+    summary: str | None = None
+    findings: list[dict] = Field(default_factory=list)
+    data_confidence: ConfidenceLevel | None = ConfidenceLevel.MEDIUM
+    requires_human_review: bool = False
+    additional_data: dict | None = None
+    report_bucket: str | None = None
+    report_object_name: str | None = None
+    report_url: str | None = None
+    metadata: dict | None = None
+    raw_output: dict | None = None
+
+
+class TaskResultRead(ORMModel):
+    id: uuid.UUID
+    task_id: uuid.UUID
+    agent_id: uuid.UUID | None
+    status: str
+    conclusion: str | None
+    summary: str | None
+    findings: list[dict] | None
+    data_confidence: ConfidenceLevel | None
+    requires_human_review: bool
+    additional_data: dict | None
+    report_bucket: str | None
+    report_object_name: str | None
+    report_url: str | None
+    is_current: bool
+    generated_at: datetime | None
+    metadata_: dict | None = Field(default=None, serialization_alias="metadata")
+    raw_output: dict | None
+    created_at: datetime
+    updated_at: datetime
+
 class TaskCreate(BaseModel):
     title: str = Field(..., max_length=512)
     description: str | None = None

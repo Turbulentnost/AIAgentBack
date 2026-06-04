@@ -12,6 +12,8 @@ from app.schemas.task import (
     CeleryTaskStatusResponse,
     TaskCreate,
     TaskRead,
+    TaskResultCreate,
+    TaskResultRead,
     TaskStepRead,
 )
 from app.services.task_service import TaskService
@@ -84,6 +86,26 @@ async def list_task_steps(db: DbSession, task_id: uuid.UUID):
     if task is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
     return sorted(task.steps, key=lambda step: (step.order_index, step.created_at))
+
+
+@router.get("/{task_id}/result", response_model=TaskResultRead)
+async def get_task_result(db: DbSession, task_id: uuid.UUID):
+    task = await TaskService(db).get(task_id)
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
+    result = await TaskService(db).get_current_result(task_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Результат задачи не найден")
+    return result
+
+
+@router.post("/{task_id}/result", response_model=TaskResultRead, status_code=status.HTTP_201_CREATED)
+async def save_task_result(db: DbSession, task_id: uuid.UUID, data: TaskResultCreate):
+    service = TaskService(db)
+    task = await service.get(task_id)
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
+    return await service.save_result(task, data)
 
 
 def _task_read(task) -> TaskRead:
