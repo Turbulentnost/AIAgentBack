@@ -28,7 +28,44 @@ def run_task(self, task_id: str, task_type: str | None, input_payload: dict) -> 
 
 @celery_app.task(name="process_document", bind=True, max_retries=3)
 def process_document(self, document_id: str) -> dict[str, Any]:
-    return _placeholder_result(self.request.id, "process_document", document_id=document_id)
+    import asyncio
+    import uuid
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.document_processing.parsers.pdf_parser import PdfParsingError, PdfParsingService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await PdfParsingService(db).parse_document(document_id=uuid.UUID(document_id))
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "process_document",
+                    "document_id": str(result.document_id),
+                    "document_version_id": str(result.document_version_id),
+                    "status": "completed" if not result.failed_pages else "partial",
+                    "pages_count": result.pages_count,
+                    "characters_count": result.characters_count,
+                    "extraction_method": result.extraction_method,
+                    "requires_ocr": result.requires_ocr,
+                    "ocr_used": result.ocr_used,
+                    "failed_pages": result.failed_pages,
+                    "extracted_text_object_name": result.extracted_text_object_name,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except PdfParsingError as exc:
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "process_document",
+                    "document_id": document_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return asyncio.run(_run())
 
 
 @celery_app.task(name="run_agent", bind=True, max_retries=3)
