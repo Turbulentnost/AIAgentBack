@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import time
 import uuid
@@ -10,14 +11,17 @@ from typing import Any
 import fitz
 import httpx
 from sqlalchemy import select
-from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.documents.processor import chunk_text
 from app.documents.storage import object_storage
-from app.models.document import Document, DocumentChunk, DocumentVersion
+from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentProcessingStatus, TextExtractStatus
+from app.services.document_processing.chunking import DocumentChunkingService, ParsedBlock
+from app.services.document_processing.concurrency import (
+    run_async_document_task,
+    run_blocking_document_task,
+)
 
 
 class PdfParsingError(RuntimeError):
@@ -79,8 +83,8 @@ class PdfParsingService:
             raise PdfParsingError(f"Документ не является PDF: {document.content_type}")
 
         try:
-            pdf_data = object_storage.get_object(document.object_name)
-            pages, page_images = self._extract_pages(pdf_data)
+            pdf_data = await run_blocking_document_task(object_storage.get_object, document.object_name)
+            pages, page_images = await run_blocking_document_task(self._extract_pages, pdf_data)
             pages_requiring_ocr = [
                 page.page_number
                 for page in pages
@@ -99,7 +103,8 @@ class PdfParsingService:
                 for page in pages
                 if page.text.strip()
             )
-            extracted_text_object_name = self._save_extraction_result(
+            extracted_text_object_name = await run_blocking_document_task(
+                self._save_extraction_result,
                 document=document,
                 document_version=document_version,
                 pages=pages,
@@ -189,12 +194,22 @@ class PdfParsingService:
         page_numbers: list[int],
     ) -> dict[int, str]:
         text_by_page: dict[int, str] = {}
+        tasks = []
         for offset in range(0, len(page_numbers), self.OCR_BATCH_SIZE):
             batch = page_numbers[offset : offset + self.OCR_BATCH_SIZE]
             messages = self._build_vision_messages(batch, page_images)
-            response = await self._call_vision_model(messages)
-            text_by_page.update(self._parse_vision_response(response, batch))
+            tasks.append(self._extract_vision_batch(messages, batch))
+        for parsed_batch in await asyncio.gather(*tasks):
+            text_by_page.update(parsed_batch)
         return text_by_page
+
+    async def _extract_vision_batch(
+        self,
+        messages: list[dict[str, Any]],
+        batch: list[int],
+    ) -> dict[int, str]:
+        response = await run_async_document_task(lambda: self._call_vision_model(messages))
+        return self._parse_vision_response(response, batch)
 
     def _build_vision_messages(
         self,
@@ -326,32 +341,31 @@ class PdfParsingService:
         document_version.extracted_text_object_name = result.extracted_text_object_name
         document_version.metadata_ = self._merge_metadata(document_version.metadata_, result)
 
-        await self.db.execute(delete(DocumentChunk).where(DocumentChunk.document_version_id == document_version.id))
-        for index, chunk in enumerate(chunk_text(result.text)):
-            self.db.add(
-                DocumentChunk(
-                    document_id=document.id,
-                    document_version_id=document_version.id,
-                    chunk_index=index,
-                    text=chunk,
-                    token_count=len(chunk.split()),
-                    qdrant_collection=settings.QDRANT_COLLECTION,
-                    embedding_model=settings.LLM_EMBEDDING_MODEL,
-                    is_indexed=False,
-                    metadata_={
-                        "source": "pdf_parser",
-                        "extraction_method": result.extraction_method,
-                        "requires_ocr": result.requires_ocr,
-                        "ocr_used": result.ocr_used,
-                    },
-                    content=chunk,
-                    chunk_metadata={
-                        "source": "pdf_parser",
-                        "extraction_method": result.extraction_method,
+        await DocumentChunkingService(self.db).replace_chunks(
+            document_id=document.id,
+            document_version_id=document_version.id,
+            blocks=[
+                ParsedBlock(
+                    text=page.text,
+                    block_type="page",
+                    page_number=page.page_number,
+                    metadata={
+                        "page_number": page.page_number,
+                        "method": page.method,
+                        "has_images": page.has_images,
+                        "requires_ocr": page.requires_ocr,
+                        "error": page.error,
                     },
                 )
-            )
-        await self.db.flush()
+                for page in result.pages
+            ],
+            source="pdf_parser",
+            base_metadata={
+                "extraction_method": result.extraction_method,
+                "requires_ocr": result.requires_ocr,
+                "ocr_used": result.ocr_used,
+            },
+        )
 
     async def _mark_failed(
         self,

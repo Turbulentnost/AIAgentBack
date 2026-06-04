@@ -55,11 +55,12 @@ class DocumentService:
 
         chunks: list[str] = []
         text_extract_status = TextExtractStatus.NOT_STARTED
-        try:
-            chunks = chunk_text(extract_text(content, mime_type))
-            text_extract_status = TextExtractStatus.EXTRACTED
-        except Exception:
-            text_extract_status = TextExtractStatus.FAILED
+        if not mime_type.startswith("image/"):
+            try:
+                chunks = chunk_text(extract_text(content, mime_type))
+                text_extract_status = TextExtractStatus.EXTRACTED
+            except Exception:
+                text_extract_status = TextExtractStatus.FAILED
 
         try:
             document = Document(

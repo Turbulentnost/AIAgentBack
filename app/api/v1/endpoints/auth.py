@@ -6,31 +6,31 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from app.api.deps import CurrentUser, DbSession, oauth2_scheme
 from app.core.security import create_access_token, decode_access_token
 from app.models.user import User
-from app.schemas.auth import LoginRequest, RegisterRequest, Token
+from app.schemas.auth import LoginRequest, Token
 from app.schemas.user import UserRead
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthService, PasswordChangeRequired
 from app.services.profile_image_service import ProfileImageService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def register(db: DbSession, data: RegisterRequest) -> UserRead:
-    try:
-        user = await AuthService(db).register(data)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return await _user_read(db, user)
-
-
 @router.post("/login", response_model=Token)
 async def login(db: DbSession, credentials: LoginRequest, request: Request) -> Token:
-    _, token = await AuthService(db).authenticate(
-        email=credentials.email,
-        password=credentials.password,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-    )
+    try:
+        _, token = await AuthService(db).authenticate(
+            email=credentials.email,
+            password=credentials.password,
+            new_password=credentials.new_password,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    except PasswordChangeRequired as exc:
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail={"code": "password_change_required", "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     if token is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный email или пароль")
     return token

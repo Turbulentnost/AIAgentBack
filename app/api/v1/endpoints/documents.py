@@ -111,8 +111,8 @@ async def upload_document_legacy(
 
 
 @router.post("/search", response_model=list[ChunkSearchHit])
-async def search_knowledge_base(query: ChunkSearchQuery):
-    hits = await retriever.retrieve(query.query, top_k=query.top_k)
+async def search_knowledge_base(query: ChunkSearchQuery, db: DbSession):
+    hits = await retriever.retrieve(query.query, top_k=query.top_k, db=db)
     return [ChunkSearchHit(content=h.get("payload", {}).get("content", ""), score=h.get("score", 0.0), metadata=h.get("payload")) for h in hits]
 
 
