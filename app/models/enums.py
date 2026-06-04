@@ -50,6 +50,7 @@ class SourceReliability(str, enum.Enum):
     REVOKED = "revoked"
 
 class DocumentType(str, enum.Enum):
+    TASK_INPUT = "task_input"
     REGULATION = "regulation"
     TZ = "tz"
     PMI = "pmi"

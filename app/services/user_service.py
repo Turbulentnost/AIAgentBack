@@ -7,9 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
-from app.models.user import Department, User
+from app.models.user import Department, User, UserAgent
 from app.schemas.department import DepartmentCreate, DepartmentUpdate
-from app.schemas.user import UserCreate, UserUpdate
+from app.schemas.user import AdminUserCreate, UserCreate, UserUpdate
 
 
 class UserService:
@@ -47,14 +47,56 @@ class UserService:
         await self.db.flush()
         return user
 
+    async def create_by_admin(self, data: AdminUserCreate, *, created_by: uuid.UUID) -> User:
+        existing_email = await self.get_by_email(data.email)
+        if existing_email is not None:
+            raise ValueError("Пользователь с таким email уже существует")
+        if data.username:
+            existing_username = await self.db.scalar(select(User).where(User.username == data.username))
+            if existing_username is not None:
+                raise ValueError("Пользователь с таким username уже существует")
+
+        values = data.model_dump(exclude={"password", "agent_access"})
+        values["email"] = data.email.lower()
+        values["hashed_password"] = hash_password(data.password)
+        values["full_name"] = values.get("full_name") or self._build_full_name(values)
+        user = User(**values)
+        self.db.add(user)
+        await self.db.flush()
+
+        for access in data.agent_access:
+            self.db.add(
+                UserAgent(
+                    user_id=user.id,
+                    agent_id=access.agent_id,
+                    access_level=access.access_level,
+                    can_run=access.can_run,
+                    can_view_results=access.can_view_results,
+                    can_approve=access.can_approve,
+                    can_configure=access.can_configure,
+                    granted_by=created_by,
+                    expires_at=access.expires_at,
+                )
+            )
+        await self.db.flush()
+        return user
+
     async def update(self, user: User, data: UserUpdate) -> User:
         values = data.model_dump(exclude_unset=True)
         if "email" in values and values["email"] is not None:
             values["email"] = values["email"].lower()
         for key, value in values.items():
             setattr(user, key, value)
-        if not user.full_name:
-            user.full_name = self._build_full_name(values)
+        if "full_name" not in values:
+            rebuilt = self._build_full_name(
+                {
+                    "last_name": user.last_name,
+                    "first_name": user.first_name,
+                    "middle_name": user.middle_name,
+                }
+            )
+            if rebuilt:
+                user.full_name = rebuilt
         await self.db.flush()
         return user
 

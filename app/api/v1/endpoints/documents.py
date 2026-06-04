@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import uuid
 from typing import Annotated
 
@@ -17,6 +18,7 @@ from app.schemas.document import (
     DocumentVersionRead,
 )
 from app.services.document_service import DocumentMetadataSaveError, DocumentService
+from app.workers.tasks import process_document
 from sqlalchemy import select
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -31,10 +33,13 @@ async def upload_document(
     department_id: Annotated[uuid.UUID | None, Form()] = None,
     task_id: Annotated[uuid.UUID | None, Form()] = None,
     is_knowledge_base: Annotated[bool, Form()] = False,
+    source_url: Annotated[str | None, Form()] = None,
+    metadata: Annotated[str | None, Form()] = None,
 ):
     content = await file.read()
     document = None
     try:
+        parsed_metadata = _parse_metadata(metadata)
         document = await DocumentService(db).upload(
             DocumentCreate(
                 title=title or file.filename or "Без названия",
@@ -43,6 +48,8 @@ async def upload_document(
                 department_id=department_id or current_user.department_id,
                 task_id=task_id,
                 is_knowledge_base=is_knowledge_base,
+                source_url=source_url,
+                metadata=parsed_metadata,
             ),
             content,
             file.content_type or "application/octet-stream",
@@ -86,6 +93,8 @@ async def upload_document_legacy(
     department_id: Annotated[uuid.UUID | None, Form()] = None,
     task_id: Annotated[uuid.UUID | None, Form()] = None,
     is_knowledge_base: Annotated[bool, Form()] = False,
+    source_url: Annotated[str | None, Form()] = None,
+    metadata: Annotated[str | None, Form()] = None,
 ):
     return await upload_document(
         db=db,
@@ -96,6 +105,8 @@ async def upload_document_legacy(
         department_id=department_id,
         task_id=task_id,
         is_knowledge_base=is_knowledge_base,
+        source_url=source_url,
+        metadata=metadata,
     )
 
 
@@ -103,6 +114,12 @@ async def upload_document_legacy(
 async def search_knowledge_base(query: ChunkSearchQuery):
     hits = await retriever.retrieve(query.query, top_k=query.top_k)
     return [ChunkSearchHit(content=h.get("payload", {}).get("content", ""), score=h.get("score", 0.0), metadata=h.get("payload")) for h in hits]
+
+
+@router.post("/{document_id}/parse")
+async def parse_document(document_id: uuid.UUID, current_user: CurrentUser):
+    task = process_document.delay(str(document_id))
+    return {"celery_task_id": task.id, "document_id": str(document_id), "status": "queued"}
 
 
 @router.get("/{document_id}/versions", response_model=list[DocumentVersionRead])
@@ -123,3 +140,15 @@ async def list_document_version_chunks(db: DbSession, document_version_id: uuid.
         .order_by(DocumentChunk.chunk_index.asc())
     )
     return list(result.scalars().all())
+
+
+def _parse_metadata(raw_metadata: str | None) -> dict | None:
+    if not raw_metadata:
+        return None
+    try:
+        parsed = json.loads(raw_metadata)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Поле metadata должно быть валидным JSON-объектом") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Поле metadata должно быть JSON-объектом")
+    return parsed

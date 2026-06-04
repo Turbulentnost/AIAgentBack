@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User, UserSession
 from app.schemas.user import Token, UserCreate
 from app.services.audit_service import AuditService
@@ -33,6 +33,7 @@ class AuthService:
         *,
         email: str,
         password: str,
+        new_password: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> tuple[User | None, Token | None]:
@@ -46,6 +47,31 @@ class AuthService:
                 user_agent=user_agent,
             )
             return None, None
+
+        if user.must_change_password:
+            if not new_password:
+                await AuditService(self.db).log(
+                    action="auth.password_change_required",
+                    actor_id=user.id,
+                    resource_type="user",
+                    resource_id=str(user.id),
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+                raise PasswordChangeRequired("Необходимо сменить временный пароль")
+            if verify_password(new_password, user.hashed_password):
+                raise ValueError("Новый пароль не должен совпадать с временным")
+            user.hashed_password = hash_password(new_password)
+            user.must_change_password = False
+            user.is_verified = True
+            await AuditService(self.db).log(
+                action="auth.initial_password_changed",
+                actor_id=user.id,
+                resource_type="user",
+                resource_id=str(user.id),
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
         expires_at = datetime.now(timezone.utc) + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
@@ -93,3 +119,7 @@ class AuthService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+
+
+class PasswordChangeRequired(RuntimeError):
+    pass

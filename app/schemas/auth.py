@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app.schemas.user import LoginRequest, Token, UserCreate, UserRead
+from app.schemas.user import LoginRequest, Token, UserRead
 
-RegisterRequest = UserCreate
-
-__all__ = ["LoginRequest", "RegisterRequest", "Token", "UserRead"]
+__all__ = ["LoginRequest", "Token", "UserRead"]

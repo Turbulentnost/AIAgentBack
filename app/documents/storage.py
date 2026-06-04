@@ -36,6 +36,17 @@ class ObjectStorage:
         except Exception as exc:
             raise ObjectStorageError("Не удалось загрузить файл в MinIO") from exc
 
+    def get_object(self, key: str) -> bytes:
+        try:
+            response = self.client.get_object(self.bucket, key)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+        except Exception as exc:
+            raise ObjectStorageError("Не удалось скачать файл из MinIO") from exc
+
     def delete_object(self, key: str) -> None:
         try:
             self.client.remove_object(self.bucket, key)

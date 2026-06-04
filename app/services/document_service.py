@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.documents.processor import chunk_text, extract_text
 from app.documents.storage import object_storage
 from app.models.document import Document, DocumentChunk, DocumentVersion
-from app.models.enums import DocumentProcessingStatus, TextExtractStatus
+from app.models.enums import DocumentProcessingStatus, DocumentType, TextExtractStatus
 from app.schemas.document import DocumentCreate
 
 
@@ -31,9 +31,26 @@ class DocumentService:
         self.validate_upload(content, mime_type)
         document_id = uuid.uuid4()
         document_type = data.doc_type or data.document_type
-        metadata = data.doc_metadata or data.metadata
-        safe_filename = self._safe_filename(original_filename or data.original_filename or f"{document_id}")
-        object_name = f"documents/{document_type.value}/{document_id}/{safe_filename}"
+        original_name = original_filename or data.original_filename or f"{document_id}"
+        safe_filename = self._safe_filename(original_name)
+        object_name = self._build_object_name(
+            document_id=document_id,
+            document_type=document_type,
+            task_id=data.task_id,
+            is_knowledge_base=data.is_knowledge_base,
+            filename=safe_filename,
+        )
+        checksum = hashlib.sha256(content).hexdigest()
+        metadata = self._build_metadata(
+            data=data,
+            document_id=document_id,
+            document_type=document_type,
+            original_filename=original_name,
+            object_name=object_name,
+            mime_type=mime_type,
+            file_size=len(content),
+            checksum=checksum,
+        )
         object_storage.put_object(object_name, content, mime_type)
 
         chunks: list[str] = []
@@ -61,7 +78,7 @@ class DocumentService:
                 is_knowledge_base=data.is_knowledge_base,
                 is_indexed=False,
                 text_extract_status=text_extract_status,
-                checksum=hashlib.sha256(content).hexdigest(),
+                checksum=checksum,
                 version=1,
                 source_url=data.source_url,
                 metadata_=metadata,
@@ -139,3 +156,55 @@ class DocumentService:
     def _safe_filename(self, filename: str) -> str:
         name = PurePath(filename).name.strip().replace("\\", "_").replace("/", "_")
         return name or "document"
+
+    def _build_object_name(
+        self,
+        *,
+        document_id: uuid.UUID,
+        document_type: DocumentType,
+        task_id: uuid.UUID | None,
+        is_knowledge_base: bool,
+        filename: str,
+    ) -> str:
+        unique_filename = f"{document_id}_{filename}"
+        if task_id and document_type == DocumentType.TASK_INPUT:
+            return f"tasks/{task_id}/input/{unique_filename}"
+        if task_id:
+            return f"tasks/{task_id}/documents/{unique_filename}"
+        if is_knowledge_base:
+            return f"knowledge_base/{document_type.value}/{unique_filename}"
+        return f"documents/{document_type.value}/{unique_filename}"
+
+    def _build_metadata(
+        self,
+        *,
+        data: DocumentCreate,
+        document_id: uuid.UUID,
+        document_type: DocumentType,
+        original_filename: str,
+        object_name: str,
+        mime_type: str,
+        file_size: int,
+        checksum: str,
+    ) -> dict:
+        provided_metadata = data.doc_metadata or data.metadata or {}
+        original_extension = PurePath(original_filename).suffix.lower()
+        requires_ocr = bool(provided_metadata.get("requires_ocr", mime_type in {"image/png", "image/jpeg", "image/webp"}))
+        return {
+            **provided_metadata,
+            "upload_source": provided_metadata.get("upload_source", "api"),
+            "document_id": str(document_id),
+            "document_type": document_type.value,
+            "original_extension": original_extension,
+            "requires_ocr": requires_ocr,
+            "bucket_name": object_storage.bucket,
+            "object_name": object_name,
+            "content_type": mime_type,
+            "file_size": file_size,
+            "checksum": checksum,
+            "version": 1,
+            "task_id": str(data.task_id) if data.task_id else None,
+            "department_id": str(data.department_id) if data.department_id else None,
+            "is_knowledge_base": data.is_knowledge_base,
+            "source_url": data.source_url,
+        }

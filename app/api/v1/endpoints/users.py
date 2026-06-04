@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.integrations.minio import MinioObjectError
-from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.schemas.user import UserRead, UserUpdate
 from app.services.audit_service import AuditService
 from app.services.profile_image_service import AvatarMetadataSaveError, AvatarValidationError, ProfileImageService
 from app.services.user_service import UserService
@@ -31,19 +31,6 @@ async def list_users(db: DbSession, current_user: CurrentUser, limit: int = 50, 
     _require_admin(current_user)
     users = await UserService(db).list(limit, offset)
     return [await _user_read(db, user) for user in users]
-
-
-@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def create_user(db: DbSession, current_user: CurrentUser, data: UserCreate):
-    _require_admin(current_user)
-    user = await UserService(db).create(data)
-    await AuditService(db).log(
-        action="users.create",
-        actor_id=current_user.id,
-        resource_type="user",
-        resource_id=str(user.id),
-    )
-    return await _user_read(db, user)
 
 
 @router.get("/{user_id}", response_model=UserRead)
@@ -161,6 +148,7 @@ def _require_admin(user) -> None:
 
 
 async def _user_read(db: DbSession, user) -> UserRead:
+    await db.refresh(user)
     data = UserRead.model_validate(user).model_dump()
     data["avatar_url"] = ProfileImageService(db).build_avatar_url(user)
     return UserRead(**data)

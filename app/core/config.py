@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     MINIO_ENDPOINT: str = "192.168.1.157:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
-    MINIO_BUCKET: str = "documents"
+    MINIO_BUCKET: str = "ai-documents"
     MINIO_USER_FILES_BUCKET: str = "ai-user-files"
     MINIO_SECURE: bool = False
     AVATAR_MAX_UPLOAD_SIZE_BYTES: int = 5 * 1024 * 1024
@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     LLM_DEFAULT_MODEL: str = "gpt-4.1"
     LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    VISION_LM_STUDIO_BASE_URL: str = "http://172.18.0.1:1234/v1"
+    VISION_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
 
     @property
     def cors_origins(self) -> list[str]:
