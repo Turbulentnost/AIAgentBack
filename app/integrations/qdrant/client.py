@@ -174,6 +174,14 @@ class QdrantVectorClient:
     ) -> None:
         collection_name = collection or self.collection
         try:
+            if not await self.client.collection_exists(collection_name):
+                logger.info(
+                    "qdrant.points.delete_skipped_missing_collection",
+                    collection=collection_name,
+                    document_version_id=document_version_id,
+                )
+                return
+
             await self.client.delete(
                 collection_name=collection_name,
                 points_selector=qmodels.FilterSelector(

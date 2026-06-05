@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import Settings, settings
 from app.core.logging import configure_logging, get_logger
+from app.knowledge_base import search as _knowledge_base_search  # noqa: F401
 from app.monitoring.metrics import setup_monitoring
 
 configure_logging()

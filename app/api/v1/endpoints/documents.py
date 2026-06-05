@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from app.api.deps import CurrentUser, DbSession
 from app.documents.storage import ObjectStorageError, object_storage
-from app.knowledge_base.retriever import retriever
+from app.knowledge_base.search import search_knowledge_base as search_knowledge_base_service
 from app.models.document import DocumentChunk, DocumentVersion
 from app.models.enums import DocumentType
 from app.schemas.document import (
@@ -111,9 +111,17 @@ async def upload_document_legacy(
 
 
 @router.post("/search", response_model=list[ChunkSearchHit])
-async def search_knowledge_base(query: ChunkSearchQuery, db: DbSession):
-    hits = await retriever.retrieve(query.query, top_k=query.top_k, db=db)
-    return [ChunkSearchHit(content=h.get("payload", {}).get("content", ""), score=h.get("score", 0.0), metadata=h.get("payload")) for h in hits]
+async def search_knowledge_base(query: ChunkSearchQuery, db: DbSession, current_user: CurrentUser):
+    return await search_knowledge_base_service(
+        query=query.query,
+        db=db,
+        user=current_user,
+        top_k=query.top_k,
+        document_types=query.document_types,
+        department_ids=query.department_ids,
+        document_version_id=query.document_version_id,
+        access_scopes=query.access_scopes,
+    )
 
 
 @router.post("/{document_id}/parse")
