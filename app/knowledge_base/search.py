@@ -10,9 +10,11 @@ from sqlalchemy.orm import selectinload
 from app.knowledge_base.vector_store import vector_store
 from app.models.document import Document, DocumentChunk
 from app.models.enums import DocumentType
+from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 from app.schemas.document import ChunkSearchHit
 from app.services.embeddings import embedding_service
+from app.services.knowledge_base_search_service import KnowledgeBaseSearchService
 from app.tools.registry import Tool, tool_registry
 
 PUBLIC_ACCESS_SCOPES = {"public", "global", "all", "company"}
@@ -28,10 +30,22 @@ async def search_knowledge_base(
     department_ids: list[uuid.UUID] | list[str] | None = None,
     document_version_id: uuid.UUID | str | None = None,
     access_scopes: list[str] | None = None,
+    knowledge_base_id: uuid.UUID | str | None = None,
+    agent_id: uuid.UUID | str | None = None,
 ) -> list[ChunkSearchHit]:
     """Search indexed knowledge-base chunks and return source-aware results."""
 
     normalized_top_k = max(1, min(top_k, 50))
+    if knowledge_base_id is not None:
+        return await _search_specific_knowledge_base(
+            query=query,
+            db=db,
+            user=user,
+            top_k=normalized_top_k,
+            knowledge_base_id=knowledge_base_id,
+            agent_id=agent_id,
+        )
+
     qdrant_filters = _build_qdrant_filters(
         document_types=document_types,
         document_version_id=document_version_id,
@@ -72,6 +86,47 @@ async def search_knowledge_base(
         if len(hits) >= normalized_top_k:
             break
     return hits
+
+
+async def _search_specific_knowledge_base(
+    *,
+    query: str,
+    db: AsyncSession,
+    user: User | None,
+    top_k: int,
+    knowledge_base_id: uuid.UUID | str,
+    agent_id: uuid.UUID | str | None,
+) -> list[ChunkSearchHit]:
+    if user is None:
+        return []
+    kb_uuid = knowledge_base_id if isinstance(knowledge_base_id, uuid.UUID) else uuid.UUID(str(knowledge_base_id))
+    kb = await db.get(KnowledgeBase, kb_uuid)
+    if kb is None:
+        return []
+    parsed_agent_id = None if agent_id is None else (agent_id if isinstance(agent_id, uuid.UUID) else uuid.UUID(str(agent_id)))
+    result = await KnowledgeBaseSearchService(db).search(
+        knowledge_base=kb,
+        query=query,
+        user=user,
+        top_k=top_k,
+        agent_id=parsed_agent_id,
+        include_inaccessible=False,
+    )
+    return [
+        ChunkSearchHit(
+            content=hit.content,
+            score=hit.score,
+            document_id=hit.document_id,
+            document_version_id=hit.document_version_id,
+            chunk_id=hit.chunk_id,
+            document_title=hit.document_title,
+            page_number=hit.page_number,
+            section_title=hit.section_title,
+            metadata=hit.metadata,
+        )
+        for hit in result.hits
+        if hit.accessible
+    ]
 
 
 def _build_qdrant_filters(
@@ -184,6 +239,8 @@ tool_registry.register(
                 "department_ids": {"type": "array", "items": {"type": "string"}},
                 "document_version_id": {"type": "string"},
                 "access_scopes": {"type": "array", "items": {"type": "string"}},
+                "knowledge_base_id": {"type": "string"},
+                "agent_id": {"type": "string"},
             },
             "required": ["query"],
         },

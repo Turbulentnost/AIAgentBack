@@ -109,6 +109,8 @@ class ChunkSearchQuery(BaseModel):
     department_ids: list[uuid.UUID] | None = None
     document_version_id: uuid.UUID | None = None
     access_scopes: list[str] | None = None
+    knowledge_base_id: uuid.UUID | None = None
+    agent_id: uuid.UUID | None = None
 class ChunkSearchHit(BaseModel):
     content: str
     score: float
