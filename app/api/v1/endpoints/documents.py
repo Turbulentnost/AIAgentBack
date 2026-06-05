@@ -6,8 +6,8 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from app.api.deps import CurrentUser, DbSession
 from app.documents.storage import ObjectStorageError, object_storage
-from app.knowledge_base.retriever import retriever
-from app.models.document import DocumentChunk, DocumentVersion
+from app.knowledge_base.search import search_knowledge_base as search_knowledge_base_service
+from app.models.document import Document, DocumentChunk, DocumentVersion
 from app.models.enums import DocumentType
 from app.schemas.document import (
     ChunkSearchHit,
@@ -18,6 +18,7 @@ from app.schemas.document import (
     DocumentVersionRead,
 )
 from app.services.document_service import DocumentMetadataSaveError, DocumentService
+from app.services.permission_service import PermissionService
 from app.workers.tasks import process_document
 from sqlalchemy import select
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -47,7 +48,7 @@ async def upload_document(
                 document_type=document_type,
                 department_id=department_id or current_user.department_id,
                 task_id=task_id,
-                is_knowledge_base=is_knowledge_base,
+                is_knowledge_base=False,
                 source_url=source_url,
                 metadata=parsed_metadata,
             ),
@@ -83,6 +84,15 @@ async def upload_document(
     return document
 
 
+@router.get("", response_model=list[DocumentRead])
+async def list_documents(db: DbSession, current_user: CurrentUser):
+    stmt = select(Document).order_by(Document.created_at.desc())
+    if not current_user.is_superuser and current_user.department_id is not None:
+        stmt = stmt.where(Document.department_id == current_user.department_id)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 @router.post("", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
 async def upload_document_legacy(
     db: DbSession,
@@ -111,9 +121,19 @@ async def upload_document_legacy(
 
 
 @router.post("/search", response_model=list[ChunkSearchHit])
-async def search_knowledge_base(query: ChunkSearchQuery, db: DbSession):
-    hits = await retriever.retrieve(query.query, top_k=query.top_k, db=db)
-    return [ChunkSearchHit(content=h.get("payload", {}).get("content", ""), score=h.get("score", 0.0), metadata=h.get("payload")) for h in hits]
+async def search_knowledge_base(query: ChunkSearchQuery, db: DbSession, current_user: CurrentUser):
+    return await search_knowledge_base_service(
+        query=query.query,
+        db=db,
+        user=current_user,
+        top_k=query.top_k,
+        document_types=query.document_types,
+        department_ids=query.department_ids,
+        document_version_id=query.document_version_id,
+        access_scopes=query.access_scopes,
+        knowledge_base_id=query.knowledge_base_id,
+        agent_id=query.agent_id,
+    )
 
 
 @router.post("/{document_id}/parse")
@@ -123,7 +143,9 @@ async def parse_document(document_id: uuid.UUID, current_user: CurrentUser):
 
 
 @router.get("/{document_id}/versions", response_model=list[DocumentVersionRead])
-async def list_document_versions(db: DbSession, document_id: uuid.UUID):
+async def list_document_versions(db: DbSession, current_user: CurrentUser, document_id: uuid.UUID):
+    if not await PermissionService(db).can_access_document(current_user, document_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к документу")
     result = await db.execute(
         select(DocumentVersion)
         .where(DocumentVersion.document_id == document_id)
@@ -133,7 +155,12 @@ async def list_document_versions(db: DbSession, document_id: uuid.UUID):
 
 
 @router.get("/versions/{document_version_id}/chunks", response_model=list[DocumentChunkRead])
-async def list_document_version_chunks(db: DbSession, document_version_id: uuid.UUID):
+async def list_document_version_chunks(db: DbSession, current_user: CurrentUser, document_version_id: uuid.UUID):
+    version = await db.get(DocumentVersion, document_version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Версия документа не найдена")
+    if not await PermissionService(db).can_access_document(current_user, version.document_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к документу")
     result = await db.execute(
         select(DocumentChunk)
         .where(DocumentChunk.document_version_id == document_version_id)

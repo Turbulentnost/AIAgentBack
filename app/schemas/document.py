@@ -105,8 +105,20 @@ class DocumentChunkRead(ORMModel):
 class ChunkSearchQuery(BaseModel):
     query: str
     top_k: int = 5
+    document_types: list[DocumentType] | None = None
+    department_ids: list[uuid.UUID] | None = None
+    document_version_id: uuid.UUID | None = None
+    access_scopes: list[str] | None = None
+    knowledge_base_id: uuid.UUID | None = None
+    agent_id: uuid.UUID | None = None
 class ChunkSearchHit(BaseModel):
     content: str
     score: float
     document_id: uuid.UUID | None = None
+    document_version_id: uuid.UUID | None = None
+    chunk_id: uuid.UUID | None = None
+    document_title: str | None = None
+    document_type: DocumentType | None = None
+    page_number: int | None = None
+    section_title: str | None = None
     metadata: dict | None = None

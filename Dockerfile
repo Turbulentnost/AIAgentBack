@@ -9,6 +9,7 @@ COPY pyproject.toml README.md ./
 COPY app ./app
 RUN python -m venv "$VIRTUAL_ENV" \
     && python -m pip install --upgrade pip \
+    && python -m pip install torch --index-url https://download.pytorch.org/whl/cpu \
     && python -m pip install -e "."
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

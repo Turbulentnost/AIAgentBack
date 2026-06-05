@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     QDRANT_HOST: str = "192.168.1.157"
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str | None = None
-    QDRANT_COLLECTION: str = "knowledge_base"
+    QDRANT_COLLECTION: str = "knowledge_base_bge_m3"
     QDRANT_VECTOR_SIZE: int = 1024
 
     MINIO_ENDPOINT: str = "192.168.1.157:9000"
@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     EMBEDDINGS_DEVICE: str = "cuda"
     EMBEDDINGS_BATCH_SIZE: int = 16
     EMBEDDINGS_TIMEOUT_SECONDS: int = 60
-    EMBEDDINGS_ALLOW_CPU_FALLBACK: bool = False
+    EMBEDDINGS_ALLOW_CPU_FALLBACK: bool = True
     EMBEDDINGS_MAX_TEXT_LENGTH: int = 20000
 
     @property

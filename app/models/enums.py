@@ -79,6 +79,77 @@ class TextExtractStatus(str, enum.Enum):
     EXTRACTED = "extracted"
     FAILED = "failed"
 
+class KnowledgeBaseStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PROCESSING = "processing"
+    NEEDS_REVIEW = "needs_review"
+    READY = "ready"
+    UPDATING = "updating"
+    ERROR = "error"
+    ARCHIVED = "archived"
+
+class KnowledgeBaseSourceStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PROCESSING = "processing"
+    NEEDS_REVIEW = "needs_review"
+    READY = "ready"
+    UPDATING = "updating"
+    ERROR = "error"
+    ARCHIVED = "archived"
+
+class KnowledgeBaseRuleStatus(str, enum.Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    NEEDS_REVIEW = "needs_review"
+    ARCHIVED = "archived"
+
+class KnowledgeBaseGrantType(str, enum.Enum):
+    USER = "user"
+    DEPARTMENT = "department"
+    AGENT = "agent"
+    ADMIN_ONLY = "admin_only"
+
+class KnowledgeBaseAccessType(str, enum.Enum):
+    READ = "read"
+    SEARCH = "search"
+    USE_VIA_AGENT = "use_via_agent"
+    MANAGE_SOURCES = "manage_sources"
+    REINDEX = "reindex"
+    MANAGE_ACCESS = "manage_access"
+    ADMIN = "admin"
+
+class KnowledgeBaseAgentAccessMode(str, enum.Enum):
+    SEARCH_ONLY = "search_only"
+    SEARCH_AND_CITE = "search_and_cite"
+    DECISION = "decision"
+    AUTO_ACTION = "auto_action"
+
+class KnowledgeBaseIndexJobType(str, enum.Enum):
+    FULL = "full"
+    SOURCE = "source"
+    CHUNK = "chunk"
+    EMBEDDINGS = "embeddings"
+    ACCESS_REINDEX = "access_reindex"
+
+class KnowledgeBaseIndexJobStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PARTIAL = "partial"
+
+class KnowledgeBaseIndexErrorType(str, enum.Enum):
+    TEXT_EXTRACT_FAILED = "text_extract_failed"
+    OCR_FAILED = "ocr_failed"
+    TABLE_READ_FAILED = "table_read_failed"
+    UNSUPPORTED_FORMAT = "unsupported_format"
+    DAMAGED_FILE = "damaged_file"
+    DOCUMENT_ACCESS_DENIED = "document_access_denied"
+    EMBEDDING_FAILED = "embedding_failed"
+    QDRANT_WRITE_FAILED = "qdrant_write_failed"
+    VERSION_CONFLICT = "version_conflict"
+    DOCUMENT_EXPIRED = "document_expired"
+
 class OpeDecision(str, enum.Enum):
     IMPLEMENT = "implement"
     REFINE = "refine"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from typing import Any
 
@@ -39,6 +40,7 @@ class LocalBgeEmbedder(BaseEmbedder):
         )
         self._device: str | None = None
         self._model: Any | None = None
+        self._model_lock = threading.Lock()
 
     @property
     def device(self) -> str:
@@ -63,7 +65,7 @@ class LocalBgeEmbedder(BaseEmbedder):
                 status="completed",
                 metadata={"device": self.device},
             )
-            for vector in vectors
+            for text, vector in zip(texts, vectors, strict=True)
         ]
         for item in items:
             self._validate_vector_size(item.vector)
@@ -108,12 +110,15 @@ class LocalBgeEmbedder(BaseEmbedder):
                 "Не установлена зависимость sentence-transformers для локального embedder-а"
             ) from exc
 
-        try:
-            self._model = SentenceTransformer(self.model_name, device=self.device)
-        except Exception as exc:
-            raise EmbeddingProviderUnavailableError(
-                f"Не удалось загрузить embedding-модель {self.model_name}: {exc}"
-            ) from exc
+        with self._model_lock:
+            if self._model is not None:
+                return self._model
+            try:
+                self._model = SentenceTransformer(self.model_name, device=self.device)
+            except Exception as exc:
+                raise EmbeddingProviderUnavailableError(
+                    f"Не удалось загрузить embedding-модель {self.model_name}: {exc}"
+                ) from exc
         return self._model
 
     def _resolve_device(self) -> str:

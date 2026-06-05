@@ -174,6 +174,14 @@ class QdrantVectorClient:
     ) -> None:
         collection_name = collection or self.collection
         try:
+            if not await self.client.collection_exists(collection_name):
+                logger.info(
+                    "qdrant.points.delete_skipped_missing_collection",
+                    collection=collection_name,
+                    document_version_id=document_version_id,
+                )
+                return
+
             await self.client.delete(
                 collection_name=collection_name,
                 points_selector=qmodels.FilterSelector(
@@ -196,6 +204,37 @@ class QdrantVectorClient:
             raise QdrantClientError(
                 f"Не удалось удалить embeddings версии документа из Qdrant: {exc}"
             ) from exc
+
+    async def delete_by_filter(
+        self,
+        filters: dict[str, Any],
+        *,
+        collection: str | None = None,
+    ) -> None:
+        collection_name = collection or self.collection
+        try:
+            if not await self.client.collection_exists(collection_name):
+                logger.info(
+                    "qdrant.points.delete_skipped_missing_collection",
+                    collection=collection_name,
+                    filters=filters,
+                )
+                return
+
+            await self.client.delete(
+                collection_name=collection_name,
+                points_selector=qmodels.FilterSelector(filter=self._build_filter(filters)),
+                wait=True,
+            )
+            logger.info("qdrant.points.deleted_by_filter", collection=collection_name, filters=filters)
+        except Exception as exc:
+            logger.error(
+                "qdrant.points.delete_by_filter_failed",
+                collection=collection_name,
+                filters=filters,
+                error=str(exc),
+            )
+            raise QdrantClientError(f"Не удалось удалить embeddings из Qdrant: {exc}") from exc
 
     def _build_filter(self, filters: dict[str, Any] | None) -> qmodels.Filter | None:
         if not filters:

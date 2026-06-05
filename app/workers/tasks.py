@@ -160,6 +160,178 @@ def index_document(self, document_id: str) -> dict[str, Any]:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="index_knowledge_base_full", bind=True, max_retries=3)
+def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
+    import asyncio
+    import uuid
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                service = KnowledgeBaseIndexingService(db)
+                if job_id:
+                    result = await service.run_job(uuid.UUID(job_id))
+                else:
+                    result = await service.index_knowledge_base(uuid.UUID(knowledge_base_id))
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "index_knowledge_base_full",
+                    "status": "completed",
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    **result,
+                }
+            except Exception as exc:
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "index_knowledge_base_full",
+                    "knowledge_base_id": knowledge_base_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return asyncio.run(_run())
+
+
+@celery_app.task(name="index_knowledge_base_source", bind=True, max_retries=3)
+def index_knowledge_base_source(
+    self,
+    knowledge_base_id: str,
+    source_id: str,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    import asyncio
+    import uuid
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                service = KnowledgeBaseIndexingService(db)
+                result = (
+                    await service.run_job(uuid.UUID(job_id))
+                    if job_id
+                    else await service.index_source(uuid.UUID(knowledge_base_id), uuid.UUID(source_id))
+                )
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "index_knowledge_base_source",
+                    "status": "completed",
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    **result,
+                }
+            except Exception as exc:
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "index_knowledge_base_source",
+                    "knowledge_base_id": knowledge_base_id,
+                    "source_id": source_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return asyncio.run(_run())
+
+
+@celery_app.task(name="reindex_knowledge_base_embeddings", bind=True, max_retries=3)
+def reindex_knowledge_base_embeddings(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
+    return index_knowledge_base_full(self, knowledge_base_id, job_id)
+
+
+@celery_app.task(name="reindex_knowledge_base_after_access_change", bind=True, max_retries=3)
+def reindex_knowledge_base_after_access_change(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
+    return index_knowledge_base_full(self, knowledge_base_id, job_id)
+
+
+@celery_app.task(name="migrate_legacy_knowledge_base_documents", bind=True, max_retries=1)
+def migrate_legacy_knowledge_base_documents(self) -> dict[str, Any]:
+    import asyncio
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.integrations.qdrant import qdrant_client
+    from app.models.document import Document, DocumentVersion
+    from app.models.enums import KnowledgeBaseAccessType, KnowledgeBaseGrantType, KnowledgeBaseStatus
+    from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseAccessGrant
+    from app.schemas.knowledge_base import KnowledgeBaseSourceCreate
+    from app.services.knowledge_base_service import KnowledgeBaseService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            legacy = await db.scalar(select(KnowledgeBase).where(KnowledgeBase.name == "Legacy Knowledge Base"))
+            if legacy is None:
+                kb_id = uuid.uuid4()
+                legacy = KnowledgeBase(
+                    id=kb_id,
+                    name="Legacy Knowledge Base",
+                    description="Автоматически созданная база для документов, ранее отмеченных как is_knowledge_base.",
+                    status=KnowledgeBaseStatus.NEEDS_REVIEW,
+                    embedding_model=settings.EMBEDDINGS_MODEL,
+                    vector_store="qdrant",
+                    qdrant_collection=f"kb_{kb_id.hex}",
+                    is_public=False,
+                )
+                db.add(legacy)
+                await db.flush()
+                db.add(
+                    KnowledgeBaseAccessGrant(
+                        knowledge_base_id=legacy.id,
+                        grantee_type=KnowledgeBaseGrantType.ADMIN_ONLY,
+                        grantee_id=None,
+                        access_type=KnowledgeBaseAccessType.ADMIN,
+                    )
+                )
+                await qdrant_client.ensure_collection(
+                    collection=legacy.qdrant_collection,
+                    vector_size=settings.EMBEDDINGS_VECTOR_SIZE,
+                )
+
+            result = await db.execute(select(Document).where(Document.is_knowledge_base.is_(True)))
+            documents = list(result.scalars().all())
+            service = KnowledgeBaseService(db)
+            migrated = 0
+            for document in documents:
+                version = await db.scalar(
+                    select(DocumentVersion)
+                    .where(DocumentVersion.document_id == document.id)
+                    .order_by(DocumentVersion.is_current.desc(), DocumentVersion.version_number.desc())
+                    .limit(1)
+                )
+                if version is None:
+                    continue
+                await service.add_source(
+                    legacy.id,
+                    KnowledgeBaseSourceCreate(document_id=document.id, document_version_id=version.id),
+                    current_user=type("SystemUser", (), {"id": None, "department_id": None, "is_superuser": True})(),
+                )
+                document.is_knowledge_base = False
+                migrated += 1
+            await db.commit()
+            return {
+                "celery_task_id": self.request.id,
+                "task_name": "migrate_legacy_knowledge_base_documents",
+                "knowledge_base_id": str(legacy.id),
+                "migrated_documents": migrated,
+                "status": "completed",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="generate_report", bind=True, max_retries=3)
 def generate_report(self, task_id: str, report_type: str = "default") -> dict[str, Any]:
     return _placeholder_result(self.request.id, "generate_report", task_id=task_id, report_type=report_type)
