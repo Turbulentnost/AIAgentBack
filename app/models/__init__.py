@@ -1,7 +1,9 @@
 from app.models.agent import Agent, AgentPrompt, AgentTool, AgentVersion, ToolCall
 from app.models.audit import AuditLog
+from app.models.browser_run import BrowserRun
 from app.models.data_source import DataSource, SourcePermission
 from app.models.document import Document, DocumentChunk, DocumentVersion, SourceReference
+from app.models.integration import IntegrationSyncState
 from app.models.knowledge_base import (
     KnowledgeBase,
     KnowledgeBaseAccessException,
@@ -27,4 +29,4 @@ from app.models.user import (
     UserSession,
 )
 
-__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AuditLog", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]
+__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AuditLog", "BrowserRun", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "IntegrationSyncState", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]

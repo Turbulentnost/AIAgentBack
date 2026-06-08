@@ -26,10 +26,13 @@ role_permissions = Table(
 
 class Department(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "departments"
+    __table_args__ = (UniqueConstraint("source_system", "external_id", name="uq_departments_source_system_external_id"),)
 
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     slug: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text)
+    source_system: Mapped[str | None] = mapped_column(String(64), index=True)
+    external_id: Mapped[str | None] = mapped_column(String(128), index=True)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("departments.id", ondelete="SET NULL"),
         index=True,

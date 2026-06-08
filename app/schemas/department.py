@@ -26,5 +26,26 @@ class DepartmentUpdate(BaseModel):
 
 class DepartmentRead(DepartmentCreate, ORMModel):
     id: uuid.UUID
+    source_system: str | None = None
+    external_id: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class DepartmentSyncStatus(ORMModel):
+    key: str
+    source_system: str
+    resource: str
+    last_synced_at: datetime | None
+    next_allowed_at: datetime | None
+    status: str
+    items_count: int
+    error_message: str | None
+    payload: dict | None = None
+
+
+class DepartmentSyncResult(DepartmentSyncStatus):
+    created_count: int = 0
+    updated_count: int = 0
+    deactivated_count: int = 0
+    synced_count: int = 0
