@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.agents.tools import audit_tools as _audit_tools  # noqa: F401
+from app.agents.tools import builder_tools as _builder_tools  # noqa: F401
 from app.agents.tools import browser_tools as _browser_tools  # noqa: F401
 from app.agents.tools import document_tools as _document_tools  # noqa: F401
 from app.agents.tools import knowledge_base_tools as _knowledge_base_tools  # noqa: F401

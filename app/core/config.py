@@ -74,14 +74,20 @@ class Settings(BaseSettings):
         "image/webp"
     )
 
+    # Общий LLM-шлюз (прочие задачи платформы).
     LLM_GATEWAY_BASE_URL: str = ""
     LLM_GATEWAY_API_KEY: str | None = None
     OPENAI_API_KEY_CLAUDE: str | None = None
     OPENAI_API_KEY: str | None = None
     LLM_DEFAULT_MODEL: str = ""
     LLM_EMBEDDING_MODEL: str = ""
+    # Конструктор агентов: Claude → fallback в LM Studio (отдельно от OCR).
+    AGENT_BUILDER_CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
+    AGENT_BUILDER_FALLBACK_BASE_URL: str = ""
+    AGENT_BUILDER_FALLBACK_MODEL: str = "openai/gpt-oss-120b"
+    # OCR / vision для PDF и изображений — всегда qwen в LM Studio.
     VISION_LM_STUDIO_BASE_URL: str = ""
-    VISION_LM_STUDIO_MODEL: str = ""
+    VISION_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
     EMBEDDINGS_PROVIDER: str = "local"
     EMBEDDINGS_MODEL: str = "BAAI/bge-m3"
     EMBEDDINGS_VECTOR_SIZE: int = 1024

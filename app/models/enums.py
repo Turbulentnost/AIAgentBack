@@ -232,6 +232,44 @@ class NdChangeResultStatus(str, enum.Enum):
     SENT_TO_APPROVAL = "sent_to_approval"
     FAILED = "failed"
 
+class AgentBuilderSessionStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PLANNING = "planning"
+    EXECUTING = "executing"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    GENERATED = "generated"
+    NEEDS_USER_REVIEW = "needs_user_review"
+    APPROVED = "approved"
+    FAILED = "failed"
+    ARCHIVED = "archived"
+
+
+class AgentBuilderPlanStatus(str, enum.Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AgentBuilderPlanStepStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class AgentBlueprintStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PLANNING = "planning"
+    GENERATED = "generated"
+    NEEDS_USER_REVIEW = "needs_user_review"
+    APPROVED = "approved"
+    IN_DEVELOPMENT = "in_development"
+    IMPLEMENTED = "implemented"
+    ARCHIVED = "archived"
+
+
 class OpeDecision(str, enum.Enum):
     IMPLEMENT = "implement"
     REFINE = "refine"
