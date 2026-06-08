@@ -46,6 +46,7 @@ async def list_available_knowledge_bases(
         if not effective.allowed:
             continue
         metadata = kb.metadata_ or {}
+        access_scope = metadata.get("access_scope") or (str(kb.department_id) if kb.department_id else None)
         items.append(
             AvailableKnowledgeBaseItem(
                 knowledge_base_id=kb.id,
@@ -55,7 +56,7 @@ async def list_available_knowledge_bases(
                 topic=kb.topic,
                 document_count=kb.sources_count,
                 fragments_count=kb.fragments_count,
-                access_scope=metadata.get("access_scope") or str(kb.department_id) if kb.department_id else None,
+                access_scope=access_scope,
                 last_indexed_at=kb.last_indexed_at,
             )
         )

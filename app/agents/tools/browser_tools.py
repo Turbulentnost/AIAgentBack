@@ -6,7 +6,6 @@ from app.agents.tools.schemas import (
     FetchPageViaUserBrowserOutput,
     ToolContext,
 )
-from app.models.enums import BrowserRunStatus
 from app.schemas.browser_run import BrowserRunCreate
 from app.services.browser_runner_service import BrowserRunnerService
 

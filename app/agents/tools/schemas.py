@@ -26,6 +26,10 @@ class ToolInvocation(BaseModel):
     task_id: uuid.UUID | None = None
 
 
+class EmptyToolInput(BaseModel):
+    pass
+
+
 class ToolDescriptor(BaseModel):
     name: str
     description: str

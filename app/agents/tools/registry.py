@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.agents.tools.schemas import ToolContext, ToolDescriptor
+from app.agents.tools.schemas import EmptyToolInput, ToolContext, ToolDescriptor
 from app.tools.registry import Tool, tool_registry
 
 ToolHandler = Callable[[BaseModel, ToolContext], Awaitable[Any]]
@@ -78,7 +78,7 @@ class AgentToolRegistry:
             user = kwargs.pop("user")
             agent_id = kwargs.pop("agent_id", None)
             task_id = kwargs.pop("task_id", None)
-            params = definition.input_model(**kwargs) if definition.input_model is not None else BaseModel()
+            params = definition.input_model(**kwargs) if definition.input_model is not None else EmptyToolInput()
             context = ToolContext(db=db, user=user, agent_id=agent_id, task_id=task_id)
             assert definition.handler is not None
             return await definition.handler(params, context)

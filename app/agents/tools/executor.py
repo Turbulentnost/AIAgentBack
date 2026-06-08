@@ -7,7 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 
 from app.agents.tools.registry import agent_tool_registry
-from app.agents.tools.schemas import ToolContext
+from app.agents.tools.schemas import EmptyToolInput, ToolContext
 from app.models.agent import ToolCall
 
 
@@ -42,7 +42,7 @@ class ToolExecutor:
         context.db.add(call)
 
         try:
-            payload: BaseModel = definition.input_model(**params) if definition.input_model is not None else BaseModel()
+            payload: BaseModel = definition.input_model(**params) if definition.input_model is not None else EmptyToolInput()
             response = await definition.handler(payload, context)
             if definition.output_model is not None:
                 response = definition.output_model.model_validate(response)
