@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     EMBEDDINGS_TIMEOUT_SECONDS: int = 60
     EMBEDDINGS_ALLOW_CPU_FALLBACK: bool = True
     EMBEDDINGS_MAX_TEXT_LENGTH: int = 20000
+    BROWSER_ALLOWED_DOMAINS: str = "1c.company.local,docs.company.local,portal.company.local,edo.company.local"
+    BROWSER_BLOCKED_SCHEMES: str = "file:,javascript:,data:"
+    BROWSER_MAX_TIMEOUT_SECONDS: int = 60
+    BROWSER_POLL_INTERVAL_SECONDS: float = 1.0
 
     @property
     def cors_origins(self) -> list[str]:
@@ -110,6 +114,14 @@ class Settings(BaseSettings):
     @property
     def avatar_allowed_content_types(self) -> list[str]:
         return self._parse_csv(self.AVATAR_ALLOWED_CONTENT_TYPES)
+
+    @property
+    def browser_allowed_domains(self) -> list[str]:
+        return self._parse_csv(self.BROWSER_ALLOWED_DOMAINS)
+
+    @property
+    def browser_blocked_schemes(self) -> list[str]:
+        return self._parse_csv(self.BROWSER_BLOCKED_SCHEMES)
 
     def _parse_csv(self, value: str) -> list[str]:
         return [item.strip() for item in value.split(",") if item.strip()]

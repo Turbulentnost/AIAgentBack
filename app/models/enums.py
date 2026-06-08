@@ -150,6 +150,14 @@ class KnowledgeBaseIndexErrorType(str, enum.Enum):
     VERSION_CONFLICT = "version_conflict"
     DOCUMENT_EXPIRED = "document_expired"
 
+class BrowserRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+
 class OpeDecision(str, enum.Enum):
     IMPLEMENT = "implement"
     REFINE = "refine"
