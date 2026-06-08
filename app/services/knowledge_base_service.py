@@ -125,6 +125,8 @@ class KnowledgeBaseService:
                 )
             )
 
+        await self._ensure_mandatory_user_grants(kb.id, payload, current_user)
+
         for document_id in payload.source_document_ids:
             await self.add_source(kb.id, KnowledgeBaseSourceCreate(document_id=document_id), current_user=current_user)
 
@@ -138,6 +140,44 @@ class KnowledgeBaseService:
         )
         await self.db.flush()
         return kb
+
+    async def _ensure_mandatory_user_grants(
+        self,
+        knowledge_base_id: uuid.UUID,
+        payload: KnowledgeBaseCreate,
+        current_user: User,
+    ) -> None:
+        existing_user_ids = {
+            grant.grantee_id
+            for grant in payload.access_grants
+            if grant.grantee_type == KnowledgeBaseGrantType.USER and grant.grantee_id is not None
+        }
+        mandatory_user_ids: set[uuid.UUID] = {current_user.id}
+        if payload.responsible_user_id:
+            mandatory_user_ids.add(payload.responsible_user_id)
+
+        if payload.source_document_ids:
+            result = await self.db.execute(
+                select(Document.uploaded_by_user_id).where(
+                    Document.id.in_(payload.source_document_ids),
+                    Document.uploaded_by_user_id.is_not(None),
+                )
+            )
+            mandatory_user_ids.update(user_id for (user_id,) in result.all() if user_id)
+
+        for user_id in mandatory_user_ids:
+            if user_id in existing_user_ids:
+                continue
+            self.db.add(
+                KnowledgeBaseAccessGrant(
+                    knowledge_base_id=knowledge_base_id,
+                    grantee_type=KnowledgeBaseGrantType.USER,
+                    grantee_id=user_id,
+                    access_type=KnowledgeBaseAccessType.ADMIN,
+                    reason="Автоматический доступ владельца или загрузившего источники",
+                    granted_by_user_id=current_user.id,
+                )
+            )
 
     async def update(
         self,
