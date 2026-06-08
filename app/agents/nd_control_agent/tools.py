@@ -1,9 +1,17 @@
 from __future__ import annotations
 TOOL_NAMES: list[str] = [
+    "list_available_knowledge_bases",
     "search_knowledge_base",
-    "get_document_from_minio",
-    "check_document_version",
-    "get_change_notices",
-    "check_document_relations",
-    "generate_nd_report",
+    "get_knowledge_fragment",
+    "get_document_metadata",
+    "get_document_text",
+    "get_document_structure",
+    "find_document_by_code",
+    "find_related_documents",
+    "get_document_sections",
+    "apply_document_change",
+    "generate_change_notice",
+    "generate_docx_report",
+    "prepare_approval_route",
+    "send_to_approval",
 ]

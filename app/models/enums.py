@@ -158,6 +158,80 @@ class BrowserRunStatus(str, enum.Enum):
     TIMEOUT = "timeout"
     CANCELLED = "cancelled"
 
+class NdChangeRequestStatus(str, enum.Enum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    DETECTING_DOCUMENT = "detecting_document"
+    REQUIRES_MANUAL_DOCUMENT_SELECTION = "requires_manual_document_selection"
+    DOCUMENT_SELECTED = "document_selected"
+    LOCATING_CHANGE_PLACE = "locating_change_place"
+    REQUIRES_MANUAL_LOCATION_SELECTION = "requires_manual_location_selection"
+    APPLYING_CHANGES = "applying_changes"
+    READY_FOR_USER_REVIEW = "ready_for_user_review"
+    SENT_TO_APPROVAL = "sent_to_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class NdChangeLocationType(str, enum.Enum):
+    TEXT_SECTION = "text_section"
+    PARAGRAPH = "paragraph"
+    SUBPARAGRAPH = "subparagraph"
+    TABLE = "table"
+    TABLE_ROW = "table_row"
+    APPENDIX = "appendix"
+    CHANGE_REGISTRATION_SHEET = "change_registration_sheet"
+    NORMATIVE_REFERENCE = "normative_reference"
+    ABBREVIATION = "abbreviation"
+    TERM_DEFINITION = "term_definition"
+    BLOCK_TEXT = "block_text"
+
+class NdChangeLocationStatus(str, enum.Enum):
+    FOUND = "found"
+    CANDIDATE = "candidate"
+    AMBIGUOUS = "ambiguous"
+    NOT_FOUND = "not_found"
+    CONFIRMED = "confirmed"
+
+class NdChangeOperationType(str, enum.Enum):
+    REPLACE_SECTION = "replace_section"
+    REPLACE_PARAGRAPH = "replace_paragraph"
+    INSERT_AFTER = "insert_after"
+    INSERT_BEFORE = "insert_before"
+    DELETE_SECTION = "delete_section"
+    UPDATE_TABLE = "update_table"
+    ADD_TABLE_ROW = "add_table_row"
+    REPLACE_APPENDIX = "replace_appendix"
+    UPDATE_REFERENCE = "update_reference"
+    ANNUL_DOCUMENT = "annul_document"
+    REPLACE_DOCUMENT = "replace_document"
+    MANUAL_REVIEW = "manual_review"
+
+class NdChangeOperationStatus(str, enum.Enum):
+    DRAFT = "draft"
+    APPLIED_TO_DRAFT = "applied_to_draft"
+    REQUIRES_MANUAL_REVIEW = "requires_manual_review"
+    FAILED = "failed"
+
+class NdChangeDraftFileStatus(str, enum.Enum):
+    GENERATED = "generated"
+    WARNING_SOURCE_NOT_EDITABLE = "warning_source_not_editable"
+    FAILED = "failed"
+
+class NdChangeApprovalStatus(str, enum.Enum):
+    DRAFT = "draft"
+    SENT = "sent"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    COMPLETED = "completed"
+
+class NdChangeResultStatus(str, enum.Enum):
+    DRAFT = "draft"
+    READY_FOR_USER_REVIEW = "ready_for_user_review"
+    SENT_TO_APPROVAL = "sent_to_approval"
+    FAILED = "failed"
+
 class OpeDecision(str, enum.Enum):
     IMPLEMENT = "implement"
     REFINE = "refine"
