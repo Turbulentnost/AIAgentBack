@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.agents.tools.registry import AgentToolDefinition, register_tool
+from app.tools.base import StubTool
+from app.tools.registry import register_tool
 
 
 class DocumentToolInput(BaseModel):
@@ -12,7 +13,7 @@ class DocumentToolInput(BaseModel):
 
 def _register_stub(name: str, description: str, agent_description: str) -> None:
     register_tool(
-        AgentToolDefinition(
+        StubTool(
             name=name,
             description=description,
             agent_description=agent_description,
@@ -50,6 +51,30 @@ _register_stub(
     "Инструмент get_document_metadata возвращает технические сведения о документе: имя файла, тип, размер, статус "
     "обработки, количество страниц, листов, наличие OCR, дату загрузки и принадлежность к задаче. Используй его, "
     "если нужно проверить готовность документа к анализу или понять, почему текст не был извлечен.",
+)
+_register_stub(
+    "get_document_structure",
+    "Возвращает структурное представление документа: разделы, пункты, таблицы и приложения.",
+    "Инструмент get_document_structure используй для поиска точного места изменения в нормативном документе. "
+    "Если структуры нет, агент должен перейти к поиску по chunks и запросить ручной выбор при неоднозначности.",
+)
+_register_stub(
+    "find_document_by_code",
+    "Ищет документ по обозначению СТО/И/РГ/ПЛ/ДИ/РИ/ПП.",
+    "Инструмент find_document_by_code используй, когда в тексте изменения явно указан код документа. "
+    "Возвращай только документы, доступные текущему пользователю через базу знаний.",
+)
+_register_stub(
+    "find_related_documents",
+    "Ищет документы, связанные нормативными ссылками или упоминаниями.",
+    "Инструмент find_related_documents используй после выбора целевого документа, чтобы сформировать список "
+    "документов, которые могут потребовать проверки из-за изменения ссылки или требования.",
+)
+_register_stub(
+    "get_document_sections",
+    "Возвращает текст конкретного раздела, пункта или подпункта документа.",
+    "Инструмент get_document_sections используй после определения номера раздела/пункта для извлечения текущей "
+    "редакции изменяемого места.",
 )
 _register_stub(
     "check_document_processing_status",

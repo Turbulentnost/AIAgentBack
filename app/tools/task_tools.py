@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.agents.tools.registry import AgentToolDefinition, register_tool
+from app.tools.base import StubTool
+from app.tools.registry import register_tool
 
 
 class TaskToolInput(BaseModel):
@@ -12,7 +13,7 @@ class TaskToolInput(BaseModel):
 
 def _register_stub(name: str, description: str, agent_description: str) -> None:
     register_tool(
-        AgentToolDefinition(
+        StubTool(
             name=name,
             description=description,
             agent_description=agent_description,
@@ -48,4 +49,22 @@ _register_stub(
     "Возвращает список ИИ-агентов, доступных текущему пользователю.",
     "Инструмент list_available_agents возвращает список ИИ-агентов, доступных текущему пользователю. Используй его, "
     "если нужно предложить пользователю подходящий агент или передать задачу другому специализированному агенту.",
+)
+_register_stub(
+    "apply_document_change",
+    "Вносит изменение только в копию редактируемого DOCX и сохраняет проект.",
+    "Инструмент apply_document_change запрещено использовать для изменения действующей версии документа. "
+    "Он должен создавать только проект новой редакции, diff и предупреждения для просмотра пользователем.",
+)
+_register_stub(
+    "prepare_approval_route",
+    "Готовит список согласующих для проекта изменения НД.",
+    "Инструмент prepare_approval_route используй перед экраном предпросмотра. На MVP список может быть пустым "
+    "или заданным пользователем; отправка разрешена только после подтверждения пользователя.",
+)
+_register_stub(
+    "send_to_approval",
+    "Отправляет проект новой редакции и извещение на согласование после подтверждения.",
+    "Инструмент send_to_approval используй только после пользовательского подтверждения предпросмотра. "
+    "Он создаёт маршрут согласования и не создаёт новую действующую версию документа.",
 )

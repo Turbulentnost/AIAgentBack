@@ -10,6 +10,7 @@ from app.core.security import hash_password
 from app.models.user import Department, User, UserAgent
 from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.schemas.user import AdminUserCreate, UserCreate, UserUpdate
+from app.utils.department_utils import is_liquidated_department_name
 
 
 class UserService:
@@ -120,11 +121,15 @@ class DepartmentService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def list(self, limit: int = 100, offset: int = 0) -> list[Department]:
-        result = await self.db.execute(
-            select(Department).order_by(Department.name).limit(limit).offset(offset)
-        )
-        return list(result.scalars().all())
+    async def list(self, limit: int = 1000, offset: int = 0, *, active_only: bool = True) -> list[Department]:
+        stmt = select(Department).order_by(Department.name).limit(limit).offset(offset)
+        if active_only:
+            stmt = stmt.where(Department.is_active.is_(True))
+        result = await self.db.execute(stmt)
+        departments = list(result.scalars().all())
+        if active_only:
+            departments = [department for department in departments if not is_liquidated_department_name(department.name)]
+        return departments
 
     async def get(self, department_id: uuid.UUID) -> Department | None:
         return await self.db.get(Department, department_id)

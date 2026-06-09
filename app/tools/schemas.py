@@ -15,6 +15,9 @@ class ToolContext(BaseModel):
     user: User
     agent_id: uuid.UUID | None = None
     task_id: uuid.UUID | None = None
+    # Когда True (Runtime Sandbox / runtime), браузерные инструменты могут открывать любой публичный
+    # домен в обход allowlist. По умолчанию False — действует ограничительный allowlist.
+    allow_open_web: bool = False
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -62,6 +65,25 @@ class FetchPageViaUserBrowserOutput(BaseModel):
     screenshot_document_id: str | None = None
     error_message: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WebSearchInput(BaseModel):
+    query: str = Field(..., min_length=2, max_length=400)
+    max_results: int = Field(default=8, ge=1, le=20)
+
+
+class WebSearchResultItem(BaseModel):
+    title: str
+    url: str
+    snippet: str | None = None
+
+
+class WebSearchOutput(BaseModel):
+    query: str
+    engine: str
+    status: str
+    results: list[WebSearchResultItem] = Field(default_factory=list)
+    error_message: str | None = None
 
 
 class ListAvailableKnowledgeBasesInput(BaseModel):

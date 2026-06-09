@@ -4,8 +4,9 @@ import uuid
 
 from sqlalchemy import select
 
-from app.agents.tools.registry import AgentToolDefinition, register_tool
-from app.agents.tools.schemas import (
+from app.tools.base import Tool
+from app.tools.registry import register_tool
+from app.tools.schemas import (
     AvailableKnowledgeBaseItem,
     GetKnowledgeFragmentInput,
     GetKnowledgeFragmentOutput,
@@ -223,53 +224,62 @@ def _format_source(document_title: str | None, page_number: int | None) -> str:
     return "Источник не указан"
 
 
-register_tool(
-    AgentToolDefinition(
-        name="list_available_knowledge_bases",
-        description="Возвращает базы знаний, доступные текущему пользователю и агенту.",
-        agent_description=(
-            "Инструмент list_available_knowledge_bases возвращает список баз знаний, доступных текущему "
-            "пользователю и агенту. Используй его, когда нужно понять, какие источники знаний можно использовать "
-            "для решения задачи. Инструмент возвращает только разрешенные базы знаний с названием, описанием, "
-            "тематикой и количеством документов. Не используй базы знаний, которых нет в результате этого инструмента."
-        ),
-        handler=list_available_knowledge_bases,
-        input_model=ListAvailableKnowledgeBasesInput,
-        output_model=ListAvailableKnowledgeBasesOutput,
-        required_permissions=["knowledge_base.list"],
+class ListAvailableKnowledgeBasesTool(Tool):
+    name = "list_available_knowledge_bases"
+    description = "Возвращает базы знаний, доступные текущему пользователю и агенту."
+    agent_description = (
+        "Инструмент list_available_knowledge_bases возвращает список баз знаний, доступных текущему "
+        "пользователю и агенту. Используй его, когда нужно понять, какие источники знаний можно использовать "
+        "для решения задачи. Инструмент возвращает только разрешенные базы знаний с названием, описанием, "
+        "тематикой и количеством документов. Не используй базы знаний, которых нет в результате этого инструмента."
     )
-)
+    input_model = ListAvailableKnowledgeBasesInput
+    output_model = ListAvailableKnowledgeBasesOutput
+    required_permissions = ["knowledge_base.list"]
+    preview_safe = True
+    preview_default_params = {"query": None}
 
-register_tool(
-    AgentToolDefinition(
-        name="search_knowledge_base",
-        description="Выполняет семантический поиск по разрешенным базам знаний.",
-        agent_description=(
-            "Инструмент search_knowledge_base выполняет семантический поиск по разрешенным базам знаний и "
-            "возвращает релевантные фрагменты документов с источниками. Используй его, когда нужно найти "
-            "требования, правила, определения, инструкции, нормы, шаблоны или технические сведения. Инструмент "
-            "возвращает только фрагменты, доступные текущему пользователю и агенту."
-        ),
-        handler=search_knowledge_base,
-        input_model=SearchKnowledgeBaseInput,
-        output_model=SearchKnowledgeBaseOutput,
-        required_permissions=["knowledge_base.search"],
-    )
-)
+    async def execute(
+        self, payload: ListAvailableKnowledgeBasesInput, context: ToolContext
+    ) -> ListAvailableKnowledgeBasesOutput:
+        return await list_available_knowledge_bases(payload, context)
 
-register_tool(
-    AgentToolDefinition(
-        name="get_knowledge_fragment",
-        description="Возвращает выбранный фрагмент базы знаний с соседними chunks.",
-        agent_description=(
-            "Инструмент get_knowledge_fragment возвращает выбранный фрагмент базы знаний по fragment_id или "
-            "chunk_id. Используй его, если нужно подробнее прочитать найденный источник, получить соседние "
-            "фрагменты или уточнить контекст перед формированием вывода. Инструмент не выполняет поиск, а "
-            "возвращает конкретный разрешенный фрагмент."
-        ),
-        handler=get_knowledge_fragment,
-        input_model=GetKnowledgeFragmentInput,
-        output_model=GetKnowledgeFragmentOutput,
-        required_permissions=["knowledge_base.read_fragment"],
+
+class SearchKnowledgeBaseTool(Tool):
+    name = "search_knowledge_base"
+    description = "Выполняет семантический поиск по разрешенным базам знаний."
+    agent_description = (
+        "Инструмент search_knowledge_base выполняет семантический поиск по разрешенным базам знаний и "
+        "возвращает релевантные фрагменты документов с источниками. Используй его, когда нужно найти "
+        "требования, правила, определения, инструкции, нормы, шаблоны или технические сведения. Инструмент "
+        "возвращает только фрагменты, доступные текущему пользователю и агенту."
     )
-)
+    input_model = SearchKnowledgeBaseInput
+    output_model = SearchKnowledgeBaseOutput
+    required_permissions = ["knowledge_base.search"]
+    preview_safe = True
+
+    async def execute(self, payload: SearchKnowledgeBaseInput, context: ToolContext) -> SearchKnowledgeBaseOutput:
+        return await search_knowledge_base(payload, context)
+
+
+class GetKnowledgeFragmentTool(Tool):
+    name = "get_knowledge_fragment"
+    description = "Возвращает выбранный фрагмент базы знаний с соседними chunks."
+    agent_description = (
+        "Инструмент get_knowledge_fragment возвращает выбранный фрагмент базы знаний по fragment_id или "
+        "chunk_id. Используй его, если нужно подробнее прочитать найденный источник, получить соседние "
+        "фрагменты или уточнить контекст перед формированием вывода. Инструмент не выполняет поиск, а "
+        "возвращает конкретный разрешенный фрагмент."
+    )
+    input_model = GetKnowledgeFragmentInput
+    output_model = GetKnowledgeFragmentOutput
+    required_permissions = ["knowledge_base.read_fragment"]
+
+    async def execute(self, payload: GetKnowledgeFragmentInput, context: ToolContext) -> GetKnowledgeFragmentOutput:
+        return await get_knowledge_fragment(payload, context)
+
+
+register_tool(ListAvailableKnowledgeBasesTool())
+register_tool(SearchKnowledgeBaseTool())
+register_tool(GetKnowledgeFragmentTool())

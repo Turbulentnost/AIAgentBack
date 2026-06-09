@@ -36,9 +36,29 @@ class ObjectStorage:
         except Exception as exc:
             raise ObjectStorageError("Не удалось загрузить файл в MinIO") from exc
 
+    def put_object_to_bucket(self, bucket: str, key: str, data: bytes, content_type: str) -> str:
+        try:
+            if not self.client.bucket_exists(bucket):
+                self.client.make_bucket(bucket)
+            self.client.put_object(bucket, key, io.BytesIO(data), length=len(data), content_type=content_type)
+            return key
+        except Exception as exc:
+            raise ObjectStorageError("Не удалось загрузить файл в MinIO") from exc
+
     def get_object(self, key: str) -> bytes:
         try:
             response = self.client.get_object(self.bucket, key)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+        except Exception as exc:
+            raise ObjectStorageError("Не удалось скачать файл из MinIO") from exc
+
+    def get_object_from_bucket(self, bucket: str, key: str) -> bytes:
+        try:
+            response = self.client.get_object(bucket, key)
             try:
                 return response.read()
             finally:

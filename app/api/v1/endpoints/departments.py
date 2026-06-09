@@ -14,8 +14,14 @@ router = APIRouter(prefix="/departments", tags=["departments"])
 
 
 @router.get("", response_model=list[DepartmentRead])
-async def list_departments(db: DbSession, current_user: CurrentUser, limit: int = 1000, offset: int = 0):
-    return await DepartmentService(db).list(limit, offset)
+async def list_departments(
+    db: DbSession,
+    current_user: CurrentUser,
+    limit: int = 1000,
+    offset: int = 0,
+    active_only: bool = True,
+):
+    return await DepartmentService(db).list(limit, offset, active_only=active_only)
 
 
 @router.get("/sync/status", response_model=DepartmentSyncStatus)

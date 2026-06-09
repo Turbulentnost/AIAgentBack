@@ -5,9 +5,10 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from app.agents.tools.executor import ToolExecutionError, ToolExecutor
-from app.agents.tools.registry import AgentToolDefinition, register_tool
-from app.agents.tools.schemas import ToolContext
+from app.tools.base import Tool
+from app.tools.executor import ToolExecutionError, ToolExecutor
+from app.tools.registry import register_tool
+from app.tools.schemas import ToolContext
 
 
 class _FakeDb:
@@ -30,22 +31,20 @@ class _EchoOutput(BaseModel):
     echoed: str
 
 
-async def _echo_tool(payload: _EchoInput, context: ToolContext) -> _EchoOutput:
-    return _EchoOutput(echoed=payload.value)
+class _EchoTool(Tool):
+    name = "test_echo_tool"
+    description = "Test echo tool"
+    agent_description = "Test echo tool"
+    input_model = _EchoInput
+    output_model = _EchoOutput
+
+    async def execute(self, payload: _EchoInput, context: ToolContext) -> _EchoOutput:
+        return _EchoOutput(echoed=payload.value)
 
 
 @pytest.mark.asyncio
 async def test_tool_executor_validates_allowed_tools_and_logs_call() -> None:
-    register_tool(
-        AgentToolDefinition(
-            name="test_echo_tool",
-            description="Test echo tool",
-            agent_description="Test echo tool",
-            handler=_echo_tool,
-            input_model=_EchoInput,
-            output_model=_EchoOutput,
-        )
-    )
+    register_tool(_EchoTool())
     db = _FakeDb()
     context = ToolContext.model_construct(db=db, user=SimpleNamespace(id="user"), agent_id=None, task_id=None)
 

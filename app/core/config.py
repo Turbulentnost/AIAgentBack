@@ -74,14 +74,20 @@ class Settings(BaseSettings):
         "image/webp"
     )
 
+    # Общий LLM-шлюз (прочие задачи платформы).
     LLM_GATEWAY_BASE_URL: str = ""
     LLM_GATEWAY_API_KEY: str | None = None
     OPENAI_API_KEY_CLAUDE: str | None = None
     OPENAI_API_KEY: str | None = None
     LLM_DEFAULT_MODEL: str = ""
     LLM_EMBEDDING_MODEL: str = ""
+    # Конструктор агентов: Claude → fallback в LM Studio (отдельно от OCR).
+    AGENT_BUILDER_CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
+    AGENT_BUILDER_FALLBACK_BASE_URL: str = ""
+    AGENT_BUILDER_FALLBACK_MODEL: str = "openai/gpt-oss-120b"
+    # OCR / vision для PDF и изображений — всегда qwen в LM Studio.
     VISION_LM_STUDIO_BASE_URL: str = ""
-    VISION_LM_STUDIO_MODEL: str = ""
+    VISION_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
     EMBEDDINGS_PROVIDER: str = "local"
     EMBEDDINGS_MODEL: str = "BAAI/bge-m3"
     EMBEDDINGS_VECTOR_SIZE: int = 1024
@@ -90,10 +96,18 @@ class Settings(BaseSettings):
     EMBEDDINGS_TIMEOUT_SECONDS: int = 60
     EMBEDDINGS_ALLOW_CPU_FALLBACK: bool = True
     EMBEDDINGS_MAX_TEXT_LENGTH: int = 20000
-    BROWSER_ALLOWED_DOMAINS: str = "1c.company.local,docs.company.local,portal.company.local,edo.company.local"
+    BROWSER_ALLOWED_DOMAINS: str = (
+        "1c.company.local,docs.company.local,portal.company.local,edo.company.local,"
+        "wttr.in,pogoda.yandex.ru,yandex.ru,gismeteo.ru,www.gismeteo.ru,meteoinfo.ru,"
+        "duckduckgo.com,html.duckduckgo.com,www.duckduckgo.com"
+    )
     BROWSER_BLOCKED_SCHEMES: str = "file:,javascript:,data:"
     BROWSER_MAX_TIMEOUT_SECONDS: int = 60
     BROWSER_POLL_INTERVAL_SECONDS: float = 1.0
+    # Runtime Sandbox: разрешить открытый веб (поиск + произвольные сайты), минуя allowlist.
+    # Внутренние/loopback/private IP, localhost, исполняемые файлы и запрещённые схемы блокируются всегда.
+    # Задеплоенные production-агенты остаются на ограничительном allowlist (allow_open_web=False).
+    BROWSER_SANDBOX_OPEN_WEB: bool = True
 
     @property
     def cors_origins(self) -> list[str]:

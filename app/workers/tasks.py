@@ -26,6 +26,95 @@ def run_task(self, task_id: str, task_type: str | None, input_payload: dict) -> 
     return asyncio.run(orchestrator.run(task_type, input_payload))
 
 
+@celery_app.task(name="run_sandbox", bind=True)
+def run_sandbox(self, run_id: str) -> dict[str, Any]:
+    import asyncio
+    import uuid
+
+    from fastapi.encoders import jsonable_encoder
+
+    from app.agents.runtime.consultant_runner import consultant_runner
+    from app.db.session import AsyncSessionLocal
+    from app.models.agent_builder_sandbox import AgentBuilderSandboxRun, AgentBuilderSandboxStep
+    from app.models.agent_builder_session import AgentBuilderSession
+    from app.models.user import User
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            run = await db.get(AgentBuilderSandboxRun, uuid.UUID(run_id))
+            if run is None:
+                return {"status": "failed", "error": "Sandbox run не найден", "run_id": run_id}
+
+            session = await db.get(AgentBuilderSession, run.session_id)
+            user = (
+                await db.get(User, run.requested_by_user_id)
+                if run.requested_by_user_id is not None
+                else None
+            )
+            blueprint = (session.proposed_agent_structure if session else None) or {}
+            test_query = run.test_query or (session.goal if session else "") or ""
+
+            run.status = "running"
+            run.started_at = datetime.now(timezone.utc)
+            await db.commit()
+
+            async def on_step_start(info: dict[str, Any]) -> AgentBuilderSandboxStep:
+                step = AgentBuilderSandboxStep(
+                    run_id=run.id,
+                    order_index=info["order_index"],
+                    title=info.get("title"),
+                    capability=info.get("capability"),
+                    tool_name=info.get("tool_name"),
+                    status="running",
+                    request=jsonable_encoder(info.get("request")),
+                    started_at=datetime.now(timezone.utc),
+                )
+                db.add(step)
+                await db.commit()
+                return step
+
+            async def on_step_finish(step: AgentBuilderSandboxStep, record: dict[str, Any]) -> None:
+                step.status = record.get("status") or "completed"
+                step.result_summary = jsonable_encoder(record.get("result_summary"))
+                step.duration_ms = record.get("duration_ms")
+                step.error_message = record.get("error_message")
+                step.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+
+            try:
+                result = await consultant_runner.execute(
+                    blueprint=blueprint,
+                    test_query=test_query,
+                    db=db,
+                    user=user,
+                    on_step_start=on_step_start,
+                    on_step_finish=on_step_finish,
+                )
+                run.final_answer = result.final_answer
+                run.stats = jsonable_encoder(result.stats)
+                run.executed_graph = jsonable_encoder(result.executed_graph)
+                run.status = "succeeded"
+                run.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return {
+                    "status": "succeeded",
+                    "run_id": run_id,
+                    "celery_task_id": self.request.id,
+                    "finished_at": run.finished_at.isoformat(),
+                }
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                run = await db.get(AgentBuilderSandboxRun, uuid.UUID(run_id))
+                if run is not None:
+                    run.status = "failed"
+                    run.error_message = str(exc)
+                    run.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                return {"status": "failed", "run_id": run_id, "error": str(exc)}
+
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="process_document", bind=True, max_retries=3)
 def process_document(self, document_id: str) -> dict[str, Any]:
     import asyncio

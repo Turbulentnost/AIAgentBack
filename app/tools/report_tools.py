@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.agents.tools.registry import AgentToolDefinition, register_tool
+from app.tools.base import StubTool
+from app.tools.registry import register_tool
 
 
 class ReportToolInput(BaseModel):
@@ -12,7 +13,7 @@ class ReportToolInput(BaseModel):
 
 def _register_stub(name: str, description: str, agent_description: str) -> None:
     register_tool(
-        AgentToolDefinition(
+        StubTool(
             name=name,
             description=description,
             agent_description=agent_description,
@@ -35,4 +36,10 @@ _register_stub(
     "Инструмент generate_docx_report формирует DOCX-отчет по результатам работы агента на основании summary, "
     "findings, источников и рекомендаций. Используй его после завершения анализа, когда нужно подготовить "
     "итоговый документ для пользователя.",
+)
+_register_stub(
+    "generate_change_notice",
+    "Формирует DOCX-файл извещения об изменении нормативного документа.",
+    "Инструмент generate_change_notice используй после подготовки проекта новой редакции и diff. "
+    "Извещение должно содержать причину, даты выпуска/введения, содержание изменения, приложения и рассылку.",
 )

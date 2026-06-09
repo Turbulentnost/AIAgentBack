@@ -15,7 +15,6 @@ from app.models.user import User
 from app.schemas.document import ChunkSearchHit
 from app.services.embeddings import embedding_service
 from app.services.knowledge_base_search_service import KnowledgeBaseSearchService
-from app.tools.registry import Tool, tool_registry
 
 PUBLIC_ACCESS_SCOPES = {"public", "global", "all", "company"}
 
@@ -223,27 +222,3 @@ def _safe_uuid(value: Any) -> uuid.UUID | None:
         return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
     except ValueError:
         return None
-
-
-tool_registry.register(
-    Tool(
-        name="search_knowledge_base",
-        description="Ищет релевантные DocumentChunk в Qdrant с учетом доступа пользователя и возвращает источники.",
-        handler=search_knowledge_base,
-        input_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "top_k": {"type": "integer", "default": 5},
-                "document_types": {"type": "array", "items": {"type": "string"}},
-                "department_ids": {"type": "array", "items": {"type": "string"}},
-                "document_version_id": {"type": "string"},
-                "access_scopes": {"type": "array", "items": {"type": "string"}},
-                "knowledge_base_id": {"type": "string"},
-                "agent_id": {"type": "string"},
-            },
-            "required": ["query"],
-        },
-        required_permissions=["knowledge_base.search"],
-    )
-)

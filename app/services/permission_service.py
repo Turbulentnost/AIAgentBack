@@ -3,13 +3,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
 from app.models.document import Document
 from app.models.task import Task
-from app.models.user import DepartmentAgent, User, UserAgent
+from app.models.user import DepartmentAgent, Permission, User, UserAgent, role_permissions, user_roles
 
 
 class PermissionService:
@@ -34,6 +34,10 @@ class PermissionService:
             )
             agent_ids_query = agent_ids_query.union(department_agent_ids)
 
+        role_agent_ids = self._role_agent_ids_query(user, "run")
+        if role_agent_ids is not None:
+            agent_ids_query = agent_ids_query.union(role_agent_ids)
+
         result = await self.db.execute(
             select(Agent).where(Agent.id.in_(agent_ids_query)).order_by(Agent.name)
         )
@@ -54,6 +58,9 @@ class PermissionService:
             )
         )
         if user_access is not None:
+            return True
+
+        if await self._has_role_agent_permission(user, agent_id, action):
             return True
 
         if user.department_id is None:
@@ -91,3 +98,41 @@ class PermissionService:
             "configure": model.can_configure,
         }
         return mapping.get(action, model.can_run)
+
+    def _role_agent_ids_query(self, user: User, action: str):
+        role_ids_query = self._user_role_ids_query(user)
+        if role_ids_query is None:
+            return None
+        return (
+            select(Agent.id)
+            .join(Permission, Permission.code == (literal("agents.") + Agent.slug + literal(f".{action}")))
+            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+            .where(role_permissions.c.role_id.in_(role_ids_query))
+        )
+
+    def _user_role_ids_query(self, user: User):
+        role_queries = []
+        if user.role_id is not None:
+            role_queries.append(select(literal(user.role_id).label("role_id")))
+        role_queries.append(select(user_roles.c.role_id).where(user_roles.c.user_id == user.id))
+        query = role_queries[0]
+        for next_query in role_queries[1:]:
+            query = query.union(next_query)
+        return query
+
+    async def _has_role_agent_permission(self, user: User, agent_id: uuid.UUID, action: str) -> bool:
+        role_ids_query = self._user_role_ids_query(user)
+        if role_ids_query is None:
+            return False
+        result = await self.db.scalar(
+            select(Permission.id)
+            .select_from(Agent)
+            .join(Permission, Permission.code == (literal("agents.") + Agent.slug + literal(f".{action}")))
+            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+            .where(
+                Agent.id == agent_id,
+                role_permissions.c.role_id.in_(role_ids_query),
+            )
+            .limit(1)
+        )
+        return result is not None

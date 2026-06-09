@@ -1,4 +1,9 @@
 from app.models.agent import Agent, AgentPrompt, AgentTool, AgentVersion, ToolCall
+from app.models.agent_blueprint import AgentBlueprint
+from app.models.agent_builder_attempt import AgentBuilderAttempt
+from app.models.agent_builder_plan import AgentBuilderPlan, AgentBuilderPlanStep
+from app.models.agent_builder_sandbox import AgentBuilderSandboxRun, AgentBuilderSandboxStep
+from app.models.agent_builder_session import AgentBuilderSession
 from app.models.audit import AuditLog
 from app.models.browser_run import BrowserRun
 from app.models.data_source import DataSource, SourcePermission
@@ -16,6 +21,16 @@ from app.models.knowledge_base import (
     KnowledgeBaseSource,
 )
 from app.models.llm import LLMCall
+from app.models.nd_change import (
+    NdChangeApprovalParticipant,
+    NdChangeApprovalRoute,
+    NdChangeCandidateDocument,
+    NdChangeDraftFile,
+    NdChangeOperation,
+    NdChangeRequest,
+    NdChangeResult,
+    NdChangeTargetLocation,
+)
 from app.models.ope import OpeCard, OpeChecklist, OpeIssue, OpeReport
 from app.models.task import Task, TaskResult, TaskStep, task_documents
 from app.models.user import (
@@ -29,4 +44,4 @@ from app.models.user import (
     UserSession,
 )
 
-__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AuditLog", "BrowserRun", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "IntegrationSyncState", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]
+__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AgentBlueprint", "AgentBuilderAttempt", "AgentBuilderPlan", "AgentBuilderPlanStep", "AgentBuilderSession", "AgentBuilderSandboxRun", "AgentBuilderSandboxStep", "AuditLog", "BrowserRun", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "IntegrationSyncState", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "NdChangeRequest", "NdChangeCandidateDocument", "NdChangeTargetLocation", "NdChangeOperation", "NdChangeDraftFile", "NdChangeApprovalRoute", "NdChangeApprovalParticipant", "NdChangeResult", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]

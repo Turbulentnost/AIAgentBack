@@ -1,0 +1,716 @@
+from __future__ import annotations
+
+from typing import Any
+
+from langgraph.graph import END, START, StateGraph
+
+from app.agents.builder.capabilities import (
+    heuristic_classify_agent_type,
+    is_type_confirmation_message,
+)
+from app.agents.builder.llm import (
+    BuilderLLMError,
+    ClarificationLLMResponse,
+    append_conversation,
+    apply_heuristic_element_answers,
+    builder_llm,
+    finalize_requirements,
+    merge_required_elements,
+    merge_requirements,
+    pending_questions_for_elements,
+    summarize_filled_elements,
+)
+from app.agents.builder.templates.consultant import (
+    init_consultant_requirements,
+    sanitize_consultant_requirements,
+)
+from app.models.enums import AgentType
+from app.agents.builder.state import AgentBuilderState
+from app.agents.builder.tools import (
+    blueprint_from_llm,
+    build_default_blueprint,
+    default_plan_steps,
+    list_available_tools_catalog,
+    render_workflow_graph,
+)
+from app.agents.builder.preview_runner import build_blueprint_summary
+from app.agents.builder.validators import validate_agent_blueprint, validate_required_elements
+from app.core.logging import get_logger
+from app.models.enums import AgentBuilderSessionStatus
+
+logger = get_logger(__name__)
+
+
+def _conversation(state: AgentBuilderState) -> list[dict[str, str]]:
+    requirements = state.get("collected_requirements") or {}
+    stored = requirements.get("conversation")
+    if isinstance(stored, list):
+        return [item for item in stored if isinstance(item, dict)]
+    return list(state.get("conversation") or [])
+
+
+def _store_conversation(requirements: dict[str, Any], conversation: list[dict[str, str]]) -> dict[str, Any]:
+    updated = dict(requirements)
+    updated["conversation"] = conversation
+    return updated
+
+
+async def understand_goal(state: AgentBuilderState) -> dict:
+    logger.info("builder.understand_goal", session_id=state.get("session_id"))
+    goal = (state.get("goal") or "").strip()
+    if not goal:
+        return {
+            "status": AgentBuilderSessionStatus.FAILED.value,
+            "assistant_messages": ["Опишите задачу агента, которого нужно спроектировать."],
+            "requires_user_input": True,
+        }
+    requirements = dict(state.get("collected_requirements") or {})
+    requirements.setdefault("goal", goal)
+    conversation = _conversation(state)
+    if not conversation:
+        conversation = append_conversation(conversation, "user", goal)
+        requirements = _store_conversation(requirements, conversation)
+    return {
+        "current_stage": "understand_goal",
+        "collected_requirements": requirements,
+        "conversation": conversation,
+        "status": AgentBuilderSessionStatus.PLANNING.value,
+    }
+
+
+async def classify_agent_type(state: AgentBuilderState) -> dict:
+    logger.info("builder.classify_agent_type")
+    requirements = dict(state.get("collected_requirements") or {})
+    conversation = _conversation(state)
+    goal = state.get("goal", "")
+    user_message = (state.get("user_message") or "").strip()
+
+    if requirements.get("agent_type_confirmed") and requirements.get("agent_type") == AgentType.CONSULTANT.value:
+        requirements = init_consultant_requirements(
+            {**requirements, "goal": goal},
+            list_available_tools_catalog(),
+        )
+        return {
+            "current_stage": "classify_agent_type",
+            "collected_requirements": requirements,
+            "conversation": conversation,
+            "requires_user_input": False,
+            "status": AgentBuilderSessionStatus.PLANNING.value,
+        }
+
+    if user_message:
+        conversation = append_conversation(conversation, "user", user_message)
+
+    proposal = requirements.get("agent_type_proposal")
+    confirm_consultant = user_message and (
+        is_type_confirmation_message(user_message)
+        and (
+            proposal == AgentType.CONSULTANT.value
+            or "консультант" in user_message.lower()
+        )
+    )
+    if proposal and confirm_consultant:
+        requirements["agent_type"] = AgentType.CONSULTANT.value
+        requirements["agent_type_confirmed"] = True
+        requirements = init_consultant_requirements(
+            {**requirements, "goal": goal},
+            list_available_tools_catalog(),
+        )
+        assistant_text = (
+            "Тип «Консультант» подтверждён. Источники знаний определены из доступных инструментов. "
+            "Анализирую цель и сформирую уточняющие вопросы только при необходимости."
+        )
+        conversation = append_conversation(conversation, "assistant", assistant_text)
+        requirements = _store_conversation(requirements, conversation)
+        return {
+            "current_stage": "classify_agent_type",
+            "collected_requirements": requirements,
+            "conversation": conversation,
+            "assistant_messages": [assistant_text],
+            "clarifying_questions": [],
+            "requires_user_input": False,
+            "status": AgentBuilderSessionStatus.PLANNING.value,
+        }
+
+    if proposal and user_message and is_type_confirmation_message(user_message) and proposal == AgentType.ACTION.value:
+        assistant_text = (
+            "Тип «Действие» пока не поддерживается. "
+            "Сейчас доступен только тип «Консультант». Подтвердите консультанта или измените цель."
+        )
+        conversation = append_conversation(conversation, "assistant", assistant_text)
+        requirements = _store_conversation(requirements, conversation)
+        return {
+            "current_stage": "classify_agent_type",
+            "collected_requirements": requirements,
+            "conversation": conversation,
+            "assistant_messages": [assistant_text],
+            "clarifying_questions": ["Подтвердите тип «Консультант» для продолжения"],
+            "requires_user_input": True,
+            "status": AgentBuilderSessionStatus.NEEDS_CLARIFICATION.value,
+        }
+
+    try:
+        llm_result = await builder_llm.classify_agent_type(goal=goal, conversation=conversation)
+        proposed_type = llm_result.proposed_agent_type
+        reasoning = llm_result.reasoning
+        assistant_text = llm_result.assistant_message
+        confidence = llm_result.confidence
+    except BuilderLLMError as exc:
+        proposed_type = heuristic_classify_agent_type(goal, conversation).value
+        reasoning = "Эвристическая классификация по ключевым словам"
+        confidence = 0.5
+        assistant_text = (
+            f"Предлагаю тип агента: {proposed_type}. {reasoning}. "
+            "Подтвердите тип, чтобы продолжить."
+        )
+        logger.warning("builder.classify_agent_type_failed", error=str(exc))
+
+    heuristic_type = heuristic_classify_agent_type(goal, conversation)
+    if proposed_type == AgentType.ACTION.value and heuristic_type == AgentType.CONSULTANT:
+        proposed_type = AgentType.CONSULTANT.value
+        reasoning = (
+            f"{reasoning} Задача сводится к поиску и представлению информации — тип «Консультант»."
+        ).strip()
+        assistant_text = (
+            "Определяю тип агента как «Консультант»: нужно найти и показать информацию "
+            "(в том числе через браузер), без изменения внешних систем. Подтвердите тип."
+        )
+
+    requirements["agent_type_proposal"] = proposed_type
+    requirements["agent_type_proposal_meta"] = {
+        "confidence": confidence,
+        "reasoning": reasoning,
+    }
+
+    if proposed_type == AgentType.ACTION.value:
+        assistant_text = (
+            f"{assistant_text} Тип «Действие» пока не поддерживается — "
+            "доступен только «Консультант». Подтвердите консультанта или уточните цель."
+        )
+
+    conversation = append_conversation(conversation, "assistant", assistant_text)
+    requirements = _store_conversation(requirements, conversation)
+    type_label = "Консультант" if proposed_type == AgentType.CONSULTANT.value else "Действие"
+    return {
+        "current_stage": "classify_agent_type",
+        "collected_requirements": requirements,
+        "conversation": conversation,
+        "assistant_messages": [assistant_text],
+        "clarifying_questions": [f"Подтвердите тип агента: {type_label}"],
+        "requires_user_input": True,
+        "status": AgentBuilderSessionStatus.NEEDS_CLARIFICATION.value,
+    }
+
+
+async def ask_clarifying_questions(state: AgentBuilderState) -> dict:
+    logger.info("builder.ask_clarifying_questions")
+    requirements = dict(state.get("collected_requirements") or {})
+    conversation = _conversation(state)
+    goal = state.get("goal", "")
+
+    if requirements.get("agent_type") == AgentType.CONSULTANT.value:
+        requirements = init_consultant_requirements(
+            {**requirements, "goal": goal},
+            list_available_tools_catalog(),
+        )
+
+    user_message = (state.get("user_message") or "").strip()
+    if user_message:
+        conversation = append_conversation(conversation, "user", user_message)
+
+    existing_elements = requirements.get("required_elements") or []
+    has_pending = any(
+        item.get("required", True) and item.get("status") != "filled" and not item.get("value")
+        for item in existing_elements
+        if isinstance(item, dict)
+    )
+    if user_message and (has_pending or not existing_elements):
+        try:
+            extracted = await builder_llm.extract_element_answers(
+                goal=goal,
+                user_message=user_message,
+                required_elements=existing_elements,
+                conversation=conversation,
+            )
+            requirements = merge_requirements(requirements, extracted.extracted_requirements)
+            requirements["required_elements"] = merge_required_elements(
+                existing_elements,
+                [item.model_dump() for item in extracted.elements],
+            )
+        except BuilderLLMError as exc:
+            logger.warning("builder.extract_answers_failed", error=str(exc))
+
+    if user_message:
+        requirements["required_elements"] = apply_heuristic_element_answers(
+            user_message,
+            requirements.get("required_elements") or [],
+        )
+
+    try:
+        llm_result = await builder_llm.clarify(
+            goal=goal,
+            conversation=conversation,
+            requirements=requirements,
+        )
+    except BuilderLLMError as exc:
+        return _llm_failure(str(exc))
+
+    requirements = merge_requirements(requirements, llm_result.extracted_requirements)
+    incoming_elements = [item.model_dump() for item in llm_result.required_elements]
+    requirements["required_elements"] = merge_required_elements(
+        requirements.get("required_elements") or [],
+        incoming_elements,
+    )
+
+    if requirements.get("agent_type") == AgentType.CONSULTANT.value:
+        requirements = sanitize_consultant_requirements(requirements, goal)
+
+    elements = requirements.get("required_elements") or []
+    pending_questions = pending_questions_for_elements(elements)
+    if not pending_questions:
+        pending_questions = [q for q in (llm_result.clarifying_questions or []) if q.strip()]
+    if requirements.get("agent_type") == AgentType.CONSULTANT.value:
+        from app.agents.builder.templates.consultant import filter_consultant_questions
+
+        pending_questions = filter_consultant_questions(pending_questions)
+    requirements["pending_questions"] = pending_questions
+    requirements = finalize_requirements(requirements)
+    requirements_validation = requirements["requirements_validation"]
+    pending_questions = requirements.get("pending_questions") or []
+
+    ready_to_plan = requirements_validation["valid"]
+    if (
+        ready_to_plan
+        and requirements.get("agent_type") == AgentType.CONSULTANT.value
+        and not requirements.get("consultant_explore_done")
+    ):
+        try:
+            explore_result = await builder_llm.explore_consultant_sources(
+                goal=goal,
+                conversation=conversation,
+                requirements=requirements,
+            )
+            requirements["consultant_explore_done"] = True
+            requirements = merge_requirements(requirements, explore_result.extracted_requirements)
+            explore_elements = [item.model_dump() for item in explore_result.required_elements]
+            requirements["required_elements"] = merge_required_elements(
+                requirements.get("required_elements") or [],
+                explore_elements,
+            )
+            explore_questions = pending_questions_for_elements(requirements.get("required_elements") or [])
+            if not explore_questions:
+                explore_questions = [
+                    q for q in (explore_result.clarifying_questions or []) if q.strip()
+                ]
+            if requirements.get("agent_type") == AgentType.CONSULTANT.value:
+                from app.agents.builder.templates.consultant import filter_consultant_questions
+
+                explore_questions = filter_consultant_questions(explore_questions)
+                requirements = sanitize_consultant_requirements(requirements, goal)
+            if explore_questions or not explore_result.ready_to_plan:
+                ready_to_plan = False
+                pending_questions = explore_questions
+                requirements["pending_questions"] = pending_questions
+                requirements = finalize_requirements(requirements)
+                requirements_validation = requirements["requirements_validation"]
+                assistant_explore = explore_result.assistant_message
+                if assistant_explore not in (llm_result.assistant_message or ""):
+                    llm_result = ClarificationLLMResponse(
+                        ready_to_plan=False,
+                        assistant_message=assistant_explore,
+                        extracted_requirements=explore_result.extracted_requirements,
+                        required_elements=explore_result.required_elements,
+                        clarifying_questions=explore_questions,
+                    )
+        except BuilderLLMError as exc:
+            logger.warning("builder.explore_consultant_failed", error=str(exc))
+            requirements["consultant_explore_done"] = True
+
+    elements = requirements.get("required_elements") or []
+    filled_summary = summarize_filled_elements(elements)
+    if ready_to_plan:
+        assistant_text = (
+            f"{filled_summary} Все обязательные данные собраны. Перехожу к планированию."
+            if filled_summary
+            else "Все обязательные данные собраны. Перехожу к планированию."
+        )
+    else:
+        assistant_text = llm_result.assistant_message
+        if filled_summary and filled_summary not in assistant_text:
+            assistant_text = f"{filled_summary} {assistant_text}".strip()
+        if requirements_validation.get("missing"):
+            assistant_text = (
+                f"{assistant_text} Не заполнено: {', '.join(requirements_validation['missing'])}."
+            ).strip()
+
+    conversation = append_conversation(conversation, "assistant", assistant_text)
+    requirements = _store_conversation(requirements, conversation)
+
+    if ready_to_plan:
+        return {
+            "current_stage": "ask_clarifying_questions",
+            "collected_requirements": requirements,
+            "conversation": conversation,
+            "clarifying_questions": [],
+            "assistant_messages": [assistant_text],
+            "requires_user_input": False,
+            "status": AgentBuilderSessionStatus.PLANNING.value,
+        }
+
+    return {
+        "current_stage": "ask_clarifying_questions",
+        "collected_requirements": requirements,
+        "conversation": conversation,
+        "clarifying_questions": pending_questions,
+        "assistant_messages": [assistant_text],
+        "requires_user_input": True,
+        "status": AgentBuilderSessionStatus.NEEDS_CLARIFICATION.value,
+    }
+
+
+async def create_plan(state: AgentBuilderState) -> dict:
+    logger.info("builder.create_plan")
+    service = state.get("service")
+    requirements = state.get("collected_requirements") or {}
+    goal = state.get("goal", "")
+    requirements_validation = validate_required_elements(requirements)
+    if not requirements_validation["valid"]:
+        missing = ", ".join(requirements_validation.get("missing") or [])
+        return {
+            "current_stage": "ask_clarifying_questions",
+            "collected_requirements": {
+                **requirements,
+                "requirements_validation": requirements_validation,
+            },
+            "clarifying_questions": requirements.get("pending_questions") or [],
+            "assistant_messages": [f"Сначала заполните все обязательные элементы: {missing}"],
+            "requires_user_input": True,
+            "status": AgentBuilderSessionStatus.NEEDS_CLARIFICATION.value,
+        }
+
+    try:
+        llm_plan = await builder_llm.generate_plan(goal=goal, requirements=requirements)
+        steps = [{"title": step.title, "description": step.description} for step in llm_plan.steps]
+        if not steps:
+            raise BuilderLLMError("Модель вернула пустой план")
+        summary = llm_plan.summary
+    except BuilderLLMError as exc:
+        return _llm_failure(str(exc))
+
+    if service is not None:
+        await service.save_plan(state["session_id"], steps, current_user=state.get("current_user"))
+
+    assistant_messages = [summary] if summary else [f"Сформирован план из {len(steps)} шагов."]
+    requirements = dict(state.get("collected_requirements") or {})
+    requirements = finalize_requirements(requirements)
+    conversation = _conversation(state)
+    for text in assistant_messages:
+        conversation = append_conversation(conversation, "assistant", text)
+    requirements = _store_conversation(requirements, conversation)
+    return {
+        "current_stage": "create_plan",
+        "plan_steps": steps,
+        "current_step_index": 0,
+        "collected_requirements": requirements,
+        "conversation": conversation,
+        "clarifying_questions": [],
+        "assistant_messages": assistant_messages,
+        "requires_user_input": False,
+        "status": AgentBuilderSessionStatus.EXECUTING.value,
+    }
+
+
+async def execute_plan_step(state: AgentBuilderState) -> dict:
+    logger.info("builder.execute_plan_step")
+    service = state.get("service")
+    index = state.get("current_step_index", 0)
+    steps = state.get("plan_steps") or default_plan_steps()
+    if index >= len(steps):
+        return {"current_stage": "execute_plan_step", "status": AgentBuilderSessionStatus.GENERATED.value}
+
+    step = steps[index]
+    requirements = dict(state.get("collected_requirements") or {})
+    result: dict[str, Any] = {
+        "step": step["title"],
+        "description": step.get("description"),
+        "status": "completed",
+    }
+
+    title_lower = step["title"].lower()
+    description_lower = (step.get("description") or "").lower()
+    if any(word in title_lower or word in description_lower for word in ("инструмент", "tool")):
+        from app.agents.builder.meta_tools import BUILDER_META_TOOLS
+
+        catalog = list_available_tools_catalog()
+        implemented = [
+            item["name"]
+            for item in catalog
+            if item["implemented"] and item["name"] not in BUILDER_META_TOOLS
+        ]
+        result["tools"] = implemented[:8]
+        requirements["recommended_tools"] = result["tools"]
+    if any(word in title_lower or word in description_lower for word in ("workflow", "процесс", "этап", "граф")):
+        workflow_steps = requirements.get("workflow_hints") or [
+            "Получение входных данных",
+            "Обработка задачи",
+            "Формирование результата",
+        ]
+        if isinstance(workflow_steps, str):
+            workflow_steps = [workflow_steps]
+        result["workflow_graph"] = render_workflow_graph(workflow_steps)
+
+    if service is not None:
+        await service.complete_plan_step(
+            state["session_id"],
+            step_order=index,
+            result=result,
+            current_user=state.get("current_user"),
+        )
+
+    return {
+        "current_stage": "execute_plan_step",
+        "current_step_index": index + 1,
+        "collected_requirements": requirements,
+        "workflow_graph": result.get("workflow_graph") or state.get("workflow_graph"),
+    }
+
+
+async def collect_requirements(state: AgentBuilderState) -> dict:
+    logger.info("builder.collect_requirements")
+    return {
+        "current_stage": "collect_requirements",
+        "collected_requirements": state.get("collected_requirements") or {},
+    }
+
+
+async def propose_structure(state: AgentBuilderState) -> dict:
+    logger.info("builder.propose_structure")
+    requirements = state.get("collected_requirements") or {}
+    goal = state.get("goal", "")
+    plan_steps = state.get("plan_steps") or []
+    requirements_validation = validate_required_elements(requirements)
+    if not requirements_validation["valid"]:
+        missing = ", ".join(requirements_validation.get("missing") or [])
+        return _llm_failure(f"Нельзя формировать blueprint: не заполнены элементы — {missing}")
+
+    try:
+        llm_blueprint = await builder_llm.generate_blueprint(
+            goal=goal,
+            requirements=requirements,
+            plan_steps=plan_steps,
+        )
+        blueprint = blueprint_from_llm(goal, llm_blueprint, requirements)
+    except BuilderLLMError as exc:
+        return _llm_failure(str(exc))
+
+    service = state.get("service")
+    if service is not None:
+        await service.save_blueprint_draft(
+            state["session_id"],
+            blueprint,
+            current_user=state.get("current_user"),
+        )
+    blueprint_message = f"Сформирован blueprint агента «{blueprint['agent_card']['name']}»."
+    requirements = finalize_requirements(dict(state.get("collected_requirements") or {}))
+    conversation = _conversation(state)
+    conversation = append_conversation(conversation, "assistant", blueprint_message)
+    requirements = _store_conversation(requirements, conversation)
+    return {
+        "current_stage": "propose_structure",
+        "blueprint": blueprint,
+        "workflow_graph": blueprint.get("workflow_graph"),
+        "collected_requirements": requirements,
+        "conversation": conversation,
+        "clarifying_questions": [],
+        "assistant_messages": [blueprint_message],
+        "status": AgentBuilderSessionStatus.GENERATED.value,
+    }
+
+
+async def validate_blueprint_node(state: AgentBuilderState) -> dict:
+    logger.info("builder.validate_blueprint")
+    blueprint = state.get("blueprint")
+    validation = validate_agent_blueprint(blueprint)
+    status = (
+        AgentBuilderSessionStatus.NEEDS_USER_REVIEW.value
+        if validation["valid"]
+        else AgentBuilderSessionStatus.NEEDS_CLARIFICATION.value
+    )
+    service = state.get("service")
+    if service is not None:
+        await service.save_validation_result(state["session_id"], validation, current_user=state.get("current_user"))
+    review_message = (
+        "Blueprint сформирован. Результат доступен в панели справа — проверьте и нажмите «Зафиксировать структуру»."
+        if validation["valid"]
+        else f"Blueprint неполный: {', '.join(validation['errors'])}"
+    )
+    requirements = finalize_requirements(dict(state.get("collected_requirements") or {}))
+    conversation = _conversation(state)
+    conversation = append_conversation(conversation, "assistant", review_message)
+    requirements = _store_conversation(requirements, conversation)
+    return {
+        "current_stage": "validate_blueprint",
+        "validation_result": validation,
+        "collected_requirements": requirements,
+        "conversation": conversation,
+        "clarifying_questions": [],
+        "status": status,
+        "assistant_messages": [review_message],
+    }
+
+
+async def prepare_preview(state: AgentBuilderState) -> dict:
+    logger.info("builder.prepare_preview")
+    requirements = dict(state.get("collected_requirements") or {})
+    goal = state.get("goal", "")
+    blueprint = state.get("blueprint")
+
+    # Статическая фаза проектирования: НЕ выполняем инструменты, браузер или сетевые вызовы.
+    design_summary = build_blueprint_summary(
+        goal=goal,
+        requirements=requirements,
+        blueprint=blueprint,
+        validation=state.get("validation_result"),
+    )
+    requirements["design_summary"] = design_summary
+    summary_message = design_summary.get("output_text") or "Blueprint сформирован."
+
+    conversation = _conversation(state)
+    conversation = append_conversation(conversation, "assistant", summary_message)
+    requirements = _store_conversation(requirements, conversation)
+
+    return {
+        "current_stage": "prepare_preview",
+        "collected_requirements": requirements,
+        "conversation": conversation,
+        "design_summary": design_summary,
+        "clarifying_questions": [],
+        "requires_user_input": True,
+        "assistant_messages": [summary_message],
+        "status": AgentBuilderSessionStatus.NEEDS_USER_REVIEW.value,
+    }
+
+
+async def wait_user_review(state: AgentBuilderState) -> dict:
+    logger.info("builder.wait_user_review")
+    return {
+        "current_stage": "wait_user_review",
+        "requires_user_input": True,
+        "status": AgentBuilderSessionStatus.NEEDS_USER_REVIEW.value,
+    }
+
+
+async def finalize_blueprint(state: AgentBuilderState) -> dict:
+    logger.info("builder.finalize_blueprint")
+    return {
+        "current_stage": "finalize_blueprint",
+        "status": AgentBuilderSessionStatus.APPROVED.value,
+    }
+
+
+def route_after_understand(state: AgentBuilderState) -> str:
+    if state.get("status") == AgentBuilderSessionStatus.FAILED.value:
+        return END
+    return "classify_agent_type"
+
+
+def route_after_classify(state: AgentBuilderState) -> str:
+    if state.get("status") == AgentBuilderSessionStatus.FAILED.value:
+        return END
+    if state.get("requires_user_input"):
+        return END
+    return "ask_clarifying_questions"
+
+
+def route_after_clarify(state: AgentBuilderState) -> str:
+    if state.get("status") == AgentBuilderSessionStatus.FAILED.value:
+        return END
+    if state.get("requires_user_input"):
+        return END
+    return "create_plan"
+
+
+def route_after_create_plan(state: AgentBuilderState) -> str:
+    if state.get("status") == AgentBuilderSessionStatus.FAILED.value:
+        return END
+    if state.get("requires_user_input"):
+        return END
+    return "execute_plan_step"
+
+
+def route_after_execute(state: AgentBuilderState) -> str:
+    index = state.get("current_step_index", 0)
+    steps = state.get("plan_steps") or default_plan_steps()
+    if index < len(steps):
+        return "execute_plan_step"
+    return "collect_requirements"
+
+
+def route_after_propose(state: AgentBuilderState) -> str:
+    if state.get("status") == AgentBuilderSessionStatus.FAILED.value:
+        return END
+    return "validate_blueprint"
+
+
+def build_graph():
+    graph = StateGraph(AgentBuilderState)
+    nodes = [
+        ("understand_goal", understand_goal),
+        ("classify_agent_type", classify_agent_type),
+        ("ask_clarifying_questions", ask_clarifying_questions),
+        ("create_plan", create_plan),
+        ("execute_plan_step", execute_plan_step),
+        ("collect_requirements", collect_requirements),
+        ("propose_structure", propose_structure),
+        ("validate_blueprint", validate_blueprint_node),
+        ("prepare_preview", prepare_preview),
+        ("wait_user_review", wait_user_review),
+        ("finalize_blueprint", finalize_blueprint),
+    ]
+    for name, fn in nodes:
+        graph.add_node(name, fn)
+
+    graph.add_edge(START, "understand_goal")
+    graph.add_conditional_edges(
+        "understand_goal",
+        route_after_understand,
+        {"classify_agent_type": "classify_agent_type", END: END},
+    )
+    graph.add_conditional_edges(
+        "classify_agent_type",
+        route_after_classify,
+        {"ask_clarifying_questions": "ask_clarifying_questions", END: END},
+    )
+    graph.add_conditional_edges(
+        "ask_clarifying_questions",
+        route_after_clarify,
+        {"create_plan": "create_plan", END: END},
+    )
+    graph.add_conditional_edges(
+        "create_plan",
+        route_after_create_plan,
+        {"execute_plan_step": "execute_plan_step", END: END},
+    )
+    graph.add_conditional_edges(
+        "execute_plan_step",
+        route_after_execute,
+        {"execute_plan_step": "execute_plan_step", "collect_requirements": "collect_requirements"},
+    )
+    graph.add_edge("collect_requirements", "propose_structure")
+    graph.add_conditional_edges(
+        "propose_structure",
+        route_after_propose,
+        {"validate_blueprint": "validate_blueprint", END: END},
+    )
+    graph.add_edge("validate_blueprint", "prepare_preview")
+    graph.add_edge("prepare_preview", "wait_user_review")
+    graph.add_edge("wait_user_review", END)
+    return graph.compile()
+
+
+def _llm_failure(message: str) -> dict[str, Any]:
+    return {
+        "status": AgentBuilderSessionStatus.FAILED.value,
+        "assistant_messages": [message],
+        "requires_user_input": False,
+    }

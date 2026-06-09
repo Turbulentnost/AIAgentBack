@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agents import tools as _agent_tools  # noqa: F401
+import app.tools as _tools  # noqa: F401
 from app.api.v1.router import api_router
 from app.core.config import Settings, settings
 from app.core.logging import configure_logging, get_logger
