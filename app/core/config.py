@@ -133,6 +133,13 @@ class Settings(BaseSettings):
     # Задеплоенные production-агенты остаются на ограничительном allowlist (allow_open_web=False).
     BROWSER_SANDBOX_OPEN_WEB: bool = True
 
+    # 1С: ERP OData — значения только из .env (см. .env.example).
+    ONEC_ODATA_URL: str = ""
+    ONEC_ODATA_USER: str = ""
+    ONEC_ODATA_PASSWORD: str = ""
+    ONEC_ODATA_TIMEOUT: int = 120
+    ONEC_MEETING_MEMO_THEME: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         return self._parse_csv(self.BACKEND_CORS_ORIGINS)
