@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.tools.base import Tool
+from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
 from app.tools.Outlook.read_calendars import fetch_outlook_calendars
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
 from app.tools.registry import register_tool
@@ -188,3 +189,86 @@ class SendMeetingInviteTool(Tool):
 
 
 register_tool(SendMeetingInviteTool())
+
+
+class CancelMeetingInput(BaseModel):
+    list_only: bool = Field(
+        default=False,
+        description="Показать совещания в календаре организатора",
+    )
+    days: int = Field(default=14, ge=1, le=365)
+    item_id: str = Field(default="", description="EWS ItemId совещания")
+    changekey: str = Field(default="", description="EWS ChangeKey")
+    subject: str = Field(default="", description="Тема для поиска совещания")
+    start: str = Field(default="", description="Начало для поиска: YYYY-MM-DD HH:MM")
+    attendee: str = Field(default="", description="E-mail участника для уточнения поиска")
+    tolerance_minutes: int = Field(default=5, ge=0, le=120)
+    message: str = Field(default="", description="Комментарий в уведомлении об отмене")
+    dry_run: bool = Field(
+        default=False,
+        description="Только показать совещение без отмены",
+    )
+    timezone: str | None = Field(
+        default=None,
+        description="Часовой пояс для start (по умолчанию OUTLOOK_TIMEZONE)",
+    )
+
+
+class CancelMeetingOutput(BaseModel):
+    action: str
+    status: str | None = None
+    calendar: str | None = None
+    meetings_count: int | None = None
+    meetings: list[dict[str, Any]] | None = None
+    meeting: dict[str, Any] | None = None
+    message: str | None = None
+
+
+async def cancel_meeting_tool(
+    payload: CancelMeetingInput,
+    context: ToolContext,
+) -> CancelMeetingOutput:
+    del context
+    raw = await asyncio.to_thread(
+        dispatch_cancel_meeting,
+        list_only=payload.list_only,
+        days=payload.days,
+        item_id=payload.item_id,
+        changekey=payload.changekey,
+        subject=payload.subject,
+        start=payload.start,
+        attendee=payload.attendee,
+        tolerance_minutes=payload.tolerance_minutes,
+        message=payload.message,
+        dry_run=payload.dry_run,
+        timezone=payload.timezone,
+    )
+    return CancelMeetingOutput.model_validate(raw)
+
+
+class CancelMeetingTool(Tool):
+    name = "cancel_meeting"
+    description = (
+        "Отменяет совещание в календаре Exchange (EWS) и рассылает уведомление участникам."
+    )
+    agent_description = (
+        "Инструмент cancel_meeting отменяет встречу в календаре Postagent. "
+        "list_only=true — список совещаний с id/changekey; для отмены укажи item_id "
+        "(и changekey) или subject + start. dry_run=true — только проверка без отмены. "
+        "message — комментарий участникам. attendee и tolerance_minutes помогают "
+        "различить совпадения."
+    )
+    input_model = CancelMeetingInput
+    output_model = CancelMeetingOutput
+    required_permissions = ["cancel_meeting"]
+    preview_default_params = {"list_only": True, "days": 7}
+
+    async def execute(
+        self,
+        payload: CancelMeetingInput,
+        context: ToolContext,
+    ) -> CancelMeetingOutput:
+        return await cancel_meeting_tool(payload, context)
+
+
+register_tool(CancelMeetingTool())
