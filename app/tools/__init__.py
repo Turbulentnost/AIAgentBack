@@ -6,6 +6,7 @@ from app.tools import builder_tools as _builder_tools  # noqa: F401
 from app.tools import document_tools as _document_tools  # noqa: F401
 from app.tools import knowledge_base_tools as _knowledge_base_tools  # noqa: F401
 from app.tools import nd_control_tools as _nd_control_tools  # noqa: F401
+from app.tools import outlook_tools as _outlook_tools  # noqa: F401
 from app.tools import report_tools as _report_tools  # noqa: F401
 from app.tools import system_tools as _system_tools  # noqa: F401
 from app.tools import task_tools as _task_tools  # noqa: F401

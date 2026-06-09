@@ -140,6 +140,17 @@ class Settings(BaseSettings):
     ONEC_ODATA_TIMEOUT: int = 120
     ONEC_MEETING_MEMO_THEME: str = ""
 
+    # Outlook / Exchange (COM-календарь, EWS, SMTP) — значения из .env.
+    OUTLOOK_EMAIL: str = ""
+    OUTLOOK_PASSWORD: str = ""
+    OUTLOOK_SERVER: str = ""
+    OUTLOOK_MAILBOX: str = ""
+    OUTLOOK_TIMEZONE: str = "Europe/Moscow"
+    OUTLOOK_SMTP_HOST: str = ""
+    OUTLOOK_SMTP_PORT: int = 587
+    OUTLOOK_SMTP_TLS: str = "true"
+    OUTLOOK_SMTP_FROM: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         return self._parse_csv(self.BACKEND_CORS_ORIGINS)
