@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.tools.base import Tool
 from app.tools.Outlook.read_calendars import fetch_outlook_calendars
+from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
 from app.tools.registry import register_tool
 from app.tools.schemas import ToolContext
 
@@ -84,3 +85,106 @@ class ReadOutlookCalendarsTool(Tool):
 
 
 register_tool(ReadOutlookCalendarsTool())
+
+
+class SendMeetingInviteInput(BaseModel):
+    attendee: str = Field(description="E-mail основного приглашаемого")
+    subject: str = Field(description="Тема совещания")
+    start: str = Field(
+        description="Начало: YYYY-MM-DD HH:MM, YYYY-MM-DDTHH:MM или DD.MM.YYYY HH:MM",
+    )
+    duration_minutes: int = Field(default=60, ge=1, le=24 * 60)
+    body: str = Field(default="", description="Текст приглашения")
+    location: str = Field(default="", description="Место проведения")
+    attendees: list[str] = Field(
+        default_factory=list,
+        description="Дополнительные участники (attendee всегда включается в список)",
+    )
+    resources: list[str] = Field(
+        default_factory=list,
+        description="E-mail переговорных (ресурсы Exchange)",
+    )
+    timezone: str | None = Field(
+        default=None,
+        description="Часовой пояс для start (по умолчанию OUTLOOK_TIMEZONE)",
+    )
+
+
+class SendMeetingInviteOutput(BaseModel):
+    status: str
+    from_address: str = Field(alias="from")
+    login: str
+    attendees: list[str]
+    subject: str
+    start: str
+    end: str
+    duration_minutes: int
+    location: str
+    resources: list[str]
+    timezone: str
+
+    model_config = {"populate_by_name": True}
+
+
+async def send_meeting_invite_tool(
+    payload: SendMeetingInviteInput,
+    context: ToolContext,
+) -> SendMeetingInviteOutput:
+    del context
+    extra = [person.strip() for person in payload.attendees if person.strip()]
+    people = [payload.attendee.strip(), *extra]
+    unique_people: list[str] = []
+    seen: set[str] = set()
+    for person in people:
+        key = person.lower()
+        if person and key not in seen:
+            seen.add(key)
+            unique_people.append(person)
+
+    raw = await asyncio.to_thread(
+        dispatch_meeting_invite,
+        attendee=unique_people[0],
+        attendees=unique_people,
+        subject=payload.subject,
+        start=payload.start,
+        duration_minutes=payload.duration_minutes,
+        body=payload.body,
+        location=payload.location,
+        resources=payload.resources,
+        timezone=payload.timezone,
+    )
+    return SendMeetingInviteOutput.model_validate(raw)
+
+
+class SendMeetingInviteTool(Tool):
+    name = "send_meeting_invite"
+    description = (
+        "Отправляет приглашение на совещание через Exchange (EWS) "
+        "от имени учётки Postagent из .env."
+    )
+    agent_description = (
+        "Инструмент send_meeting_invite создаёт встречу в календаре Postagent и "
+        "рассылает приглашения участникам. Укажи attendee, subject, start "
+        "(локальное время), duration_minutes, location, resources (переговорные). "
+        "attendees — дополнительные участники. Нужны OUTLOOK_EMAIL, OUTLOOK_PASSWORD, "
+        "OUTLOOK_SERVER и доступный mailbox с правом отправки приглашений."
+    )
+    input_model = SendMeetingInviteInput
+    output_model = SendMeetingInviteOutput
+    required_permissions = ["send_meeting_invite"]
+    preview_default_params = {
+        "attendee": "user@example.com",
+        "subject": "Совещание",
+        "start": "2026-06-05 14:00",
+        "duration_minutes": 60,
+    }
+
+    async def execute(
+        self,
+        payload: SendMeetingInviteInput,
+        context: ToolContext,
+    ) -> SendMeetingInviteOutput:
+        return await send_meeting_invite_tool(payload, context)
+
+
+register_tool(SendMeetingInviteTool())
