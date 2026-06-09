@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     BROWSER_BLOCKED_SCHEMES: str = "file:,javascript:,data:"
     BROWSER_MAX_TIMEOUT_SECONDS: int = 60
     BROWSER_POLL_INTERVAL_SECONDS: float = 1.0
+    # Runtime Sandbox: разрешить открытый веб (поиск + произвольные сайты), минуя allowlist.
+    # Внутренние/loopback/private IP, localhost, исполняемые файлы и запрещённые схемы блокируются всегда.
+    # Задеплоенные production-агенты остаются на ограничительном allowlist (allow_open_web=False).
+    BROWSER_SANDBOX_OPEN_WEB: bool = True
 
     @property
     def cors_origins(self) -> list[str]:

@@ -12,6 +12,7 @@ from app.tools.executor import ToolExecutor
 from app.tools.registry import tool_registry
 from app.tools.schemas import ToolContext
 from app.tools.system_tools import resolve_current_date
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.llm.gateway import llm_gateway
 
@@ -147,7 +148,13 @@ class ConsultantRunner:
         on_step_finish: StepFinish | None = None,
     ) -> ConsultantRunResult:
         tool_names = _resolve_runtime_tools(blueprint)
-        context = ToolContext.model_construct(db=db, user=user, agent_id=None, task_id=None)
+        context = ToolContext.model_construct(
+            db=db,
+            user=user,
+            agent_id=None,
+            task_id=None,
+            allow_open_web=settings.BROWSER_SANDBOX_OPEN_WEB,
+        )
         steps: list[dict[str, Any]] = []
 
         async def run_tool(order: int, capability: str | None, tool_name: str, params: dict[str, Any]) -> Any:

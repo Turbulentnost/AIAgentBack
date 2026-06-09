@@ -41,7 +41,7 @@ class BrowserRunnerService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    def validate_url(self, url: str) -> None:
+    def validate_url(self, url: str, *, allow_any_domain: bool = False) -> None:
         parsed = urlparse(url)
         scheme = parsed.scheme.lower()
         blocked_schemes = {item.rstrip(":").lower() for item in settings.browser_blocked_schemes}
@@ -54,8 +54,9 @@ class BrowserRunnerService:
         if host in {"localhost"} or host.endswith(".localhost"):
             raise BrowserRunnerError("Локальные адреса запрещены для browser-runner")
 
+        # Внутренние/loopback/private IP блокируются всегда, даже в open-web режиме.
         self._validate_ip_host(host)
-        if not self._is_allowed_domain(host):
+        if not allow_any_domain and not self._is_allowed_domain(host):
             raise BrowserRunnerError("Домен не входит в allowlist browser-runner")
 
         suffix = PurePosixPath(parsed.path or "").suffix.lower()
@@ -69,8 +70,9 @@ class BrowserRunnerService:
         requested_by_user_id: uuid.UUID,
         requested_by_agent_id: uuid.UUID | None = None,
         task_id: uuid.UUID | None = None,
+        allow_any_domain: bool = False,
     ) -> BrowserRun:
-        self.validate_url(payload.url)
+        self.validate_url(payload.url, allow_any_domain=allow_any_domain)
         timeout = min(payload.timeout_seconds, settings.BROWSER_MAX_TIMEOUT_SECONDS)
         run = BrowserRun(
             requested_by_agent_id=requested_by_agent_id or payload.agent_id,

@@ -18,6 +18,7 @@ class AgentBuilderState(BaseAgentState, total=False):
     current_step_index: int
     blueprint: dict | None
     validation_result: dict | None
+    design_summary: dict | None
     clarifying_questions: list[str]
     assistant_messages: list[str]
     attempts: list[dict]

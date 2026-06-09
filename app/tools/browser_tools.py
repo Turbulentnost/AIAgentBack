@@ -51,6 +51,7 @@ async def fetch_page_via_user_browser(
         requested_by_user_id=context.user.id,
         requested_by_agent_id=context.agent_id,
         task_id=context.task_id,
+        allow_any_domain=context.allow_open_web,
     )
     await context.db.commit()
 
@@ -124,6 +125,7 @@ async def web_search(payload: WebSearchInput, context: ToolContext) -> WebSearch
         requested_by_user_id=context.user.id,
         requested_by_agent_id=context.agent_id,
         task_id=context.task_id,
+        allow_any_domain=context.allow_open_web,
     )
     await context.db.commit()
 

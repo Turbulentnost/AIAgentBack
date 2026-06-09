@@ -33,7 +33,7 @@ from app.agents.builder.tools import (
     list_available_tools_catalog,
     render_workflow_graph,
 )
-from app.agents.builder.preview_runner import run_agent_preview
+from app.agents.builder.preview_runner import build_blueprint_summary
 from app.agents.builder.validators import validate_agent_blueprint, validate_required_elements
 from app.core.logging import get_logger
 from app.models.enums import AgentBuilderSessionStatus
@@ -565,40 +565,28 @@ async def prepare_preview(state: AgentBuilderState) -> dict:
     goal = state.get("goal", "")
     blueprint = state.get("blueprint")
 
-    service = state.get("service")
-    preview_result = await run_agent_preview(
+    # Статическая фаза проектирования: НЕ выполняем инструменты, браузер или сетевые вызовы.
+    design_summary = build_blueprint_summary(
         goal=goal,
         requirements=requirements,
         blueprint=blueprint,
-        db=service.db if service is not None else None,
-        user=state.get("current_user"),
+        validation=state.get("validation_result"),
     )
-    requirements["preview_result"] = preview_result
-
-    if preview_result.get("success"):
-        preview_text = preview_result.get("output_text") or ""
-        preview_message = preview_text or (
-            "Blueprint готов. Запустите пробный запуск (Sandbox) в панели по центру, "
-            "чтобы выполнить агента и получить реальный результат."
-        )
-    else:
-        preview_message = (
-            f"Не удалось подготовить пробный запуск: {preview_result.get('error', 'неизвестная ошибка')}. "
-            "Исправьте требования или пересоберите blueprint."
-        )
+    requirements["design_summary"] = design_summary
+    summary_message = design_summary.get("output_text") or "Blueprint сформирован."
 
     conversation = _conversation(state)
-    conversation = append_conversation(conversation, "assistant", preview_message)
+    conversation = append_conversation(conversation, "assistant", summary_message)
     requirements = _store_conversation(requirements, conversation)
 
     return {
         "current_stage": "prepare_preview",
         "collected_requirements": requirements,
         "conversation": conversation,
-        "preview_result": preview_result,
+        "design_summary": design_summary,
         "clarifying_questions": [],
         "requires_user_input": True,
-        "assistant_messages": [preview_message],
+        "assistant_messages": [summary_message],
         "status": AgentBuilderSessionStatus.NEEDS_USER_REVIEW.value,
     }
 

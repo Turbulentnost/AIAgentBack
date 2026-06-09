@@ -15,6 +15,9 @@ class ToolContext(BaseModel):
     user: User
     agent_id: uuid.UUID | None = None
     task_id: uuid.UUID | None = None
+    # Когда True (Runtime Sandbox / runtime), браузерные инструменты могут открывать любой публичный
+    # домен в обход allowlist. По умолчанию False — действует ограничительный allowlist.
+    allow_open_web: bool = False
 
     model_config = {"arbitrary_types_allowed": True}
 

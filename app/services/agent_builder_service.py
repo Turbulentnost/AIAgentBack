@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agents.builder.agent_builder import run_builder_session
 from app.agents.builder.llm import append_conversation
-from app.agents.builder.preview_runner import run_agent_preview
+from app.agents.builder.preview_runner import build_blueprint_summary
 from app.agents.builder.stages import build_design_stages
 from app.agents.builder.validators import validate_required_elements
 from app.agents.builder.tools import slugify_code
@@ -110,12 +110,12 @@ class AgentBuilderService:
 
         from app.schemas.agent_builder import (
             AgentBuilderDesignStageRead,
-            AgentBuilderPreviewRead,
+            AgentBuilderDesignSummaryRead,
             AgentBuilderRequiredElementRead,
         )
 
         required_elements_raw = reqs.get("required_elements") or []
-        preview_raw = reqs.get("preview_result")
+        design_summary_raw = reqs.get("design_summary")
         requirements_validation = reqs.get("requirements_validation") or validate_required_elements(reqs)
 
         if session.status != AgentBuilderSessionStatus.NEEDS_CLARIFICATION:
@@ -155,8 +155,8 @@ class AgentBuilderService:
                 if isinstance(item, dict)
             ],
             requirements_validation=requirements_validation,
-            preview_result=AgentBuilderPreviewRead.model_validate(preview_raw)
-            if isinstance(preview_raw, dict)
+            design_summary=AgentBuilderDesignSummaryRead.model_validate(design_summary_raw)
+            if isinstance(design_summary_raw, dict)
             else None,
             agent_type=reqs.get("agent_type") or (blueprint.agent_type if blueprint else None),
             agent_type_proposal=agent_type_proposal,
@@ -258,15 +258,6 @@ class AgentBuilderService:
             missing = ", ".join(req_validation.get("missing") or [])
             raise AgentBuilderServiceError(f"Не все обязательные элементы заполнены: {missing}")
 
-        latest_sandbox = await self.get_latest_sandbox_run(session.id, current_user=current_user)
-        sandbox_ok = latest_sandbox is not None and latest_sandbox.status == "succeeded"
-        preview = reqs.get("preview_result") or {}
-        preview_ok = bool(preview.get("success") and preview.get("output_text"))
-        if not sandbox_ok and not preview_ok:
-            raise AgentBuilderServiceError(
-                "Сначала выполните пробный запуск (Sandbox) и дождитесь успешного результата"
-            )
-
         validation = validate_agent_blueprint(self._blueprint_dict(blueprint))
         if not validation["valid"]:
             raise AgentBuilderServiceError(f"Blueprint неполный: {', '.join(validation['errors'])}")
@@ -285,34 +276,29 @@ class AgentBuilderService:
             raise AgentBuilderServiceError("Сначала дождитесь формирования blueprint")
 
         reqs = dict(session.collected_requirements or {})
-        preview = await run_agent_preview(
+        # Статическая сводка структуры — без выполнения инструментов и сетевых вызовов.
+        summary = build_blueprint_summary(
             goal=session.goal,
             requirements=reqs,
             blueprint=session.proposed_agent_structure,
-            db=self.db,
-            user=current_user,
+            validation=session.validation_result,
         )
-        reqs["preview_result"] = preview
+        reqs["design_summary"] = summary
         conversation = reqs.get("conversation") if isinstance(reqs.get("conversation"), list) else []
-        if preview.get("success"):
-            message = preview.get("output_text") or (
-                "Blueprint готов. Запустите пробный запуск (Sandbox), чтобы выполнить агента."
-            )
-        else:
-            message = f"Пробный запуск не удался: {preview.get('error', 'неизвестная ошибка')}"
+        message = summary.get("output_text") or "Blueprint сформирован."
         conversation = append_conversation(conversation, "assistant", message)
         reqs["conversation"] = conversation
         session.collected_requirements = reqs
         session.current_stage = "prepare_preview"
-        if preview.get("success"):
+        if summary.get("valid"):
             session.status = AgentBuilderSessionStatus.NEEDS_USER_REVIEW
         await self.db.flush()
         await self._record_attempt(
             session,
-            goal="Пробный запуск агента",
-            success=bool(preview.get("success")),
-            result_summary=(preview.get("output_text") or preview.get("error") or "Пробный запуск")[:500],
-            input_context={"preview_type": preview.get("preview_type")},
+            goal="Статическая сводка blueprint",
+            success=bool(summary.get("valid")),
+            result_summary=(summary.get("output_text") or "Сводка blueprint")[:500],
+            input_context={"summary_type": summary.get("summary_type")},
         )
         return await self.get_session_detail(session.id, current_user=current_user)
 

@@ -116,14 +116,18 @@ class AgentBuilderRequiredElementRead(BaseModel):
     status: str = "pending"
 
 
-class AgentBuilderPreviewRead(BaseModel):
+class AgentBuilderDesignSummaryRead(BaseModel):
+    """Статическая сводка структуры агента (без выполнения инструментов)."""
+
     success: bool
-    preview_type: str | None = None
+    summary_type: str | None = None
     output_text: str | None = None
-    city: str | None = None
-    source: str | None = None
-    source_url: str | None = None
-    error: str | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    runtime_dependencies: list[str] = Field(default_factory=list)
+    input_params: list[str] = Field(default_factory=list)
+    output_format: list[str] = Field(default_factory=list)
+    valid: bool = True
+    errors: list[str] = Field(default_factory=list)
 
 
 class AgentBuilderSessionDetailRead(AgentBuilderSessionRead):
@@ -135,7 +139,7 @@ class AgentBuilderSessionDetailRead(AgentBuilderSessionRead):
     design_stages: list[AgentBuilderDesignStageRead] = Field(default_factory=list)
     required_elements: list[AgentBuilderRequiredElementRead] = Field(default_factory=list)
     requirements_validation: dict[str, Any] | None = None
-    preview_result: AgentBuilderPreviewRead | None = None
+    design_summary: AgentBuilderDesignSummaryRead | None = None
     agent_type: str | None = None
     agent_type_proposal: AgentTypeProposalRead | None = None
 
