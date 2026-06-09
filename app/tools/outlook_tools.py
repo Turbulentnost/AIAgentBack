@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.tools.base import Tool
 from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
 from app.tools.Outlook.read_calendars import fetch_outlook_calendars
+from app.tools.Outlook.reschedule_meeting import dispatch_reschedule_meeting
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
 from app.tools.registry import register_tool
 from app.tools.schemas import ToolContext
@@ -272,3 +273,105 @@ class CancelMeetingTool(Tool):
 
 
 register_tool(CancelMeetingTool())
+
+
+class RescheduleMeetingInput(BaseModel):
+    list_only: bool = Field(
+        default=False,
+        description="Показать совещания в календаре организатора",
+    )
+    days: int = Field(default=14, ge=1, le=365)
+    item_id: str = Field(default="", description="EWS ItemId совещания")
+    changekey: str = Field(default="", description="EWS ChangeKey")
+    subject: str = Field(default="", description="Тема для поиска совещания")
+    start: str = Field(default="", description="Текущее начало для поиска")
+    new_start: str = Field(default="", description="Новое начало совещания")
+    new_end: str = Field(
+        default="",
+        description="Новый конец (иначе сохраняется длительность или duration_minutes)",
+    )
+    duration_minutes: int | None = Field(
+        default=None,
+        ge=1,
+        le=24 * 60,
+        description="Новая длительность в минутах",
+    )
+    location: str | None = Field(
+        default=None,
+        description="Новое место (если не указано — не меняется)",
+    )
+    attendee: str = Field(default="", description="E-mail участника для уточнения поиска")
+    tolerance_minutes: int = Field(default=5, ge=0, le=120)
+    message: str = Field(default="", description="Комментарий в уведомлении о переносе")
+    dry_run: bool = Field(default=False, description="Только показать изменения без переноса")
+    timezone: str | None = Field(
+        default=None,
+        description="Часовой пояс для start/new_start (по умолчанию OUTLOOK_TIMEZONE)",
+    )
+
+
+class RescheduleMeetingOutput(BaseModel):
+    action: str
+    status: str | None = None
+    calendar: str | None = None
+    meetings_count: int | None = None
+    meetings: list[dict[str, Any]] | None = None
+    meeting: dict[str, Any] | None = None
+    new_start: str | None = None
+    new_end: str | None = None
+    location: str | None = None
+    message: str | None = None
+
+
+async def reschedule_meeting_tool(
+    payload: RescheduleMeetingInput,
+    context: ToolContext,
+) -> RescheduleMeetingOutput:
+    del context
+    raw = await asyncio.to_thread(
+        dispatch_reschedule_meeting,
+        list_only=payload.list_only,
+        days=payload.days,
+        item_id=payload.item_id,
+        changekey=payload.changekey,
+        subject=payload.subject,
+        start=payload.start,
+        new_start=payload.new_start,
+        new_end=payload.new_end,
+        duration_minutes=payload.duration_minutes,
+        location=payload.location,
+        attendee=payload.attendee,
+        tolerance_minutes=payload.tolerance_minutes,
+        message=payload.message,
+        dry_run=payload.dry_run,
+        timezone=payload.timezone,
+    )
+    return RescheduleMeetingOutput.model_validate(raw)
+
+
+class RescheduleMeetingTool(Tool):
+    name = "reschedule_meeting"
+    description = (
+        "Переносит совещание в календаре Exchange (EWS) и рассылает обновлённое приглашение."
+    )
+    agent_description = (
+        "Инструмент reschedule_meeting переносит встречу на новое время. "
+        "list_only=true — список совещаний; для переноса укажи new_start и "
+        "item_id (с changekey) или subject + start. new_end или duration_minutes "
+        "задают новую длительность. location меняет место. dry_run=true — "
+        "только проверка. message — комментарий участникам."
+    )
+    input_model = RescheduleMeetingInput
+    output_model = RescheduleMeetingOutput
+    required_permissions = ["reschedule_meeting"]
+    preview_default_params = {"list_only": True, "days": 7}
+
+    async def execute(
+        self,
+        payload: RescheduleMeetingInput,
+        context: ToolContext,
+    ) -> RescheduleMeetingOutput:
+        return await reschedule_meeting_tool(payload, context)
+
+
+register_tool(RescheduleMeetingTool())
