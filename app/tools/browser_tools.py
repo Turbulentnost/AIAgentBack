@@ -4,8 +4,9 @@ import html as html_lib
 import re
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
-from app.agents.tools.registry import AgentToolDefinition, register_tool
-from app.agents.tools.schemas import (
+from app.tools.base import Tool
+from app.tools.registry import register_tool
+from app.tools.schemas import (
     FetchPageViaUserBrowserInput,
     FetchPageViaUserBrowserOutput,
     ToolContext,
@@ -138,21 +139,43 @@ async def web_search(payload: WebSearchInput, context: ToolContext) -> WebSearch
     )
 
 
-register_tool(
-    AgentToolDefinition(
-        name="fetch_page_via_user_browser",
-        description="Открывает разрешенный URL через браузер пользователя и возвращает извлеченное содержимое.",
-        agent_description=(
-            "Инструмент fetch_page_via_user_browser открывает указанную страницу через браузер пользователя "
-            "и возвращает извлеченное содержимое страницы. Используй этот инструмент, если информация доступна "
-            "только через пользовательский браузер, корпоративную сеть, VPN, внутренний портал, web-интерфейс 1С "
-            "или страницу, требующую пользовательской авторизации. Передавай только конкретный URL и цель "
-            "извлечения. Не используй инструмент для произвольного обхода сайтов, массового сканирования или "
-            "открытия непроверенных ссылок."
-        ),
-        handler=fetch_page_via_user_browser,
-        input_model=FetchPageViaUserBrowserInput,
-        output_model=FetchPageViaUserBrowserOutput,
-        required_permissions=["browser_runs.create"],
+class FetchPageViaUserBrowserTool(Tool):
+    name = "fetch_page_via_user_browser"
+    description = "Открывает разрешенный URL через браузер пользователя и возвращает извлеченное содержимое."
+    agent_description = (
+        "Инструмент fetch_page_via_user_browser открывает указанную страницу через браузер пользователя "
+        "и возвращает извлеченное содержимое страницы. Используй этот инструмент, если информация доступна "
+        "только через пользовательский браузер, корпоративную сеть, VPN, внутренний портал, web-интерфейс 1С "
+        "или страницу, требующую пользовательской авторизации. Передавай только конкретный URL и цель "
+        "извлечения. Не используй инструмент для произвольного обхода сайтов, массового сканирования или "
+        "открытия непроверенных ссылок."
     )
-)
+    input_model = FetchPageViaUserBrowserInput
+    output_model = FetchPageViaUserBrowserOutput
+    required_permissions = ["browser_runs.create"]
+
+    async def execute(
+        self, payload: FetchPageViaUserBrowserInput, context: ToolContext
+    ) -> FetchPageViaUserBrowserOutput:
+        return await fetch_page_via_user_browser(payload, context)
+
+
+class WebSearchTool(Tool):
+    name = "web_search"
+    description = "Ищет в поисковике (через браузер пользователя) и возвращает список релевантных сайтов."
+    agent_description = (
+        "Инструмент web_search выполняет поисковый запрос в поисковой системе через браузер пользователя "
+        "и возвращает список найденных сайтов (заголовок и URL). Используй его, когда неизвестно, на каких "
+        "сайтах искать информацию: сначала найди подходящие источники через web_search, затем открой "
+        "конкретные страницы через fetch_page_via_user_browser. Передавай короткий поисковый запрос."
+    )
+    input_model = WebSearchInput
+    output_model = WebSearchOutput
+    required_permissions = ["browser_runs.create"]
+
+    async def execute(self, payload: WebSearchInput, context: ToolContext) -> WebSearchOutput:
+        return await web_search(payload, context)
+
+
+register_tool(FetchPageViaUserBrowserTool())
+register_tool(WebSearchTool())

@@ -12,8 +12,9 @@ from app.agents.builder.tools import (
     slugify_code,
 )
 from app.agents.builder.validators import validate_agent_blueprint
-from app.agents.tools.registry import AgentToolDefinition, register_tool
-from app.agents.tools.schemas import EmptyToolInput, ToolContext
+from app.tools.base import Tool
+from app.tools.registry import register_tool
+from app.tools.schemas import EmptyToolInput, ToolContext
 from app.models.agent_blueprint import AgentBlueprint
 from app.models.enums import AgentBlueprintStatus
 
@@ -112,57 +113,69 @@ async def render_workflow_graph_tool(payload: RenderWorkflowGraphInput, _: ToolC
     return render_workflow_graph(payload.steps)
 
 
-register_tool(
-    AgentToolDefinition(
-        name="list_available_tools",
-        description="Каталог инструментов платформы",
-        agent_description="Возвращает список доступных инструментов агентов платформы",
-        handler=list_available_tools,
-        input_model=EmptyToolInput,
-    )
-)
-register_tool(
-    AgentToolDefinition(
-        name="get_tool_description",
-        description="Описание инструмента",
-        agent_description="Возвращает описание конкретного инструмента по имени",
-        handler=get_tool_description,
-        input_model=GetToolDescriptionInput,
-    )
-)
-register_tool(
-    AgentToolDefinition(
-        name="search_agent_templates",
-        description="Поиск шаблонов агентов",
-        agent_description="Ищет одобренные blueprint агентов как шаблоны",
-        handler=search_agent_templates,
-        input_model=SearchAgentTemplatesInput,
-    )
-)
-register_tool(
-    AgentToolDefinition(
-        name="save_agent_blueprint",
-        description="Сохранение blueprint агента",
-        agent_description="Сохраняет черновик blueprint агента в сессии конструктора",
-        handler=save_agent_blueprint,
-        input_model=SaveAgentBlueprintInput,
-    )
-)
-register_tool(
-    AgentToolDefinition(
-        name="validate_agent_blueprint",
-        description="Валидация blueprint",
-        agent_description="Проверяет полноту blueprint агента",
-        handler=validate_agent_blueprint_tool,
-        input_model=ValidateAgentBlueprintInput,
-    )
-)
-register_tool(
-    AgentToolDefinition(
-        name="render_workflow_graph",
-        description="Построение workflow graph",
-        agent_description="Строит read-only граф workflow по списку шагов",
-        handler=render_workflow_graph_tool,
-        input_model=RenderWorkflowGraphInput,
-    )
-)
+class ListAvailableToolsTool(Tool):
+    name = "list_available_tools"
+    description = "Каталог инструментов платформы"
+    agent_description = "Возвращает список доступных инструментов агентов платформы"
+    input_model = EmptyToolInput
+
+    async def execute(self, payload: EmptyToolInput, context: ToolContext) -> dict[str, Any]:
+        return await list_available_tools(payload, context)
+
+
+class GetToolDescriptionTool(Tool):
+    name = "get_tool_description"
+    description = "Описание инструмента"
+    agent_description = "Возвращает описание конкретного инструмента по имени"
+    input_model = GetToolDescriptionInput
+
+    async def execute(self, payload: GetToolDescriptionInput, context: ToolContext) -> dict[str, Any]:
+        return await get_tool_description(payload, context)
+
+
+class SearchAgentTemplatesTool(Tool):
+    name = "search_agent_templates"
+    description = "Поиск шаблонов агентов"
+    agent_description = "Ищет одобренные blueprint агентов как шаблоны"
+    input_model = SearchAgentTemplatesInput
+
+    async def execute(self, payload: SearchAgentTemplatesInput, context: ToolContext) -> dict[str, Any]:
+        return await search_agent_templates(payload, context)
+
+
+class SaveAgentBlueprintTool(Tool):
+    name = "save_agent_blueprint"
+    description = "Сохранение blueprint агента"
+    agent_description = "Сохраняет черновик blueprint агента в сессии конструктора"
+    input_model = SaveAgentBlueprintInput
+
+    async def execute(self, payload: SaveAgentBlueprintInput, context: ToolContext) -> dict[str, Any]:
+        return await save_agent_blueprint(payload, context)
+
+
+class ValidateAgentBlueprintTool(Tool):
+    name = "validate_agent_blueprint"
+    description = "Валидация blueprint"
+    agent_description = "Проверяет полноту blueprint агента"
+    input_model = ValidateAgentBlueprintInput
+
+    async def execute(self, payload: ValidateAgentBlueprintInput, context: ToolContext) -> dict[str, Any]:
+        return await validate_agent_blueprint_tool(payload, context)
+
+
+class RenderWorkflowGraphTool(Tool):
+    name = "render_workflow_graph"
+    description = "Построение workflow graph"
+    agent_description = "Строит read-only граф workflow по списку шагов"
+    input_model = RenderWorkflowGraphInput
+
+    async def execute(self, payload: RenderWorkflowGraphInput, context: ToolContext) -> dict[str, Any]:
+        return await render_workflow_graph_tool(payload, context)
+
+
+register_tool(ListAvailableToolsTool())
+register_tool(GetToolDescriptionTool())
+register_tool(SearchAgentTemplatesTool())
+register_tool(SaveAgentBlueprintTool())
+register_tool(ValidateAgentBlueprintTool())
+register_tool(RenderWorkflowGraphTool())

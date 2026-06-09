@@ -4,7 +4,7 @@ import re
 from typing import Any
 from urllib.parse import quote
 
-from app.agents.tools.registry import agent_tool_registry
+from app.tools.registry import tool_registry
 
 
 def _text_chunks(goal: str, requirements: dict[str, Any]) -> list[str]:
@@ -65,7 +65,7 @@ def _normalize_city(value: str) -> str:
 
 
 def infer_preview_tool_params(tool_name: str, goal: str, requirements: dict[str, Any]) -> dict[str, Any] | None:
-    definition = agent_tool_registry.get(tool_name)
+    definition = tool_registry.get(tool_name)
     if definition and definition.preview_default_params:
         return dict(definition.preview_default_params)
 
@@ -78,6 +78,11 @@ def infer_preview_tool_params(tool_name: str, goal: str, requirements: dict[str,
         if not query:
             return None
         return {"query": query, "limit": 5}
+    if tool_name == "web_search":
+        query = goal.strip()[:400]
+        if not query:
+            return None
+        return {"query": query, "max_results": 8}
     if tool_name == "fetch_page_via_user_browser":
         url = find_http_url(goal, requirements)
         if url:

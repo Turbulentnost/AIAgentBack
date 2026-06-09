@@ -20,6 +20,7 @@ CAPABILITY_CATALOG: dict[str, dict[str, Any]] = {
         "suggested_tools": [
             "search_knowledge_base",
             "list_available_knowledge_bases",
+            "web_search",
             "fetch_page_via_user_browser",
             "get_current_date",
         ],

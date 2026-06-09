@@ -57,9 +57,9 @@ def validate_agent_blueprint(blueprint: dict[str, Any] | None) -> dict[str, Any]
     if len(nodes) > 1 and not edges:
         warnings.append("workflow_graph.edges пуст при нескольких узлах")
 
-    from app.agents.tools.registry import agent_tool_registry
+    from app.tools.registry import tool_registry
 
-    tool_names = {tool.name for tool in agent_tool_registry.list()}
+    tool_names = {tool.name for tool in tool_registry.list()}
     for node in nodes:
         if node.get("type") in {"start", "end"}:
             continue

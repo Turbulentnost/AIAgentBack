@@ -5,8 +5,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field
 
-from app.agents.tools.registry import AgentToolDefinition, register_tool
-from app.agents.tools.schemas import ToolContext
+from app.tools.base import Tool
+from app.tools.registry import register_tool
+from app.tools.schemas import ToolContext
 
 WEEKDAY_RU = (
     "понедельник",
@@ -72,21 +73,23 @@ async def get_current_date(payload: GetCurrentDateInput, context: ToolContext) -
     return resolve_current_date(payload.timezone)
 
 
-register_tool(
-    AgentToolDefinition(
-        name="get_current_date",
-        description="Возвращает текущую дату и день недели в указанном часовом поясе.",
-        agent_description=(
-            "Инструмент get_current_date возвращает сегодняшнюю дату, день недели и время "
-            "в заданном часовом поясе (по умолчанию Europe/Moscow). "
-            "Используй его, когда в задаче фигурирует «сегодня», «на сегодня», «текущая дата» "
-            "или нужно определить актуальный день для поиска информации."
-        ),
-        handler=get_current_date,
-        input_model=GetCurrentDateInput,
-        output_model=GetCurrentDateOutput,
-        preview_safe=True,
-        preview_always=True,
-        preview_default_params={"timezone": "Europe/Moscow"},
+class GetCurrentDateTool(Tool):
+    name = "get_current_date"
+    description = "Возвращает текущую дату и день недели в указанном часовом поясе."
+    agent_description = (
+        "Инструмент get_current_date возвращает сегодняшнюю дату, день недели и время "
+        "в заданном часовом поясе (по умолчанию Europe/Moscow). "
+        "Используй его, когда в задаче фигурирует «сегодня», «на сегодня», «текущая дата» "
+        "или нужно определить актуальный день для поиска информации."
     )
-)
+    input_model = GetCurrentDateInput
+    output_model = GetCurrentDateOutput
+    preview_safe = True
+    preview_always = True
+    preview_default_params = {"timezone": "Europe/Moscow"}
+
+    async def execute(self, payload: GetCurrentDateInput, context: ToolContext) -> GetCurrentDateOutput:
+        return await get_current_date(payload, context)
+
+
+register_tool(GetCurrentDateTool())

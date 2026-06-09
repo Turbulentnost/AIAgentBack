@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.agents.tools.registry import AgentToolDefinition, register_tool
+from app.tools.base import StubTool
+from app.tools.registry import register_tool
 
 
 class ReportToolInput(BaseModel):
@@ -12,7 +13,7 @@ class ReportToolInput(BaseModel):
 
 def _register_stub(name: str, description: str, agent_description: str) -> None:
     register_tool(
-        AgentToolDefinition(
+        StubTool(
             name=name,
             description=description,
             agent_description=agent_description,

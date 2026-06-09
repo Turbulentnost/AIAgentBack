@@ -24,7 +24,7 @@ def slugify_code(name: str) -> str:
 
 
 def list_available_tools_catalog() -> list[dict[str, Any]]:
-    from app.agents.tools.registry import agent_tool_registry
+    from app.tools.registry import tool_registry
 
     return [
         {
@@ -33,7 +33,7 @@ def list_available_tools_catalog() -> list[dict[str, Any]]:
             "implemented": tool.implemented,
             "required_permissions": tool.required_permissions,
         }
-        for tool in agent_tool_registry.list()
+        for tool in tool_registry.list()
     ]
 
 
@@ -99,14 +99,22 @@ def default_plan_steps() -> list[dict[str, str]]:
 
 
 def blueprint_from_llm(goal: str, llm: "BlueprintLLMResponse", requirements: dict[str, Any]) -> dict[str, Any]:
-    from app.agents.tools.registry import agent_tool_registry
+    from app.agents.builder.meta_tools import BUILDER_META_TOOLS
+    from app.tools.registry import tool_registry
 
-    allowed_tools = {tool.name for tool in agent_tool_registry.list() if tool.implemented}
+    allowed_tools = {
+        tool.name
+        for tool in tool_registry.list()
+        if tool.implemented and tool.name not in BUILDER_META_TOOLS
+    }
     tools = [tool for tool in llm.tools if tool in allowed_tools]
     if not tools:
-        tools = list(requirements.get("recommended_tools") or [])[:5]
+        tools = [
+            tool for tool in (requirements.get("recommended_tools") or [])
+            if tool not in BUILDER_META_TOOLS
+        ][:5]
     if not tools:
-        tools = [tool.name for tool in agent_tool_registry.list() if tool.implemented][:5]
+        tools = sorted(allowed_tools)[:5]
 
     agent_type = requirements.get("agent_type")
     workflow_capability_steps: list[dict[str, str]] = []

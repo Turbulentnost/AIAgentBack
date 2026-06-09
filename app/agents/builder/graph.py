@@ -439,8 +439,14 @@ async def execute_plan_step(state: AgentBuilderState) -> dict:
     title_lower = step["title"].lower()
     description_lower = (step.get("description") or "").lower()
     if any(word in title_lower or word in description_lower for word in ("инструмент", "tool")):
+        from app.agents.builder.meta_tools import BUILDER_META_TOOLS
+
         catalog = list_available_tools_catalog()
-        implemented = [item["name"] for item in catalog if item["implemented"]]
+        implemented = [
+            item["name"]
+            for item in catalog
+            if item["implemented"] and item["name"] not in BUILDER_META_TOOLS
+        ]
         result["tools"] = implemented[:8]
         requirements["recommended_tools"] = result["tools"]
     if any(word in title_lower or word in description_lower for word in ("workflow", "процесс", "этап", "граф")):
@@ -571,15 +577,13 @@ async def prepare_preview(state: AgentBuilderState) -> dict:
 
     if preview_result.get("success"):
         preview_text = preview_result.get("output_text") or ""
-        source = preview_result.get("source") or "preview"
-        preview_message = (
-            f"Пробный запуск агента выполнен ({source}).\n\n"
-            f"Результат:\n{preview_text}\n\n"
-            "Если результат вас устраивает — нажмите «Зафиксировать структуру»."
+        preview_message = preview_text or (
+            "Blueprint готов. Запустите пробный запуск (Sandbox) в панели по центру, "
+            "чтобы выполнить агента и получить реальный результат."
         )
     else:
         preview_message = (
-            f"Пробный запуск не удался: {preview_result.get('error', 'неизвестная ошибка')}. "
+            f"Не удалось подготовить пробный запуск: {preview_result.get('error', 'неизвестная ошибка')}. "
             "Исправьте требования или пересоберите blueprint."
         )
 

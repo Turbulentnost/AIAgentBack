@@ -15,7 +15,7 @@ from app.agents.builder.stages import build_design_stages
 from app.agents.builder.validators import validate_required_elements
 from app.agents.builder.tools import slugify_code
 from app.agents.builder.validators import validate_agent_blueprint
-from app.agents.tools.registry import agent_tool_registry
+from app.tools.registry import tool_registry
 from app.models.agent_blueprint import AgentBlueprint
 from app.models.agent_builder_attempt import AgentBuilderAttempt
 from app.models.agent_builder_plan import AgentBuilderPlan, AgentBuilderPlanStep
@@ -258,10 +258,13 @@ class AgentBuilderService:
             missing = ", ".join(req_validation.get("missing") or [])
             raise AgentBuilderServiceError(f"Не все обязательные элементы заполнены: {missing}")
 
+        latest_sandbox = await self.get_latest_sandbox_run(session.id, current_user=current_user)
+        sandbox_ok = latest_sandbox is not None and latest_sandbox.status == "succeeded"
         preview = reqs.get("preview_result") or {}
-        if not preview.get("success") or not preview.get("output_text"):
+        preview_ok = bool(preview.get("success") and preview.get("output_text"))
+        if not sandbox_ok and not preview_ok:
             raise AgentBuilderServiceError(
-                "Сначала дождитесь успешного пробного запуска агента и проверьте результат"
+                "Сначала выполните пробный запуск (Sandbox) и дождитесь успешного результата"
             )
 
         validation = validate_agent_blueprint(self._blueprint_dict(blueprint))
@@ -292,9 +295,8 @@ class AgentBuilderService:
         reqs["preview_result"] = preview
         conversation = reqs.get("conversation") if isinstance(reqs.get("conversation"), list) else []
         if preview.get("success"):
-            message = (
-                f"Пробный запуск агента выполнен ({preview.get('source', 'preview')}).\n\n"
-                f"Результат:\n{preview.get('output_text', '')}"
+            message = preview.get("output_text") or (
+                "Blueprint готов. Запустите пробный запуск (Sandbox), чтобы выполнить агента."
             )
         else:
             message = f"Пробный запуск не удался: {preview.get('error', 'неизвестная ошибка')}"
@@ -400,7 +402,7 @@ class AgentBuilderService:
                 implemented=tool.implemented,
                 required_permissions=tool.required_permissions,
             )
-            for tool in agent_tool_registry.list()
+            for tool in tool_registry.list()
         ]
 
     async def save_plan(self, session_id: str, steps: list[dict[str, str]], *, current_user: User) -> AgentBuilderPlan:

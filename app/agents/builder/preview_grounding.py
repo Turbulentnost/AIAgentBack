@@ -9,15 +9,17 @@ from app.agents.builder.preview_tool_params import (
     has_substantive_preview_data,
     infer_preview_tool_params,
 )
-from app.agents.tools.registry import agent_tool_registry
-from app.agents.tools.schemas import EmptyToolInput, ToolContext
-from app.agents.tools.system_tools import resolve_current_date
+from app.tools.registry import tool_registry
+from app.tools.schemas import EmptyToolInput, ToolContext
+from app.tools.system_tools import resolve_current_date
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 def _candidate_tool_names(blueprint: dict[str, Any] | None, requirements: dict[str, Any]) -> list[str]:
+    from app.agents.builder.meta_tools import BUILDER_META_TOOLS
+
     names: list[str] = []
     for source in (
         (blueprint or {}).get("tools"),
@@ -30,6 +32,8 @@ def _candidate_tool_names(blueprint: dict[str, Any] | None, requirements: dict[s
     seen: set[str] = set()
     ordered: list[str] = []
     for name in names:
+        if name in BUILDER_META_TOOLS:
+            continue
         if name not in seen:
             seen.add(name)
             ordered.append(name)
@@ -61,15 +65,15 @@ async def collect_preview_grounding(
     for name in blueprint_tools:
         if name not in to_run:
             to_run.append(name)
-    for definition in agent_tool_registry.list():
+    for definition in tool_registry.list():
         if definition.preview_always and definition.name not in to_run:
             to_run.append(definition.name)
 
     for tool_name in to_run:
         if tool_name == "get_current_date":
             continue
-        definition = agent_tool_registry.get(tool_name)
-        if definition is None or not definition.implemented or definition.handler is None:
+        definition = tool_registry.get(tool_name)
+        if definition is None or not definition.implemented:
             skipped_tools.append(tool_name)
             continue
 
@@ -89,7 +93,7 @@ async def collect_preview_grounding(
                 else EmptyToolInput()
             )
             context = ToolContext(db=db, user=user)
-            response = await definition.handler(payload, context)
+            response = await definition.execute(payload, context)
             tool_results[tool_name] = _dump_tool_result(response)
         except Exception as exc:
             logger.warning("builder.preview_grounding_tool_failed", tool=tool_name, error=str(exc))

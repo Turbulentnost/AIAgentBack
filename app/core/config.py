@@ -98,7 +98,8 @@ class Settings(BaseSettings):
     EMBEDDINGS_MAX_TEXT_LENGTH: int = 20000
     BROWSER_ALLOWED_DOMAINS: str = (
         "1c.company.local,docs.company.local,portal.company.local,edo.company.local,"
-        "wttr.in,pogoda.yandex.ru,yandex.ru,gismeteo.ru,www.gismeteo.ru,meteoinfo.ru"
+        "wttr.in,pogoda.yandex.ru,yandex.ru,gismeteo.ru,www.gismeteo.ru,meteoinfo.ru,"
+        "duckduckgo.com,html.duckduckgo.com,www.duckduckgo.com"
     )
     BROWSER_BLOCKED_SCHEMES: str = "file:,javascript:,data:"
     BROWSER_MAX_TIMEOUT_SECONDS: int = 60

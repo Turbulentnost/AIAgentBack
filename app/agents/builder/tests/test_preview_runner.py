@@ -15,7 +15,7 @@ def test_build_partial_preview_message():
     }
     text = build_partial_preview_message(grounding)
     assert "9 июня 2026" in text
-    assert "fetch_page_via_user_browser" in text
+    assert "Sandbox" in text
     assert "[" not in text
     assert "плейсхолдер" not in text.lower()
 
@@ -35,7 +35,7 @@ async def test_run_agent_preview_partial_skips_llm():
 
     assert result["success"] is True
     assert result["preview_type"] == "partial_grounding"
-    assert "частично" in result["output_text"].lower()
+    assert "Sandbox" in result["output_text"]
     mock_generate.assert_not_called()
 
 

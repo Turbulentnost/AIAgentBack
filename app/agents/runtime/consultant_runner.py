@@ -5,11 +5,13 @@ from collections.abc import Awaitable, Callable
 from time import perf_counter
 from typing import Any
 
+import app.tools  # noqa: F401  # ensure all tools are registered in any process that runs agents
+from app.agents.builder.meta_tools import BUILDER_META_TOOLS
 from app.agents.builder.preview_tool_params import infer_preview_tool_params
-from app.agents.tools.executor import ToolExecutor
-from app.agents.tools.registry import agent_tool_registry
-from app.agents.tools.schemas import ToolContext
-from app.agents.tools.system_tools import resolve_current_date
+from app.tools.executor import ToolExecutor
+from app.tools.registry import tool_registry
+from app.tools.schemas import ToolContext
+from app.tools.system_tools import resolve_current_date
 from app.core.logging import get_logger
 from app.llm.gateway import llm_gateway
 
@@ -18,16 +20,7 @@ logger = get_logger(__name__)
 MAX_ITERATIONS = 6
 
 # Builder/meta tools that must never run inside a consultant sandbox execution.
-EXCLUDED_RUNTIME_TOOLS = frozenset(
-    {
-        "list_available_tools",
-        "get_tool_description",
-        "search_agent_templates",
-        "save_agent_blueprint",
-        "validate_agent_blueprint",
-        "render_workflow_graph",
-    }
-)
+EXCLUDED_RUNTIME_TOOLS = BUILDER_META_TOOLS
 
 # Callback signatures used to persist a live trace.
 StepStart = Callable[[dict[str, Any]], Awaitable[Any]]
@@ -57,12 +50,12 @@ def _resolve_runtime_tools(blueprint: dict[str, Any]) -> list[str]:
     for name in blueprint_tools:
         if name in EXCLUDED_RUNTIME_TOOLS:
             continue
-        definition = agent_tool_registry.get(name)
+        definition = tool_registry.get(name)
         if definition is None or not definition.implemented:
             continue
         if name not in resolved:
             resolved.append(name)
-    if "get_current_date" not in resolved and agent_tool_registry.get("get_current_date"):
+    if "get_current_date" not in resolved and tool_registry.get("get_current_date"):
         resolved.insert(0, "get_current_date")
     return resolved
 
@@ -70,7 +63,7 @@ def _resolve_runtime_tools(blueprint: dict[str, Any]) -> list[str]:
 def _openai_tools_schema(tool_names: list[str]) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     for name in tool_names:
-        definition = agent_tool_registry.get(name)
+        definition = tool_registry.get(name)
         if definition is None:
             continue
         parameters = definition.input_schema or {"type": "object", "properties": {}}
@@ -133,7 +126,7 @@ def _summarize_result(tool_name: str, params: dict[str, Any], result: Any) -> di
 
 
 def _label_for_tool(tool_name: str) -> str:
-    definition = agent_tool_registry.get(tool_name)
+    definition = tool_registry.get(tool_name)
     if definition is not None and definition.description:
         return f"{tool_name}: {definition.description}"
     return tool_name
@@ -306,7 +299,7 @@ class ConsultantRunner:
         collected: list[dict[str, Any]] = []
         order = order_start
         for tool_name in tool_names:
-            definition = agent_tool_registry.get(tool_name)
+            definition = tool_registry.get(tool_name)
             params = infer_preview_tool_params(tool_name, test_query, requirements)
             if params is None and definition is not None and definition.preview_default_params:
                 params = dict(definition.preview_default_params)

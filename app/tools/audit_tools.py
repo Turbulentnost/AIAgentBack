@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.agents.tools.registry import AgentToolDefinition, register_tool
+from app.tools.base import StubTool
+from app.tools.registry import register_tool
 
 
 class AuditToolInput(BaseModel):
@@ -11,7 +12,7 @@ class AuditToolInput(BaseModel):
 
 
 register_tool(
-    AgentToolDefinition(
+    StubTool(
         name="list_agent_audit_events",
         description="Возвращает аудит действий агента по задаче или ресурсу.",
         agent_description=(

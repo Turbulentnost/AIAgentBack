@@ -11,21 +11,14 @@ logger = get_logger(__name__)
 
 def build_partial_preview_message(grounding: dict[str, Any]) -> str:
     current = grounding.get("current_date") or {}
-    date_label = current.get("date_human") or current.get("date_iso") or "неизвестно"
-    skipped = grounding.get("skipped_tools") or []
-    errors = grounding.get("errors") or {}
+    date_label = current.get("date_human") or current.get("date_ru") or current.get("date_iso") or "неизвестно"
     lines = [
-        f"Пробный запуск выполнен частично. Текущая дата: {date_label}.",
+        f"Blueprint готов. Текущая дата: {date_label}.",
         "",
-        "Полный ответ пока недоступен: в preview не удалось получить данные из внешних источников "
-        "(браузер, базы знаний и т.д.). После фиксации структуры агент выполнит все шаги blueprint.",
+        "Чтобы получить настоящий результат работы агента (с реальными данными из браузера и баз знаний), "
+        "нажмите «Запустить пробный запуск (Sandbox)» в панели по центру — агент выполнит все шаги blueprint "
+        "в реальном времени и покажет трассировку, анализ и итоговый ответ.",
     ]
-    if skipped:
-        lines.extend(["", f"Не выполнено в preview: {', '.join(skipped)}."])
-    if errors:
-        lines.append("")
-        for tool, err in errors.items():
-            lines.append(f"• {tool}: {err}")
     return "\n".join(lines)
 
 

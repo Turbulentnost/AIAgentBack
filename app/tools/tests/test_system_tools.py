@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.tools.schemas import ToolContext
-from app.agents.tools.system_tools import GetCurrentDateInput, get_current_date, resolve_current_date
+from app.tools.schemas import ToolContext
+from app.tools.system_tools import GetCurrentDateInput, get_current_date, resolve_current_date
 
 
 def test_resolve_current_date_moscow():

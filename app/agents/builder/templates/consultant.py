@@ -11,8 +11,8 @@ KNOWLEDGE_TOOL_HINTS = (
     "list_available_knowledge_bases",
     "get_knowledge_fragment",
     "get_document_text",
+    "web_search",
     "fetch_page_via_user_browser",
-    "get_tool_description",
 )
 
 CONSULTANT_FORBIDDEN_ELEMENT_KEYS = frozenset(
@@ -76,7 +76,13 @@ def resolve_knowledge_sources_from_tools(
     tools_catalog: list[dict[str, Any]],
     goal: str = "",
 ) -> dict[str, Any]:
-    implemented = [tool for tool in tools_catalog if tool.get("implemented")]
+    from app.agents.builder.meta_tools import BUILDER_META_TOOLS
+
+    implemented = [
+        tool
+        for tool in tools_catalog
+        if tool.get("implemented") and tool.get("name") not in BUILDER_META_TOOLS
+    ]
     goal_lower = goal.lower()
 
     selected: list[dict[str, Any]] = []
