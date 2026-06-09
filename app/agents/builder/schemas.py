@@ -13,6 +13,9 @@ class WorkflowGraphNode(BaseModel):
     id: str
     label: str
     type: str = "step"
+    capability: str | None = None
+    goal: str | None = None
+    node_kind: str = "task"
 
 
 class WorkflowGraphEdge(BaseModel):

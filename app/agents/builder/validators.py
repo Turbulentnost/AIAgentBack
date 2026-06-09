@@ -2,9 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
+
 def _element_has_value(item: dict[str, Any]) -> bool:
     value = item.get("value")
     return bool(value and str(value).strip())
+
+
+def _element_satisfied(item: dict[str, Any]) -> bool:
+    if item.get("auto_resolved"):
+        return True
+    if _element_has_value(item):
+        return True
+    from app.agents.builder.templates.consultant import CONSULTANT_CONFIDENCE_THRESHOLD
+
+    confidence = item.get("confidence")
+    if confidence is not None and float(confidence) >= CONSULTANT_CONFIDENCE_THRESHOLD:
+        return True
+    return False
 
 
 REQUIRED_BLUEPRINT_SECTIONS = (
@@ -43,6 +57,22 @@ def validate_agent_blueprint(blueprint: dict[str, Any] | None) -> dict[str, Any]
     if len(nodes) > 1 and not edges:
         warnings.append("workflow_graph.edges пуст при нескольких узлах")
 
+    from app.agents.tools.registry import agent_tool_registry
+
+    tool_names = {tool.name for tool in agent_tool_registry.list()}
+    for node in nodes:
+        if node.get("type") in {"start", "end"}:
+            continue
+        capability = node.get("capability")
+        goal = node.get("goal")
+        node_id = str(node.get("id") or "")
+        if not capability and not goal:
+            errors.append(f"Узел workflow '{node.get('label')}' должен иметь capability или goal")
+        if capability and capability in tool_names and not goal:
+            warnings.append(
+                f"Узел '{node.get('label')}' использует имя tool как capability — используйте capability id"
+            )
+
     prompts = blueprint.get("prompts") or {}
     if not prompts.get("system"):
         warnings.append("prompts.system не задан")
@@ -63,7 +93,7 @@ def validate_required_elements(requirements: dict[str, Any] | None) -> dict[str,
         missing = [
             item.get("label") or item.get("key")
             for item in elements
-            if item.get("required", True) and not _element_has_value(item)
+            if item.get("required", True) and not _element_satisfied(item)
         ]
         return {
             "valid": len(missing) == 0,

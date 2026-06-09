@@ -11,6 +11,7 @@ from app.models.enums import (
     AgentBuilderPlanStatus,
     AgentBuilderPlanStepStatus,
     AgentBuilderSessionStatus,
+    AgentType,
 )
 
 
@@ -57,11 +58,19 @@ class AgentBuilderAttemptRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AgentTypeProposalRead(BaseModel):
+    proposed_agent_type: str | None = None
+    confidence: float | None = None
+    reasoning: str | None = None
+    confirmed: bool = False
+
+
 class AgentBlueprintRead(BaseModel):
     id: uuid.UUID
     name: str
     code: str
     description: str | None = None
+    agent_type: str | None = None
     status: AgentBlueprintStatus
     version: int
     input_schema: dict[str, Any] | None = None
@@ -127,6 +136,8 @@ class AgentBuilderSessionDetailRead(AgentBuilderSessionRead):
     required_elements: list[AgentBuilderRequiredElementRead] = Field(default_factory=list)
     requirements_validation: dict[str, Any] | None = None
     preview_result: AgentBuilderPreviewRead | None = None
+    agent_type: str | None = None
+    agent_type_proposal: AgentTypeProposalRead | None = None
 
 
 class AgentBuilderToolCatalogItem(BaseModel):
@@ -134,3 +145,36 @@ class AgentBuilderToolCatalogItem(BaseModel):
     description: str
     implemented: bool
     required_permissions: list[str] = Field(default_factory=list)
+
+
+class SandboxStepRead(BaseModel):
+    id: uuid.UUID
+    order_index: int
+    title: str | None = None
+    capability: str | None = None
+    tool_name: str | None = None
+    status: str
+    request: dict[str, Any] | None = None
+    result_summary: dict[str, Any] | None = None
+    duration_ms: int | None = None
+    error_message: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class SandboxRunStartCreate(BaseModel):
+    test_query: str | None = None
+
+
+class SandboxRunRead(BaseModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    status: str
+    test_query: str | None = None
+    final_answer: str | None = None
+    stats: dict[str, Any] | None = None
+    executed_graph: dict[str, Any] | None = None
+    error_message: str | None = None
+    steps: list[SandboxStepRead] = Field(default_factory=list)
+
+    model_config = {"from_attributes": True}

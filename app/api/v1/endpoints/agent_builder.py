@@ -14,6 +14,8 @@ from app.schemas.agent_builder import (
     AgentBuilderSessionDetailRead,
     AgentBuilderSessionRead,
     AgentBuilderToolCatalogItem,
+    SandboxRunRead,
+    SandboxRunStartCreate,
 )
 from app.services.agent_builder_service import AgentBuilderService, AgentBuilderServiceError
 
@@ -136,6 +138,48 @@ async def regenerate(session_id: uuid.UUID, db: DbSession, current_user: Current
     except AgentBuilderServiceError as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/sandbox-run", response_model=SandboxRunRead, status_code=status.HTTP_201_CREATED)
+async def start_sandbox_run(
+    session_id: uuid.UUID,
+    payload: SandboxRunStartCreate,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    try:
+        run = await AgentBuilderService(db).start_sandbox_run(
+            session_id,
+            test_query=payload.test_query,
+            current_user=current_user,
+        )
+        return SandboxRunRead.model_validate(run)
+    except AgentBuilderServiceError as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/sandbox-run", response_model=SandboxRunRead | None)
+async def get_latest_sandbox_run(session_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    try:
+        run = await AgentBuilderService(db).get_latest_sandbox_run(session_id, current_user=current_user)
+        return SandboxRunRead.model_validate(run) if run is not None else None
+    except AgentBuilderServiceError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/sandbox-run/{run_id}", response_model=SandboxRunRead)
+async def get_sandbox_run(
+    session_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    try:
+        run = await AgentBuilderService(db).get_sandbox_run(session_id, run_id, current_user=current_user)
+        return SandboxRunRead.model_validate(run)
+    except AgentBuilderServiceError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
 
 @router.get("/tools", response_model=list[AgentBuilderToolCatalogItem])

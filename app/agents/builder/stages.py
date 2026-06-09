@@ -2,6 +2,7 @@ from __future__ import annotations
 
 DESIGN_STAGES: tuple[tuple[str, str], ...] = (
     ("understand_goal", "Понимание цели"),
+    ("classify_agent_type", "Определение типа агента"),
     ("ask_clarifying_questions", "Сбор всех требований"),
     ("create_plan", "Планирование"),
     ("execute_plan_step", "Выполнение плана"),

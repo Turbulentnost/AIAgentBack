@@ -237,6 +237,8 @@ register_tool(
         input_model=ListAvailableKnowledgeBasesInput,
         output_model=ListAvailableKnowledgeBasesOutput,
         required_permissions=["knowledge_base.list"],
+        preview_safe=True,
+        preview_default_params={"query": None},
     )
 )
 
@@ -254,6 +256,7 @@ register_tool(
         input_model=SearchKnowledgeBaseInput,
         output_model=SearchKnowledgeBaseOutput,
         required_permissions=["knowledge_base.search"],
+        preview_safe=True,
     )
 )
 

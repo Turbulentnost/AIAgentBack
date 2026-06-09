@@ -6,6 +6,7 @@ from app.agents.tools import browser_tools as _browser_tools  # noqa: F401
 from app.agents.tools import document_tools as _document_tools  # noqa: F401
 from app.agents.tools import knowledge_base_tools as _knowledge_base_tools  # noqa: F401
 from app.agents.tools import report_tools as _report_tools  # noqa: F401
+from app.agents.tools import system_tools as _system_tools  # noqa: F401
 from app.agents.tools import task_tools as _task_tools  # noqa: F401
 from app.agents.tools.executor import ToolExecutor
 from app.agents.tools.registry import AgentToolDefinition, agent_tool_registry, register_tool

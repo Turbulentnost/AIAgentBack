@@ -96,7 +96,10 @@ class Settings(BaseSettings):
     EMBEDDINGS_TIMEOUT_SECONDS: int = 60
     EMBEDDINGS_ALLOW_CPU_FALLBACK: bool = True
     EMBEDDINGS_MAX_TEXT_LENGTH: int = 20000
-    BROWSER_ALLOWED_DOMAINS: str = "1c.company.local,docs.company.local,portal.company.local,edo.company.local"
+    BROWSER_ALLOWED_DOMAINS: str = (
+        "1c.company.local,docs.company.local,portal.company.local,edo.company.local,"
+        "wttr.in,pogoda.yandex.ru,yandex.ru,gismeteo.ru,www.gismeteo.ru,meteoinfo.ru"
+    )
     BROWSER_BLOCKED_SCHEMES: str = "file:,javascript:,data:"
     BROWSER_MAX_TIMEOUT_SECONDS: int = 60
     BROWSER_POLL_INTERVAL_SECONDS: float = 1.0

@@ -19,6 +19,7 @@ from app.agents.tools.registry import agent_tool_registry
 from app.models.agent_blueprint import AgentBlueprint
 from app.models.agent_builder_attempt import AgentBuilderAttempt
 from app.models.agent_builder_plan import AgentBuilderPlan, AgentBuilderPlanStep
+from app.models.agent_builder_sandbox import AgentBuilderSandboxRun
 from app.models.agent_builder_session import AgentBuilderSession
 from app.models.enums import (
     AgentBlueprintStatus,
@@ -122,6 +123,15 @@ class AgentBuilderService:
         elif requirements_validation.get("valid"):
             clarifying_questions = []
         design_stages = build_design_stages(session.current_stage, session.status.value)
+        proposal_meta = reqs.get("agent_type_proposal_meta") or {}
+        from app.schemas.agent_builder import AgentTypeProposalRead
+
+        agent_type_proposal = AgentTypeProposalRead(
+            proposed_agent_type=reqs.get("agent_type_proposal"),
+            confidence=proposal_meta.get("confidence"),
+            reasoning=proposal_meta.get("reasoning"),
+            confirmed=bool(reqs.get("agent_type_confirmed")),
+        )
 
         return AgentBuilderSessionDetailRead(
             id=session.id,
@@ -148,6 +158,8 @@ class AgentBuilderService:
             preview_result=AgentBuilderPreviewRead.model_validate(preview_raw)
             if isinstance(preview_raw, dict)
             else None,
+            agent_type=reqs.get("agent_type") or (blueprint.agent_type if blueprint else None),
+            agent_type_proposal=agent_type_proposal,
         )
 
     async def send_message(self, session_id: uuid.UUID, message: str, *, current_user: User) -> AgentBuilderSessionDetailRead:
@@ -274,6 +286,8 @@ class AgentBuilderService:
             goal=session.goal,
             requirements=reqs,
             blueprint=session.proposed_agent_structure,
+            db=self.db,
+            user=current_user,
         )
         reqs["preview_result"] = preview
         conversation = reqs.get("conversation") if isinstance(reqs.get("conversation"), list) else []
@@ -299,6 +313,76 @@ class AgentBuilderService:
             input_context={"preview_type": preview.get("preview_type")},
         )
         return await self.get_session_detail(session.id, current_user=current_user)
+
+    async def start_sandbox_run(
+        self,
+        session_id: uuid.UUID,
+        *,
+        test_query: str | None,
+        current_user: User,
+    ) -> AgentBuilderSandboxRun:
+        session = await self.get_session(session_id, current_user=current_user)
+        if session.proposed_agent_structure is None:
+            raise AgentBuilderServiceError("Сначала дождитесь формирования blueprint")
+
+        query = (test_query or "").strip() or session.goal
+        run = AgentBuilderSandboxRun(
+            session_id=session.id,
+            requested_by_user_id=current_user.id,
+            status="pending",
+            test_query=query,
+        )
+        self.db.add(run)
+        await self.db.flush()
+        run_id = run.id
+        await self.db.commit()
+
+        from app.workers.tasks import run_sandbox
+
+        run_sandbox.apply_async(args=[str(run_id)], queue="agents")
+        loaded = await self._load_sandbox_run(run_id)
+        if loaded is None:
+            raise AgentBuilderServiceError("Не удалось создать пробный запуск")
+        return loaded
+
+    async def get_sandbox_run(
+        self,
+        session_id: uuid.UUID,
+        run_id: uuid.UUID,
+        *,
+        current_user: User,
+    ) -> AgentBuilderSandboxRun:
+        session = await self.get_session(session_id, current_user=current_user)
+        run = await self._load_sandbox_run(run_id)
+        if run is None or run.session_id != session.id:
+            raise AgentBuilderServiceError("Sandbox run не найден")
+        return run
+
+    async def get_latest_sandbox_run(
+        self,
+        session_id: uuid.UUID,
+        *,
+        current_user: User,
+    ) -> AgentBuilderSandboxRun | None:
+        session = await self.get_session(session_id, current_user=current_user)
+        stmt = (
+            select(AgentBuilderSandboxRun)
+            .where(AgentBuilderSandboxRun.session_id == session.id)
+            .options(selectinload(AgentBuilderSandboxRun.steps))
+            .order_by(AgentBuilderSandboxRun.created_at.desc())
+            .limit(1)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _load_sandbox_run(self, run_id: uuid.UUID) -> AgentBuilderSandboxRun | None:
+        stmt = (
+            select(AgentBuilderSandboxRun)
+            .where(AgentBuilderSandboxRun.id == run_id)
+            .options(selectinload(AgentBuilderSandboxRun.steps))
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def regenerate(self, session_id: uuid.UUID, *, current_user: User) -> AgentBuilderSessionDetailRead:
         session = await self.get_session(session_id, current_user=current_user)
@@ -375,10 +459,12 @@ class AgentBuilderService:
         agent_card = blueprint.get("agent_card") or {}
         name = agent_card.get("name") or session.goal[:80]
         code = slugify_code(name)
+        agent_type = blueprint.get("agent_type") or (session.collected_requirements or {}).get("agent_type")
         existing = await self._latest_blueprint(session.id)
         if existing is not None:
             existing.name = name
             existing.description = agent_card.get("purpose")
+            existing.agent_type = agent_type
             existing.input_schema = blueprint.get("input_schema")
             existing.output_schema = blueprint.get("output_schema")
             existing.tools = blueprint.get("tools")
@@ -403,6 +489,7 @@ class AgentBuilderService:
             name=name,
             code=code,
             description=agent_card.get("purpose"),
+            agent_type=agent_type,
             created_by_user_id=current_user.id,
             created_by_builder_session_id=session.id,
             status=AgentBlueprintStatus.GENERATED,

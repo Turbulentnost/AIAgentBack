@@ -64,6 +64,25 @@ class FetchPageViaUserBrowserOutput(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class WebSearchInput(BaseModel):
+    query: str = Field(..., min_length=2, max_length=400)
+    max_results: int = Field(default=8, ge=1, le=20)
+
+
+class WebSearchResultItem(BaseModel):
+    title: str
+    url: str
+    snippet: str | None = None
+
+
+class WebSearchOutput(BaseModel):
+    query: str
+    engine: str
+    status: str
+    results: list[WebSearchResultItem] = Field(default_factory=list)
+    error_message: str | None = None
+
+
 class ListAvailableKnowledgeBasesInput(BaseModel):
     query: str | None = None
 

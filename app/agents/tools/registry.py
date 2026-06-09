@@ -21,6 +21,9 @@ class AgentToolDefinition:
     input_model: type[BaseModel] | None = None
     output_model: type[BaseModel] | None = None
     required_permissions: list[str] = field(default_factory=list)
+    preview_safe: bool = False
+    preview_always: bool = False
+    preview_default_params: dict[str, Any] = field(default_factory=dict)
 
     @property
     def input_schema(self) -> dict[str, Any] | None:

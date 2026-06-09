@@ -21,10 +21,12 @@ T = TypeVar("T", bound=BaseModel)
 class RequiredElementLLM(BaseModel):
     key: str
     label: str
-    question: str
+    question: str | None = None
     required: bool = True
     value: str | None = None
     status: str = "pending"
+    confidence: float | None = None
+    auto_resolved: bool = False
 
 
 class ClarificationLLMResponse(BaseModel):
@@ -35,6 +37,14 @@ class ClarificationLLMResponse(BaseModel):
     clarifying_questions: list[str] = Field(default_factory=list)
 
 
+class ExploreConsultantLLMResponse(BaseModel):
+    ready_to_plan: bool = True
+    assistant_message: str = Field(..., min_length=1)
+    required_elements: list[RequiredElementLLM] = Field(default_factory=list)
+    clarifying_questions: list[str] = Field(default_factory=list)
+    extracted_requirements: dict[str, Any] = Field(default_factory=dict)
+
+
 class ElementAnswersLLMResponse(BaseModel):
     elements: list[RequiredElementLLM] = Field(default_factory=list)
     extracted_requirements: dict[str, Any] = Field(default_factory=dict)
@@ -42,6 +52,20 @@ class ElementAnswersLLMResponse(BaseModel):
 
 class PreviewSampleLLMResponse(BaseModel):
     output_text: str = Field(..., min_length=1)
+
+
+class ClassifyAgentTypeLLMResponse(BaseModel):
+    proposed_agent_type: str
+    confidence: float = 0.0
+    reasoning: str = ""
+    assistant_message: str = Field(..., min_length=1)
+
+
+class WorkflowNodeLLM(BaseModel):
+    label: str
+    capability: str | None = None
+    goal: str | None = None
+    node_kind: str = "capability"
 
 
 class PlanStepLLM(BaseModel):
@@ -62,6 +86,7 @@ class BlueprintLLMResponse(BaseModel):
     tools: list[str] = Field(default_factory=list)
     knowledge_bases: list[str] = Field(default_factory=list)
     workflow_steps: list[str] = Field(default_factory=list)
+    workflow_nodes: list[WorkflowNodeLLM] = Field(default_factory=list)
     human_approval: bool = False
     human_approval_rules: list[dict[str, Any]] = Field(default_factory=list)
     system_prompt: str = ""
@@ -73,6 +98,11 @@ class BlueprintLLMResponse(BaseModel):
     @classmethod
     def _normalize_string_lists(cls, value: Any) -> list[str]:
         return normalize_string_list(value)
+
+    @field_validator("workflow_nodes", mode="before")
+    @classmethod
+    def _normalize_workflow_nodes(cls, value: Any) -> list[dict[str, Any]]:
+        return normalize_workflow_nodes(value)
 
     @field_validator("human_approval_rules", "test_cases", mode="before")
     @classmethod
@@ -102,6 +132,46 @@ class BuilderLLM:
         base_url = settings.AGENT_BUILDER_FALLBACK_BASE_URL or settings.LLM_GATEWAY_BASE_URL
         return bool(base_url and settings.AGENT_BUILDER_FALLBACK_MODEL)
 
+    async def classify_agent_type(
+        self,
+        *,
+        goal: str,
+        conversation: list[dict[str, str]],
+    ) -> ClassifyAgentTypeLLMResponse:
+        user_prompt = {
+            "task": "classify_agent_type",
+            "goal": goal,
+            "conversation": conversation,
+            "agent_types": {
+                "consultant": (
+                    "Агент находит информацию в источниках (БЗ, веб, браузер), анализирует и "
+                    "показывает ответ пользователю. Просмотр сайтов и извлечение данных для ответа — consultant."
+                ),
+                "action": (
+                    "Агент изменяет состояние внешних систем: создаёт/редактирует записи, ставит задачи, "
+                    "отправляет письма, планирует совещания, выполняет транзакции."
+                ),
+            },
+            "instructions": (
+                "Определи тип будущего агента: consultant или action. "
+                "Если задача — найти, прочитать, собрать и показать информацию (в т.ч. через браузер) — "
+                "это consultant, НЕ action. "
+                "action только когда нужно создать/изменить/отправить/запланировать что-то во внешней системе. "
+                "В assistant_message кратко объясни выбор и попроси пользователя подтвердить тип. "
+                "Не переходи к сбору требований."
+            ),
+            "response_schema": {
+                "proposed_agent_type": "consultant|action",
+                "confidence": "number 0..1",
+                "reasoning": "string",
+                "assistant_message": "string",
+            },
+        }
+        return await self._chat_json(
+            ClassifyAgentTypeLLMResponse,
+            user_content=json.dumps(user_prompt, ensure_ascii=False),
+        )
+
     async def clarify(
         self,
         *,
@@ -109,25 +179,52 @@ class BuilderLLM:
         conversation: list[dict[str, str]],
         requirements: dict[str, Any],
     ) -> ClarificationLLMResponse:
-        tools_preview = [item["name"] for item in list_available_tools_catalog() if item["implemented"]][:20]
+        from app.agents.builder.templates.consultant import CONSULTANT_CONFIDENCE_THRESHOLD
+
+        agent_type = requirements.get("agent_type")
+        tools_preview = [
+            {"name": item["name"], "description": item["description"]}
+            for item in list_available_tools_catalog()
+            if item.get("implemented")
+        ]
+        consultant_instructions = ""
+        if agent_type == "consultant":
+            consultant_instructions = (
+                "Тип агента: consultant (Консультант). "
+                f"Порог уверенности: {CONSULTANT_CONFIDENCE_THRESHOLD}. "
+                "Проанализируй goal и conversation: что уже ясно из исходного текста пользователя. "
+                "ЗАПРЕЩЕНО спрашивать пользователя: об источниках/сайтах/URL, о формате ответа, "
+                "о способе поиска, о стиле промпта — агент определяет это сам из available_tools. "
+                "Для «сегодня»/«на сегодня» используй инструмент get_current_date — НЕ спрашивай дату. "
+                "НЕ включай в required_elements/clarifying_questions: knowledge_sources, data_sources, "
+                "weather_sites, sites, output_format, response_format, search_approach, answer_prompt. "
+                "Сформируй required_elements ТОЛЬКО для критичных пробелов (например город/регион, "
+                "если его нет в goal и confidence < порога). "
+                "Для каждого элемента укажи confidence 0..1. "
+                f"Если confidence >= {CONSULTANT_CONFIDENCE_THRESHOLD}: value + status=filled, без вопроса. "
+                f"Если confidence < {CONSULTANT_CONFIDENCE_THRESHOLD}: pending + question. "
+                "Если из goal всё понятно — required_elements пуст, ready_to_plan=true. "
+                "В extracted_requirements выводи response_format='текстовый ответ консультанта', "
+                "search_approach и recommended_tools из available_tools."
+            )
         user_prompt = {
             "task": "clarify_requirements",
             "goal": goal,
+            "agent_type": agent_type,
             "known_requirements": requirements,
             "conversation": conversation,
             "available_tools": tools_preview,
+            "confidence_threshold": CONSULTANT_CONFIDENCE_THRESHOLD,
             "instructions": (
-                "Сначала определи полный список required_elements — обязательных элементов для проектирования агента. "
-                "Каждый элемент: key, label, question, required, value, status (pending|filled). "
-                "Внимательно прочитай ПОСЛЕДНЕЕ сообщение пользователя в conversation: "
-                "если там есть ответ на вопрос — заполни value и поставь status=filled для соответствующего элемента. "
+                f"{consultant_instructions} "
+                "Каждый required_element: key, label, question, required, value, status, confidence. "
+                "Внимательно прочитай ПОСЛЕДНЕЕ сообщение пользователя: "
+                "если там ответ — заполни value, status=filled, confidence=1. "
                 "НЕ задавай повторно вопросы, на которые пользователь уже ответил. "
-                "В clarifying_questions включай ТОЛЬКО вопросы по элементам со status=pending. "
-                "В assistant_message кратко перечисли, что уже понятно, и что ещё нужно (если есть). "
-                "ready_to_plan=true ТОЛЬКО если все required элементы заполнены (status=filled). "
-                "До этого момента НЕ переходи к планированию и анализу. "
-                "В extracted_requirements обновляй подтверждённые поля: "
-                "inputs, outputs, human_approval, knowledge_bases, constraints, roles, workflow_hints."
+                "В clarifying_questions — ТОЛЬКО вопросы по pending-элементам с confidence ниже порога. "
+                "В assistant_message: что уже понятно из goal, какие пробелы остались (если есть). "
+                "ready_to_plan=true, если нет pending-элементов, требующих ввода пользователя. "
+                "В extracted_requirements обновляй inputs, outputs, human_approval, knowledge_bases, constraints."
             ),
             "response_schema": {
                 "ready_to_plan": "boolean",
@@ -137,10 +234,12 @@ class BuilderLLM:
                     {
                         "key": "string",
                         "label": "string",
-                        "question": "string",
+                        "question": "string|null",
                         "required": True,
                         "value": "string|null",
                         "status": "pending|filled",
+                        "confidence": "number 0..1",
+                        "auto_resolved": "boolean",
                     }
                 ],
                 "clarifying_questions": ["string"],
@@ -148,6 +247,61 @@ class BuilderLLM:
         }
         return await self._chat_json(
             ClarificationLLMResponse,
+            user_content=json.dumps(user_prompt, ensure_ascii=False),
+        )
+
+    async def explore_consultant_sources(
+        self,
+        *,
+        goal: str,
+        conversation: list[dict[str, str]],
+        requirements: dict[str, Any],
+    ) -> ExploreConsultantLLMResponse:
+        from app.agents.builder.templates.consultant import CONSULTANT_CONFIDENCE_THRESHOLD
+
+        tools_preview = [
+            {"name": item["name"], "description": item["description"]}
+            for item in list_available_tools_catalog()
+            if item.get("implemented")
+        ]
+        user_prompt = {
+            "task": "explore_consultant_sources",
+            "goal": goal,
+            "conversation": conversation,
+            "known_requirements": requirements,
+            "available_tools": tools_preview,
+            "confidence_threshold": CONSULTANT_CONFIDENCE_THRESHOLD,
+            "instructions": (
+                "Пользовательских вопросов пока нет — начни «поиск»: проанализируй goal и available_tools, "
+                "определи какие инструменты подходят (включая get_current_date для «сегодня»). "
+                "Обнови extracted_requirements: recommended_tools, knowledge_bases, search_approach. "
+                "НЕ спрашивай об источниках, сайтах, формате ответа — выбери сам. "
+                f"Добавляй required_elements/clarifying_questions ТОЛЬКО для пробелов "
+                f"с confidence < {CONSULTANT_CONFIDENCE_THRESHOLD} (например город без указания в goal). "
+                "НЕ спрашивай про сайты, URL, формат, параметры погоды — агент выберет сам. "
+                "Если пробелов нет — ready_to_plan=true, clarifying_questions=[]. "
+                "В assistant_message опиши выбранные инструменты и оставшиеся уточнения (если есть)."
+            ),
+            "response_schema": {
+                "ready_to_plan": "boolean",
+                "assistant_message": "string",
+                "extracted_requirements": "object",
+                "required_elements": [
+                    {
+                        "key": "string",
+                        "label": "string",
+                        "question": "string|null",
+                        "required": True,
+                        "value": "string|null",
+                        "status": "pending|filled",
+                        "confidence": "number 0..1",
+                    }
+                ],
+                "clarifying_questions": ["string"],
+            },
+        }
+        return await self._chat_json(
+            ExploreConsultantLLMResponse,
             user_content=json.dumps(user_prompt, ensure_ascii=False),
         )
 
@@ -200,16 +354,25 @@ class BuilderLLM:
         goal: str,
         requirements: dict[str, Any],
         blueprint: dict[str, Any],
+        preview_grounding: dict[str, Any] | None = None,
     ) -> PreviewSampleLLMResponse:
+        grounding = preview_grounding or {}
         user_prompt = {
             "task": "generate_preview_sample",
             "goal": goal,
             "requirements": requirements,
             "blueprint": blueprint,
+            "preview_grounding": grounding,
             "instructions": (
-                "Сгенерируй пример реального результата работы будущего агента в текстовом виде. "
-                "Это пробный запуск для пользователя перед сохранением blueprint. "
-                "Используй конкретные данные из requirements, не пиши общие фразы."
+                "Сформируй результат пробного запуска будущего агента. "
+                "preview_grounding содержит current_date и tool_results (реальные ответы tools). "
+                "ОБЯЗАТЕЛЬНО используй current_date для «сегодня» — не выдумывай дату. "
+                "Если has_substantive_data=true: сформируй ГОТОВЫЙ ответ пользователю, "
+                "опираясь ТОЛЬКО на tool_results (текст страниц, фрагменты БЗ и т.д.). "
+                "Без плейсхолдеров, без шаблонов, без «демонстрации». "
+                "Если has_substantive_data=false: честно сообщи, что пробный запуск выполнил только "
+                "подготовительные шаги (например дата), доменные данные не получены. "
+                "Кратко укажи skipped_tools/errors. НЕ придумывай факты и НЕ используй плейсхолдеры."
             ),
             "response_schema": {"output_text": "string"},
         }
@@ -269,8 +432,12 @@ class BuilderLLM:
             "plan_steps": plan_steps,
             "available_tools": tools_preview,
             "instructions": (
-                "Спроектируй структуру агента. tools — только имена из available_tools. "
-                "workflow_steps — 3-8 этапов workflow. system_prompt — рабочий системный промпт агента."
+                "Спроектируй структуру агента. "
+                "workflow_nodes — граф ЗАДАЧ по capabilities, НЕ по именам tools. "
+                "Каждый workflow_node: label, capability, goal, node_kind. "
+                "Допустимые capability: receive_question, knowledge_search, rag_retrieval, llm_answer, present_answer. "
+                "tools — только hints для runtime, имена из available_tools. "
+                "system_prompt — рабочий системный промпт агента."
             ),
             "response_schema": {
                 "agent_name": "string",
@@ -279,6 +446,14 @@ class BuilderLLM:
                 "output_schema": "object",
                 "tools": ["string"],
                 "knowledge_bases": ["string"],
+                "workflow_nodes": [
+                    {
+                        "label": "string",
+                        "capability": "string",
+                        "goal": "string",
+                        "node_kind": "task|capability|human_approval",
+                    }
+                ],
                 "workflow_steps": ["string"],
                 "human_approval": "boolean",
                 "human_approval_rules": ["object"],
@@ -507,6 +682,22 @@ def normalize_dict_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict) and item]
 
 
+def normalize_workflow_nodes(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict) and item.get("label"):
+            result.append(item)
+        elif isinstance(item, str) and item.strip():
+            result.append({"label": item.strip(), "node_kind": "task"})
+    return result
+
+
 def merge_required_elements(
     existing: list[dict[str, Any]],
     incoming: list[dict[str, Any]],
@@ -581,11 +772,11 @@ def apply_heuristic_element_answers(
 
 
 def pending_questions_for_elements(elements: list[dict[str, Any]]) -> list[str]:
+    from app.agents.builder.templates.consultant import element_needs_user_input
+
     questions: list[str] = []
     for item in elements:
-        if not item.get("required", True):
-            continue
-        if _element_has_value(item):
+        if not element_needs_user_input(item):
             continue
         question = (item.get("question") or item.get("label") or "").strip()
         if question and question not in questions:

@@ -232,6 +232,11 @@ class NdChangeResultStatus(str, enum.Enum):
     SENT_TO_APPROVAL = "sent_to_approval"
     FAILED = "failed"
 
+class AgentType(str, enum.Enum):
+    CONSULTANT = "consultant"
+    ACTION = "action"
+
+
 class AgentBuilderSessionStatus(str, enum.Enum):
     DRAFT = "draft"
     PLANNING = "planning"
