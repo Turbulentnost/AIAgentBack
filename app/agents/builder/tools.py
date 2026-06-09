@@ -116,6 +116,9 @@ def blueprint_from_llm(goal: str, llm: "BlueprintLLMResponse", requirements: dic
     if not tools:
         tools = sorted(allowed_tools)[:5]
 
+    agent_name = (llm.agent_name or "").strip() or (requirements.get("agent_name") or "").strip() or (goal or "").strip()[:80] or "Новый агент"
+    purpose = (llm.purpose or "").strip() or (goal or "").strip() or agent_name
+
     agent_type = requirements.get("agent_type")
     workflow_capability_steps: list[dict[str, str]] = []
     if llm.workflow_nodes:
@@ -137,20 +140,20 @@ def blueprint_from_llm(goal: str, llm: "BlueprintLLMResponse", requirements: dic
     merged_requirements = {
         **requirements,
         "agent_type": agent_type,
-        "agent_name": llm.agent_name,
+        "agent_name": agent_name,
         "workflow_capability_steps": workflow_capability_steps,
-        "input_schema": llm.input_schema,
-        "output_schema": llm.output_schema,
+        "input_schema": llm.input_schema or {"type": "object", "properties": {}},
+        "output_schema": llm.output_schema or {"type": "object", "properties": {}},
         "knowledge_bases": llm.knowledge_bases,
         "human_approval": llm.human_approval,
         "human_approval_rules": llm.human_approval_rules,
-        "system_prompt": llm.system_prompt,
+        "system_prompt": llm.system_prompt or f"Ты агент для задачи: {goal}",
         "developer_prompt": llm.developer_prompt,
         "test_cases": llm.test_cases,
         "constraints": llm.constraints,
         "workflow_steps": workflow_steps,
     }
     blueprint = build_default_blueprint(goal, merged_requirements, tools)
-    blueprint["agent_card"]["name"] = llm.agent_name
-    blueprint["agent_card"]["purpose"] = llm.purpose or goal
+    blueprint["agent_card"]["name"] = agent_name
+    blueprint["agent_card"]["purpose"] = purpose
     return blueprint

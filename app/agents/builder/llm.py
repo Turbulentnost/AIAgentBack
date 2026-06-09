@@ -79,8 +79,8 @@ class PlanLLMResponse(BaseModel):
 
 
 class BlueprintLLMResponse(BaseModel):
-    agent_name: str
-    purpose: str
+    agent_name: str = ""
+    purpose: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
     output_schema: dict[str, Any] = Field(default_factory=dict)
     tools: list[str] = Field(default_factory=list)
@@ -437,7 +437,10 @@ class BuilderLLM:
                 "Каждый workflow_node: label, capability, goal, node_kind. "
                 "Допустимые capability: receive_question, knowledge_search, rag_retrieval, llm_answer, present_answer. "
                 "tools — только hints для runtime, имена из available_tools. "
-                "system_prompt — рабочий системный промпт агента."
+                "system_prompt — рабочий системный промпт агента. "
+                "Верни ТОЛЬКО JSON-объект blueprint строго по response_schema, без markdown и текста вне JSON. "
+                "НЕ возвращай поля status, assistant_message, вопросы, подтверждения или предложения предпросмотра. "
+                "Поля agent_name (краткое имя агента) и purpose (назначение) ОБЯЗАТЕЛЬНЫ и не должны быть пустыми."
             ),
             "response_schema": {
                 "agent_name": "string",
