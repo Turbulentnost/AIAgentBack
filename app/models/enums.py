@@ -96,6 +96,23 @@ class KnowledgeBaseSourceStatus(str, enum.Enum):
     UPDATING = "updating"
     ERROR = "error"
     ARCHIVED = "archived"
+    EXCLUDED = "excluded"
+    NEEDS_OCR = "needs_ocr"
+    READY_TO_INDEX = "ready_to_index"
+
+
+class KnowledgeBaseSourcePrecheckStatus(str, enum.Enum):
+    PENDING = "pending"
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+class KnowledgeBaseChunkQualityStatus(str, enum.Enum):
+    UNKNOWN = "unknown"
+    GOOD = "good"
+    MEDIUM = "medium"
+    LOW = "low"
+    FAILED = "failed"
 
 class KnowledgeBaseRuleStatus(str, enum.Enum):
     DRAFT = "draft"
@@ -106,6 +123,8 @@ class KnowledgeBaseRuleStatus(str, enum.Enum):
 class KnowledgeBaseGrantType(str, enum.Enum):
     USER = "user"
     DEPARTMENT = "department"
+    ROLE = "role"
+    ORGANIZATION = "organization"
     AGENT = "agent"
     ADMIN_ONLY = "admin_only"
 

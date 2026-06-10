@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, DbSession
 from app.models.audit import AuditLog
 from app.models.document import Document
-from app.models.enums import KnowledgeBaseIndexJobType, KnowledgeBaseStatus
+from app.models.enums import KnowledgeBaseAccessType, KnowledgeBaseIndexJobType, KnowledgeBaseStatus
 from app.models.knowledge_base import KnowledgeBaseIndexingError
 from app.models.user import User
 from app.schemas.knowledge_base import (
@@ -21,6 +21,8 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseChunkExclude,
     KnowledgeBaseChunkRead,
     KnowledgeBaseCreate,
+    KnowledgeBaseListItem,
+    KnowledgeBaseOverviewStats,
     KnowledgeBaseIndexRequest,
     KnowledgeBaseIndexingErrorRead,
     KnowledgeBaseIndexingJobRead,
@@ -34,6 +36,9 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseTestSearchResponse,
     KnowledgeBaseUpdate,
 )
+from app.schemas.user import ResponsibleUserRead
+from app.services.employee_sync_service import EmployeeSyncService
+from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
 from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
 from app.services.knowledge_base_search_service import KnowledgeBaseSearchService
 from app.services.knowledge_base_service import KnowledgeBaseService, KnowledgeBaseServiceError, file_extension
@@ -47,12 +52,41 @@ from app.workers.tasks import (
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
 
 
+async def _commit_and_refresh(db: DbSession, entity):
+    await db.commit()
+    await db.refresh(entity)
+    return entity
+
+
+async def _commit_and_refresh_all(db: DbSession, entities):
+    await db.commit()
+    for entity in entities:
+        await db.refresh(entity)
+    return entities
+
+
 @router.get("/stats", response_model=KnowledgeBaseStats)
 async def knowledge_base_stats(db: DbSession, current_user: CurrentUser):
     return await KnowledgeBaseService(db).stats()
 
 
-@router.get("", response_model=list[KnowledgeBaseRead])
+@router.get("/responsible-users", response_model=list[ResponsibleUserRead])
+async def list_responsible_users(db: DbSession, current_user: CurrentUser):
+    _ = current_user
+    users = await EmployeeSyncService(db).list_responsible_candidates()
+    return [
+        ResponsibleUserRead(
+            id=user.id,
+            full_name=user.full_name,
+            position=user.position,
+            department_id=user.department_id,
+            department_name=user.department.name if user.department else None,
+        )
+        for user in users
+    ]
+
+
+@router.get("", response_model=list[KnowledgeBaseListItem])
 async def list_knowledge_bases(
     db: DbSession,
     current_user: CurrentUser,
@@ -61,20 +95,46 @@ async def list_knowledge_bases(
     responsible_user_id: uuid.UUID | None = None,
     query: str | None = None,
 ):
-    return await KnowledgeBaseService(db).list_knowledge_bases(
+    items = await KnowledgeBaseService(db).list_knowledge_bases(
         status=status_filter,
         department_id=department_id,
         responsible_user_id=responsible_user_id,
         query=query,
     )
+    access_service = KnowledgeBaseAccessService(db)
+    result: list[KnowledgeBaseListItem] = []
+    for kb in items:
+        kb_loaded = await access_service.load_for_access_check(kb.id) or kb
+        read_access = await access_service.can_access_knowledge_base(
+            user=current_user,
+            knowledge_base=kb_loaded,
+            required_access=KnowledgeBaseAccessType.READ,
+        )
+        search_access = await access_service.can_access_knowledge_base(
+            user=current_user,
+            knowledge_base=kb_loaded,
+            required_access=KnowledgeBaseAccessType.SEARCH,
+            allow_non_ready_for_admin=False,
+        )
+        indexing_active = kb.status in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}
+        base = KnowledgeBaseRead.model_validate(kb)
+        result.append(
+            KnowledgeBaseListItem(
+                **base.model_dump(),
+                can_access=read_access.allowed,
+                can_search=search_access.allowed,
+                can_delete=current_user.is_superuser or kb.owner_user_id == current_user.id,
+                indexing_active=indexing_active,
+            )
+        )
+    return result
 
 
 @router.post("", response_model=KnowledgeBaseRead, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(payload: KnowledgeBaseCreate, db: DbSession, current_user: CurrentUser):
     try:
         item = await KnowledgeBaseService(db).create(payload, current_user=current_user)
-        await db.commit()
-        return item
+        return await _commit_and_refresh(db, item)
     except KnowledgeBaseServiceError as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -97,8 +157,7 @@ async def update_knowledge_base(
 ):
     try:
         item = await KnowledgeBaseService(db).update(knowledge_base_id, payload, current_user=current_user)
-        await db.commit()
-        return item
+        return await _commit_and_refresh(db, item)
     except KnowledgeBaseServiceError as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -108,11 +167,17 @@ async def update_knowledge_base(
 async def archive_knowledge_base(knowledge_base_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
     try:
         item = await KnowledgeBaseService(db).archive(knowledge_base_id, current_user=current_user)
-        await db.commit()
-        return item
+        return await _commit_and_refresh(db, item)
     except KnowledgeBaseServiceError as exc:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        message = str(exc)
+        if "может только" in message:
+            status_code = status.HTTP_403_FORBIDDEN
+        elif "уже удалена" in message:
+            status_code = status.HTTP_409_CONFLICT
+        else:
+            status_code = status.HTTP_404_NOT_FOUND
+        raise HTTPException(status_code=status_code, detail=message) from exc
 
 
 @router.get("/{knowledge_base_id}/sources", response_model=list[KnowledgeBaseSourceRead])
@@ -132,6 +197,7 @@ async def add_source(
     try:
         source = await KnowledgeBaseService(db).add_source(knowledge_base_id, payload, current_user=current_user)
         await db.commit()
+        await db.refresh(source)
         document = await db.get(Document, source.document_id)
         return _source_read(source, document)
     except KnowledgeBaseServiceError as exc:
@@ -149,6 +215,35 @@ async def remove_source(knowledge_base_id: uuid.UUID, source_id: uuid.UUID, db: 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.post("/{knowledge_base_id}/sources/{source_id}/exclude", response_model=KnowledgeBaseSourceRead)
+async def exclude_source(knowledge_base_id: uuid.UUID, source_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    try:
+        source = await KnowledgeBaseService(db).exclude_source(knowledge_base_id, source_id, current_user=current_user)
+        await db.commit()
+        await db.refresh(source)
+        document = await db.get(Document, source.document_id)
+        return _source_read(source, document)
+    except KnowledgeBaseServiceError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{knowledge_base_id}/overview", response_model=KnowledgeBaseOverviewStats)
+async def knowledge_base_overview(knowledge_base_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    _ = current_user
+    assessment = await KnowledgeBaseSearchService(db).readiness_assessment(knowledge_base_id)
+    return KnowledgeBaseOverviewStats(
+        sources_total=assessment["sources_total"],
+        sources_processed=assessment["sources_ready"],
+        sources_with_errors=assessment["unresolved_errors"],
+        fragments_total=assessment["fragments_total"],
+        qdrant_points=assessment["fragments_total"],
+        fulltext_chunks=assessment["fts_chunks"],
+        quality_percent=assessment["quality_percent"],
+        unresolved_errors=assessment["unresolved_errors"],
+    )
+
+
 @router.post("/{knowledge_base_id}/sources/{source_id}/reindex", response_model=KnowledgeBaseIndexingJobRead)
 async def reindex_source(knowledge_base_id: uuid.UUID, source_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
     job = await KnowledgeBaseIndexingService(db).create_job(
@@ -157,7 +252,7 @@ async def reindex_source(knowledge_base_id: uuid.UUID, source_id: uuid.UUID, db:
         started_by_user_id=current_user.id,
         target_source_id=source_id,
     )
-    await db.commit()
+    job = await _commit_and_refresh(db, job)
     index_knowledge_base_source.delay(str(knowledge_base_id), str(source_id), str(job.id))
     return job
 
@@ -208,8 +303,7 @@ async def create_rule(
     current_user: CurrentUser,
 ):
     item = await KnowledgeBaseService(db).create_rule(knowledge_base_id, payload, current_user=current_user)
-    await db.commit()
-    return item
+    return await _commit_and_refresh(db, item)
 
 
 @router.get("/{knowledge_base_id}/access", response_model=KnowledgeBaseAccessRead)
@@ -257,8 +351,7 @@ async def replace_agents(
     current_user: CurrentUser,
 ):
     items = await KnowledgeBaseService(db).replace_agents(knowledge_base_id, payload, current_user=current_user)
-    await db.commit()
-    return items
+    return await _commit_and_refresh_all(db, items)
 
 
 @router.post("/{knowledge_base_id}/index", response_model=KnowledgeBaseIndexingJobRead)
@@ -268,14 +361,21 @@ async def start_indexing(
     db: DbSession,
     current_user: CurrentUser,
 ):
-    job = await KnowledgeBaseIndexingService(db).create_job(
+    kb = await KnowledgeBaseService(db).get(knowledge_base_id)
+    if kb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="База знаний не найдена")
+
+    indexing_service = KnowledgeBaseIndexingService(db)
+    await indexing_service.supersede_stale_queued_jobs(knowledge_base_id)
+    await indexing_service.mark_indexing_queued(knowledge_base_id)
+    job = await indexing_service.create_job(
         knowledge_base_id,
         job_type=payload.job_type,
         started_by_user_id=current_user.id,
         target_source_id=payload.source_id,
         target_chunk_id=payload.chunk_id,
     )
-    await db.commit()
+    job = await _commit_and_refresh(db, job)
     if payload.job_type == KnowledgeBaseIndexJobType.SOURCE and payload.source_id is not None:
         index_knowledge_base_source.delay(str(knowledge_base_id), str(payload.source_id), str(job.id))
     elif payload.job_type == KnowledgeBaseIndexJobType.EMBEDDINGS:
@@ -315,6 +415,12 @@ async def retry_indexing_error(error_id: uuid.UUID, db: DbSession, current_user:
     return job
 
 
+@router.get("/{knowledge_base_id}/readiness")
+async def knowledge_base_readiness(knowledge_base_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    _ = current_user
+    return await KnowledgeBaseSearchService(db).readiness_assessment(knowledge_base_id)
+
+
 @router.post("/{knowledge_base_id}/test-search", response_model=KnowledgeBaseTestSearchResponse)
 async def test_search(
     knowledge_base_id: uuid.UUID,
@@ -323,9 +429,18 @@ async def test_search(
     current_user: CurrentUser,
 ):
     service = KnowledgeBaseService(db)
-    kb = await service.get(knowledge_base_id)
+    access_service = KnowledgeBaseAccessService(db)
+    kb = await access_service.load_for_access_check(knowledge_base_id)
     if kb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="База знаний не найдена")
+    search_access = await access_service.can_access_knowledge_base(
+        user=current_user,
+        knowledge_base=kb,
+        required_access=KnowledgeBaseAccessType.SEARCH,
+        allow_non_ready_for_admin=False,
+    )
+    if not search_access.allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для поиска по базе знаний")
     acting_user = await _acting_user(db, current_user, payload)
     result = await KnowledgeBaseSearchService(db).search(
         knowledge_base=kb,
@@ -394,6 +509,11 @@ def _source_read(source, document: Document | None) -> dict:
         "fragments_count": source.fragments_count,
         "file_size": source.file_size,
         "access_snapshot": source.access_snapshot,
+        "precheck_status": getattr(source, "precheck_status", None),
+        "precheck_notes": getattr(source, "precheck_notes", None),
+        "checksum": getattr(source, "checksum", None),
+        "quality_status": getattr(source, "quality_status", None),
+        "pages_count": getattr(source, "pages_count", None),
         "created_at": source.created_at,
         "updated_at": source.updated_at,
         "document_title": document.title if document else None,
@@ -414,6 +534,7 @@ def _chunk_read(kb_chunk, document_chunk, document: Document | None) -> dict:
         "exclusion_reason": kb_chunk.exclusion_reason,
         "indexed_at": kb_chunk.indexed_at,
         "embedding_status": kb_chunk.embedding_status,
+        "quality_status": getattr(kb_chunk, "quality_status", None),
         "clause_number": kb_chunk.clause_number,
         "fragment_type": kb_chunk.fragment_type,
         "access_snapshot": kb_chunk.access_snapshot,

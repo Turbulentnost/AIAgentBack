@@ -7,8 +7,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.integrations.minio import MinioObjectError
-from app.schemas.user import UserRead, UserUpdate
+from app.schemas.user import EmployeeSyncResult, EmployeeSyncStatus, ResponsibleUserRead, UserRead, UserUpdate
 from app.services.audit_service import AuditService
+from app.services.employee_sync_service import EmployeeSyncCooldownError, EmployeeSyncService
 from app.services.profile_image_service import AvatarMetadataSaveError, AvatarValidationError, ProfileImageService
 from app.services.user_service import UserService
 
@@ -31,6 +32,79 @@ async def list_users(db: DbSession, current_user: CurrentUser, limit: int = 50, 
     _require_admin(current_user)
     users = await UserService(db).list(limit, offset)
     return [await _user_read(db, user) for user in users]
+
+
+@router.get("/responsible-candidates", response_model=list[ResponsibleUserRead])
+async def list_responsible_candidates(db: DbSession, current_user: CurrentUser):
+    _ = current_user
+    users = await EmployeeSyncService(db).list_responsible_candidates()
+    return [
+        ResponsibleUserRead(
+            id=user.id,
+            full_name=user.full_name,
+            position=user.position,
+            department_id=user.department_id,
+            department_name=user.department.name if user.department else None,
+        )
+        for user in users
+    ]
+
+
+@router.get("/sync/status", response_model=EmployeeSyncStatus)
+async def employee_sync_status(db: DbSession, current_user: CurrentUser):
+    _require_admin(current_user)
+    return await EmployeeSyncService(db).status()
+
+
+@router.post("/sync", response_model=EmployeeSyncResult)
+async def sync_employees_from_1c(db: DbSession, current_user: CurrentUser):
+    _require_admin(current_user)
+    service = EmployeeSyncService(db)
+    try:
+        result = await service.sync_from_1c()
+        await AuditService(db).log(
+            action="users.sync_1c",
+            actor_id=current_user.id,
+            resource_type="user",
+            payload=result,
+        )
+        await db.commit()
+        state = await service.status()
+        counts = {
+            key: result.get(key, 0)
+            for key in (
+                "created_count",
+                "updated_count",
+                "deactivated_count",
+                "skipped_count",
+                "missing_department_count",
+                "synced_count",
+            )
+        }
+        return EmployeeSyncResult(
+            key=state.key,
+            source_system=state.source_system,
+            resource=state.resource,
+            last_synced_at=state.last_synced_at,
+            next_allowed_at=state.next_allowed_at,
+            status=state.status,
+            items_count=state.items_count,
+            error_message=state.error_message,
+            payload=state.payload,
+            **counts,
+        )
+    except EmployeeSyncCooldownError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "message": str(exc),
+                "next_allowed_at": exc.next_allowed_at.isoformat(),
+            },
+        ) from exc
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Не удалось обновить сотрудников из 1С: {exc}") from exc
 
 
 @router.get("/{user_id}", response_model=UserRead)

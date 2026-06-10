@@ -39,6 +39,7 @@ class DocumentService:
             task_id=data.task_id,
             is_knowledge_base=data.is_knowledge_base,
             filename=safe_filename,
+            relative_path=data.relative_path,
         )
         checksum = hashlib.sha256(content).hexdigest()
         metadata = self._build_metadata(
@@ -158,6 +159,21 @@ class DocumentService:
         name = PurePath(filename).name.strip().replace("\\", "_").replace("/", "_")
         return name or "document"
 
+    def _normalize_storage_path(self, relative_path: str | None) -> str | None:
+        if not relative_path:
+            return None
+        parts: list[str] = []
+        for segment in relative_path.replace("\\", "/").split("/"):
+            cleaned = segment.strip().replace("\\", "_").replace("/", "_")
+            if not cleaned or cleaned in {".", ".."}:
+                continue
+            parts.append(cleaned)
+        if not parts:
+            return None
+        if len(parts) > 1:
+            return "/".join(parts[:-1])
+        return None
+
     def _build_object_name(
         self,
         *,
@@ -166,15 +182,21 @@ class DocumentService:
         task_id: uuid.UUID | None,
         is_knowledge_base: bool,
         filename: str,
+        relative_path: str | None = None,
     ) -> str:
         unique_filename = f"{document_id}_{filename}"
+        folder_path = self._normalize_storage_path(relative_path)
         if task_id and document_type == DocumentType.TASK_INPUT:
-            return f"tasks/{task_id}/input/{unique_filename}"
-        if task_id:
-            return f"tasks/{task_id}/documents/{unique_filename}"
-        if is_knowledge_base:
-            return f"knowledge_base/{document_type.value}/{unique_filename}"
-        return f"documents/{document_type.value}/{unique_filename}"
+            base = f"tasks/{task_id}/input"
+        elif task_id:
+            base = f"tasks/{task_id}/documents"
+        elif is_knowledge_base:
+            base = f"knowledge_base/{document_type.value}"
+        else:
+            base = f"documents/{document_type.value}"
+        if folder_path:
+            return f"{base}/{folder_path}/{unique_filename}"
+        return f"{base}/{unique_filename}"
 
     def _build_metadata(
         self,
@@ -191,9 +213,12 @@ class DocumentService:
         provided_metadata = data.doc_metadata or data.metadata or {}
         original_extension = PurePath(original_filename).suffix.lower()
         requires_ocr = bool(provided_metadata.get("requires_ocr", mime_type in {"image/png", "image/jpeg", "image/webp"}))
+        storage_path = self._normalize_storage_path(data.relative_path)
         return {
             **provided_metadata,
             "upload_source": provided_metadata.get("upload_source", "api"),
+            "relative_path": data.relative_path,
+            "storage_path": storage_path,
             "document_id": str(document_id),
             "document_type": document_type.value,
             "original_extension": original_extension,

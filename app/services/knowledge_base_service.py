@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -15,6 +16,7 @@ from app.models.enums import (
     KnowledgeBaseAccessType,
     KnowledgeBaseGrantType,
     KnowledgeBaseIndexJobStatus,
+    KnowledgeBaseSourcePrecheckStatus,
     KnowledgeBaseSourceStatus,
     KnowledgeBaseStatus,
 )
@@ -60,6 +62,7 @@ class KnowledgeBaseService:
         query: str | None = None,
     ) -> list[KnowledgeBase]:
         stmt = select(KnowledgeBase).order_by(KnowledgeBase.updated_at.desc())
+        stmt = stmt.where(KnowledgeBase.deleted_at.is_(None))
         if status is not None:
             stmt = stmt.where(KnowledgeBase.status == status)
         if department_id is not None:
@@ -74,7 +77,10 @@ class KnowledgeBaseService:
     async def get(self, knowledge_base_id: uuid.UUID) -> KnowledgeBase | None:
         result = await self.db.execute(
             select(KnowledgeBase)
-            .where(KnowledgeBase.id == knowledge_base_id)
+            .where(
+                KnowledgeBase.id == knowledge_base_id,
+                KnowledgeBase.deleted_at.is_(None),
+            )
             .options(
                 selectinload(KnowledgeBase.sources),
                 selectinload(KnowledgeBase.rules),
@@ -204,13 +210,31 @@ class KnowledgeBaseService:
         return kb
 
     async def archive(self, knowledge_base_id: uuid.UUID, *, current_user: User) -> KnowledgeBase:
-        kb = await self.get_or_raise(knowledge_base_id)
+        """Soft-delete: mark KB as deleted in PostgreSQL only.
+
+        Qdrant vectors, indexing jobs, sources and chunks are intentionally preserved.
+        """
+        result = await self.db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
+        )
+        kb = result.scalar_one_or_none()
+        if kb is None:
+            raise KnowledgeBaseServiceError("База знаний не найдена")
+        if kb.deleted_at is not None:
+            raise KnowledgeBaseServiceError("База знаний уже удалена")
+        if not current_user.is_superuser and kb.owner_user_id != current_user.id:
+            raise KnowledgeBaseServiceError("Удалить базу знаний может только её создатель")
+
+        now = datetime.now(timezone.utc)
         kb.status = KnowledgeBaseStatus.ARCHIVED
+        kb.deleted_at = now
+        kb.deleted_by_user_id = current_user.id
         await self.audit.log(
             action="kb.archived",
             actor_id=current_user.id,
             resource_type="knowledge_base",
             resource_id=str(kb.id),
+            payload={"soft_delete": True, "qdrant_collection": kb.qdrant_collection},
         )
         await self.db.flush()
         return kb
@@ -244,11 +268,25 @@ class KnowledgeBaseService:
             added_by_user_id=current_user.id,
             processing_status=KnowledgeBaseSourceStatus.DRAFT,
             file_size=version.file_size or document.file_size,
+            checksum=document.checksum or version.checksum,
             access_snapshot=self._document_access_snapshot(document),
         )
         self.db.add(source)
         kb.sources_count += 1
         kb.storage_bytes += int(source.file_size or 0)
+        await self.db.flush()
+
+        from app.services.knowledge_base_precheck_service import KnowledgeBasePrecheckService
+
+        precheck = await KnowledgeBasePrecheckService(self.db).precheck_source(source, user=current_user)
+        if not precheck.passed:
+            source.precheck_status = KnowledgeBaseSourcePrecheckStatus.FAILED
+            source.precheck_notes = precheck.user_message
+            source.processing_status = KnowledgeBaseSourceStatus.ERROR
+        elif precheck.needs_ocr:
+            source.processing_status = KnowledgeBaseSourceStatus.NEEDS_OCR
+        else:
+            source.processing_status = KnowledgeBaseSourceStatus.READY_TO_INDEX
         await self.db.flush()
         await self.audit.log(
             action="kb.source_added",
@@ -257,6 +295,21 @@ class KnowledgeBaseService:
             resource_id=str(kb.id),
             payload={"source_id": str(source.id), "document_id": str(document.id), "document_version_id": str(version.id)},
         )
+        return source
+
+    async def exclude_source(self, knowledge_base_id: uuid.UUID, source_id: uuid.UUID, *, current_user: User) -> KnowledgeBaseSource:
+        source = await self.db.get(KnowledgeBaseSource, source_id)
+        if source is None or source.knowledge_base_id != knowledge_base_id:
+            raise KnowledgeBaseServiceError("Источник базы знаний не найден")
+        source.processing_status = KnowledgeBaseSourceStatus.EXCLUDED
+        await self.audit.log(
+            action="kb.source_excluded",
+            actor_id=current_user.id,
+            resource_type="knowledge_base",
+            resource_id=str(knowledge_base_id),
+            payload={"source_id": str(source_id)},
+        )
+        await self.db.flush()
         return source
 
     async def remove_source(self, knowledge_base_id: uuid.UUID, source_id: uuid.UUID, *, current_user: User) -> None:
@@ -274,6 +327,7 @@ class KnowledgeBaseService:
         await self.db.flush()
 
     async def list_sources(self, knowledge_base_id: uuid.UUID) -> list[KnowledgeBaseSource]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseSource)
             .where(KnowledgeBaseSource.knowledge_base_id == knowledge_base_id)
@@ -282,6 +336,7 @@ class KnowledgeBaseService:
         return list(result.scalars().all())
 
     async def list_chunks(self, knowledge_base_id: uuid.UUID) -> list[tuple[KnowledgeBaseChunk, DocumentChunk, Document | None]]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseChunk, DocumentChunk, Document)
             .join(DocumentChunk, DocumentChunk.id == KnowledgeBaseChunk.document_chunk_id)
@@ -337,6 +392,7 @@ class KnowledgeBaseService:
         return rule
 
     async def list_rules(self, knowledge_base_id: uuid.UUID) -> list[KnowledgeBaseRule]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseRule)
             .where(KnowledgeBaseRule.knowledge_base_id == knowledge_base_id)
@@ -391,6 +447,7 @@ class KnowledgeBaseService:
         self,
         knowledge_base_id: uuid.UUID,
     ) -> tuple[list[KnowledgeBaseAccessGrant], list[KnowledgeBaseAccessException]]:
+        await self.get_or_raise(knowledge_base_id)
         grants = await self.db.execute(
             select(KnowledgeBaseAccessGrant).where(KnowledgeBaseAccessGrant.knowledge_base_id == knowledge_base_id)
         )
@@ -428,18 +485,35 @@ class KnowledgeBaseService:
         return bindings
 
     async def list_agents(self, knowledge_base_id: uuid.UUID) -> list[KnowledgeBaseAgentBinding]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseAgentBinding).where(KnowledgeBaseAgentBinding.knowledge_base_id == knowledge_base_id)
         )
         return list(result.scalars().all())
 
     async def list_jobs(self, knowledge_base_id: uuid.UUID) -> list[KnowledgeBaseIndexingJob]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseIndexingJob)
             .where(KnowledgeBaseIndexingJob.knowledge_base_id == knowledge_base_id)
             .order_by(KnowledgeBaseIndexingJob.created_at.desc())
         )
         return list(result.scalars().all())
+
+    async def active_indexing_knowledge_base_ids(self, knowledge_base_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        if not knowledge_base_ids:
+            return set()
+        result = await self.db.execute(
+            select(KnowledgeBaseIndexingJob.knowledge_base_id)
+            .where(
+                KnowledgeBaseIndexingJob.knowledge_base_id.in_(knowledge_base_ids),
+                KnowledgeBaseIndexingJob.status.in_(
+                    [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                ),
+            )
+            .distinct()
+        )
+        return {row[0] for row in result.all()}
 
     async def list_job_errors(self, job_id: uuid.UUID) -> list[KnowledgeBaseIndexingError]:
         result = await self.db.execute(
@@ -450,6 +524,7 @@ class KnowledgeBaseService:
         return list(result.scalars().all())
 
     async def list_audit(self, knowledge_base_id: uuid.UUID) -> list[AuditLog]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(AuditLog)
             .where(
@@ -461,18 +536,35 @@ class KnowledgeBaseService:
         return list(result.scalars().all())
 
     async def stats(self) -> KnowledgeBaseStats:
-        total = await self.db.scalar(select(func.count(KnowledgeBase.id)))
-        active = await self.db.scalar(
-            select(func.count(KnowledgeBase.id)).where(KnowledgeBase.status == KnowledgeBaseStatus.READY)
+        active_kb_filter = KnowledgeBase.deleted_at.is_(None)
+        total = await self.db.scalar(
+            select(func.count(KnowledgeBase.id)).where(active_kb_filter)
         )
-        docs = await self.db.scalar(select(func.count(KnowledgeBaseSource.id)))
-        fragments = await self.db.scalar(select(func.coalesce(func.sum(KnowledgeBase.fragments_count), 0)))
-        storage = await self.db.scalar(select(func.coalesce(func.sum(KnowledgeBase.storage_bytes), 0)))
+        active = await self.db.scalar(
+            select(func.count(KnowledgeBase.id)).where(
+                active_kb_filter,
+                KnowledgeBase.status == KnowledgeBaseStatus.READY,
+            )
+        )
+        docs = await self.db.scalar(
+            select(func.count(KnowledgeBaseSource.id))
+            .join(KnowledgeBase, KnowledgeBase.id == KnowledgeBaseSource.knowledge_base_id)
+            .where(active_kb_filter)
+        )
+        fragments = await self.db.scalar(
+            select(func.coalesce(func.sum(KnowledgeBase.fragments_count), 0)).where(active_kb_filter)
+        )
+        storage = await self.db.scalar(
+            select(func.coalesce(func.sum(KnowledgeBase.storage_bytes), 0)).where(active_kb_filter)
+        )
         errors = await self.db.scalar(
             select(func.count(KnowledgeBaseIndexingError.id)).where(KnowledgeBaseIndexingError.is_resolved.is_(False))
         )
         needs_review = await self.db.scalar(
-            select(func.count(KnowledgeBase.id)).where(KnowledgeBase.status == KnowledgeBaseStatus.NEEDS_REVIEW)
+            select(func.count(KnowledgeBase.id)).where(
+                active_kb_filter,
+                KnowledgeBase.status == KnowledgeBaseStatus.NEEDS_REVIEW,
+            )
         )
         completed_jobs = await self.db.scalar(
             select(func.count(KnowledgeBaseIndexingJob.id)).where(

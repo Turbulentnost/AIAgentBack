@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     PASSWORD_MIN_LENGTH: int = 8
+    ONEC_AUTH_API_BASE_URL: str = "http://192.168.0.247:8000/api/v1"
+    ONEC_TOKEN_MAX_AGE_HOURS: int = 4
     BACKEND_CORS_ORIGINS: str = (
         "http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.157:5173"
     )

@@ -5,9 +5,11 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.knowledge_base.vector_store import vector_store
+from app.knowledge_base.vector_store import VectorStore, vector_store
 from app.models.document import DocumentChunk
+from app.models.knowledge_base import KnowledgeBase
 from app.services.embeddings import embedding_service
+from app.services.knowledge_base_fts_service import KnowledgeBaseFtsService, merge_hybrid_results
 
 
 class HybridRetriever:
@@ -17,19 +19,58 @@ class HybridRetriever:
         top_k: int = 5,
         filters: dict | None = None,
         db: AsyncSession | None = None,
+        *,
+        knowledge_base: KnowledgeBase | None = None,
     ) -> list[dict]:
+        if knowledge_base is not None and db is not None:
+            return await self._hybrid_kb_search(db, knowledge_base, query, top_k=top_k)
+
         embedding = await embedding_service.embed_text(query)
         hits = await vector_store.search(embedding.vector, top_k=top_k, filters=filters)
         if db is None:
             return hits
         return await self._attach_chunks(db, hits)
 
+    async def _hybrid_kb_search(
+        self,
+        db: AsyncSession,
+        knowledge_base: KnowledgeBase,
+        query: str,
+        *,
+        top_k: int,
+    ) -> list[dict]:
+        fts_service = KnowledgeBaseFtsService(db)
+        is_exact = fts_service.is_exact_query(query)
+        vector_weight = 0.35 if is_exact else 0.65
+        fts_weight = 0.65 if is_exact else 0.35
+        fetch_k = max(top_k * 5, top_k)
+
+        embedding = await embedding_service.embed_text(query)
+        vector_hits = await VectorStore(knowledge_base.qdrant_collection).search(
+            embedding.vector,
+            top_k=fetch_k,
+            filters={"knowledge_base_id": str(knowledge_base.id), "is_active": True},
+        )
+        fts_hits = await fts_service.search(knowledge_base.id, query, top_k=fetch_k)
+        merged = merge_hybrid_results(
+            vector_hits,
+            fts_hits,
+            top_k=fetch_k,
+            vector_weight=vector_weight,
+            fts_weight=fts_weight,
+        )
+        return await self._attach_chunks(db, merged)
+
     async def _attach_chunks(self, db: AsyncSession, hits: list[dict]) -> list[dict]:
-        chunk_ids = [
-            uuid.UUID(str(hit.get("payload", {}).get("chunk_id")))
-            for hit in hits
-            if hit.get("payload", {}).get("chunk_id")
-        ]
+        chunk_ids = []
+        for hit in hits:
+            payload = hit.get("payload") or {}
+            chunk_id = payload.get("chunk_id")
+            if chunk_id:
+                try:
+                    chunk_ids.append(uuid.UUID(str(chunk_id)))
+                except ValueError:
+                    continue
         if not chunk_ids:
             return hits
 

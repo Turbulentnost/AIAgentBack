@@ -3,17 +3,21 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.knowledge_base.vector_store import VectorStore
+from app.knowledge_base.retriever import HybridRetriever
 from app.models.document import Document, DocumentChunk
-from app.models.enums import KnowledgeBaseAccessType, KnowledgeBaseAgentAccessMode
-from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseChunk
+from app.models.enums import (
+    KnowledgeBaseAccessType,
+    KnowledgeBaseAgentAccessMode,
+    KnowledgeBaseChunkQualityStatus,
+    KnowledgeBaseSourceStatus,
+)
+from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseChunk, KnowledgeBaseIndexingError, KnowledgeBaseSource
 from app.models.user import User
 from app.schemas.knowledge_base import KnowledgeBaseSearchHit, KnowledgeBaseTestSearchResponse
-from app.services.embeddings import embedding_service
 from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
 
 
@@ -21,6 +25,7 @@ class KnowledgeBaseSearchService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.access = KnowledgeBaseAccessService(db)
+        self.retriever = HybridRetriever()
 
     async def search(
         self,
@@ -33,11 +38,11 @@ class KnowledgeBaseSearchService:
         include_inaccessible: bool = False,
     ) -> KnowledgeBaseTestSearchResponse:
         normalized_top_k = max(1, min(top_k, 50))
-        embedding = await embedding_service.embed_text(query)
-        raw_hits = await VectorStore(knowledge_base.qdrant_collection).search(
-            embedding.vector,
+        raw_hits = await self.retriever.retrieve(
+            query,
             top_k=max(normalized_top_k * 5, normalized_top_k),
-            filters={"knowledge_base_id": str(knowledge_base.id), "is_active": True},
+            db=self.db,
+            knowledge_base=knowledge_base,
         )
 
         kb_chunk_ids = _kb_chunk_ids(raw_hits)
@@ -52,6 +57,8 @@ class KnowledgeBaseSearchService:
             if row is None:
                 continue
             kb_chunk, document_chunk, document = row
+            if kb_chunk.is_excluded_from_search:
+                continue
             effective = await self.access.can_use_chunk(
                 user=user,
                 knowledge_base=knowledge_base,
@@ -67,7 +74,7 @@ class KnowledgeBaseSearchService:
             hits.append(
                 KnowledgeBaseSearchHit(
                     content=content if effective.allowed or user.is_superuser else "(фрагмент недоступен текущему сценарию)",
-                    score=float(raw_hit.get("score", 0.0)),
+                    score=float(raw_hit.get("hybrid_score") or raw_hit.get("score", 0.0)),
                     accessible=effective.allowed,
                     access_reason=effective.reason,
                     knowledge_base_id=knowledge_base.id,
@@ -79,7 +86,11 @@ class KnowledgeBaseSearchService:
                     page_number=document_chunk.page_number,
                     section_title=document_chunk.section_title,
                     clause_number=kb_chunk.clause_number,
-                    metadata={**payload, **(document_chunk.metadata_ or document_chunk.chunk_metadata or {})},
+                    metadata={
+                        **payload,
+                        **(document_chunk.metadata_ or document_chunk.chunk_metadata or {}),
+                        "quality_status": getattr(kb_chunk.quality_status, "value", kb_chunk.quality_status),
+                    },
                 )
             )
             if len([hit for hit in hits if hit.accessible]) >= normalized_top_k:
@@ -90,6 +101,58 @@ class KnowledgeBaseSearchService:
             hits=hits[:normalized_top_k] if include_inaccessible else accessible_hits[:normalized_top_k],
             answer_preview=self._answer_preview(accessible_hits),
         )
+
+    async def readiness_assessment(self, knowledge_base_id: uuid.UUID) -> dict[str, Any]:
+        sources_total = await self.db.scalar(
+            select(func.count(KnowledgeBaseSource.id)).where(KnowledgeBaseSource.knowledge_base_id == knowledge_base_id)
+        )
+        sources_ready = await self.db.scalar(
+            select(func.count(KnowledgeBaseSource.id)).where(
+                KnowledgeBaseSource.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseSource.processing_status.in_(
+                    [KnowledgeBaseSourceStatus.READY, KnowledgeBaseSourceStatus.READY_TO_INDEX]
+                ),
+            )
+        )
+        fragments = await self.db.scalar(
+            select(func.count(KnowledgeBaseChunk.id)).where(KnowledgeBaseChunk.knowledge_base_id == knowledge_base_id)
+        )
+        fts_chunks = await self.db.scalar(
+            select(func.count(KnowledgeBaseChunk.id)).where(
+                KnowledgeBaseChunk.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseChunk.search_vector.is_not(None),
+            )
+        )
+        good_chunks = await self.db.scalar(
+            select(func.count(KnowledgeBaseChunk.id)).where(
+                KnowledgeBaseChunk.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseChunk.quality_status == KnowledgeBaseChunkQualityStatus.GOOD,
+            )
+        )
+        errors = await self.db.scalar(
+            select(func.count(KnowledgeBaseIndexingError.id)).where(
+                KnowledgeBaseIndexingError.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseIndexingError.is_resolved.is_(False),
+            )
+        )
+        quality_percent = round((float(good_chunks or 0) / float(fragments or 1)) * 100, 1)
+        can_promote = (
+            int(sources_ready or 0) > 0
+            and int(fragments or 0) > 0
+            and int(fts_chunks or 0) > 0
+            and int(errors or 0) == 0
+            and quality_percent >= 70
+        )
+        return {
+            "sources_total": int(sources_total or 0),
+            "sources_ready": int(sources_ready or 0),
+            "fragments_total": int(fragments or 0),
+            "fts_chunks": int(fts_chunks or 0),
+            "quality_percent": quality_percent,
+            "unresolved_errors": int(errors or 0),
+            "can_promote_to_ready": can_promote,
+            "recommendation": "Можно переводить в готовую" if can_promote else "Нужна проверка",
+        }
 
     async def _load_rows(
         self,

@@ -10,7 +10,6 @@ from app.core.config import settings
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User, UserSession
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login", auto_error=False)
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 async def get_current_user(db: DbSession, token: Annotated[str | None, Depends(oauth2_scheme)]) -> User:

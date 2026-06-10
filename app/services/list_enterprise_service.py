@@ -359,6 +359,10 @@ def build_report(
         position = positions.get(position_key) or "(должность не указана)"
         rows.append(
             {
+                "employee_key": employee_key or "",
+                "person_key": person_key or "",
+                "enterprise_dept_key": enterprise_dept_key or "",
+                "position_key": position_key if not is_empty_key(position_key) else "",
                 "department": resolve_department_display(
                     dept_key,
                     enterprise_dept_key,

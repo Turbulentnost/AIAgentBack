@@ -35,12 +35,14 @@ async def upload_document(
     task_id: Annotated[uuid.UUID | None, Form()] = None,
     is_knowledge_base: Annotated[bool, Form()] = False,
     source_url: Annotated[str | None, Form()] = None,
+    relative_path: Annotated[str | None, Form()] = None,
     metadata: Annotated[str | None, Form()] = None,
 ):
     content = await file.read()
     document = None
     try:
         parsed_metadata = _parse_metadata(metadata)
+        resolved_relative_path = relative_path or file.filename
         document = await DocumentService(db).upload(
             DocumentCreate(
                 title=title or file.filename or "Без названия",
@@ -50,6 +52,7 @@ async def upload_document(
                 task_id=task_id,
                 is_knowledge_base=False,
                 source_url=source_url,
+                relative_path=resolved_relative_path,
                 metadata=parsed_metadata,
             ),
             content,
@@ -58,6 +61,7 @@ async def upload_document(
             uploaded_by_user_id=current_user.id,
         )
         await db.commit()
+        await db.refresh(document)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ObjectStorageError as exc:
