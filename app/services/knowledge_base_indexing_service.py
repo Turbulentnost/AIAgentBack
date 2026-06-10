@@ -24,7 +24,7 @@ from app.models.enums import (
 from app.models.knowledge_base import (
     KnowledgeBase,
     KnowledgeBaseChunk,
-    KnowledgeBaseIndexingError,
+    KnowledgeBaseIndexingError as KnowledgeBaseIndexingErrorModel,
     KnowledgeBaseIndexingJob,
     KnowledgeBaseSource,
 )
@@ -895,7 +895,7 @@ class KnowledgeBaseIndexingService:
     ) -> None:
         job.errors_count += 1
         self.db.add(
-            KnowledgeBaseIndexingError(
+            KnowledgeBaseIndexingErrorModel(
                 job_id=job.id,
                 knowledge_base_id=job.knowledge_base_id,
                 source_id=source_id,

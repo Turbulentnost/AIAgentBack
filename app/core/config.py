@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "knowledge_base_bge_m3"
     QDRANT_VECTOR_SIZE: int = 1024
 
+    # Режим поиска по базе знаний: "semantic" — чистый векторный (смысловой)
+    # поиск; "hybrid" — вектор + полнотекстовый поиск по ключевым словам.
+    KB_SEARCH_MODE: str = "semantic"
+    # Минимальная косинусная близость, ниже которой фрагмент не показывается
+    # (0 — без отсечки). Помогает не выдавать нерелевантные фрагменты.
+    KB_SEARCH_MIN_SCORE: float = 0.0
+    # Максимальное время (сек) на формирование «Предварительного ответа» через
+    # LLM. По истечении показываем самый релевантный фрагмент без синтеза.
+    KB_SEARCH_ANSWER_TIMEOUT: float = 45.0
+
     MINIO_ENDPOINT: str = "192.168.1.157:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"

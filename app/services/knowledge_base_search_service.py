@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import re
 import uuid
 from typing import Any
 
@@ -7,7 +9,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.knowledge_base.retriever import HybridRetriever
+from app.llm.gateway import llm_gateway
 from app.models.document import Document, DocumentChunk
 from app.models.enums import (
     KnowledgeBaseAccessType,
@@ -76,12 +80,15 @@ class KnowledgeBaseSearchService:
             )
             if not effective.allowed and not include_inaccessible:
                 continue
+            relevance = _relevance_score(raw_hit)
+            if settings.KB_SEARCH_MIN_SCORE > 0 and relevance < settings.KB_SEARCH_MIN_SCORE:
+                continue
             content = document_chunk.text or document_chunk.content or ""
             show_content = effective.allowed or can_view_restricted
             hits.append(
                 KnowledgeBaseSearchHit(
                     content=content if show_content else "(фрагмент недоступен текущему сценарию)",
-                    score=float(raw_hit.get("hybrid_score") or raw_hit.get("score", 0.0)),
+                    score=relevance,
                     accessible=effective.allowed,
                     access_reason=effective.reason,
                     knowledge_base_id=knowledge_base.id,
@@ -110,7 +117,7 @@ class KnowledgeBaseSearchService:
         preview_hits = accessible_hits if not test_mode else [hit for hit in hits if hit.content and not hit.content.startswith("(фрагмент")]
         return KnowledgeBaseTestSearchResponse(
             hits=hits[:normalized_top_k] if include_inaccessible else accessible_hits[:normalized_top_k],
-            answer_preview=self._answer_preview(preview_hits),
+            answer_preview=await self._answer_preview(preview_hits, query),
         )
 
     async def _can_view_restricted_test_hits(self, viewer: User, knowledge_base: KnowledgeBase) -> bool:
@@ -193,17 +200,115 @@ class KnowledgeBaseSearchService:
         )
         return {kb_chunk.id: (kb_chunk, document_chunk, document) for kb_chunk, document_chunk, document in result.all()}
 
-    def _answer_preview(self, hits: list[KnowledgeBaseSearchHit]) -> str | None:
-        if not hits:
-            return None
-        snippets = []
-        for hit in hits[:3]:
-            text = " ".join(hit.content.split())
+    async def _answer_preview(self, hits: list[KnowledgeBaseSearchHit], query: str) -> str | None:
+        # Контекст для LLM: берём топ-фрагменты как есть (в т.ч. структурные,
+        # вроде дерева каталогов) — иногда именно там лежит ответ (например,
+        # каталог qdrant/). Лишние «рисующие» символы схлопываем.
+        context_snippets: list[str] = []
+        for hit in hits[:4]:
+            text = " ".join((hit.content or "").split())
             if text:
-                snippets.append(text[:300])
-        if not snippets:
+                context_snippets.append(text[:500])
+        if not context_snippets:
             return None
-        return " ".join(snippets)
+
+        llm_answer = await self._generate_grounded_answer(query, context_snippets)
+        if llm_answer:
+            return llm_answer
+        # Fallback: самый релевантный осмысленный фрагмент (до конца предложения),
+        # а если прозы нет — первый фрагмент как есть.
+        prose = next((s for s in context_snippets if _is_prose(s)), context_snippets[0])
+        return _trim_to_sentence(prose, 400)
+
+    async def _generate_grounded_answer(self, query: str, snippets: list[str]) -> str | None:
+        context = "\n\n".join(f"[Фрагмент {index + 1}]\n{snippet}" for index, snippet in enumerate(snippets))
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Ты ассистент по базе знаний. Отвечай на вопрос кратко и по делу, "
+                    "СТРОГО на основании приведённых фрагментов. Не используй внешние знания "
+                    "и ничего не выдумывай. Если во фрагментах нет прямого ответа, честно "
+                    "напиши, что в документах это явно не указано, и приведи наиболее близкую "
+                    "по смыслу информацию из фрагментов. Отвечай на русском языке. /no_think"
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Вопрос: {query}\n\nФрагменты из базы знаний:\n{context}\n\nОтвет:",
+            },
+        ]
+        try:
+            # Запас токенов нужен, т.к. reasoning-модель (qwen3) сначала
+            # «думает», и только потом пишет финальный ответ в content.
+            # Ограничиваем время, чтобы поиск не зависал на медленных ответах.
+            response = await asyncio.wait_for(
+                llm_gateway.chat(messages, temperature=0.1, max_tokens=3000),
+                timeout=settings.KB_SEARCH_ANSWER_TIMEOUT,
+            )
+            message = response["choices"][0]["message"]
+            content = message.get("content") or ""
+        except Exception:
+            return None
+        # Сырые рассуждения (reasoning_content) не используем — только чистый
+        # ответ. Если ответа нет, вернём None и сработает fallback-фрагмент.
+        return _clean_llm_text(content)
+
+
+_SENTENCE_END = re.compile(r"[.!?…](?:\s|$)")
+
+
+def _is_prose(text: str) -> bool:
+    """Фрагмент считается осмысленным текстом, а не деревом каталогов/кодом.
+
+    Отсеиваем фрагменты, в которых мало букв относительно общей длины
+    (например, «│ ├── docker-compose.yml │ ├── nginx/ ...»).
+    """
+    if not text:
+        return False
+    letters = sum(1 for ch in text if ch.isalpha())
+    if letters < 40:
+        return False
+    return letters / len(text) >= 0.55
+
+
+def _trim_to_sentence(text: str | None, limit: int) -> str | None:
+    """Обрезает текст до конца последнего целого предложения в пределах limit."""
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    matches = list(_SENTENCE_END.finditer(window))
+    if matches:
+        return window[: matches[-1].end()].strip()
+    return window.rsplit(" ", 1)[0].strip() + "…"
+
+
+def _clean_llm_text(text: str | None) -> str | None:
+    if not text:
+        return None
+    # Убираем блоки рассуждений qwen/reasoning-моделей вида <think>...</think>.
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = cleaned.strip()
+    return cleaned or None
+
+
+def _relevance_score(raw_hit: dict[str, Any]) -> float:
+    """Понятная пользователю релевантность 0..1.
+
+    Для гибридного поиска RRF-балл (hybrid_score) очень мал по своей природе
+    (≈ 0.01) и не отражает качество совпадения, поэтому для отображения
+    используем косинусную близость вектора (bge-m3, 0..1). Если фрагмент найден
+    только полнотекстовым поиском, нормализуем ранг ts_rank.
+    """
+    vector_score = raw_hit.get("vector_score")
+    if vector_score is not None:
+        return max(0.0, min(1.0, float(vector_score)))
+    fts_score = raw_hit.get("fts_score")
+    if fts_score is not None:
+        return max(0.0, min(1.0, float(fts_score)))
+    return float(raw_hit.get("hybrid_score") or raw_hit.get("score", 0.0))
 
 
 def _kb_chunk_ids(hits: list[dict[str, Any]]) -> list[uuid.UUID]:

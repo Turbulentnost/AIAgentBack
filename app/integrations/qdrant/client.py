@@ -46,6 +46,22 @@ class QdrantVectorClient:
             )
         return self._client
 
+    def reset_client(self) -> None:
+        """Сбрасывает кэшированный async-клиент.
+
+        Каждая задача Celery выполняется в новом event loop, а
+        AsyncQdrantClient привязан к loop, в котором был создан. Без сброса
+        повторная задача падает с «Event loop is closed»."""
+        self._client = None
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            try:
+                await self._client.close()
+            except Exception:
+                pass
+            self._client = None
+
     async def health_check(self) -> bool:
         try:
             await self.client.get_collections()

@@ -10,11 +10,14 @@ def _run_async_task(factory):
     import asyncio
 
     from app.db.session import engine
+    from app.integrations.qdrant import qdrant_client
 
     async def runner():
+        qdrant_client.reset_client()
         try:
             return await factory()
         finally:
+            await qdrant_client.aclose()
             await engine.dispose()
 
     return asyncio.run(runner())

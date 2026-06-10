@@ -114,6 +114,8 @@ def merge_hybrid_results(
                 "score": score,
                 "payload": payload.get("payload") or {"knowledge_base_chunk_id": key},
                 "hybrid_score": score,
+                "vector_score": payload.get("vector_score"),
+                "fts_score": payload.get("fts_score"),
             }
         )
     return results

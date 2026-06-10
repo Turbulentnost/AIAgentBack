@@ -182,9 +182,9 @@ class DocumentChunkingService:
             tokens = self._count_tokens(unit)
             if current and current_tokens + tokens > self.chunk_size_tokens:
                 split_blocks.append(self._copy_block(block, " ".join(current)))
-                overlap_words = " ".join(current).split()[-self.overlap_tokens :]
-                current = [" ".join(overlap_words)] if overlap_words else []
-                current_tokens = len(overlap_words)
+                tail_text = self._sentence_aligned_tail(" ".join(current))
+                current = [tail_text] if tail_text else []
+                current_tokens = self._count_tokens(tail_text) if tail_text else 0
             current.append(unit)
             current_tokens += tokens
         if current:
@@ -204,14 +204,30 @@ class DocumentChunkingService:
         for block in reversed(blocks):
             block_tokens = self._count_tokens(block.text)
             if tokens + block_tokens > self.overlap_tokens:
-                words = block.text.split()
-                if not overlap and words:
-                    overlap_text = " ".join(words[-self.overlap_tokens :])
-                    overlap.append(self._copy_block(block, overlap_text))
+                tail_text = self._sentence_aligned_tail(block.text)
+                if not overlap and tail_text:
+                    overlap.append(self._copy_block(block, tail_text))
                 break
             overlap.insert(0, block)
             tokens += block_tokens
         return overlap
+
+    def _sentence_aligned_tail(self, text: str) -> str:
+        """Возвращает последние целые предложения в пределах overlap_tokens.
+
+        Перекрытие переносится целыми предложениями, поэтому следующий фрагмент
+        начинается с начала предложения, а не с середины. Если в тексте лишь
+        одно предложение, переносим последние слова (без разрыва слов)."""
+        sentences = self._split_sentences_or_words(text)
+        tail: list[str] = []
+        tokens = 0
+        for sentence in reversed(sentences):
+            sentence_tokens = self._count_tokens(sentence)
+            if tail and tokens + sentence_tokens > self.overlap_tokens:
+                break
+            tail.insert(0, sentence)
+            tokens += sentence_tokens
+        return " ".join(tail)
 
     def _metadata_for_blocks(
         self,

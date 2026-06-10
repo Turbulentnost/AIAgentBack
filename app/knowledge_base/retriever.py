@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.knowledge_base.vector_store import VectorStore, vector_store
 from app.models.document import DocumentChunk
 from app.models.knowledge_base import KnowledgeBase
@@ -23,13 +24,47 @@ class HybridRetriever:
         knowledge_base: KnowledgeBase | None = None,
     ) -> list[dict]:
         if knowledge_base is not None and db is not None:
-            return await self._hybrid_kb_search(db, knowledge_base, query, top_k=top_k)
+            if settings.KB_SEARCH_MODE.lower() == "hybrid":
+                return await self._hybrid_kb_search(db, knowledge_base, query, top_k=top_k)
+            return await self._semantic_kb_search(db, knowledge_base, query, top_k=top_k)
 
         embedding = await embedding_service.embed_text(query)
         hits = await vector_store.search(embedding.vector, top_k=top_k, filters=filters)
         if db is None:
             return hits
         return await self._attach_chunks(db, hits)
+
+    async def _semantic_kb_search(
+        self,
+        db: AsyncSession,
+        knowledge_base: KnowledgeBase,
+        query: str,
+        *,
+        top_k: int,
+    ) -> list[dict]:
+        """Чистый смысловой поиск: ранжирование только по косинусной близости
+        векторов (без полнотекстового поиска по ключевым словам)."""
+        fetch_k = max(top_k * 5, top_k)
+        embedding = await embedding_service.embed_text(query)
+        vector_hits = await VectorStore(knowledge_base.qdrant_collection).search(
+            embedding.vector,
+            top_k=fetch_k,
+            filters={"knowledge_base_id": str(knowledge_base.id), "is_active": True},
+        )
+        results: list[dict] = []
+        for hit in vector_hits:
+            payload = hit.get("payload") or {}
+            score = float(hit.get("score", 0.0))
+            results.append(
+                {
+                    "id": payload.get("knowledge_base_chunk_id") or hit.get("id"),
+                    "score": score,
+                    "payload": payload,
+                    "hybrid_score": score,
+                    "vector_score": score,
+                }
+            )
+        return await self._attach_chunks(db, results)
 
     async def _hybrid_kb_search(
         self,
