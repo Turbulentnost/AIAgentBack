@@ -196,7 +196,7 @@ def _to_search_hit(hit: dict, chunk: DocumentChunk, payload: dict[str, Any]) -> 
         **(chunk.metadata_ or chunk.chunk_metadata or {}),
     }
     return ChunkSearchHit(
-        content=chunk.text or chunk.content or "",
+        content=chunk.content or chunk.text or "",
         score=float(hit.get("score", 0.0)),
         document_id=document.id if document else chunk.document_id,
         document_version_id=version.id if version else chunk.document_version_id,

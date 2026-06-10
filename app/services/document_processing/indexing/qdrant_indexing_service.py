@@ -41,7 +41,9 @@ class QdrantIndexingService:
             raise QdrantIndexingError("Нет DocumentChunk для индексации")
 
         await qdrant_client.delete_by_document_version(str(document_version.id))
-        texts = [chunk.text or chunk.content for chunk in chunks]
+        from app.documents.chunk_utils import chunk_embedding_text
+
+        texts = [chunk_embedding_text(chunk) for chunk in chunks]
         embeddings = await self.embedding_service.embed_texts(texts)
 
         points = [

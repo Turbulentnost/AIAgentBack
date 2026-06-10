@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.documents.chunk_utils import chunk_display_text, chunk_embedding_text
 from app.knowledge_base.retriever import HybridRetriever
 from app.llm.gateway import llm_gateway
 from app.models.document import Document, DocumentChunk
@@ -83,7 +84,8 @@ class KnowledgeBaseSearchService:
             relevance = _relevance_score(raw_hit)
             if settings.KB_SEARCH_MIN_SCORE > 0 and relevance < settings.KB_SEARCH_MIN_SCORE:
                 continue
-            content = document_chunk.text or document_chunk.content or ""
+            content = chunk_display_text(document_chunk)
+            embedding_text = chunk_embedding_text(document_chunk)
             show_content = effective.allowed or can_view_restricted
             hits.append(
                 KnowledgeBaseSearchHit(
@@ -104,6 +106,7 @@ class KnowledgeBaseSearchService:
                         **payload,
                         **(document_chunk.metadata_ or document_chunk.chunk_metadata or {}),
                         "quality_status": getattr(kb_chunk.quality_status, "value", kb_chunk.quality_status),
+                        "embedding_text": embedding_text if embedding_text != content else None,
                     },
                 )
             )
@@ -206,7 +209,9 @@ class KnowledgeBaseSearchService:
         # каталог qdrant/). Лишние «рисующие» символы схлопываем.
         context_snippets: list[str] = []
         for hit in hits[:4]:
-            text = " ".join((hit.content or "").split())
+            meta = hit.metadata or {}
+            source_text = meta.get("embedding_text") or hit.content or ""
+            text = " ".join(source_text.split())
             if text:
                 context_snippets.append(text[:500])
         if not context_snippets:

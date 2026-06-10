@@ -6,6 +6,7 @@ import uuid
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.documents.chunk_utils import chunk_embedding_text
 from app.models.document import DocumentChunk
 from app.models.knowledge_base import KnowledgeBaseChunk
 
@@ -21,7 +22,7 @@ class KnowledgeBaseFtsService:
         self.db = db
 
     async def index_chunk(self, kb_chunk: KnowledgeBaseChunk, document_chunk: DocumentChunk) -> None:
-        content = document_chunk.text or document_chunk.content or ""
+        content = chunk_embedding_text(document_chunk)
         if not content.strip():
             return
         clause = kb_chunk.clause_number or ""

@@ -142,7 +142,7 @@ async def get_knowledge_fragment(
         document_title=document.title if document else None,
         section_title=document_chunk.section_title,
         page_number=document_chunk.page_number,
-        text=document_chunk.text or document_chunk.content or "",
+        text=document_chunk.content or document_chunk.text or "",
         neighbors=neighbors,
         source=_format_source(document.title if document else None, document_chunk.page_number),
         metadata={
@@ -206,7 +206,7 @@ async def _load_neighbors(
         items.append(
             KnowledgeFragmentNeighbor(
                 fragment_id=kb_chunk.id,
-                text=neighbor_chunk.text or neighbor_chunk.content or "",
+                text=neighbor_chunk.content or neighbor_chunk.text or "",
                 page_number=neighbor_chunk.page_number,
                 section_title=neighbor_chunk.section_title,
             )

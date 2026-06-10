@@ -593,7 +593,7 @@ def _chunk_read(kb_chunk, document_chunk, document: Document | None) -> dict:
         "clause_number": kb_chunk.clause_number,
         "fragment_type": kb_chunk.fragment_type,
         "access_snapshot": kb_chunk.access_snapshot,
-        "text": document_chunk.text or document_chunk.content,
+        "text": document_chunk.content or document_chunk.text,
         "document_id": document.id if document else document_chunk.document_id,
         "document_title": document.title if document else None,
         "page_number": document_chunk.page_number,

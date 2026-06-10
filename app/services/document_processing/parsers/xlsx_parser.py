@@ -354,6 +354,10 @@ class XlsxParsingService:
                         "rows_count": sheet.rows_count,
                         "columns_count": sheet.columns_count,
                         "headers": sheet.headers,
+                        "rows": [
+                            ["" if cell is None else str(cell) for cell in row]
+                            for row in sheet.rows
+                        ],
                         "merged_ranges": sheet.merged_ranges,
                         "formulas_count": sheet.formulas_count,
                         "comments_count": sheet.comments_count,

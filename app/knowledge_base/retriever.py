@@ -119,7 +119,7 @@ class HybridRetriever:
             if chunk is not None:
                 payload = {
                     **payload,
-                    "content": chunk.text or chunk.content,
+                    "content": chunk.content or chunk.text,
                     "metadata": chunk.metadata_ or chunk.chunk_metadata,
                 }
             enriched.append({**hit, "payload": payload})

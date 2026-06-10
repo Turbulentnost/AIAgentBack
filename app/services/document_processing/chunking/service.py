@@ -10,6 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.document import DocumentChunk
+from app.services.document_processing.chunking.table_rows import (
+    build_table_row_display_text,
+    build_table_row_embedding_text,
+    detect_table_structure,
+    is_probably_table_block,
+)
 
 
 class DocumentChunkingError(RuntimeError):
@@ -29,6 +35,10 @@ class ParsedBlock:
 
 class DocumentChunkingService:
     """Hybrid chunking for parsed PDF, DOCX, XLSX and OCR documents."""
+
+    # Версия алгоритма chunking. Увеличивается при изменении логики разбиения,
+    # чтобы переиндексация перепарсила документы со старыми чанками.
+    CHUNKING_VERSION = 2
 
     DEFAULT_CHUNK_TOKENS = 850
     DEFAULT_OVERLAP_TOKENS = 120
@@ -60,7 +70,8 @@ class DocumentChunkingService:
         if not normalized_blocks:
             raise DocumentChunkingError("Недостаточно текста для chunking")
 
-        chunks = self._build_chunks(normalized_blocks, source=source, base_metadata=base_metadata or {})
+        expanded_blocks = self._expand_table_blocks(normalized_blocks)
+        chunks = self._build_chunks(expanded_blocks, source=source, base_metadata=base_metadata or {})
         if not chunks:
             raise DocumentChunkingError("Не удалось сформировать chunks")
 
@@ -71,6 +82,7 @@ class DocumentChunkingService:
         created: list[DocumentChunk] = []
         for index, chunk in enumerate(chunks):
             text = chunk["text"]
+            content = chunk.get("content") or text
             metadata = chunk["metadata"]
             item = DocumentChunk(
                 document_id=document_id,
@@ -84,7 +96,7 @@ class DocumentChunkingService:
                 embedding_model=settings.LLM_EMBEDDING_MODEL,
                 is_indexed=False,
                 metadata_=metadata,
-                content=text,
+                content=content,
                 chunk_metadata=metadata,
             )
             self.db.add(item)
@@ -112,6 +124,73 @@ class DocumentChunkingService:
             )
         return normalized
 
+    def _expand_table_blocks(self, blocks: list[ParsedBlock]) -> list[ParsedBlock]:
+        """Каждая строка таблицы — отдельный блок с разным текстом для embedding и UI."""
+        expanded: list[ParsedBlock] = []
+        for block in blocks:
+            if not is_probably_table_block(block.block_type, block.metadata):
+                expanded.append(block)
+                continue
+            expanded.extend(self._table_block_to_row_blocks(block))
+        return expanded
+
+    def _table_block_to_row_blocks(self, block: ParsedBlock) -> list[ParsedBlock]:
+        rows = block.metadata.get("rows") or []
+        if not rows:
+            return [block]
+
+        structure = detect_table_structure(rows)
+        if not structure.data_rows:
+            return [block]
+
+        table_index = block.metadata.get("table_index")
+        sheet_name = block.sheet_name or block.metadata.get("sheet_name")
+        table_caption = structure.caption
+        if block.block_type == "sheet" and sheet_name and not table_caption:
+            table_caption = f"Лист: {sheet_name}"
+
+        # Не тащим все строки таблицы в metadata каждой строки.
+        base_row_metadata = {key: value for key, value in block.metadata.items() if key != "rows"}
+
+        row_blocks: list[ParsedBlock] = []
+        for row_index, row_values in enumerate(structure.data_rows):
+            if not any(cell.strip() for cell in row_values):
+                continue
+            embedding_text = build_table_row_embedding_text(
+                section_title=block.section_title,
+                table_caption=table_caption,
+                headers=structure.headers,
+                row_values=row_values,
+            )
+            display_text = build_table_row_display_text(
+                headers=structure.headers,
+                row_values=row_values,
+            )
+            if not embedding_text.strip():
+                continue
+            row_blocks.append(
+                ParsedBlock(
+                    text=embedding_text,
+                    block_type="table_row",
+                    metadata={
+                        **base_row_metadata,
+                        "chunk_kind": "table_row",
+                        "fragment_type": "table_row",
+                        "display_text": display_text,
+                        "table_index": table_index,
+                        "row_index": row_index,
+                        "headers": structure.headers,
+                        "row_values": row_values,
+                        "table_caption": table_caption,
+                    },
+                    page_number=block.page_number,
+                    section_title=block.section_title,
+                    sheet_name=block.sheet_name,
+                    cell_range=block.cell_range,
+                )
+            )
+        return row_blocks or [block]
+
     def _build_chunks(
         self,
         blocks: list[ParsedBlock],
@@ -130,6 +209,8 @@ class DocumentChunkingService:
             text = "\n\n".join(block.text for block in current_blocks)
             if self._count_tokens(text) < self.min_chunk_tokens and chunks:
                 chunks[-1]["text"] = f"{chunks[-1]['text']}\n\n{text}"
+                prev_content = chunks[-1].get("content") or chunks[-1]["text"]
+                chunks[-1]["content"] = f"{prev_content}\n\n{text}"
                 chunks[-1]["metadata"] = self._merge_chunk_metadata(
                     chunks[-1]["metadata"],
                     self._metadata_for_blocks(current_blocks, source, base_metadata),
@@ -138,6 +219,7 @@ class DocumentChunkingService:
                 chunks.append(
                     {
                         "text": text,
+                        "content": text,
                         "metadata": self._metadata_for_blocks(current_blocks, source, base_metadata),
                     }
                 )
@@ -146,6 +228,18 @@ class DocumentChunkingService:
             current_tokens = sum(self._count_tokens(block.text) for block in current_blocks)
 
         for block in blocks:
+            if block.block_type == "table_row":
+                flush()
+                metadata = self._metadata_for_blocks([block], source, base_metadata)
+                chunks.append(
+                    {
+                        "text": block.text,
+                        "content": block.metadata.get("display_text") or block.text,
+                        "metadata": metadata,
+                    }
+                )
+                continue
+
             block_tokens = self._count_tokens(block.text)
             if block_tokens > self.chunk_size_tokens:
                 flush()
@@ -168,6 +262,7 @@ class DocumentChunkingService:
                 chunks.append(
                     {
                         "text": text,
+                        "content": text,
                         "metadata": self._metadata_for_blocks(current_blocks, source, base_metadata),
                     }
                 )
@@ -251,6 +346,7 @@ class DocumentChunkingService:
             "blocks_count": len(blocks),
             "chunking": {
                 "algorithm": "hybrid_structure_token_overlap",
+                "version": self.CHUNKING_VERSION,
                 "chunk_size_tokens": self.chunk_size_tokens,
                 "overlap_tokens": self.overlap_tokens,
                 "min_chunk_tokens": self.min_chunk_tokens,

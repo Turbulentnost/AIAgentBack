@@ -440,6 +440,11 @@ class KnowledgeBaseIndexingService:
             await self._update_job_progress(job)
 
         await self._ensure_source_document_processed(document, version)
+        # Парсер мог изменить документ/версию: после flush атрибуты с
+        # server-side onupdate (updated_at) истекают, а их синхронное чтение
+        # в async-сессии падает с MissingGreenlet. Обновляем явно.
+        await self.db.refresh(document)
+        await self.db.refresh(version)
         chunks = await self._load_document_chunks(source.document_version_id)
         if not chunks:
             raise KnowledgeBaseIndexingError("У источника нет фрагментов для индексации")
@@ -487,7 +492,9 @@ class KnowledgeBaseIndexingService:
         if job is not None:
             await self._set_job_stage(job, "embeddings")
 
-        texts = [chunk.text or chunk.content for chunk in chunks]
+        from app.documents.chunk_utils import chunk_embedding_text
+
+        texts = [chunk_embedding_text(chunk) for chunk in chunks]
         embeddings = await self.embedding_service.embed_texts(texts)
         if job is not None:
             await self._set_job_stage(job, "qdrant")
@@ -583,7 +590,9 @@ class KnowledgeBaseIndexingService:
             kb.metadata_ = metadata or None
 
     def _chunk_quality(self, chunk: DocumentChunk, metadata: dict[str, Any]) -> KnowledgeBaseChunkQualityStatus:
-        text = (chunk.text or chunk.content or "").strip()
+        from app.documents.chunk_utils import chunk_embedding_text
+
+        text = chunk_embedding_text(chunk)
         if not text:
             return KnowledgeBaseChunkQualityStatus.FAILED
         quality_notes = metadata.get("quality_notes") or metadata.get("ocr_quality")
@@ -620,7 +629,7 @@ class KnowledgeBaseIndexingService:
 
     async def _ensure_source_document_processed(self, document: Document, version: DocumentVersion) -> None:
         existing = await self._load_document_chunks(version.id)
-        if existing:
+        if existing and not self._chunks_outdated(existing):
             return
 
         content_type = (document.content_type or document.mime_type or "").lower()
@@ -645,9 +654,27 @@ class KnowledgeBaseIndexingService:
             else:
                 raise KnowledgeBaseIndexingError(f"Неподдерживаемый формат: {content_type or filename}")
         except KnowledgeBaseIndexingError:
+            if existing:
+                # Перепарсить не получилось (например, формат не поддерживается),
+                # но старые чанки есть — продолжаем работать с ними.
+                return
             raise
         except Exception as exc:
+            if existing:
+                return
             raise KnowledgeBaseIndexingError(f"Не удалось обработать документ «{document.title}»: {exc}") from exc
+
+    def _chunks_outdated(self, chunks: list[DocumentChunk]) -> bool:
+        """Чанки устарели, если созданы старой версией алгоритма chunking."""
+        from app.services.document_processing.chunking import DocumentChunkingService
+
+        current = DocumentChunkingService.CHUNKING_VERSION
+        for chunk in chunks:
+            metadata = chunk.metadata_ or chunk.chunk_metadata or {}
+            version = (metadata.get("chunking") or {}).get("version")
+            if version != current:
+                return True
+        return False
 
     def _resolve_final_kb_status(self, kb: KnowledgeBase, job: KnowledgeBaseIndexingJob) -> KnowledgeBaseStatus:
         if job.errors_count > 0 and job.processed_sources_count == 0:
