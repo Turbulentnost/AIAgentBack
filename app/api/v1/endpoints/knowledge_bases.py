@@ -23,6 +23,7 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseCreate,
     KnowledgeBaseListItem,
     KnowledgeBaseOverviewStats,
+    KnowledgeBaseIndexCancelRequest,
     KnowledgeBaseIndexRequest,
     KnowledgeBaseIndexingErrorRead,
     KnowledgeBaseIndexingJobRead,
@@ -37,11 +38,11 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseUpdate,
 )
 from app.schemas.user import ResponsibleUserRead
-from app.services.employee_sync_service import EmployeeSyncService
 from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
-from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingError, KnowledgeBaseIndexingService
 from app.services.knowledge_base_search_service import KnowledgeBaseSearchService
 from app.services.knowledge_base_service import KnowledgeBaseService, KnowledgeBaseServiceError, file_extension
+from app.services.user_service import UserService
 from app.workers.tasks import (
     index_knowledge_base_full,
     index_knowledge_base_source,
@@ -73,7 +74,7 @@ async def knowledge_base_stats(db: DbSession, current_user: CurrentUser):
 @router.get("/responsible-users", response_model=list[ResponsibleUserRead])
 async def list_responsible_users(db: DbSession, current_user: CurrentUser):
     _ = current_user
-    users = await EmployeeSyncService(db).list_responsible_candidates()
+    users = await UserService(db).list_platform_access_users()
     return [
         ResponsibleUserRead(
             id=user.id,
@@ -102,6 +103,8 @@ async def list_knowledge_bases(
         query=query,
     )
     access_service = KnowledgeBaseAccessService(db)
+    service = KnowledgeBaseService(db)
+    active_indexing_ids = await service.active_indexing_knowledge_base_ids([kb.id for kb in items])
     result: list[KnowledgeBaseListItem] = []
     for kb in items:
         kb_loaded = await access_service.load_for_access_check(kb.id) or kb
@@ -116,7 +119,10 @@ async def list_knowledge_bases(
             required_access=KnowledgeBaseAccessType.SEARCH,
             allow_non_ready_for_admin=False,
         )
-        indexing_active = kb.status in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}
+        indexing_active = (
+            kb.status in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}
+            or kb.id in active_indexing_ids
+        )
         base = KnowledgeBaseRead.model_validate(kb)
         result.append(
             KnowledgeBaseListItem(
@@ -325,7 +331,9 @@ async def replace_access(
             payload,
             current_user=current_user,
         )
-        job = await KnowledgeBaseIndexingService(db).create_job(
+        indexing_service = KnowledgeBaseIndexingService(db)
+        await indexing_service.mark_indexing_queued(knowledge_base_id)
+        job = await indexing_service.create_job(
             knowledge_base_id,
             job_type=KnowledgeBaseIndexJobType.ACCESS_REINDEX,
             started_by_user_id=current_user.id,
@@ -385,6 +393,41 @@ async def start_indexing(
     return job
 
 
+@router.post("/{knowledge_base_id}/index/cancel", response_model=KnowledgeBaseIndexingJobRead)
+async def cancel_indexing(
+    knowledge_base_id: uuid.UUID,
+    payload: KnowledgeBaseIndexCancelRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    kb = await KnowledgeBaseService(db).get(knowledge_base_id)
+    if kb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="База знаний не найдена")
+    indexing_service = KnowledgeBaseIndexingService(db)
+    try:
+        if payload.force:
+            job = await indexing_service.force_cancel(
+                knowledge_base_id,
+                requested_by_user_id=current_user.id,
+                reason=payload.reason,
+            )
+            if job is None:
+                kb = await _commit_and_refresh(db, kb)
+                jobs = await KnowledgeBaseService(db).list_jobs(knowledge_base_id)
+                if jobs:
+                    return jobs[0]
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Активное задание индексации не найдено")
+            return await _commit_and_refresh(db, job)
+        job = await indexing_service.request_cancel(
+            knowledge_base_id,
+            requested_by_user_id=current_user.id,
+            reason=payload.reason,
+        )
+        return await _commit_and_refresh(db, job)
+    except KnowledgeBaseIndexingError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
 @router.get("/{knowledge_base_id}/index/jobs", response_model=list[KnowledgeBaseIndexingJobRead])
 async def list_jobs(knowledge_base_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
     return await KnowledgeBaseService(db).list_jobs(knowledge_base_id)
@@ -433,11 +476,21 @@ async def test_search(
     kb = await access_service.load_for_access_check(knowledge_base_id)
     if kb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="База знаний не найдена")
+    if kb.status == KnowledgeBaseStatus.DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Тест поиска недоступен: база ещё не проиндексирована. Добавьте источники и запустите индексацию.",
+        )
+    if kb.status == KnowledgeBaseStatus.PROCESSING and kb.fragments_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Тест поиска временно недоступен: идёт первая индексация базы знаний.",
+        )
     search_access = await access_service.can_access_knowledge_base(
         user=current_user,
         knowledge_base=kb,
         required_access=KnowledgeBaseAccessType.SEARCH,
-        allow_non_ready_for_admin=False,
+        allow_non_ready_for_admin=True,
     )
     if not search_access.allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для поиска по базе знаний")
@@ -449,6 +502,8 @@ async def test_search(
         top_k=payload.top_k,
         agent_id=payload.agent_id,
         include_inaccessible=True,
+        test_mode=True,
+        viewer=current_user,
     )
     await service.audit.log(
         action="kb.test_search",

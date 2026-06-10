@@ -294,6 +294,13 @@ class KnowledgeBaseIndexingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     qdrant_points_count: Mapped[int] = mapped_column(Integer, default=0)
     fulltext_chunks_count: Mapped[int] = mapped_column(Integer, default=0)
     processing_params: Mapped[dict | None] = mapped_column(JSONB)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    cancel_requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     started_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)

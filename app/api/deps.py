@@ -12,7 +12,7 @@ from app.db.session import get_db
 from app.models.user import User, UserSession
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login", auto_error=False)
 DbSession = Annotated[AsyncSession, Depends(get_db)]
-async def get_current_user(db: DbSession, token: Annotated[str | None, Depends(oauth2_scheme)]) -> User:
+async def authenticate_access_token(db: AsyncSession, token: str) -> User:
     exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Не удалось проверить учётные данные")
     if not token:
         raise exc
@@ -33,5 +33,13 @@ async def get_current_user(db: DbSession, token: Annotated[str | None, Depends(o
     if user is None or not user.is_active:
         raise exc
     return user
+
+
+async def get_current_user(db: DbSession, token: Annotated[str | None, Depends(oauth2_scheme)]) -> User:
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Не удалось проверить учётные данные")
+    return await authenticate_access_token(db, token)
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
 

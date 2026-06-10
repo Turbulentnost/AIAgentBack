@@ -37,7 +37,7 @@ async def list_users(db: DbSession, current_user: CurrentUser, limit: int = 50, 
 @router.get("/responsible-candidates", response_model=list[ResponsibleUserRead])
 async def list_responsible_candidates(db: DbSession, current_user: CurrentUser):
     _ = current_user
-    users = await EmployeeSyncService(db).list_responsible_candidates()
+    users = await UserService(db).list_platform_access_users()
     return [
         ResponsibleUserRead(
             id=user.id,

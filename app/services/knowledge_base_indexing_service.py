@@ -28,6 +28,11 @@ from app.models.knowledge_base import (
     KnowledgeBaseIndexingJob,
     KnowledgeBaseSource,
 )
+from app.services.knowledge_base_indexing_events import (
+    build_indexing_payload,
+    is_indexing_active,
+    publish_indexing_event,
+)
 from app.models.user import User
 from app.services.embeddings import EmbeddingService, embedding_service
 from app.services.knowledge_base_fts_service import KnowledgeBaseFtsService
@@ -91,10 +96,17 @@ class KnowledgeBaseIndexingService:
         )
         self.db.add(job)
         await self.db.flush()
+        kb = await self.db.get(KnowledgeBase, knowledge_base_id)
+        if kb is not None:
+            await self._emit_indexing_event(job, event="queued", kb=kb)
         return job
 
     async def mark_indexing_queued(self, knowledge_base_id: uuid.UUID) -> KnowledgeBase:
         kb = await self._load_kb(knowledge_base_id)
+        metadata = kb.metadata_ or {}
+        if kb.status not in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}:
+            metadata["indexing_previous_status"] = kb.status.value
+            kb.metadata_ = metadata
         kb.status = KnowledgeBaseStatus.PROCESSING
         for source in kb.sources:
             if source.processing_status not in _SKIP_STATUSES:
@@ -119,6 +131,91 @@ class KnowledgeBaseIndexingService:
         if superseded:
             await self.db.flush()
         return superseded
+
+    async def request_cancel(
+        self,
+        knowledge_base_id: uuid.UUID,
+        *,
+        requested_by_user_id: uuid.UUID,
+        reason: str | None = None,
+    ) -> KnowledgeBaseIndexingJob:
+        result = await self.db.execute(
+            select(KnowledgeBaseIndexingJob)
+            .where(
+                KnowledgeBaseIndexingJob.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseIndexingJob.status.in_(
+                    [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                ),
+            )
+            .order_by(KnowledgeBaseIndexingJob.created_at.desc())
+            .limit(1)
+        )
+        job = result.scalar_one_or_none()
+        if job is None:
+            raise KnowledgeBaseIndexingError("Активное задание индексации не найдено")
+        job.cancel_requested = True
+        job.cancel_requested_by_user_id = requested_by_user_id
+        job.cancel_requested_at = _now()
+        job.cancel_reason = reason or "Остановка по запросу пользователя"
+        await self._set_job_stage(job, "stopping")
+        if job.status == KnowledgeBaseIndexJobStatus.QUEUED:
+            kb = await self._load_kb(knowledge_base_id)
+            elapsed = (_now() - job.started_at).total_seconds() if job.started_at else 0.0
+            started = perf_counter() - max(0.0, elapsed)
+            await self._mark_job_cancelled(job, kb, started)
+        await self.db.flush()
+        return job
+
+    async def force_cancel(
+        self,
+        knowledge_base_id: uuid.UUID,
+        *,
+        requested_by_user_id: uuid.UUID | None = None,
+        reason: str | None = None,
+    ) -> KnowledgeBaseIndexingJob | None:
+        result = await self.db.execute(
+            select(KnowledgeBaseIndexingJob)
+            .where(
+                KnowledgeBaseIndexingJob.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseIndexingJob.status.in_(
+                    [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                ),
+            )
+            .order_by(KnowledgeBaseIndexingJob.created_at.desc())
+            .limit(1)
+        )
+        job = result.scalar_one_or_none()
+        if job is None:
+            kb = await self._load_kb(knowledge_base_id)
+            if kb.status in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}:
+                metadata = kb.metadata_ or {}
+                previous_status = metadata.pop("indexing_previous_status", None)
+                kb.metadata_ = metadata or None
+                if previous_status and kb.fragments_count > 0:
+                    try:
+                        kb.status = KnowledgeBaseStatus(previous_status)
+                    except ValueError:
+                        kb.status = KnowledgeBaseStatus.READY if kb.fragments_count > 0 else KnowledgeBaseStatus.DRAFT
+                elif kb.fragments_count > 0:
+                    kb.status = KnowledgeBaseStatus.READY
+                else:
+                    kb.status = KnowledgeBaseStatus.DRAFT
+                for source in kb.sources:
+                    if source.processing_status == KnowledgeBaseSourceStatus.PROCESSING:
+                        source.processing_status = KnowledgeBaseSourceStatus.READY_TO_INDEX
+                await self.db.flush()
+            return None
+        job.cancel_requested = True
+        if requested_by_user_id is not None:
+            job.cancel_requested_by_user_id = requested_by_user_id
+        job.cancel_requested_at = _now()
+        job.cancel_reason = reason or "Принудительная остановка индексации"
+        kb = await self._load_kb(knowledge_base_id)
+        elapsed = (_now() - job.started_at).total_seconds() if job.started_at else 0.0
+        started = perf_counter() - max(0.0, elapsed)
+        await self._mark_job_cancelled(job, kb, started)
+        await self.db.flush()
+        return job
 
     async def precheck_all_sources(
         self,
@@ -183,6 +280,10 @@ class KnowledgeBaseIndexingService:
         kb.status = KnowledgeBaseStatus.PROCESSING
         started = perf_counter()
 
+        if await self._check_cancel_requested(job, kb, started):
+            return self._job_result(job)
+
+        await self._set_job_stage(job, "precheck")
         eligible = await self.precheck_all_sources(knowledge_base_id, user=user, job=job)
         job.total_sources_count = len(eligible)
         await self._update_job_progress(job)
@@ -201,6 +302,8 @@ class KnowledgeBaseIndexingService:
                 vector_size=settings.EMBEDDINGS_VECTOR_SIZE,
             )
             for source in eligible:
+                if await self._check_cancel_requested(job, kb, started):
+                    return self._job_result(job)
                 try:
                     result = await self._index_loaded_source(kb, source, job=job)
                     processed_sources += 1
@@ -227,6 +330,10 @@ class KnowledgeBaseIndexingService:
                     )
                     source.processing_status = KnowledgeBaseSourceStatus.ERROR
 
+            if await self._check_cancel_requested(job, kb, started):
+                return self._job_result(job)
+
+            await self._set_job_stage(job, "quality_control")
             await self._run_qc(kb, job)
             await self._refresh_aggregates(kb)
             kb.status = self._resolve_final_kb_status(kb, job)
@@ -328,6 +435,7 @@ class KnowledgeBaseIndexingService:
 
         source.processing_status = KnowledgeBaseSourceStatus.PROCESSING
         if job is not None:
+            await self._set_job_stage(job, "text_extraction")
             job.extracted_sources_count += 1
             await self._update_job_progress(job)
 
@@ -337,6 +445,7 @@ class KnowledgeBaseIndexingService:
             raise KnowledgeBaseIndexingError("У источника нет фрагментов для индексации")
 
         if job is not None:
+            await self._set_job_stage(job, "chunking")
             job.chunked_sources_count += 1
             await self._update_job_progress(job)
 
@@ -375,8 +484,13 @@ class KnowledgeBaseIndexingService:
 
         await self.db.flush()
 
+        if job is not None:
+            await self._set_job_stage(job, "embeddings")
+
         texts = [chunk.text or chunk.content for chunk in chunks]
         embeddings = await self.embedding_service.embed_texts(texts)
+        if job is not None:
+            await self._set_job_stage(job, "qdrant")
         points = [
             QdrantPoint(
                 id=str(kb_chunk.id),
@@ -394,6 +508,8 @@ class KnowledgeBaseIndexingService:
 
         now = _now()
         fts_count = 0
+        if job is not None:
+            await self._set_job_stage(job, "fulltext")
         for chunk, kb_chunk, embedding in zip(chunks, kb_chunks, embeddings.items, strict=True):
             kb_chunk.embedding_status = "indexed"
             kb_chunk.indexed_at = now
@@ -454,14 +570,17 @@ class KnowledgeBaseIndexingService:
             )
         )
         job.fulltext_chunks_count = int(fts_count or 0)
+        metadata = kb.metadata_ or {}
         if empty_chunks or low_quality or job.errors_count > 0:
-            metadata = kb.metadata_ or {}
             metadata["qc_warnings"] = {
                 "empty_chunks": int(empty_chunks or 0),
                 "low_quality_chunks": int(low_quality or 0),
                 "errors": job.errors_count,
             }
             kb.metadata_ = metadata
+        elif "qc_warnings" in metadata:
+            metadata.pop("qc_warnings")
+            kb.metadata_ = metadata or None
 
     def _chunk_quality(self, chunk: DocumentChunk, metadata: dict[str, Any]) -> KnowledgeBaseChunkQualityStatus:
         text = (chunk.text or chunk.content or "").strip()
@@ -531,14 +650,16 @@ class KnowledgeBaseIndexingService:
             raise KnowledgeBaseIndexingError(f"Не удалось обработать документ «{document.title}»: {exc}") from exc
 
     def _resolve_final_kb_status(self, kb: KnowledgeBase, job: KnowledgeBaseIndexingJob) -> KnowledgeBaseStatus:
-        metadata = kb.metadata_ or {}
-        processing = metadata.get("processing_settings") or {}
         if job.errors_count > 0 and job.processed_sources_count == 0:
             return KnowledgeBaseStatus.ERROR
         if job.errors_count > 0:
             return KnowledgeBaseStatus.NEEDS_REVIEW
-        if processing.get("manualReview") or metadata.get("qc_warnings"):
+        metadata = kb.metadata_ or {}
+        qc_warnings = metadata.get("qc_warnings") or {}
+        if qc_warnings.get("empty_chunks") or qc_warnings.get("low_quality_chunks"):
             return KnowledgeBaseStatus.NEEDS_REVIEW
+        if (kb.fragments_count or 0) == 0 and job.processed_sources_count == 0:
+            return KnowledgeBaseStatus.ERROR
         return KnowledgeBaseStatus.READY
 
     async def _load_document_chunks(self, document_version_id: uuid.UUID) -> list[DocumentChunk]:
@@ -630,10 +751,78 @@ class KnowledgeBaseIndexingService:
         job.started_at = _now()
         job.embedding_model = kb.embedding_model or settings.EMBEDDINGS_MODEL
         job.qdrant_collection = kb.qdrant_collection
+        await self._set_job_stage(job, "precheck")
         await self.db.flush()
+
+    async def _set_job_stage(self, job: KnowledgeBaseIndexingJob, stage: str, *, emit: bool = True) -> None:
+        params = dict(job.processing_params or {})
+        params["current_stage"] = stage
+        job.processing_params = params
+        await self.db.flush()
+        if emit:
+            await self._emit_indexing_event(job, event="stage")
+
+    async def _emit_indexing_event(
+        self,
+        job: KnowledgeBaseIndexingJob,
+        *,
+        event: str = "progress",
+        kb: KnowledgeBase | None = None,
+    ) -> None:
+        knowledge_base = kb or await self.db.get(KnowledgeBase, job.knowledge_base_id)
+        if knowledge_base is None:
+            return
+        payload = build_indexing_payload(
+            event=event,
+            knowledge_base=knowledge_base,
+            job=job,
+            indexing_active=is_indexing_active(knowledge_base, job),
+        )
+        publish_indexing_event(knowledge_base.id, payload)
+
+    async def _check_cancel_requested(
+        self,
+        job: KnowledgeBaseIndexingJob,
+        kb: KnowledgeBase,
+        started: float,
+    ) -> bool:
+        await self.db.refresh(job)
+        if not job.cancel_requested:
+            return False
+        await self._mark_job_cancelled(job, kb, started)
+        return True
+
+    async def _mark_job_cancelled(
+        self,
+        job: KnowledgeBaseIndexingJob,
+        kb: KnowledgeBase,
+        started: float,
+    ) -> None:
+        job.status = KnowledgeBaseIndexJobStatus.CANCELLED
+        job.finished_at = _now()
+        job.duration_ms = int((perf_counter() - started) * 1000)
+        await self._set_job_stage(job, "stopped", emit=False)
+        metadata = kb.metadata_ or {}
+        previous_status = metadata.pop("indexing_previous_status", None)
+        kb.metadata_ = metadata or None
+        if previous_status and kb.fragments_count > 0:
+            try:
+                kb.status = KnowledgeBaseStatus(previous_status)
+            except ValueError:
+                kb.status = KnowledgeBaseStatus.READY
+        elif kb.fragments_count > 0:
+            kb.status = KnowledgeBaseStatus.READY
+        else:
+            kb.status = KnowledgeBaseStatus.DRAFT
+        for source in kb.sources:
+            if source.processing_status == KnowledgeBaseSourceStatus.PROCESSING:
+                source.processing_status = KnowledgeBaseSourceStatus.READY_TO_INDEX
+        await self.db.flush()
+        await self._emit_indexing_event(job, event="cancelled", kb=kb)
 
     async def _update_job_progress(self, job: KnowledgeBaseIndexingJob) -> None:
         await self.db.flush()
+        await self._emit_indexing_event(job, event="progress")
 
     async def _mark_job_completed(
         self,
@@ -651,11 +840,47 @@ class KnowledgeBaseIndexingService:
         job.created_fragments_count = created_fragments_count
         job.updated_fragments_count = updated_fragments_count
         await self.db.flush()
+        await self._emit_indexing_event(job, event="completed")
 
     async def _mark_job_failed(self, job: KnowledgeBaseIndexingJob, started: float) -> None:
         job.status = KnowledgeBaseIndexJobStatus.FAILED
         job.finished_at = _now()
         job.duration_ms = int((perf_counter() - started) * 1000)
+        await self.db.flush()
+        await self._emit_indexing_event(job, event="failed")
+
+    async def abort_job_from_worker(self, job_id: uuid.UUID, *, error_message: str) -> None:
+        job = await self.db.get(KnowledgeBaseIndexingJob, job_id)
+        if job is None:
+            return
+        if job.status not in {KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING}:
+            return
+        kb = await self._load_kb(job.knowledge_base_id)
+        elapsed = (_now() - job.started_at).total_seconds() if job.started_at else 0.0
+        started = perf_counter() - max(0.0, elapsed)
+        await self._record_error(
+            job,
+            KnowledgeBaseIndexErrorType.QDRANT_WRITE_FAILED,
+            error_message,
+            user_message="Индексация прервана на стороне worker",
+            recommended_action="Повторите запуск индексации",
+        )
+        await self._mark_job_failed(job, started)
+        metadata = kb.metadata_ or {}
+        previous_status = metadata.pop("indexing_previous_status", None)
+        kb.metadata_ = metadata or None
+        if previous_status and kb.fragments_count > 0:
+            try:
+                kb.status = KnowledgeBaseStatus(previous_status)
+            except ValueError:
+                kb.status = KnowledgeBaseStatus.READY
+        elif kb.fragments_count > 0:
+            kb.status = KnowledgeBaseStatus.READY
+        else:
+            kb.status = KnowledgeBaseStatus.DRAFT
+        for source in kb.sources:
+            if source.processing_status == KnowledgeBaseSourceStatus.PROCESSING:
+                source.processing_status = KnowledgeBaseSourceStatus.READY_TO_INDEX
         await self.db.flush()
 
     async def _record_error(

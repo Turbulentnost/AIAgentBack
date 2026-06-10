@@ -8,8 +8,6 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
 from app.core.security import hash_password
 from app.integrations.onec_odata import create_session
 from app.models.integration import IntegrationSyncState
@@ -166,18 +164,9 @@ class EmployeeSyncService:
         }
 
     async def list_responsible_candidates(self, *, limit: int = 2000) -> list[User]:
-        result = await self.db.execute(
-            select(User)
-            .options(selectinload(User.department))
-            .where(
-                User.deleted_at.is_(None),
-                User.is_active.is_(True),
-                User.source_system == SOURCE_SYSTEM,
-            )
-            .order_by(User.full_name.asc().nullslast(), User.last_name.asc().nullslast())
-            .limit(limit)
-        )
-        return list(result.scalars().all())
+        from app.services.user_service import UserService
+
+        return await UserService(self.db).list_platform_access_users(limit=limit)
 
     async def _load_departments_by_path(self) -> dict[str, Department]:
         result = await self.db.execute(

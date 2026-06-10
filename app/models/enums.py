@@ -156,6 +156,7 @@ class KnowledgeBaseIndexJobStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     PARTIAL = "partial"
+    CANCELLED = "CANCELLED"
 
 class KnowledgeBaseIndexErrorType(str, enum.Enum):
     TEXT_EXTRACT_FAILED = "text_extract_failed"

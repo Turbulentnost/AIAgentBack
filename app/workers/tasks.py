@@ -6,6 +6,20 @@ from typing import Any
 from app.workers.celery_app import celery_app
 
 
+def _run_async_task(factory):
+    import asyncio
+
+    from app.db.session import engine
+
+    async def runner():
+        try:
+            return await factory()
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(runner())
+
+
 @celery_app.task(name="debug_task", bind=True)
 def debug_task(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
@@ -251,7 +265,6 @@ def index_document(self, document_id: str) -> dict[str, Any]:
 
 @celery_app.task(name="index_knowledge_base_full", bind=True, max_retries=3)
 def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
-    import asyncio
     import uuid
 
     from app.db.session import AsyncSessionLocal
@@ -259,8 +272,8 @@ def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None =
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
+            service = KnowledgeBaseIndexingService(db)
             try:
-                service = KnowledgeBaseIndexingService(db)
                 if job_id:
                     result = await service.run_job(uuid.UUID(job_id))
                 else:
@@ -275,16 +288,24 @@ def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None =
                 }
             except Exception as exc:
                 await db.rollback()
+                if job_id:
+                    async with AsyncSessionLocal() as cleanup_db:
+                        await KnowledgeBaseIndexingService(cleanup_db).abort_job_from_worker(
+                            uuid.UUID(job_id),
+                            error_message=str(exc),
+                        )
+                        await cleanup_db.commit()
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "index_knowledge_base_full",
                     "knowledge_base_id": knowledge_base_id,
+                    "job_id": job_id,
                     "status": "failed",
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
 
-    return asyncio.run(_run())
+    return _run_async_task(_run)
 
 
 @celery_app.task(name="index_knowledge_base_source", bind=True, max_retries=3)
@@ -294,7 +315,6 @@ def index_knowledge_base_source(
     source_id: str,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    import asyncio
     import uuid
 
     from app.db.session import AsyncSessionLocal
@@ -302,8 +322,8 @@ def index_knowledge_base_source(
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
+            service = KnowledgeBaseIndexingService(db)
             try:
-                service = KnowledgeBaseIndexingService(db)
                 result = (
                     await service.run_job(uuid.UUID(job_id))
                     if job_id
@@ -319,27 +339,35 @@ def index_knowledge_base_source(
                 }
             except Exception as exc:
                 await db.rollback()
+                if job_id:
+                    async with AsyncSessionLocal() as cleanup_db:
+                        await KnowledgeBaseIndexingService(cleanup_db).abort_job_from_worker(
+                            uuid.UUID(job_id),
+                            error_message=str(exc),
+                        )
+                        await cleanup_db.commit()
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "index_knowledge_base_source",
                     "knowledge_base_id": knowledge_base_id,
                     "source_id": source_id,
+                    "job_id": job_id,
                     "status": "failed",
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
 
-    return asyncio.run(_run())
+    return _run_async_task(_run)
 
 
 @celery_app.task(name="reindex_knowledge_base_embeddings", bind=True, max_retries=3)
 def reindex_knowledge_base_embeddings(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
-    return index_knowledge_base_full(self, knowledge_base_id, job_id)
+    return index_knowledge_base_full.run(knowledge_base_id, job_id)
 
 
 @celery_app.task(name="reindex_knowledge_base_after_access_change", bind=True, max_retries=3)
 def reindex_knowledge_base_after_access_change(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
-    return index_knowledge_base_full(self, knowledge_base_id, job_id)
+    return index_knowledge_base_full.run(knowledge_base_id, job_id)
 
 
 @celery_app.task(name="migrate_legacy_knowledge_base_documents", bind=True, max_retries=1)

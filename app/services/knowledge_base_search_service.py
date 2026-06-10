@@ -36,8 +36,14 @@ class KnowledgeBaseSearchService:
         top_k: int = 5,
         agent_id: uuid.UUID | None = None,
         include_inaccessible: bool = False,
+        test_mode: bool = False,
+        viewer: User | None = None,
     ) -> KnowledgeBaseTestSearchResponse:
         normalized_top_k = max(1, min(top_k, 50))
+        viewer_user = viewer or user
+        can_view_restricted = False
+        if test_mode:
+            can_view_restricted = await self._can_view_restricted_test_hits(viewer_user, knowledge_base)
         raw_hits = await self.retriever.retrieve(
             query,
             top_k=max(normalized_top_k * 5, normalized_top_k),
@@ -71,9 +77,10 @@ class KnowledgeBaseSearchService:
             if not effective.allowed and not include_inaccessible:
                 continue
             content = document_chunk.text or document_chunk.content or ""
+            show_content = effective.allowed or can_view_restricted
             hits.append(
                 KnowledgeBaseSearchHit(
-                    content=content if effective.allowed or user.is_superuser else "(фрагмент недоступен текущему сценарию)",
+                    content=content if show_content else "(фрагмент недоступен текущему сценарию)",
                     score=float(raw_hit.get("hybrid_score") or raw_hit.get("score", 0.0)),
                     accessible=effective.allowed,
                     access_reason=effective.reason,
@@ -93,14 +100,31 @@ class KnowledgeBaseSearchService:
                     },
                 )
             )
-            if len([hit for hit in hits if hit.accessible]) >= normalized_top_k:
+            if include_inaccessible:
+                if len(hits) >= normalized_top_k:
+                    break
+            elif len([hit for hit in hits if hit.accessible]) >= normalized_top_k:
                 break
 
         accessible_hits = [hit for hit in hits if hit.accessible]
+        preview_hits = accessible_hits if not test_mode else [hit for hit in hits if hit.content and not hit.content.startswith("(фрагмент")]
         return KnowledgeBaseTestSearchResponse(
             hits=hits[:normalized_top_k] if include_inaccessible else accessible_hits[:normalized_top_k],
-            answer_preview=self._answer_preview(accessible_hits),
+            answer_preview=self._answer_preview(preview_hits),
         )
+
+    async def _can_view_restricted_test_hits(self, viewer: User, knowledge_base: KnowledgeBase) -> bool:
+        if viewer.is_superuser:
+            return True
+        if knowledge_base.owner_user_id == viewer.id or knowledge_base.responsible_user_id == viewer.id:
+            return True
+        test_access = await self.access.can_access_knowledge_base(
+            user=viewer,
+            knowledge_base=knowledge_base,
+            required_access=KnowledgeBaseAccessType.SEARCH,
+            allow_non_ready_for_admin=True,
+        )
+        return test_access.allowed
 
     async def readiness_assessment(self, knowledge_base_id: uuid.UUID) -> dict[str, Any]:
         sources_total = await self.db.scalar(

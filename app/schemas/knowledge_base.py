@@ -231,6 +231,11 @@ class KnowledgeBaseIndexRequest(BaseModel):
     chunk_id: uuid.UUID | None = None
 
 
+class KnowledgeBaseIndexCancelRequest(BaseModel):
+    reason: str | None = None
+    force: bool = False
+
+
 class KnowledgeBaseIndexingJobRead(ORMModel):
     id: uuid.UUID
     knowledge_base_id: uuid.UUID
@@ -250,6 +255,10 @@ class KnowledgeBaseIndexingJobRead(ORMModel):
     qdrant_points_count: int = 0
     fulltext_chunks_count: int = 0
     processing_params: dict | None = None
+    cancel_requested: bool = False
+    cancel_requested_by_user_id: uuid.UUID | None = None
+    cancel_requested_at: datetime | None = None
+    cancel_reason: str | None = None
     duration_ms: int | None
     started_by_user_id: uuid.UUID | None
     started_at: datetime | None
