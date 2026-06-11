@@ -46,6 +46,24 @@ class KnowledgeBaseFtsService:
         *,
         top_k: int = 20,
     ) -> list[dict]:
+        # websearch_to_tsquery объединяет слова через AND: вопрос целиком
+        # («Какие есть базы данных») часто не находит ничего. Если строгий
+        # вариант пуст, повторяем поиск с OR между словами.
+        hits = await self._search_tsquery(knowledge_base_id, query, top_k=top_k)
+        if hits:
+            return hits
+        or_query = " OR ".join(word for word in query.split() if word)
+        if or_query and or_query != query:
+            return await self._search_tsquery(knowledge_base_id, or_query, top_k=top_k)
+        return []
+
+    async def _search_tsquery(
+        self,
+        knowledge_base_id: uuid.UUID,
+        query: str,
+        *,
+        top_k: int,
+    ) -> list[dict]:
         stmt = (
             select(
                 KnowledgeBaseChunk.id,

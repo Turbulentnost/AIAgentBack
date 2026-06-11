@@ -114,6 +114,41 @@ class KnowledgeBaseIndexingService:
         await self.db.flush()
         return kb
 
+    async def has_active_full_job(self, knowledge_base_id: uuid.UUID) -> bool:
+        """Есть ли уже активная полная (пере)индексация этой базы.
+
+        Используется, чтобы не ставить в очередь дублирующие job'ы: вторая
+        полная индексация сразу после первой лишь сбрасывает прогресс в UI.
+        """
+        result = await self.db.scalar(
+            select(func.count(KnowledgeBaseIndexingJob.id)).where(
+                KnowledgeBaseIndexingJob.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseIndexingJob.status.in_(
+                    [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                ),
+                KnowledgeBaseIndexingJob.job_type.in_(
+                    [
+                        KnowledgeBaseIndexJobType.FULL,
+                        KnowledgeBaseIndexJobType.ACCESS_REINDEX,
+                        KnowledgeBaseIndexJobType.EMBEDDINGS,
+                    ]
+                ),
+            )
+        )
+        return bool(result)
+
+    async def _has_other_active_jobs(self, knowledge_base_id: uuid.UUID, current_job_id: uuid.UUID) -> bool:
+        result = await self.db.scalar(
+            select(func.count(KnowledgeBaseIndexingJob.id)).where(
+                KnowledgeBaseIndexingJob.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseIndexingJob.id != current_job_id,
+                KnowledgeBaseIndexingJob.status.in_(
+                    [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                ),
+            )
+        )
+        return bool(result)
+
     async def supersede_stale_queued_jobs(self, knowledge_base_id: uuid.UUID) -> int:
         result = await self.db.execute(
             select(KnowledgeBaseIndexingJob).where(
@@ -336,7 +371,7 @@ class KnowledgeBaseIndexingService:
             await self._set_job_stage(job, "quality_control")
             await self._run_qc(kb, job)
             await self._refresh_aggregates(kb)
-            kb.status = self._resolve_final_kb_status(kb, job)
+            kb.status = await self._resolve_final_kb_status_async(kb, job)
             kb.last_indexed_at = _now()
             await self._mark_job_completed(
                 job,
@@ -404,7 +439,7 @@ class KnowledgeBaseIndexingService:
             job.fulltext_chunks_count = result["fulltext_chunks_count"]
             await self._run_qc(kb, job)
             await self._refresh_aggregates(kb)
-            kb.status = self._resolve_final_kb_status(kb, job)
+            kb.status = await self._resolve_final_kb_status_async(kb, job)
             kb.last_indexed_at = _now()
             await self._mark_job_completed(
                 job,
@@ -675,6 +710,17 @@ class KnowledgeBaseIndexingService:
             if version != current:
                 return True
         return False
+
+    async def _resolve_final_kb_status_async(
+        self,
+        kb: KnowledgeBase,
+        job: KnowledgeBaseIndexingJob,
+    ) -> KnowledgeBaseStatus:
+        # «Готова» выставляем только когда не осталось других активных job'ов:
+        # иначе база мигает статусом, пока в очереди ждёт следующая индексация.
+        if await self._has_other_active_jobs(kb.id, job.id):
+            return KnowledgeBaseStatus.PROCESSING
+        return self._resolve_final_kb_status(kb, job)
 
     def _resolve_final_kb_status(self, kb: KnowledgeBase, job: KnowledgeBaseIndexingJob) -> KnowledgeBaseStatus:
         if job.errors_count > 0 and job.processed_sources_count == 0:

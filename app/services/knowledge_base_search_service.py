@@ -243,24 +243,32 @@ class KnowledgeBaseSearchService:
                 "content": f"Вопрос: {query}\n\nФрагменты из базы знаний:\n{context}\n\nОтвет:",
             },
         ]
-        try:
-            # Запас токенов нужен, т.к. reasoning-модель (qwen3) сначала
-            # «думает», и только потом пишет финальный ответ в content.
-            # Ограничиваем время, чтобы поиск не зависал на медленных ответах.
-            response = await asyncio.wait_for(
-                llm_gateway.chat(messages, temperature=0.1, max_tokens=3000),
-                timeout=settings.KB_SEARCH_ANSWER_TIMEOUT,
-            )
-            message = response["choices"][0]["message"]
-            content = message.get("content") or ""
-        except Exception:
-            return None
+        # Перебираем модели по порядку: первая доступная с непустым ответом
+        # выигрывает. Запас токенов нужен reasoning-моделям (qwen3), которые
+        # сначала «думают» и только потом пишут финальный ответ в content.
+        for model in _answer_models():
+            try:
+                response = await asyncio.wait_for(
+                    llm_gateway.chat(messages, model=model, temperature=0.1, max_tokens=3000),
+                    timeout=settings.KB_SEARCH_ANSWER_TIMEOUT,
+                )
+                message = response["choices"][0]["message"]
+                content = _clean_llm_text(message.get("content") or "")
+                if content:
+                    return content
+            except Exception:
+                continue
         # Сырые рассуждения (reasoning_content) не используем — только чистый
         # ответ. Если ответа нет, вернём None и сработает fallback-фрагмент.
-        return _clean_llm_text(content)
+        return None
 
 
 _SENTENCE_END = re.compile(r"[.!?…](?:\s|$)")
+
+
+def _answer_models() -> list[str]:
+    models = [item.strip() for item in settings.KB_SEARCH_ANSWER_MODELS.split(",") if item.strip()]
+    return models or [settings.LLM_DEFAULT_MODEL]
 
 
 def _is_prose(text: str) -> bool:

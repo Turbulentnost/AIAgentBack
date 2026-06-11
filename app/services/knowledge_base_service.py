@@ -42,6 +42,7 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseUpdate,
 )
 from app.services.audit_service import AuditService
+from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
 
 
 class KnowledgeBaseServiceError(ValueError):
@@ -535,53 +536,54 @@ class KnowledgeBaseService:
         )
         return list(result.scalars().all())
 
-    async def stats(self) -> KnowledgeBaseStats:
-        active_kb_filter = KnowledgeBase.deleted_at.is_(None)
-        total = await self.db.scalar(
-            select(func.count(KnowledgeBase.id)).where(active_kb_filter)
-        )
-        active = await self.db.scalar(
-            select(func.count(KnowledgeBase.id)).where(
-                active_kb_filter,
-                KnowledgeBase.status == KnowledgeBaseStatus.READY,
+    async def stats(self, *, user: User) -> KnowledgeBaseStats:
+        access_service = KnowledgeBaseAccessService(self.db)
+        accessible_ids: list[uuid.UUID] = []
+        successfully_indexed = 0
+
+        for kb in await self.list_knowledge_bases():
+            kb_loaded = await access_service.load_for_access_check(kb.id) or kb
+            read_access = await access_service.can_access_knowledge_base(
+                user=user,
+                knowledge_base=kb_loaded,
+                required_access=KnowledgeBaseAccessType.READ,
             )
-        )
-        docs = await self.db.scalar(
-            select(func.count(KnowledgeBaseSource.id))
-            .join(KnowledgeBase, KnowledgeBase.id == KnowledgeBaseSource.knowledge_base_id)
-            .where(active_kb_filter)
-        )
-        fragments = await self.db.scalar(
-            select(func.coalesce(func.sum(KnowledgeBase.fragments_count), 0)).where(active_kb_filter)
-        )
+            search_access = await access_service.can_access_knowledge_base(
+                user=user,
+                knowledge_base=kb_loaded,
+                required_access=KnowledgeBaseAccessType.SEARCH,
+                allow_non_ready_for_admin=False,
+            )
+            if not read_access.allowed and not search_access.allowed:
+                continue
+            accessible_ids.append(kb.id)
+            if kb.status == KnowledgeBaseStatus.READY:
+                successfully_indexed += 1
+
+        if not accessible_ids:
+            return KnowledgeBaseStats(
+                total_bases=0,
+                indexing_errors_count=0,
+                storage_bytes=0,
+                successfully_indexed_bases=0,
+            )
+
         storage = await self.db.scalar(
-            select(func.coalesce(func.sum(KnowledgeBase.storage_bytes), 0)).where(active_kb_filter)
+            select(func.coalesce(func.sum(KnowledgeBase.storage_bytes), 0)).where(
+                KnowledgeBase.id.in_(accessible_ids)
+            )
         )
         errors = await self.db.scalar(
-            select(func.count(KnowledgeBaseIndexingError.id)).where(KnowledgeBaseIndexingError.is_resolved.is_(False))
-        )
-        needs_review = await self.db.scalar(
-            select(func.count(KnowledgeBase.id)).where(
-                active_kb_filter,
-                KnowledgeBase.status == KnowledgeBaseStatus.NEEDS_REVIEW,
+            select(func.count(KnowledgeBaseIndexingError.id)).where(
+                KnowledgeBaseIndexingError.is_resolved.is_(False),
+                KnowledgeBaseIndexingError.knowledge_base_id.in_(accessible_ids),
             )
         )
-        completed_jobs = await self.db.scalar(
-            select(func.count(KnowledgeBaseIndexingJob.id)).where(
-                KnowledgeBaseIndexingJob.status == KnowledgeBaseIndexJobStatus.COMPLETED
-            )
-        )
-        all_jobs = await self.db.scalar(select(func.count(KnowledgeBaseIndexingJob.id)))
-        success_percent = (float(completed_jobs or 0) / float(all_jobs or 1)) * 100
         return KnowledgeBaseStats(
-            total_bases=int(total or 0),
-            active_bases=int(active or 0),
-            documents_in_bases=int(docs or 0),
-            fragments_count=int(fragments or 0),
+            total_bases=len(accessible_ids),
+            indexing_errors_count=int(errors or 0),
             storage_bytes=int(storage or 0),
-            successful_indexing_percent=round(success_percent, 1),
-            errors_count=int(errors or 0),
-            needs_review_count=int(needs_review or 0),
+            successfully_indexed_bases=successfully_indexed,
         )
 
     async def get_or_raise(self, knowledge_base_id: uuid.UUID) -> KnowledgeBase:

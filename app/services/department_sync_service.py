@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.integrations.onec_odata import create_session
 from app.models.integration import IntegrationSyncState
 from app.models.user import Department
-from app.services import list_enterprise_service as onec
+from app.services import list_enterprise_positions as onec
 
 SYNC_KEY = "1c.departments"
 SOURCE_SYSTEM = "1c"

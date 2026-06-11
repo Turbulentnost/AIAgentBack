@@ -12,7 +12,7 @@ from app.core.security import hash_password
 from app.integrations.onec_odata import create_session
 from app.models.integration import IntegrationSyncState
 from app.models.user import Department, Role, User
-from app.services import list_enterprise_service as onec
+from app.services import list_enterprise_positions as onec
 from app.services.department_sync_service import DepartmentSyncService
 
 SYNC_KEY = "1c.employees"

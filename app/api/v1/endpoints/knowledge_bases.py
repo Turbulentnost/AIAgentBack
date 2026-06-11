@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Annotated
 
@@ -10,8 +11,17 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, DbSession
 from app.models.audit import AuditLog
 from app.models.document import Document
-from app.models.enums import KnowledgeBaseAccessType, KnowledgeBaseIndexJobType, KnowledgeBaseStatus
-from app.models.knowledge_base import KnowledgeBaseIndexingError
+from app.models.enums import (
+    KnowledgeBaseAccessType,
+    KnowledgeBaseIndexJobStatus,
+    KnowledgeBaseIndexJobType,
+    KnowledgeBaseStatus,
+)
+from app.models.knowledge_base import (
+    KnowledgeBaseIndexingError as KnowledgeBaseIndexingErrorModel,
+    KnowledgeBaseIndexingJob,
+    KnowledgeBaseSearchQuery,
+)
 from app.models.user import User
 from app.schemas.knowledge_base import (
     KnowledgeBaseAccessRead,
@@ -30,6 +40,8 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseRead,
     KnowledgeBaseRuleCreate,
     KnowledgeBaseRuleRead,
+    KnowledgeBaseSearchQueryCreate,
+    KnowledgeBaseSearchQueryRead,
     KnowledgeBaseSourceCreate,
     KnowledgeBaseSourceRead,
     KnowledgeBaseStats,
@@ -48,6 +60,7 @@ from app.workers.tasks import (
     index_knowledge_base_source,
     reindex_knowledge_base_after_access_change,
     reindex_knowledge_base_embeddings,
+    run_knowledge_base_search_query,
 )
 
 router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
@@ -68,7 +81,7 @@ async def _commit_and_refresh_all(db: DbSession, entities):
 
 @router.get("/stats", response_model=KnowledgeBaseStats)
 async def knowledge_base_stats(db: DbSession, current_user: CurrentUser):
-    return await KnowledgeBaseService(db).stats()
+    return await KnowledgeBaseService(db).stats(user=current_user)
 
 
 @router.get("/responsible-users", response_model=list[ResponsibleUserRead])
@@ -332,6 +345,12 @@ async def replace_access(
             current_user=current_user,
         )
         indexing_service = KnowledgeBaseIndexingService(db)
+        # Если полная индексация уже в очереди/выполняется, она сама учтёт
+        # новые права (access_snapshot формируется в момент индексации) —
+        # дублирующий job только сбрасывает прогресс в UI.
+        if await indexing_service.has_active_full_job(knowledge_base_id):
+            await db.commit()
+            return KnowledgeBaseAccessRead(grants=grants, exceptions=exceptions)
         await indexing_service.mark_indexing_queued(knowledge_base_id)
         job = await indexing_service.create_job(
             knowledge_base_id,
@@ -374,6 +393,29 @@ async def start_indexing(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="База знаний не найдена")
 
     indexing_service = KnowledgeBaseIndexingService(db)
+    # Полная индексация уже идёт или ждёт в очереди — возвращаем её вместо
+    # создания дубля (дубль после первой джобы сбрасывает прогресс с нуля).
+    if payload.job_type in {KnowledgeBaseIndexJobType.FULL, KnowledgeBaseIndexJobType.ACCESS_REINDEX}:
+        existing = await db.scalar(
+            select(KnowledgeBaseIndexingJob)
+            .where(
+                KnowledgeBaseIndexingJob.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseIndexingJob.status.in_(
+                    [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                ),
+                KnowledgeBaseIndexingJob.job_type.in_(
+                    [
+                        KnowledgeBaseIndexJobType.FULL,
+                        KnowledgeBaseIndexJobType.ACCESS_REINDEX,
+                        KnowledgeBaseIndexJobType.EMBEDDINGS,
+                    ]
+                ),
+            )
+            .order_by(KnowledgeBaseIndexingJob.created_at.desc())
+            .limit(1)
+        )
+        if existing is not None:
+            return existing
     await indexing_service.supersede_stale_queued_jobs(knowledge_base_id)
     await indexing_service.mark_indexing_queued(knowledge_base_id)
     job = await indexing_service.create_job(
@@ -440,7 +482,7 @@ async def list_job_errors(job_id: uuid.UUID, db: DbSession, current_user: Curren
 
 @router.post("/index/errors/{error_id}/retry", response_model=KnowledgeBaseIndexingJobRead)
 async def retry_indexing_error(error_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
-    error = await db.get(KnowledgeBaseIndexingError, error_id)
+    error = await db.get(KnowledgeBaseIndexingErrorModel, error_id)
     if error is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ошибка индексации не найдена")
     job = await KnowledgeBaseIndexingService(db).create_job(
@@ -520,6 +562,115 @@ async def test_search(
     )
     await db.commit()
     return result
+
+
+async def _check_search_access(db: DbSession, knowledge_base_id: uuid.UUID, current_user: User):
+    access_service = KnowledgeBaseAccessService(db)
+    kb = await access_service.load_for_access_check(knowledge_base_id)
+    if kb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="База знаний не найдена")
+    search_access = await access_service.can_access_knowledge_base(
+        user=current_user,
+        knowledge_base=kb,
+        required_access=KnowledgeBaseAccessType.SEARCH,
+        allow_non_ready_for_admin=True,
+    )
+    if not search_access.allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для поиска по базе знаний")
+    return kb
+
+
+@router.post(
+    "/{knowledge_base_id}/search-queries",
+    response_model=KnowledgeBaseSearchQueryRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_search_query(
+    knowledge_base_id: uuid.UUID,
+    payload: KnowledgeBaseSearchQueryCreate,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    kb = await _check_search_access(db, knowledge_base_id, current_user)
+    if kb.status == KnowledgeBaseStatus.DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Поиск недоступен: база ещё не проиндексирована.",
+        )
+    item = KnowledgeBaseSearchQuery(
+        knowledge_base_id=knowledge_base_id,
+        user_id=current_user.id,
+        query=payload.query.strip(),
+        top_k=max(1, min(payload.top_k, 50)),
+        status="pending",
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    run_knowledge_base_search_query.delay(str(item.id))
+    return item
+
+
+@router.get(
+    "/{knowledge_base_id}/search-queries",
+    response_model=list[KnowledgeBaseSearchQueryRead],
+)
+async def list_search_queries(
+    knowledge_base_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    limit: int = 30,
+):
+    await _check_search_access(db, knowledge_base_id, current_user)
+    result = await db.execute(
+        select(KnowledgeBaseSearchQuery)
+        .where(
+            KnowledgeBaseSearchQuery.knowledge_base_id == knowledge_base_id,
+            KnowledgeBaseSearchQuery.user_id == current_user.id,
+        )
+        .order_by(KnowledgeBaseSearchQuery.created_at.asc())
+        .limit(max(1, min(limit, 100)))
+    )
+    return list(result.scalars().all())
+
+
+@router.get(
+    "/{knowledge_base_id}/search-queries/{search_query_id}",
+    response_model=KnowledgeBaseSearchQueryRead,
+)
+async def get_search_query(
+    knowledge_base_id: uuid.UUID,
+    search_query_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    item = await db.get(KnowledgeBaseSearchQuery, search_query_id)
+    if item is None or item.knowledge_base_id != knowledge_base_id or item.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Запрос не найден")
+    return item
+
+
+@router.post(
+    "/{knowledge_base_id}/search-queries/{search_query_id}/cancel",
+    response_model=KnowledgeBaseSearchQueryRead,
+)
+async def cancel_search_query(
+    knowledge_base_id: uuid.UUID,
+    search_query_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    item = await db.get(KnowledgeBaseSearchQuery, search_query_id)
+    if item is None or item.knowledge_base_id != knowledge_base_id or item.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Запрос не найден")
+    if item.status in {"pending", "running"}:
+        item.cancel_requested = True
+        if item.status == "pending":
+            item.status = "cancelled"
+            item.finished_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(item)
+    return item
 
 
 @router.get("/{knowledge_base_id}/audit")

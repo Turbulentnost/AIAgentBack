@@ -363,6 +363,80 @@ def index_knowledge_base_source(
     return _run_async_task(_run)
 
 
+@celery_app.task(name="run_knowledge_base_search_query", bind=True, max_retries=0)
+def run_knowledge_base_search_query(self, search_query_id: str) -> dict[str, Any]:
+    """Фоновый поиск по базе знаний: выполняется до конца, даже если
+    пользователь ушёл со страницы. Результат сохраняется в историю."""
+    import uuid
+
+    from fastapi.encoders import jsonable_encoder
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseSearchQuery
+    from app.models.user import User
+    from app.services.knowledge_base_search_service import KnowledgeBaseSearchService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            item = await db.get(KnowledgeBaseSearchQuery, uuid.UUID(search_query_id))
+            if item is None:
+                return {"status": "failed", "error": "Запрос не найден"}
+            if item.cancel_requested or item.status == "cancelled":
+                item.status = "cancelled"
+                item.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return {"status": "cancelled"}
+
+            kb = await db.get(KnowledgeBase, item.knowledge_base_id)
+            user = await db.get(User, item.user_id)
+            if kb is None or user is None:
+                item.status = "failed"
+                item.error = "База знаний или пользователь не найдены"
+                item.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return {"status": "failed", "error": item.error}
+
+            item.status = "running"
+            await db.commit()
+
+            try:
+                result = await KnowledgeBaseSearchService(db).search(
+                    knowledge_base=kb,
+                    query=item.query,
+                    user=user,
+                    top_k=item.top_k,
+                    include_inaccessible=True,
+                    test_mode=True,
+                    viewer=user,
+                )
+            except Exception as exc:
+                await db.rollback()
+                item = await db.get(KnowledgeBaseSearchQuery, uuid.UUID(search_query_id))
+                if item is not None:
+                    item.status = "failed"
+                    item.error = str(exc)[:2000]
+                    item.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                return {"status": "failed", "error": str(exc)}
+
+            # Пользователь мог запросить отмену, пока шёл поиск.
+            await db.refresh(item)
+            if item.cancel_requested:
+                item.status = "cancelled"
+                item.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return {"status": "cancelled"}
+
+            item.answer = result.answer_preview
+            item.hits = jsonable_encoder(result.hits)
+            item.status = "completed"
+            item.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+            return {"status": "completed", "hits_count": len(result.hits)}
+
+    return _run_async_task(_run)
+
+
 @celery_app.task(name="reindex_knowledge_base_embeddings", bind=True, max_retries=3)
 def reindex_knowledge_base_embeddings(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
     return index_knowledge_base_full.run(knowledge_base_id, job_id)

@@ -99,14 +99,14 @@ class KnowledgeBaseListItem(KnowledgeBaseRead):
 
 
 class KnowledgeBaseStats(BaseModel):
+    # Базы, к которым у текущего пользователя есть доступ на чтение или поиск.
     total_bases: int
-    active_bases: int
-    documents_in_bases: int
-    fragments_count: int
+    # Нерешённые ошибки индексации по доступным базам.
+    indexing_errors_count: int
+    # Суммарный объём данных в доступных базах (байты).
     storage_bytes: int
-    successful_indexing_percent: float
-    errors_count: int
-    needs_review_count: int
+    # Доступные базы со статусом «Готова» (успешно проиндексированы).
+    successfully_indexed_bases: int
 
 
 class KnowledgeBaseSourceCreate(BaseModel):
@@ -323,3 +323,21 @@ class KnowledgeBaseSearchHit(BaseModel):
 class KnowledgeBaseTestSearchResponse(BaseModel):
     hits: list[KnowledgeBaseSearchHit]
     answer_preview: str | None = None
+
+
+class KnowledgeBaseSearchQueryCreate(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+class KnowledgeBaseSearchQueryRead(ORMModel):
+    id: uuid.UUID
+    knowledge_base_id: uuid.UUID
+    query: str
+    top_k: int
+    status: str
+    answer: str | None = None
+    hits: list[KnowledgeBaseSearchHit] | None = None
+    error: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None

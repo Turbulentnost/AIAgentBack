@@ -113,12 +113,21 @@ class LocalBgeEmbedder(BaseEmbedder):
         with self._model_lock:
             if self._model is not None:
                 return self._model
+            # Сначала пробуем локальный кеш (без обращения к HuggingFace Hub):
+            # это быстрее и не зависит от сети/состояния http-клиента hub'а.
             try:
-                self._model = SentenceTransformer(self.model_name, device=self.device)
-            except Exception as exc:
-                raise EmbeddingProviderUnavailableError(
-                    f"Не удалось загрузить embedding-модель {self.model_name}: {exc}"
-                ) from exc
+                self._model = SentenceTransformer(
+                    self.model_name,
+                    device=self.device,
+                    local_files_only=True,
+                )
+            except Exception:
+                try:
+                    self._model = SentenceTransformer(self.model_name, device=self.device)
+                except Exception as exc:
+                    raise EmbeddingProviderUnavailableError(
+                        f"Не удалось загрузить embedding-модель {self.model_name}: {exc}"
+                    ) from exc
         return self._model
 
     def _resolve_device(self) -> str:

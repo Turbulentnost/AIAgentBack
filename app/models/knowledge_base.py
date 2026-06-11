@@ -316,6 +316,34 @@ class KnowledgeBaseIndexingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class KnowledgeBaseSearchQuery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """История поисковых запросов пользователя по базе знаний.
+
+    Запрос выполняется в фоне (Celery): пользователь может уйти со страницы,
+    результат будет сохранён и показан при возвращении.
+    """
+
+    __tablename__ = "knowledge_base_search_queries"
+
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    query: Mapped[str] = mapped_column(Text)
+    top_k: Mapped[int] = mapped_column(Integer, default=5)
+    # pending | running | completed | failed | cancelled
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    answer: Mapped[str | None] = mapped_column(Text)
+    hits: Mapped[list[Any] | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class KnowledgeBaseIndexingError(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "knowledge_base_indexing_errors"
 
