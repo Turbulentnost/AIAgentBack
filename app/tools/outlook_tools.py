@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app.tools.base import Tool
 from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
+from app.tools.Outlook.find_meeting_slot import dispatch_find_meeting_slot
+from app.tools.Outlook.meeting_rooms import dispatch_meeting_rooms
 from app.tools.Outlook.read_calendars import fetch_outlook_calendars
 from app.tools.Outlook.reschedule_meeting import dispatch_reschedule_meeting
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
@@ -375,3 +377,177 @@ class RescheduleMeetingTool(Tool):
 
 
 register_tool(RescheduleMeetingTool())
+
+
+class FindMeetingSlotInput(BaseModel):
+    attendees: list[str] = Field(description="E-mail участников совещания")
+    preferred: str = Field(description="Желаемая дата/время начала поиска")
+    duration_minutes: int = Field(ge=1, le=24 * 60, description="Длительность в минутах")
+    max_days: int = Field(default=30, ge=1, le=365)
+    step_minutes: int = Field(default=15, ge=1, le=120)
+    max_items: int = Field(default=500, ge=1, le=2000)
+    source: Literal["freebusy", "calendar"] = Field(
+        default="freebusy",
+        description="freebusy — быстро; calendar — запасной вариант",
+    )
+    workers: int = Field(default=4, ge=1, le=16)
+    timezone: str | None = Field(
+        default=None,
+        description="Часовой пояс для preferred (по умолчанию OUTLOOK_TIMEZONE)",
+    )
+    rooms_file: str | None = Field(
+        default=None,
+        description="JSON со списком переговорных",
+    )
+    skip_rooms: bool = Field(default=False, description="Не проверять переговорные")
+
+
+class FindMeetingSlotOutput(BaseModel):
+    preferred: str
+    slot_start: str
+    slot_end: str
+    duration_minutes: int
+    attendees: list[str]
+    checked_candidates: int
+    search_until: str
+    availability_source: str
+    rooms_status: list[dict[str, Any]] | None = None
+
+
+async def find_meeting_slot_tool(
+    payload: FindMeetingSlotInput,
+    context: ToolContext,
+) -> FindMeetingSlotOutput:
+    del context
+    raw = await asyncio.to_thread(
+        dispatch_find_meeting_slot,
+        attendees=payload.attendees,
+        preferred=payload.preferred,
+        duration_minutes=payload.duration_minutes,
+        max_days=payload.max_days,
+        step_minutes=payload.step_minutes,
+        max_items=payload.max_items,
+        source=payload.source,
+        workers=payload.workers,
+        timezone=payload.timezone,
+        rooms_file=payload.rooms_file,
+        skip_rooms=payload.skip_rooms,
+    )
+    return FindMeetingSlotOutput.model_validate(raw)
+
+
+class FindMeetingSlotTool(Tool):
+    name = "find_meeting_slot"
+    description = (
+        "Ищет ближайший свободный слот для совещания у нескольких участников через EWS."
+    )
+    agent_description = (
+        "Инструмент find_meeting_slot подбирает время совещания с учётом занятости "
+        "участников: только рабочие дни пн–пт, 08:00–17:00, без пересечений с "
+        "перерывами 10:00–10:15, 12:00–13:00, 15:00–15:15. "
+        "Укажи attendees, preferred (желаемое время), duration_minutes. "
+        "source=freebusy быстрее; skip_rooms=true отключает проверку переговорных."
+    )
+    input_model = FindMeetingSlotInput
+    output_model = FindMeetingSlotOutput
+    required_permissions = ["find_meeting_slot"]
+    preview_default_params = {
+        "attendees": ["user@example.com"],
+        "preferred": "2026-06-10 14:00",
+        "duration_minutes": 60,
+        "skip_rooms": True,
+    }
+
+    async def execute(
+        self,
+        payload: FindMeetingSlotInput,
+        context: ToolContext,
+    ) -> FindMeetingSlotOutput:
+        return await find_meeting_slot_tool(payload, context)
+
+
+register_tool(FindMeetingSlotTool())
+
+
+class MeetingRoomsInput(BaseModel):
+    list_only: bool = Field(
+        default=True,
+        description="Вернуть список переговорных",
+    )
+    check: bool = Field(
+        default=False,
+        description="Проверить занятость переговорных на слот",
+    )
+    discover: bool = Field(
+        default=False,
+        description="Дополнить список комнатами из Exchange",
+    )
+    rooms_file: str | None = Field(
+        default=None,
+        description="Путь к JSON со списком переговорных",
+    )
+    start: str = Field(
+        default="",
+        description="Начало слота для check: YYYY-MM-DD HH:MM",
+    )
+    duration_minutes: int = Field(default=60, ge=1, le=24 * 60)
+    timezone: str | None = Field(
+        default=None,
+        description="Часовой пояс для start (по умолчанию OUTLOOK_TIMEZONE)",
+    )
+
+
+class MeetingRoomsOutput(BaseModel):
+    rooms: list[dict[str, str]]
+    rooms_count: int
+    pending_without_email: list[str] = Field(default_factory=list)
+    discovered_not_in_json: list[dict[str, str]] = Field(default_factory=list)
+    slot_start: str | None = None
+    slot_end: str | None = None
+    rooms_status: list[dict[str, Any]] | None = None
+    free_count: int | None = None
+
+
+async def meeting_rooms_tool(
+    payload: MeetingRoomsInput,
+    context: ToolContext,
+) -> MeetingRoomsOutput:
+    del context
+    raw = await asyncio.to_thread(
+        dispatch_meeting_rooms,
+        list_only=payload.list_only,
+        check=payload.check,
+        discover=payload.discover,
+        rooms_file=payload.rooms_file,
+        start=payload.start,
+        duration_minutes=payload.duration_minutes,
+        timezone=payload.timezone,
+    )
+    return MeetingRoomsOutput.model_validate(raw)
+
+
+class MeetingRoomsTool(Tool):
+    name = "meeting_rooms"
+    description = (
+        "Список переговорных Exchange и проверка их занятости через EWS Free/Busy."
+    )
+    agent_description = (
+        "Инструмент meeting_rooms возвращает переговорные комнаты и их занятость. "
+        "list_only=true — список из meeting_rooms.json; discover=true дополняет "
+        "комнатами из Exchange. check=true с start и duration_minutes проверяет "
+        "свободность всех комнат на указанный слот."
+    )
+    input_model = MeetingRoomsInput
+    output_model = MeetingRoomsOutput
+    required_permissions = ["meeting_rooms"]
+    preview_default_params = {"list_only": True, "discover": False}
+
+    async def execute(
+        self,
+        payload: MeetingRoomsInput,
+        context: ToolContext,
+    ) -> MeetingRoomsOutput:
+        return await meeting_rooms_tool(payload, context)
+
+
+register_tool(MeetingRoomsTool())
