@@ -145,7 +145,7 @@ class DocumentChunkingService:
 
         table_index = block.metadata.get("table_index")
         sheet_name = block.sheet_name or block.metadata.get("sheet_name")
-        table_caption = structure.caption
+        table_caption = structure.caption or block.metadata.get("table_caption") or block.section_title
         if block.block_type == "sheet" and sheet_name and not table_caption:
             table_caption = f"Лист: {sheet_name}"
 

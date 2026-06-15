@@ -155,6 +155,8 @@ class KnowledgeBaseChunkRead(ORMModel):
     fragment_type: str | None = None
     access_snapshot: dict | None = None
     text: str | None = None
+    metadata: dict | None = None
+    chunk_index: int | None = None
     document_id: uuid.UUID | None = None
     document_title: str | None = None
     page_number: int | None = None

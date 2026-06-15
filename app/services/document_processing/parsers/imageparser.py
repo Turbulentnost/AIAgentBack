@@ -4,7 +4,7 @@ import base64
 import json
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -36,6 +36,8 @@ class ImageParseResult:
     characters_count: int
     duration_ms: int
     quality_notes: str | None = None
+    text_blocks: list[str] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ImageParsingService:
@@ -67,12 +69,14 @@ class ImageParsingService:
         try:
             image_data = await run_blocking_document_task(object_storage.get_object, document.object_name)
             response = await self._extract_with_vision(image_data, content_type)
-            text, quality_notes = self._parse_vision_response(response)
+            text, quality_notes, text_blocks, tables = self._parse_vision_response(response)
             extracted_text_object_name = await run_blocking_document_task(
                 self._save_extraction_result,
                 document=document,
                 document_version=document_version,
                 text=text,
+                text_blocks=text_blocks,
+                tables=tables,
                 quality_notes=quality_notes,
                 content_type=content_type,
             )
@@ -85,6 +89,8 @@ class ImageParsingService:
                 characters_count=len(text),
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 quality_notes=quality_notes,
+                text_blocks=text_blocks,
+                tables=tables,
             )
             await self._persist_result(document, document_version, result)
             return result
@@ -139,10 +145,15 @@ class ImageParsingService:
                         {
                             "type": "text",
                             "text": (
-                                "Извлеки весь читаемый текст, таблицы, реквизиты, подписи, печати "
-                                "и структуру с изображения документа. Верни строго JSON вида "
-                                "{\"text\": \"...\", \"tables\": [], \"quality_notes\": \"...\"}. "
-                                "Не добавляй пояснения вне JSON."
+                                "Извлеки текст и таблицы с изображения документа в естественном порядке чтения. "
+                                "Верни строго JSON-объект формата: "
+                                "{\"text_blocks\": [\"абзац 1\", \"абзац 2\"], "
+                                "\"tables\": [{\"caption\": \"\", \"headers\": [\"Колонка 1\"], "
+                                "\"rows\": [[\"a\"], [\"b\"]]}], "
+                                "\"quality_notes\": \"\"}. "
+                                "text_blocks — связные абзацы, заголовки и реквизиты в порядке чтения, без таблиц. "
+                                "tables — все таблицы; первая строка должна быть заголовком, остальные — данными. "
+                                "Не добавляй пояснения вне JSON, не используй markdown."
                             ),
                         },
                         {
@@ -166,16 +177,74 @@ class ImageParsingService:
         data = await run_async_document_task(_request)
         return str(data["choices"][0]["message"]["content"])
 
-    def _parse_vision_response(self, response: str) -> tuple[str, str | None]:
+    def _parse_vision_response(
+        self,
+        response: str,
+    ) -> tuple[str, str | None, list[str], list[dict[str, Any]]]:
         try:
             payload = json.loads(self._strip_code_fence(response))
-            text = str(payload.get("text", "")).strip()
+            text_blocks = self._normalize_text_blocks(payload)
+            tables = self._normalize_tables(payload.get("tables"))
             quality_notes = payload.get("quality_notes")
-            if text:
-                return text, str(quality_notes) if quality_notes else None
+            joined_text = "\n\n".join(text_blocks).strip()
+            if not joined_text:
+                joined_text = str(payload.get("text", "")).strip()
+            if joined_text or text_blocks or tables:
+                return (
+                    joined_text,
+                    str(quality_notes) if isinstance(quality_notes, str) and quality_notes.strip() else None,
+                    text_blocks,
+                    tables,
+                )
         except Exception:
             pass
-        return response.strip(), None
+        text = response.strip()
+        return text, None, [text] if text else [], []
+
+    @staticmethod
+    def _normalize_text_blocks(payload: dict[str, Any]) -> list[str]:
+        raw = payload.get("text_blocks")
+        if isinstance(raw, list):
+            blocks = [str(item).strip() for item in raw if str(item).strip()]
+            if blocks:
+                return blocks
+        text_raw = payload.get("text")
+        if isinstance(text_raw, str) and text_raw.strip():
+            return [paragraph.strip() for paragraph in text_raw.split("\n\n") if paragraph.strip()]
+        return []
+
+    @staticmethod
+    def _normalize_tables(tables_raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(tables_raw, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for table_index, table in enumerate(tables_raw):
+            if not isinstance(table, dict):
+                continue
+            rows_input = table.get("rows")
+            if not isinstance(rows_input, list):
+                continue
+            rows: list[list[str]] = []
+            for row in rows_input:
+                if not isinstance(row, list):
+                    continue
+                rows.append(["" if cell is None else str(cell).strip() for cell in row])
+            rows = [row for row in rows if any(cell for cell in row)]
+            if not rows:
+                continue
+            headers_input = table.get("headers")
+            if isinstance(headers_input, list) and headers_input:
+                headers = [str(item).strip() for item in headers_input]
+                rows = [headers] + rows
+            caption = table.get("caption")
+            normalized.append(
+                {
+                    "table_index": table_index,
+                    "rows": rows,
+                    "caption": str(caption).strip() if isinstance(caption, str) and caption.strip() else None,
+                }
+            )
+        return normalized
 
     def _strip_code_fence(self, value: str) -> str:
         stripped = value.strip()
@@ -190,6 +259,8 @@ class ImageParsingService:
         document: Document,
         document_version: DocumentVersion,
         text: str,
+        text_blocks: list[str],
+        tables: list[dict[str, Any]],
         quality_notes: str | None,
         content_type: str,
     ) -> str:
@@ -199,6 +270,8 @@ class ImageParsingService:
             "document_version_id": str(document_version.id),
             "content_type": content_type,
             "text": text,
+            "text_blocks": text_blocks,
+            "tables": tables,
             "quality_notes": quality_notes,
         }
         object_storage.put_object(
@@ -229,23 +302,74 @@ class ImageParsingService:
         await DocumentChunkingService(self.db).replace_chunks(
             document_id=document.id,
             document_version_id=document_version.id,
-            blocks=[
-                ParsedBlock(
-                    text=result.text,
-                    block_type="image_ocr",
-                    page_number=1,
-                    metadata={
-                        "extraction_method": result.extraction_method,
-                        "quality_notes": result.quality_notes,
-                    },
-                )
-            ],
+            blocks=self._build_chunking_blocks(result),
             source="imageparser",
             base_metadata={
                 "extraction_method": result.extraction_method,
                 "quality_notes": result.quality_notes,
             },
         )
+
+    def _build_chunking_blocks(self, result: ImageParseResult) -> list[ParsedBlock]:
+        blocks: list[ParsedBlock] = []
+        common_meta = {
+            "extraction_method": result.extraction_method,
+            "quality_notes": result.quality_notes,
+        }
+
+        if not result.text_blocks and not result.tables:
+            blocks.append(
+                ParsedBlock(
+                    text=result.text,
+                    block_type="image_ocr",
+                    page_number=1,
+                    metadata=common_meta,
+                )
+            )
+            return blocks
+
+        for index, paragraph in enumerate(result.text_blocks):
+            paragraph_text = paragraph.strip()
+            if not paragraph_text:
+                continue
+            blocks.append(
+                ParsedBlock(
+                    text=paragraph_text,
+                    block_type="paragraph",
+                    page_number=1,
+                    metadata={**common_meta, "block_index": index},
+                )
+            )
+
+        for table_index, table in enumerate(result.tables):
+            rows = table.get("rows") or []
+            if not rows:
+                continue
+            blocks.append(
+                ParsedBlock(
+                    text="\n".join(" | ".join(row) for row in rows),
+                    block_type="table",
+                    page_number=1,
+                    section_title=table.get("caption") or None,
+                    metadata={
+                        **common_meta,
+                        "table_index": table.get("table_index", table_index),
+                        "table_caption": table.get("caption"),
+                        "rows": rows,
+                    },
+                )
+            )
+
+        if not blocks:
+            blocks.append(
+                ParsedBlock(
+                    text=result.text,
+                    block_type="image_ocr",
+                    page_number=1,
+                    metadata=common_meta,
+                )
+            )
+        return blocks
 
     async def _mark_failed(
         self,
@@ -279,6 +403,8 @@ class ImageParsingService:
                 "status": "completed",
                 "extraction_method": result.extraction_method,
                 "characters_count": result.characters_count,
+                "tables_count": len(result.tables or []),
+                "text_blocks_count": len(result.text_blocks or []),
                 "duration_ms": result.duration_ms,
                 "vision_model": settings.VISION_LM_STUDIO_MODEL,
                 "quality_notes": result.quality_notes,

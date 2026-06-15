@@ -20,6 +20,7 @@ from app.models.enums import (
     KnowledgeBaseSourcePrecheckStatus,
     KnowledgeBaseSourceStatus,
     KnowledgeBaseStatus,
+    TextExtractStatus,
 )
 from app.models.knowledge_base import (
     KnowledgeBase,
@@ -47,6 +48,19 @@ _SKIP_STATUSES = {
     KnowledgeBaseSourceStatus.ARCHIVED,
     KnowledgeBaseSourceStatus.EXCLUDED,
 }
+
+_JOB_STAGE_ORDER = [
+    "precheck",
+    "text_extraction",
+    "ocr_extraction",
+    "chunking",
+    "embeddings",
+    "qdrant",
+    "fulltext",
+    "quality_control",
+    "stopping",
+    "stopped",
+]
 
 
 class KnowledgeBaseIndexingService:
@@ -474,7 +488,7 @@ class KnowledgeBaseIndexingService:
             job.extracted_sources_count += 1
             await self._update_job_progress(job)
 
-        await self._ensure_source_document_processed(document, version)
+        await self._ensure_source_document_processed(document, version, job=job)
         # Парсер мог изменить документ/версию: после flush атрибуты с
         # server-side onupdate (updated_at) истекают, а их синхронное чтение
         # в async-сессии падает с MissingGreenlet. Обновляем явно.
@@ -662,10 +676,27 @@ class KnowledgeBaseIndexingService:
             raise KnowledgeBaseIndexingError("База знаний не найдена")
         return kb
 
-    async def _ensure_source_document_processed(self, document: Document, version: DocumentVersion) -> None:
+    async def _ensure_source_document_processed(
+        self,
+        document: Document,
+        version: DocumentVersion,
+        *,
+        job: KnowledgeBaseIndexingJob | None = None,
+    ) -> None:
         existing = await self._load_document_chunks(version.id)
         if existing and not self._chunks_outdated(existing):
             return
+
+        if job is not None and (
+            document.text_extract_status != TextExtractStatus.EXTRACTED
+            or version.text_extract_status != TextExtractStatus.EXTRACTED
+            or not existing
+        ):
+            await self._set_job_stage(job, "ocr_extraction")
+            params = dict(job.processing_params or {})
+            params["ocr_sources_count"] = int(params.get("ocr_sources_count") or 0) + 1
+            job.processing_params = params
+            await self._update_job_progress(job)
 
         content_type = (document.content_type or document.mime_type or "").lower()
         filename = (document.original_filename or version.original_filename or "").lower()
@@ -829,7 +860,13 @@ class KnowledgeBaseIndexingService:
 
     async def _set_job_stage(self, job: KnowledgeBaseIndexingJob, stage: str, *, emit: bool = True) -> None:
         params = dict(job.processing_params or {})
-        params["current_stage"] = stage
+        current_stage = str(params.get("current_stage") or "")
+        current_index = _JOB_STAGE_ORDER.index(current_stage) if current_stage in _JOB_STAGE_ORDER else -1
+        next_index = _JOB_STAGE_ORDER.index(stage) if stage in _JOB_STAGE_ORDER else current_index
+        if next_index >= current_index:
+            params["current_stage"] = stage
+            params["max_stage_index"] = next_index
+        params["last_observed_stage"] = stage
         job.processing_params = params
         await self.db.flush()
         if emit:
