@@ -51,6 +51,7 @@ from app.schemas.knowledge_base import (
 )
 from app.schemas.user import ResponsibleUserRead
 from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
+from app.services.knowledge_base_celery import attach_celery_task_id
 from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingError, KnowledgeBaseIndexingService
 from app.services.knowledge_base_search_service import KnowledgeBaseSearchService
 from app.services.knowledge_base_service import KnowledgeBaseService, KnowledgeBaseServiceError, file_extension
@@ -77,6 +78,11 @@ async def _commit_and_refresh_all(db: DbSession, entities):
     for entity in entities:
         await db.refresh(entity)
     return entities
+
+
+async def _enqueue_indexing_job(db: DbSession, job: KnowledgeBaseIndexingJob, async_result) -> KnowledgeBaseIndexingJob:
+    job.processing_params = attach_celery_task_id(job.processing_params, async_result.id)
+    return await _commit_and_refresh(db, job)
 
 
 @router.get("/stats", response_model=KnowledgeBaseStats)
@@ -272,8 +278,8 @@ async def reindex_source(knowledge_base_id: uuid.UUID, source_id: uuid.UUID, db:
         target_source_id=source_id,
     )
     job = await _commit_and_refresh(db, job)
-    index_knowledge_base_source.delay(str(knowledge_base_id), str(source_id), str(job.id))
-    return job
+    async_result = index_knowledge_base_source.delay(str(knowledge_base_id), str(source_id), str(job.id))
+    return await _enqueue_indexing_job(db, job, async_result)
 
 
 @router.get("/{knowledge_base_id}/chunks", response_model=list[KnowledgeBaseChunkRead])
@@ -358,7 +364,9 @@ async def replace_access(
             started_by_user_id=current_user.id,
         )
         await db.commit()
-        reindex_knowledge_base_after_access_change.delay(str(knowledge_base_id), str(job.id))
+        async_result = reindex_knowledge_base_after_access_change.delay(str(knowledge_base_id), str(job.id))
+        job.processing_params = attach_celery_task_id(job.processing_params, async_result.id)
+        await db.commit()
         return KnowledgeBaseAccessRead(grants=grants, exceptions=exceptions)
     except KnowledgeBaseServiceError as exc:
         await db.rollback()
@@ -427,12 +435,14 @@ async def start_indexing(
     )
     job = await _commit_and_refresh(db, job)
     if payload.job_type == KnowledgeBaseIndexJobType.SOURCE and payload.source_id is not None:
-        index_knowledge_base_source.delay(str(knowledge_base_id), str(payload.source_id), str(job.id))
+        async_result = index_knowledge_base_source.delay(
+            str(knowledge_base_id), str(payload.source_id), str(job.id)
+        )
     elif payload.job_type == KnowledgeBaseIndexJobType.EMBEDDINGS:
-        reindex_knowledge_base_embeddings.delay(str(knowledge_base_id), str(job.id))
+        async_result = reindex_knowledge_base_embeddings.delay(str(knowledge_base_id), str(job.id))
     else:
-        index_knowledge_base_full.delay(str(knowledge_base_id), str(job.id))
-    return job
+        async_result = index_knowledge_base_full.delay(str(knowledge_base_id), str(job.id))
+    return await _enqueue_indexing_job(db, job, async_result)
 
 
 @router.post("/{knowledge_base_id}/index/cancel", response_model=KnowledgeBaseIndexingJobRead)
@@ -494,9 +504,14 @@ async def retry_indexing_error(error_id: uuid.UUID, db: DbSession, current_user:
     error.is_resolved = True
     await db.commit()
     if error.source_id:
-        index_knowledge_base_source.delay(str(error.knowledge_base_id), str(error.source_id), str(job.id))
+        async_result = index_knowledge_base_source.delay(
+            str(error.knowledge_base_id), str(error.source_id), str(job.id)
+        )
     else:
-        index_knowledge_base_full.delay(str(error.knowledge_base_id), str(job.id))
+        async_result = index_knowledge_base_full.delay(str(error.knowledge_base_id), str(job.id))
+    job.processing_params = attach_celery_task_id(job.processing_params, async_result.id)
+    await db.commit()
+    await db.refresh(job)
     return job
 
 
