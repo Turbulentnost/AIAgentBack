@@ -701,6 +701,19 @@ async def _documents_by_id(db: DbSession, document_ids: list[uuid.UUID]) -> dict
     return {document.id: document for document in result.scalars().all()}
 
 
+def _document_relative_path(document: Document | None) -> str | None:
+    if not document:
+        return None
+    for payload in (document.metadata_, document.doc_metadata):
+        if isinstance(payload, dict):
+            relative_path = payload.get("relative_path")
+            if relative_path:
+                return str(relative_path).replace("\\", "/")
+    if document.original_filename:
+        return document.original_filename
+    return document.title
+
+
 def _source_read(source, document: Document | None) -> dict:
     filename = document.original_filename if document else None
     return {
@@ -725,6 +738,7 @@ def _source_read(source, document: Document | None) -> dict:
         "document_title": document.title if document else None,
         "original_filename": filename,
         "extension": file_extension(filename),
+        "relative_path": _document_relative_path(document),
         "department_id": document.department_id if document else None,
         "linked_agents_count": 0,
     }
