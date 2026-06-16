@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 
 from app.tools.base import Tool
 from app.core.config import settings
+from app.tools.onec.create_service_memo import (
+    DEFAULT_TASK_DESCRIPTION,
+    DEFAULT_THEME,
+    create_and_send_service_memo,
+)
 from app.tools.onec.get_meetings import get_last_meeting_memos
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
 from app.tools.onec.meeting_topics_registry import query_meeting_topics
@@ -262,3 +267,90 @@ class GetMeetingTopicsRegistryTool(Tool):
 
 
 register_tool(GetMeetingTopicsRegistryTool())
+
+
+class CreateServiceMemoInput(BaseModel):
+    recipient_fio: str = Field(description="ФИО получателя (Catalog_Пользователи)")
+    text: str = Field(description="Текст служебной записки")
+    theme: str = Field(
+        default=DEFAULT_THEME,
+        description="Тема из Catalog_ТД_ТемыСлужебныхЗаписок",
+    )
+    task_description: str = Field(
+        default=DEFAULT_TASK_DESCRIPTION,
+        description="Текст задачи для исполнителя в 1С",
+    )
+
+
+class ServiceMemoRecipient(BaseModel):
+    fio: str
+    user_ref: str
+
+
+class ServiceMemoInfo(BaseModel):
+    ref_key: str | None = None
+    number: str | None = None
+    date: str | None = None
+    posted: bool | None = None
+    status: str | None = None
+
+
+class ServiceMemoTaskInfo(BaseModel):
+    ref_key: str | None = None
+    number: str | None = None
+    description: str | None = None
+    executor_ref: str | None = None
+
+
+class CreateServiceMemoOutput(BaseModel):
+    theme: str
+    recipient: ServiceMemoRecipient
+    memo: ServiceMemoInfo
+    task: ServiceMemoTaskInfo
+
+
+async def create_service_memo_tool(
+    payload: CreateServiceMemoInput,
+    context: ToolContext,
+) -> CreateServiceMemoOutput:
+    del context
+    raw = await asyncio.to_thread(
+        create_and_send_service_memo,
+        recipient_fio=payload.recipient_fio,
+        text=payload.text,
+        theme=payload.theme,
+        task_description=payload.task_description,
+    )
+    return CreateServiceMemoOutput.model_validate(raw)
+
+
+class CreateServiceMemoTool(Tool):
+    name = "create_service_memo"
+    description = (
+        "Создаёт служебную записку в 1С:ERP и ставит задачу исполнителю по ФИО."
+    )
+    agent_description = (
+        "Инструмент create_service_memo создаёт Document_ТД_СлужебнаяЗаписка в 1С:ERP "
+        "и Task_ЗадачаИсполнителя для указанного сотрудника. "
+        "recipient_fio — ФИО из Catalog_Пользователи; text — текст записки; "
+        f"theme по умолчанию «{DEFAULT_THEME}»; task_description — текст задачи. "
+        "Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = CreateServiceMemoInput
+    output_model = CreateServiceMemoOutput
+    required_permissions = ["create_service_memo"]
+    preview_default_params = {
+        "recipient_fio": "Комарькова Анастасия Эдуардовна",
+        "text": "Прошу ознакомиться с информацией.",
+        "task_description": DEFAULT_TASK_DESCRIPTION,
+    }
+
+    async def execute(
+        self,
+        payload: CreateServiceMemoInput,
+        context: ToolContext,
+    ) -> CreateServiceMemoOutput:
+        return await create_service_memo_tool(payload, context)
+
+
+register_tool(CreateServiceMemoTool())
