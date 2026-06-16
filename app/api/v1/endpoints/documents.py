@@ -1,26 +1,33 @@
 from __future__ import annotations
 import json
 import uuid
-from typing import Annotated
+from io import BytesIO
+from typing import Annotated, Literal
+from urllib.parse import quote
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, or_, select
+
 from app.api.deps import CurrentUser, DbSession
 from app.documents.storage import ObjectStorageError, object_storage
 from app.knowledge_base.search import search_knowledge_base as search_knowledge_base_service
 from app.models.document import Document, DocumentChunk, DocumentVersion
 from app.models.enums import DocumentType
+from app.schemas.common import Page
 from app.schemas.document import (
     ChunkSearchHit,
     ChunkSearchQuery,
     DocumentChunkRead,
     DocumentCreate,
+    DocumentListItem,
     DocumentRead,
     DocumentVersionRead,
 )
 from app.services.document_service import DocumentMetadataSaveError, DocumentService
 from app.services.permission_service import PermissionService
 from app.workers.tasks import process_document
-from sqlalchemy import select
+
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
@@ -88,13 +95,48 @@ async def upload_document(
     return document
 
 
-@router.get("", response_model=list[DocumentRead])
-async def list_documents(db: DbSession, current_user: CurrentUser):
+@router.get("", response_model=Page[DocumentListItem])
+async def list_documents(
+    db: DbSession,
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    size: int = Query(25, ge=1, le=5000),
+    query: str | None = None,
+):
+    filters = []
+    normalized_query = (query or "").strip()
+    if normalized_query:
+        pattern = f"%{normalized_query}%"
+        filters.append(
+            or_(
+                Document.title.ilike(pattern),
+                Document.original_filename.ilike(pattern),
+            )
+        )
+
+    count_stmt = select(func.count(Document.id))
+    if filters:
+        count_stmt = count_stmt.where(*filters)
+    total = int(await db.scalar(count_stmt) or 0)
+
     stmt = select(Document).order_by(Document.created_at.desc())
-    if not current_user.is_superuser and current_user.department_id is not None:
-        stmt = stmt.where(Document.department_id == current_user.department_id)
+    if filters:
+        stmt = stmt.where(*filters)
+    stmt = stmt.offset((page - 1) * size).limit(size)
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    documents = list(result.scalars().all())
+
+    permissions = PermissionService(db)
+    items: list[DocumentListItem] = []
+    for document in documents:
+        base = DocumentRead.model_validate(document)
+        items.append(
+            DocumentListItem(
+                **base.model_dump(),
+                can_access=permissions.can_access_document_record(current_user, document),
+            )
+        )
+    return Page(items=items, total=total, page=page, size=size)
 
 
 @router.post("", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
@@ -141,9 +183,41 @@ async def search_knowledge_base(query: ChunkSearchQuery, db: DbSession, current_
 
 
 @router.post("/{document_id}/parse")
-async def parse_document(document_id: uuid.UUID, current_user: CurrentUser):
+async def parse_document(document_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    if not await PermissionService(db).can_access_document(current_user, document_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к документу")
     task = process_document.delay(str(document_id))
     return {"celery_task_id": task.id, "document_id": str(document_id), "status": "queued"}
+
+
+@router.get("/{document_id}/file")
+async def get_document_file(
+    document_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    disposition: Literal["inline", "attachment"] = Query("attachment"),
+):
+    document = await db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Документ не найден")
+    if not await PermissionService(db).can_access_document(current_user, document_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к документу")
+    if not document.object_name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл документа не найден")
+
+    try:
+        content = object_storage.get_object(document.object_name)
+    except ObjectStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    filename = document.original_filename or f"{document.title}.bin"
+    media_type = document.content_type or document.mime_type or "application/octet-stream"
+    encoded_filename = quote(filename)
+    headers = {
+        "Content-Disposition": f'{disposition}; filename="{filename}"; filename*=UTF-8\'\'{encoded_filename}',
+        "Content-Length": str(len(content)),
+    }
+    return StreamingResponse(BytesIO(content), media_type=media_type, headers=headers)
 
 
 @router.get("/{document_id}/versions", response_model=list[DocumentVersionRead])

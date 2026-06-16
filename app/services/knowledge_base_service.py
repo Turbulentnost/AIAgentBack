@@ -240,6 +240,52 @@ class KnowledgeBaseService:
         await self.db.flush()
         return kb
 
+    async def confirm_review(self, knowledge_base_id: uuid.UUID, *, current_user: User) -> KnowledgeBase:
+        kb = await self.get_or_raise(knowledge_base_id)
+        if kb.deleted_at is not None:
+            raise KnowledgeBaseServiceError("База знаний удалена")
+        if kb.status == KnowledgeBaseStatus.READY:
+            return kb
+        if kb.status != KnowledgeBaseStatus.NEEDS_REVIEW:
+            raise KnowledgeBaseServiceError("Подтверждение доступно только для баз со статусом «Требует проверки»")
+
+        active_ids = await self.active_indexing_knowledge_base_ids([kb.id])
+        if kb.id in active_ids:
+            raise KnowledgeBaseServiceError("Нельзя подтвердить базу знаний во время индексации")
+
+        access_service = KnowledgeBaseAccessService(self.db)
+        kb_loaded = await access_service.load_for_access_check(kb.id) or kb
+        admin_access = await access_service.can_access_knowledge_base(
+            user=current_user,
+            knowledge_base=kb_loaded,
+            required_access=KnowledgeBaseAccessType.ADMIN,
+        )
+        can_manage = (
+            current_user.is_superuser
+            or kb.owner_user_id == current_user.id
+            or kb.responsible_user_id == current_user.id
+            or admin_access.allowed
+        )
+        if not can_manage:
+            raise KnowledgeBaseServiceError("Недостаточно прав для подтверждения базы знаний")
+
+        kb.status = KnowledgeBaseStatus.READY
+        metadata = dict(kb.metadata_ or {})
+        qc_warnings = metadata.get("qc_warnings")
+        if isinstance(qc_warnings, dict):
+            metadata["qc_warnings"] = {}
+        kb.metadata_ = metadata
+
+        await self.audit.log(
+            action="kb.review_confirmed",
+            actor_id=current_user.id,
+            resource_type="knowledge_base",
+            resource_id=str(kb.id),
+            payload={"previous_status": KnowledgeBaseStatus.NEEDS_REVIEW.value},
+        )
+        await self.db.flush()
+        return kb
+
     async def add_source(
         self,
         knowledge_base_id: uuid.UUID,

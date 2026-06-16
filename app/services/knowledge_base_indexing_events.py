@@ -47,12 +47,14 @@ def is_indexing_active(
     knowledge_base: KnowledgeBase,
     job: KnowledgeBaseIndexingJob | None = None,
 ) -> bool:
-    if knowledge_base.status in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}:
-        return True
+    if job is not None and job.status == KnowledgeBaseIndexJobStatus.CANCELLED:
+        return False
     if job is not None and job.status in {
         KnowledgeBaseIndexJobStatus.QUEUED,
         KnowledgeBaseIndexJobStatus.RUNNING,
     }:
+        return True
+    if knowledge_base.status in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}:
         return True
     return False
 

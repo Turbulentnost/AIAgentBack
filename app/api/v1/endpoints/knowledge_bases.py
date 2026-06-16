@@ -138,9 +138,21 @@ async def list_knowledge_bases(
             required_access=KnowledgeBaseAccessType.SEARCH,
             allow_non_ready_for_admin=False,
         )
-        indexing_active = (
-            kb.status in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}
-            or kb.id in active_indexing_ids
+        admin_access = await access_service.can_access_knowledge_base(
+            user=current_user,
+            knowledge_base=kb_loaded,
+            required_access=KnowledgeBaseAccessType.ADMIN,
+        )
+        indexing_active = kb.id in active_indexing_ids
+        can_delete = current_user.is_superuser or kb.owner_user_id == current_user.id
+        can_confirm_review = (
+            kb.status == KnowledgeBaseStatus.NEEDS_REVIEW
+            and not indexing_active
+            and (
+                can_delete
+                or kb.responsible_user_id == current_user.id
+                or admin_access.allowed
+            )
         )
         base = KnowledgeBaseRead.model_validate(kb)
         result.append(
@@ -148,7 +160,8 @@ async def list_knowledge_bases(
                 **base.model_dump(),
                 can_access=read_access.allowed,
                 can_search=search_access.allowed,
-                can_delete=current_user.is_superuser or kb.owner_user_id == current_user.id,
+                can_delete=can_delete,
+                can_confirm_review=can_confirm_review,
                 indexing_active=indexing_active,
             )
         )
@@ -199,6 +212,23 @@ async def archive_knowledge_base(knowledge_base_id: uuid.UUID, db: DbSession, cu
         if "может только" in message:
             status_code = status.HTTP_403_FORBIDDEN
         elif "уже удалена" in message:
+            status_code = status.HTTP_409_CONFLICT
+        else:
+            status_code = status.HTTP_404_NOT_FOUND
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+
+@router.post("/{knowledge_base_id}/confirm-review", response_model=KnowledgeBaseRead)
+async def confirm_knowledge_base_review(knowledge_base_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    try:
+        item = await KnowledgeBaseService(db).confirm_review(knowledge_base_id, current_user=current_user)
+        return await _commit_and_refresh(db, item)
+    except KnowledgeBaseServiceError as exc:
+        await db.rollback()
+        message = str(exc)
+        if "Недостаточно прав" in message:
+            status_code = status.HTTP_403_FORBIDDEN
+        elif "Подтверждение доступно" in message or "во время индексации" in message or "удалена" in message:
             status_code = status.HTTP_409_CONFLICT
         else:
             status_code = status.HTTP_404_NOT_FOUND
@@ -445,6 +475,19 @@ async def start_indexing(
     return await _enqueue_indexing_job(db, job, async_result)
 
 
+async def _fetch_latest_indexing_job(
+    db: DbSession,
+    knowledge_base_id: uuid.UUID,
+) -> KnowledgeBaseIndexingJob | None:
+    result = await db.execute(
+        select(KnowledgeBaseIndexingJob)
+        .where(KnowledgeBaseIndexingJob.knowledge_base_id == knowledge_base_id)
+        .order_by(KnowledgeBaseIndexingJob.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 @router.post("/{knowledge_base_id}/index/cancel", response_model=KnowledgeBaseIndexingJobRead)
 async def cancel_indexing(
     knowledge_base_id: uuid.UUID,
@@ -452,9 +495,6 @@ async def cancel_indexing(
     db: DbSession,
     current_user: CurrentUser,
 ):
-    kb = await KnowledgeBaseService(db).get(knowledge_base_id)
-    if kb is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="База знаний не найдена")
     indexing_service = KnowledgeBaseIndexingService(db)
     try:
         if payload.force:
@@ -463,21 +503,27 @@ async def cancel_indexing(
                 requested_by_user_id=current_user.id,
                 reason=payload.reason,
             )
-            if job is None:
-                kb = await _commit_and_refresh(db, kb)
-                jobs = await KnowledgeBaseService(db).list_jobs(knowledge_base_id)
-                if jobs:
-                    return jobs[0]
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Активное задание индексации не найдено")
-            return await _commit_and_refresh(db, job)
-        job = await indexing_service.request_cancel(
-            knowledge_base_id,
-            requested_by_user_id=current_user.id,
-            reason=payload.reason,
-        )
-        return await _commit_and_refresh(db, job)
+        else:
+            job = await indexing_service.request_cancel(
+                knowledge_base_id,
+                requested_by_user_id=current_user.id,
+                reason=payload.reason,
+            )
     except KnowledgeBaseIndexingError as exc:
+        await db.rollback()
+        latest = await _fetch_latest_indexing_job(db, knowledge_base_id)
+        if latest is not None and latest.status == KnowledgeBaseIndexJobStatus.CANCELLED:
+            return latest
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if job is not None:
+        return await _commit_and_refresh(db, job)
+
+    await db.commit()
+    latest = await _fetch_latest_indexing_job(db, knowledge_base_id)
+    if latest is not None:
+        return latest
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Активное задание индексации не найдено")
 
 
 @router.get("/{knowledge_base_id}/index/jobs", response_model=list[KnowledgeBaseIndexingJobRead])

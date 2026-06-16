@@ -266,15 +266,48 @@ def index_document(self, document_id: str) -> dict[str, Any]:
     return asyncio.run(_run())
 
 
-@celery_app.task(name="index_knowledge_base_full", bind=True, max_retries=3)
+@celery_app.task(
+    name="index_knowledge_base_full",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=False,
+)
 def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
     import uuid
 
     from app.db.session import AsyncSessionLocal
+    from app.models.enums import KnowledgeBaseIndexJobStatus
+    from app.models.knowledge_base import KnowledgeBaseIndexingJob
+    from app.services.knowledge_base_celery import is_celery_task_cancelled
     from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+
+    if is_celery_task_cancelled(self.request.id):
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "index_knowledge_base_full",
+            "knowledge_base_id": knowledge_base_id,
+            "job_id": job_id,
+            "status": "cancelled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
+            if job_id:
+                job = await db.get(KnowledgeBaseIndexingJob, uuid.UUID(job_id))
+                if job is not None and (
+                    job.status == KnowledgeBaseIndexJobStatus.CANCELLED or job.cancel_requested
+                ):
+                    return {
+                        "celery_task_id": self.request.id,
+                        "task_name": "index_knowledge_base_full",
+                        "knowledge_base_id": knowledge_base_id,
+                        "job_id": job_id,
+                        "status": "cancelled",
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
             service = KnowledgeBaseIndexingService(db)
             try:
                 if job_id:
@@ -282,10 +315,15 @@ def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None =
                 else:
                     result = await service.index_knowledge_base(uuid.UUID(knowledge_base_id))
                 await db.commit()
+                result_status = result.get("status")
+                if result_status in {"cancelled", "CANCELLED"}:
+                    status = "cancelled"
+                else:
+                    status = "completed"
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "index_knowledge_base_full",
-                    "status": "completed",
+                    "status": status,
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                     **result,
                 }
@@ -293,6 +331,18 @@ def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None =
                 await db.rollback()
                 if job_id:
                     async with AsyncSessionLocal() as cleanup_db:
+                        job = await cleanup_db.get(KnowledgeBaseIndexingJob, uuid.UUID(job_id))
+                        if job is not None and (
+                            job.status == KnowledgeBaseIndexJobStatus.CANCELLED or job.cancel_requested
+                        ):
+                            return {
+                                "celery_task_id": self.request.id,
+                                "task_name": "index_knowledge_base_full",
+                                "knowledge_base_id": knowledge_base_id,
+                                "job_id": job_id,
+                                "status": "cancelled",
+                                "finished_at": datetime.now(timezone.utc).isoformat(),
+                            }
                         await KnowledgeBaseIndexingService(cleanup_db).abort_job_from_worker(
                             uuid.UUID(job_id),
                             error_message=str(exc),
@@ -311,7 +361,13 @@ def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None =
     return _run_async_task(_run)
 
 
-@celery_app.task(name="index_knowledge_base_source", bind=True, max_retries=3)
+@celery_app.task(
+    name="index_knowledge_base_source",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=False,
+)
 def index_knowledge_base_source(
     self,
     knowledge_base_id: str,
@@ -321,10 +377,39 @@ def index_knowledge_base_source(
     import uuid
 
     from app.db.session import AsyncSessionLocal
+    from app.models.enums import KnowledgeBaseIndexJobStatus
+    from app.models.knowledge_base import KnowledgeBaseIndexingJob
+    from app.services.knowledge_base_celery import is_celery_task_cancelled
     from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+
+    if is_celery_task_cancelled(self.request.id):
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "index_knowledge_base_source",
+            "knowledge_base_id": knowledge_base_id,
+            "source_id": source_id,
+            "job_id": job_id,
+            "status": "cancelled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
+            if job_id:
+                job = await db.get(KnowledgeBaseIndexingJob, uuid.UUID(job_id))
+                if job is not None and (
+                    job.status == KnowledgeBaseIndexJobStatus.CANCELLED or job.cancel_requested
+                ):
+                    return {
+                        "celery_task_id": self.request.id,
+                        "task_name": "index_knowledge_base_source",
+                        "knowledge_base_id": knowledge_base_id,
+                        "source_id": source_id,
+                        "job_id": job_id,
+                        "status": "cancelled",
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
             service = KnowledgeBaseIndexingService(db)
             try:
                 result = (
@@ -333,10 +418,12 @@ def index_knowledge_base_source(
                     else await service.index_source(uuid.UUID(knowledge_base_id), uuid.UUID(source_id))
                 )
                 await db.commit()
+                result_status = result.get("status")
+                status = "cancelled" if result_status in {"cancelled", "CANCELLED"} else "completed"
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "index_knowledge_base_source",
-                    "status": "completed",
+                    "status": status,
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                     **result,
                 }
@@ -344,6 +431,19 @@ def index_knowledge_base_source(
                 await db.rollback()
                 if job_id:
                     async with AsyncSessionLocal() as cleanup_db:
+                        job = await cleanup_db.get(KnowledgeBaseIndexingJob, uuid.UUID(job_id))
+                        if job is not None and (
+                            job.status == KnowledgeBaseIndexJobStatus.CANCELLED or job.cancel_requested
+                        ):
+                            return {
+                                "celery_task_id": self.request.id,
+                                "task_name": "index_knowledge_base_source",
+                                "knowledge_base_id": knowledge_base_id,
+                                "source_id": source_id,
+                                "job_id": job_id,
+                                "status": "cancelled",
+                                "finished_at": datetime.now(timezone.utc).isoformat(),
+                            }
                         await KnowledgeBaseIndexingService(cleanup_db).abort_job_from_worker(
                             uuid.UUID(job_id),
                             error_message=str(exc),
@@ -437,12 +537,24 @@ def run_knowledge_base_search_query(self, search_query_id: str) -> dict[str, Any
     return _run_async_task(_run)
 
 
-@celery_app.task(name="reindex_knowledge_base_embeddings", bind=True, max_retries=3)
+@celery_app.task(
+    name="reindex_knowledge_base_embeddings",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=False,
+)
 def reindex_knowledge_base_embeddings(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
     return index_knowledge_base_full.run(knowledge_base_id, job_id)
 
 
-@celery_app.task(name="reindex_knowledge_base_after_access_change", bind=True, max_retries=3)
+@celery_app.task(
+    name="reindex_knowledge_base_after_access_change",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=False,
+)
 def reindex_knowledge_base_after_access_change(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
     return index_knowledge_base_full.run(knowledge_base_id, job_id)
 

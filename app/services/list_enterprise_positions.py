@@ -35,6 +35,8 @@ from urllib.parse import quote
 import requests
 
 from app.integrations.onec_odata import create_session, fetch_all, get_odata_base_url
+from app.utils.department_classification import is_position_like_department_name
+from app.utils.position_names import position_display_name
 
 sys.stdout.reconfigure(encoding="utf-8")
 print = functools.partial(print, flush=True)
@@ -166,7 +168,7 @@ def build_enterprise_departments(session: requests.Session) -> list[dict]:
     rows: list[dict] = []
     for key, row in structure.items():
         name = (row.get("Description") or "").strip()
-        if not name:
+        if not name or is_position_like_department_name(name):
             continue
         parent_key = row.get("Parent_Key") or EMPTY
         rows.append(
@@ -178,6 +180,23 @@ def build_enterprise_departments(session: requests.Session) -> list[dict]:
             }
         )
     return sorted(rows, key=lambda item: normalize_text(item["path"]))
+
+
+def build_enterprise_structure_positions(session: requests.Session) -> list[dict]:
+    """Return job titles that were mistakenly stored as enterprise structure nodes in 1C."""
+    structure, _children = load_hierarchy(session, STRUCTURE_ENTITY)
+    rows: list[dict] = []
+    for key, row in structure.items():
+        name = (row.get("Description") or "").strip()
+        if not name or not is_position_like_department_name(name):
+            continue
+        rows.append(
+            {
+                "external_id": key,
+                "name": position_display_name(external_id=key, name=name),
+            }
+        )
+    return sorted(rows, key=lambda item: normalize_text(item["name"]))
 
 
 def build_name_index(hierarchy: dict[str, dict]) -> dict[str, list[str]]:

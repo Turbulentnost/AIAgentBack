@@ -240,7 +240,10 @@ class KnowledgeBaseIndexingService:
         )
         jobs = list(result.scalars().all())
         if not jobs:
-            kb = await self._load_kb(knowledge_base_id)
+            try:
+                kb = await self._load_kb(knowledge_base_id)
+            except KnowledgeBaseIndexingError:
+                return None
             if kb.status in {KnowledgeBaseStatus.PROCESSING, KnowledgeBaseStatus.UPDATING}:
                 metadata = kb.metadata_ or {}
                 previous_status = metadata.pop("indexing_previous_status", None)
@@ -362,6 +365,8 @@ class KnowledgeBaseIndexingService:
             return self._job_result(job)
 
         await self._mark_job_running(job, kb)
+        if await self._is_job_cancelled(job):
+            return self._job_result(job)
         kb.status = KnowledgeBaseStatus.PROCESSING
         _, kb = await self._commit_checkpoint(job=job, kb=kb)
         started = perf_counter()
@@ -380,7 +385,8 @@ class KnowledgeBaseIndexingService:
         if await self._abort_if_cancelled(job, kb, started):
             return self._job_result(job)
         job.total_sources_count = len(eligible)
-        await self._update_job_progress(job)
+        if not await self._update_job_progress(job):
+            return self._job_result(job)
 
         processed_sources = 0
         created_fragments = 0
@@ -414,8 +420,10 @@ class KnowledgeBaseIndexingService:
                     job.embedded_chunks_count = embedded_chunks
                     job.qdrant_points_count = qdrant_points
                     job.fulltext_chunks_count = fulltext_chunks
-                    await self._update_job_progress(job)
-                    _, kb = await self._commit_checkpoint(job=job, kb=kb)
+                    if not await self._update_job_progress(job):
+                        kb = await self._load_kb(kb.id)
+                        return self._job_result(job)
+                    kb = await self._load_kb(kb.id)
                 except Exception as exc:
                     await self._record_error(
                         job,
@@ -475,6 +483,8 @@ class KnowledgeBaseIndexingService:
             return self._job_result(job)
 
         await self._mark_job_running(job, kb)
+        if await self._is_job_cancelled(job):
+            return self._job_result(job)
         kb.status = KnowledgeBaseStatus.PROCESSING
         _, kb = await self._commit_checkpoint(job=job, kb=kb)
         started = perf_counter()
@@ -911,6 +921,8 @@ class KnowledgeBaseIndexingService:
         return f"{document.department_id}:{document.updated_at.isoformat() if document.updated_at else ''}"
 
     async def _mark_job_running(self, job: KnowledgeBaseIndexingJob, kb: KnowledgeBase) -> None:
+        if await self._is_job_cancelled(job):
+            return
         job.status = KnowledgeBaseIndexJobStatus.RUNNING
         job.started_at = _now()
         job.embedding_model = kb.embedding_model or settings.EMBEDDINGS_MODEL
@@ -967,6 +979,10 @@ class KnowledgeBaseIndexingService:
         await self._mark_job_cancelled(job, kb, started)
         return True
 
+    async def _is_job_cancelled(self, job: KnowledgeBaseIndexingJob) -> bool:
+        await self.db.refresh(job)
+        return job.status == KnowledgeBaseIndexJobStatus.CANCELLED or bool(job.cancel_requested)
+
     async def _mark_job_cancelled(
         self,
         job: KnowledgeBaseIndexingJob,
@@ -1001,6 +1017,11 @@ class KnowledgeBaseIndexingService:
         job: KnowledgeBaseIndexingJob | None = None,
         kb: KnowledgeBase | None = None,
     ) -> tuple[KnowledgeBaseIndexingJob | None, KnowledgeBase | None]:
+        if job is not None and await self._is_job_cancelled(job):
+            await self.db.rollback()
+            if kb is not None:
+                kb = await self._load_kb(kb.id)
+            return job, kb
         await self.db.commit()
         if job is not None:
             await self.db.refresh(job)
@@ -1008,10 +1029,13 @@ class KnowledgeBaseIndexingService:
             kb = await self._load_kb(kb.id)
         return job, kb
 
-    async def _update_job_progress(self, job: KnowledgeBaseIndexingJob) -> None:
+    async def _update_job_progress(self, job: KnowledgeBaseIndexingJob) -> bool:
+        if await self._is_job_cancelled(job):
+            return False
         await self.db.flush()
         await self._emit_indexing_event(job, event="progress")
         await self._commit_checkpoint(job=job)
+        return not await self._is_job_cancelled(job)
 
     async def _mark_job_completed(
         self,

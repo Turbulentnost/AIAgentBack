@@ -2,7 +2,36 @@ from __future__ import annotations
 
 from typing import Any
 
+from redis import Redis
+
+from app.core.config import settings
 from app.workers.celery_app import celery_app
+
+_CANCELLED_CELERY_TASK_TTL_SECONDS = 60 * 60 * 24
+
+
+def _cancelled_celery_task_key(celery_task_id: str) -> str:
+    return f"kb_indexing:cancelled_celery:{celery_task_id}"
+
+
+def mark_celery_task_cancelled(celery_task_id: str | None) -> None:
+    if not celery_task_id:
+        return
+    client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        client.setex(_cancelled_celery_task_key(celery_task_id), _CANCELLED_CELERY_TASK_TTL_SECONDS, "1")
+    finally:
+        client.close()
+
+
+def is_celery_task_cancelled(celery_task_id: str | None) -> bool:
+    if not celery_task_id:
+        return False
+    client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        return client.exists(_cancelled_celery_task_key(celery_task_id)) == 1
+    finally:
+        client.close()
 
 _INDEXING_TASK_NAMES = {
     "index_knowledge_base_full",
@@ -28,6 +57,7 @@ def read_celery_task_id(processing_params: dict[str, Any] | None) -> str | None:
 def revoke_indexing_celery_task(celery_task_id: str | None, *, terminate: bool = False) -> None:
     if not celery_task_id:
         return
+    mark_celery_task_cancelled(celery_task_id)
     celery_app.control.revoke(celery_task_id, terminate=terminate, signal="SIGTERM")
 
 

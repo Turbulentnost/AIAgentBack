@@ -12,6 +12,8 @@ from app.integrations.onec_odata import create_session
 from app.models.integration import IntegrationSyncState
 from app.models.user import Department
 from app.services import list_enterprise_positions as onec
+from app.utils.department_classification import is_position_like_department_name
+from app.utils.department_names import department_display_name
 
 SYNC_KEY = "1c.departments"
 SOURCE_SYSTEM = "1c"
@@ -93,10 +95,11 @@ class DepartmentSyncService:
         for row in rows:
             external_id = str(row["external_id"])
             department = existing_by_external_id.get(external_id)
+            display_name = department_display_name(external_id=external_id, name=row["name"])
             if department is None:
-                slug = self._unique_slug(row["name"], external_id, existing_by_slug)
+                slug = self._unique_slug(display_name, external_id, existing_by_slug)
                 department = Department(
-                    name=row["name"],
+                    name=display_name,
                     slug=slug,
                     description=row["path"],
                     source_system=SOURCE_SYSTEM,
@@ -107,7 +110,7 @@ class DepartmentSyncService:
                 existing_by_slug[slug] = department
                 created += 1
             else:
-                department.name = row["name"]
+                department.name = display_name
                 department.description = row["path"]
                 department.is_active = True
                 updated += 1
@@ -128,11 +131,18 @@ class DepartmentSyncService:
                 department.is_active = False
                 deactivated += 1
 
+        reclassified = 0
+        for department in existing_by_external_id.values():
+            if department.is_active and is_position_like_department_name(department.name):
+                department.is_active = False
+                reclassified += 1
+
         await self.db.flush()
         return {
             "created_count": created,
             "updated_count": updated,
             "deactivated_count": deactivated,
+            "reclassified_position_count": reclassified,
             "synced_count": len(rows),
         }
 

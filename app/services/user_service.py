@@ -13,6 +13,7 @@ from app.services.employee_sync_service import SOURCE_SYSTEM
 from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.schemas.user import AdminUserCreate, UserCreate, UserUpdate
 from app.utils.department_utils import is_liquidated_department_name
+from app.utils.department_classification import is_position_like_department_name
 
 
 class UserService:
@@ -150,7 +151,12 @@ class DepartmentService:
         result = await self.db.execute(stmt)
         departments = list(result.scalars().all())
         if active_only:
-            departments = [department for department in departments if not is_liquidated_department_name(department.name)]
+            departments = [
+                department
+                for department in departments
+                if not is_liquidated_department_name(department.name)
+                and not is_position_like_department_name(department.name)
+            ]
         return departments
 
     async def get(self, department_id: uuid.UUID) -> Department | None:

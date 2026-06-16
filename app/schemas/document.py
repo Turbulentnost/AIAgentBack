@@ -51,6 +51,10 @@ class DocumentRead(ORMModel):
     updated_at: datetime
 
 
+class DocumentListItem(DocumentRead):
+    can_access: bool = False
+
+
 class DocumentVersionRead(ORMModel):
     id: uuid.UUID
     document_id: uuid.UUID

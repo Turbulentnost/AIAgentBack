@@ -11,6 +11,8 @@ from app.models.document import Document
 from app.models.task import Task
 from app.models.user import DepartmentAgent, Permission, User, UserAgent, role_permissions, user_roles
 
+PUBLIC_DOCUMENT_ACCESS_SCOPES = {"public", "global", "all", "company"}
+
 
 class PermissionService:
     def __init__(self, db: AsyncSession) -> None:
@@ -88,7 +90,18 @@ class PermissionService:
         document = await self.db.get(Document, document_id)
         if document is None:
             return False
-        return user.department_id is not None and document.department_id == user.department_id
+        return self.can_access_document_record(user, document)
+
+    def can_access_document_record(self, user: User, document: Document) -> bool:
+        if user.is_superuser:
+            return True
+        if document.uploaded_by_user_id == user.id:
+            return True
+        if user.department_id is not None and document.department_id == user.department_id:
+            return True
+        metadata = document.metadata_ or {}
+        access_scope = str(metadata.get("access_scope") or metadata.get("access") or "").lower()
+        return access_scope in PUBLIC_DOCUMENT_ACCESS_SCOPES
 
     def _agent_action_column(self, action: str, model: type[UserAgent] | type[DepartmentAgent]):
         mapping = {
