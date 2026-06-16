@@ -11,7 +11,6 @@
 
 Примеры:
   python -m app.tools.onec.lookup_email_by_fio "Кербенева Ольга Владимировна"
-  python -m app.tools.onec.lookup_email_by_fio "Иванов Иван" "Петров Петр" -o emails.json
 """
 
 from __future__ import annotations
@@ -28,12 +27,7 @@ import requests
 
 from app.integrations.onec_odata import fetch_all
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
-from app.tools.onec.lookup_user_ref import (
-    build_fio_index,
-    load_persons,
-    load_users,
-    resolve_user_ref,
-)
+from app.tools.onec.lookup_user_ref import resolve_user_by_fio
 
 print = functools.partial(print, flush=True)
 log = functools.partial(print, flush=True, file=sys.stderr)
@@ -68,6 +62,158 @@ def register_available(session: requests.Session, config: ODataConfig) -> bool:
     url = f"{entity_url(config.url, REGISTER_ENTITY)}?$top=1&$format=json"
     response = session.get(url, timeout=config.timeout)
     return response.ok
+
+
+def odata_escape(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def odata_get_rows(
+    session: requests.Session,
+    url: str,
+    *,
+    timeout: int,
+) -> list[dict[str, Any]]:
+    response = session.get(url, timeout=timeout)
+    if not response.ok:
+        return []
+    return response.json().get("value") or []
+
+
+def load_register_emails_for_user(
+    session: requests.Session,
+    config: ODataConfig,
+    user_ref: str,
+) -> list[dict[str, str]]:
+    filter_expr = f"Пользователь_Key eq guid'{user_ref}'"
+    url = (
+        f"{entity_url(config.url, REGISTER_ENTITY)}"
+        f"?$filter={quote(filter_expr, safe='')}"
+        f"&$format=json"
+    )
+    entries: list[dict[str, str]] = []
+    for row in odata_get_rows(session, url, timeout=config.timeout):
+        email = (
+            row.get("АдресЭлектроннойПочты")
+            or row.get("Email")
+            or row.get("Представление")
+            or ""
+        ).strip()
+        account_key = row.get("УчетнаяЗапись_Key") or row.get("УчетнаяЗаписьЭлектроннойПочты_Key")
+        entries.append(
+            {
+                "email": normalize_email(email),
+                "account_key": account_key or "",
+                "source": REGISTER_ENTITY,
+            }
+        )
+    return entries
+
+
+def load_mail_emails_for_user(
+    session: requests.Session,
+    config: ODataConfig,
+    user_ref: str,
+) -> list[dict[str, str]]:
+    filter_expr = (
+        f"DeletionMark eq false and "
+        f"(ВладелецУчетнойЗаписи_Key eq guid'{user_ref}' or "
+        f"CRM_Ответственный_Key eq guid'{user_ref}')"
+    )
+    url = (
+        f"{entity_url(config.url, MAIL_CATALOG)}"
+        f"?$filter={quote(filter_expr, safe='')}"
+        f"&$select={quote('Ref_Key,Description,АдресЭлектроннойПочты,ВладелецУчетнойЗаписи_Key,CRM_Ответственный_Key', safe=',_')}"
+        f"&$format=json"
+    )
+    entries: list[dict[str, str]] = []
+    for row in odata_get_rows(session, url, timeout=config.timeout):
+        email = normalize_email(row.get("АдресЭлектроннойПочты") or row.get("Description"))
+        if not is_valid_email(email):
+            continue
+        entries.append(
+            {
+                "email": email,
+                "account_key": row.get("Ref_Key") or "",
+                "source": f"{MAIL_CATALOG}.ВладелецУчетнойЗаписи_Key",
+            }
+        )
+    return entries
+
+
+def load_sync_email_for_user(
+    session: requests.Session,
+    config: ODataConfig,
+    user_ref: str,
+) -> list[dict[str, str]]:
+    url = (
+        f"{entity_url(config.url, USER_CATALOG)}(guid'{user_ref}')"
+        f"?$select={quote('Ref_Key,CRM_ЕмейлДляСинхронизации,DeletionMark,Недействителен', safe=',_')}"
+        f"&$format=json"
+    )
+    response = session.get(url, timeout=config.timeout)
+    if not response.ok:
+        return []
+    row = response.json()
+    if row.get("DeletionMark") or row.get("Недействителен"):
+        return []
+    email = normalize_email(row.get("CRM_ЕмейлДляСинхронизации"))
+    if not is_valid_email(email):
+        return []
+    return [
+        {
+            "email": email,
+            "account_key": "",
+            "source": f"{USER_CATALOG}.CRM_ЕмейлДляСинхронизации",
+        }
+    ]
+
+
+def load_contact_emails_for_user(
+    session: requests.Session,
+    config: ODataConfig,
+    user_ref: str,
+) -> list[dict[str, str]]:
+    filter_expr = f"Ref_Key eq guid'{user_ref}' and Тип eq '{EMAIL_TYPE}'"
+    url = (
+        f"{entity_url(config.url, CONTACTS_ENTITY)}"
+        f"?$filter={quote(filter_expr, safe='')}"
+        f"&$select={quote('Ref_Key,АдресЭП,Представление,Тип', safe=',_')}"
+        f"&$format=json"
+    )
+    entries: list[dict[str, str]] = []
+    for row in odata_get_rows(session, url, timeout=config.timeout):
+        email = normalize_email(row.get("АдресЭП") or row.get("Представление"))
+        if not is_valid_email(email):
+            continue
+        entries.append(
+            {
+                "email": email,
+                "account_key": "",
+                "source": CONTACTS_ENTITY,
+            }
+        )
+    return entries
+
+
+def lookup_emails_for_user_ref(
+    session: requests.Session,
+    config: ODataConfig,
+    user_ref: str,
+    *,
+    register_published: bool | None = None,
+) -> list[dict[str, str]]:
+    if register_published is None:
+        register_published = register_available(session, config)
+
+    entries: list[dict[str, str]] = []
+    if register_published:
+        entries.extend(load_register_emails_for_user(session, config, user_ref))
+    entries.extend(load_mail_emails_for_user(session, config, user_ref))
+    if not entries:
+        entries.extend(load_sync_email_for_user(session, config, user_ref))
+        entries.extend(load_contact_emails_for_user(session, config, user_ref))
+    return dedupe_entries([entry for entry in entries if entry["email"]])
 
 
 def load_register_index(
@@ -224,55 +370,18 @@ def lookup_email_by_fio(
     *,
     session: requests.Session | None = None,
     config: ODataConfig = CONFIG,
-    users: list[dict[str, Any]] | None = None,
-    exact_index: dict[str, str] | None = None,
-    ambiguous: dict[str, list[str]] | None = None,
-    register_index: dict[str, list[dict[str, str]]] | None = None,
-    mail_index: dict[str, list[dict[str, str]]] | None = None,
-    sync_index: dict[str, list[dict[str, str]]] | None = None,
-    contact_index: dict[str, list[dict[str, str]]] | None = None,
     register_published: bool | None = None,
 ) -> dict[str, Any]:
     session = session or create_session(config)
-    persons: dict[str, dict[str, Any]] | None = None
-
-    if users is None or exact_index is None or ambiguous is None:
-        users = load_users(session, config=config)
-        person_keys = {
-            user.get("ФизическоеЛицо_Key")
-            for user in users
-            if user.get("ФизическоеЛицо_Key") and not is_empty_key(user.get("ФизическоеЛицо_Key"))
-        }
-        persons = load_persons(session, person_keys, config=config)
-        exact_index, ambiguous = build_fio_index(users, persons)
-
-    user_ref = resolve_user_ref(
-        fio,
-        exact_index,
-        ambiguous,
-        users,
-        persons=persons,
-    )
-    user_row = next((user for user in users if user["Ref_Key"] == user_ref), {})
-    resolved_fio = (user_row.get("Description") or fio).strip()
+    user_ref, resolved_fio, _users = resolve_user_by_fio(session, fio, config=config)
 
     if register_published is None:
         register_published = register_available(session, config)
-    if register_index is None:
-        register_index = load_register_index(session, config) if register_published else {}
-    if mail_index is None:
-        mail_index = load_mail_catalog_index(session, config)
-    if sync_index is None:
-        sync_index = load_user_sync_emails(session, config)
-    if contact_index is None:
-        contact_index = load_contact_email_index(session, config)
 
-    emails = lookup_emails_for_user(
+    emails = lookup_emails_for_user_ref(
+        session,
+        config,
         user_ref,
-        register_index=register_index,
-        mail_index=mail_index,
-        sync_index=sync_index,
-        contact_index=contact_index,
         register_published=register_published,
     )
 
@@ -289,6 +398,45 @@ def lookup_email_by_fio(
         "user_ref": user_ref,
         "register_published": register_published,
         "emails": emails,
+    }
+
+
+def dispatch_lookup_emails_by_fio(
+    fio_list: list[str],
+    *,
+    config: ODataConfig | None = None,
+) -> dict[str, Any]:
+    """Ищет e-mail по списку ФИО и возвращает JSON для API/агента."""
+    config = config or CONFIG
+    session = create_session(config)
+    register_published = register_available(session, config)
+
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for fio in fio_list:
+        query = fio.strip()
+        if not query:
+            continue
+        try:
+            results.append(
+                lookup_email_by_fio(
+                    query,
+                    session=session,
+                    config=config,
+                    register_published=register_published,
+                )
+            )
+        except (LookupError, ValueError) as error:
+            errors.append({"fio": query, "error": str(error)})
+
+    if not results and errors:
+        raise ValueError(errors[0]["error"])
+
+    return {
+        "register_entity": REGISTER_ENTITY,
+        "register_published": register_published,
+        "results": results,
+        "errors": errors,
     }
 
 
@@ -328,58 +476,22 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
 
     args = build_parser().parse_args(argv)
-    session = create_session(CONFIG)
 
-    log("Загрузка справочников и регистров ...")
-    users = load_users(session, config=CONFIG)
-    person_keys = {
-        user.get("ФизическоеЛицо_Key")
-        for user in users
-        if user.get("ФизическоеЛицо_Key") and not is_empty_key(user.get("ФизическоеЛицо_Key"))
-    }
-    persons = load_persons(session, person_keys, config=CONFIG)
-    exact_index, ambiguous = build_fio_index(users, persons)
+    try:
+        payload = dispatch_lookup_emails_by_fio(args.fio)
+    except ValueError as error:
+        log(f"Ошибка: {error}")
+        return 1
 
-    register_published = register_available(session, CONFIG)
-    register_index = load_register_index(session, CONFIG) if register_published else {}
-    mail_index = load_mail_catalog_index(session, CONFIG)
-    sync_index = load_user_sync_emails(session, CONFIG)
-    contact_index = load_contact_email_index(session, CONFIG)
-    log(
-        f"  Пользователей: {len(users)}; "
-        f"учётных записей почты: {sum(len(v) for v in mail_index.values())}; "
-        f"регистр CRM: {'да' if register_published else 'нет'}"
-    )
+    exit_code = 1 if payload["errors"] else 0
+    for result in payload["results"]:
+        print(format_result(result))
+        print()
+    for item in payload["errors"]:
+        log(f"Ошибка для «{item['fio']}»: {item['error']}")
+        exit_code = 1
 
-    results: list[dict[str, Any]] = []
-    exit_code = 0
-    for fio in args.fio:
-        try:
-            result = lookup_email_by_fio(
-                fio,
-                session=session,
-                users=users,
-                exact_index=exact_index,
-                ambiguous=ambiguous,
-                register_index=register_index,
-                mail_index=mail_index,
-                sync_index=sync_index,
-                contact_index=contact_index,
-                register_published=register_published,
-            )
-            results.append(result)
-            print(format_result(result))
-            print()
-        except (LookupError, ValueError) as error:
-            log(f"Ошибка для «{fio}»: {error}")
-            exit_code = 1
-
-    if args.output and results:
-        payload = {
-            "register_entity": REGISTER_ENTITY,
-            "register_published": register_published,
-            "results": results,
-        }
+    if args.output and payload["results"]:
         with open(args.output, "w", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2)
         log(f"Сохранено: {args.output}")
