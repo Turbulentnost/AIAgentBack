@@ -173,6 +173,31 @@ async def list_document_version_chunks(db: DbSession, current_user: CurrentUser,
     return list(result.scalars().all())
 
 
+@router.get("/versions/{document_version_id}/extracted-text")
+async def get_document_version_extracted_text(
+    db: DbSession,
+    current_user: CurrentUser,
+    document_version_id: uuid.UUID,
+):
+    version = await db.get(DocumentVersion, document_version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Версия документа не найдена")
+    if not await PermissionService(db).can_access_document(current_user, version.document_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к документу")
+    object_name = version.extracted_text_object_name
+    if not object_name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Извлечённый текст для версии документа не найден")
+    try:
+        payload = json.loads(object_storage.get_object(object_name).decode("utf-8"))
+    except ObjectStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Некорректный JSON извлечённого текста") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Некорректный формат извлечённого текста")
+    return payload
+
+
 def _parse_metadata(raw_metadata: str | None) -> dict | None:
     if not raw_metadata:
         return None

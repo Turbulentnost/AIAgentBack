@@ -20,6 +20,7 @@ from app.services.document_processing.concurrency import (
     run_async_document_task,
     run_blocking_document_task,
 )
+from app.services.document_processing.parsers.vision_json import parse_image_vision_response
 
 
 class ImageParsingError(RuntimeError):
@@ -166,10 +167,10 @@ class ImageParsingService:
                 }
             ],
             "temperature": 0,
-            "max_tokens": 4096,
+            "max_tokens": 12288,
         }
         async def _request() -> dict[str, Any]:
-            async with httpx.AsyncClient(timeout=180) as client:
+            async with httpx.AsyncClient(timeout=settings.VISION_OCR_TIMEOUT_SECONDS) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
                 return response.json()
@@ -181,25 +182,7 @@ class ImageParsingService:
         self,
         response: str,
     ) -> tuple[str, str | None, list[str], list[dict[str, Any]]]:
-        try:
-            payload = json.loads(self._strip_code_fence(response))
-            text_blocks = self._normalize_text_blocks(payload)
-            tables = self._normalize_tables(payload.get("tables"))
-            quality_notes = payload.get("quality_notes")
-            joined_text = "\n\n".join(text_blocks).strip()
-            if not joined_text:
-                joined_text = str(payload.get("text", "")).strip()
-            if joined_text or text_blocks or tables:
-                return (
-                    joined_text,
-                    str(quality_notes) if isinstance(quality_notes, str) and quality_notes.strip() else None,
-                    text_blocks,
-                    tables,
-                )
-        except Exception:
-            pass
-        text = response.strip()
-        return text, None, [text] if text else [], []
+        return parse_image_vision_response(response)
 
     @staticmethod
     def _normalize_text_blocks(payload: dict[str, Any]) -> list[str]:

@@ -108,6 +108,7 @@ class Settings(BaseSettings):
     # OCR / vision для PDF и изображений — всегда qwen в LM Studio.
     VISION_LM_STUDIO_BASE_URL: str = ""
     VISION_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
+    VISION_OCR_TIMEOUT_SECONDS: int = 600
     EMBEDDINGS_PROVIDER: str = "local"
     EMBEDDINGS_MODEL: str = "BAAI/bge-m3"
     EMBEDDINGS_VECTOR_SIZE: int = 1024

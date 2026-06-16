@@ -22,6 +22,7 @@ from app.services.document_processing.concurrency import (
     run_async_document_task,
     run_blocking_document_task,
 )
+from app.services.document_processing.parsers.vision_json import parse_pdf_vision_response
 
 
 class PdfParsingError(RuntimeError):
@@ -61,7 +62,8 @@ class PdfParsingService:
     """Parse PDF documents stored in MinIO and persist extracted text metadata."""
 
     MIN_TEXT_CHARS_PER_PAGE = 40
-    OCR_BATCH_SIZE = 2
+    OCR_BATCH_SIZE = 1
+    VISION_MAX_TOKENS = 12288
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
@@ -178,7 +180,9 @@ class PdfParsingService:
                 ordered_text = "\n\n".join(block["text"] for block in text_blocks if block.get("text"))
                 text = ordered_text.strip() or page.get_text("text").strip()
                 has_images = bool(page.get_images(full=True))
-                requires_ocr = len(text) < self.MIN_TEXT_CHARS_PER_PAGE and not tables
+                requires_ocr = (len(text) < self.MIN_TEXT_CHARS_PER_PAGE and not tables) or (
+                    has_images and len(text) < 200 and not tables
+                )
                 pages.append(
                     PageParseResult(
                         page_number=page_index,
@@ -191,7 +195,7 @@ class PdfParsingService:
                         tables=tables,
                     )
                 )
-                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
                 page_images[page_index] = pixmap.tobytes("png")
         return pages, page_images
 
@@ -276,13 +280,37 @@ class PdfParsingService:
         page_numbers: list[int],
     ) -> dict[int, dict[str, Any]]:
         result_by_page: dict[int, dict[str, Any]] = {}
-        tasks = []
-        for offset in range(0, len(page_numbers), self.OCR_BATCH_SIZE):
-            batch = page_numbers[offset : offset + self.OCR_BATCH_SIZE]
-            messages = self._build_vision_messages(batch, page_images)
-            tasks.append(self._extract_vision_batch(messages, batch))
-        for parsed_batch in await asyncio.gather(*tasks):
-            result_by_page.update(parsed_batch)
+        max_attempts = 3
+        for page_number in page_numbers:
+            last_error = "OCR не вернул текст"
+            for attempt in range(max_attempts):
+                try:
+                    messages = self._build_vision_messages([page_number], page_images)
+                    parsed_batch = await self._extract_vision_batch(messages, [page_number])
+                    page_result = parsed_batch.get(page_number)
+                    if page_result is None and parsed_batch:
+                        page_result = next(iter(parsed_batch.values()))
+                    if page_result and not page_result.get("error"):
+                        has_content = bool(
+                            str(page_result.get("text") or "").strip()
+                            or page_result.get("text_blocks")
+                            or page_result.get("tables")
+                        )
+                        if has_content:
+                            result_by_page[page_number] = page_result
+                            break
+                        last_error = "OCR не вернул текст"
+                    elif page_result and page_result.get("error"):
+                        last_error = str(page_result["error"])
+                except Exception as exc:
+                    last_error = str(exc)
+            else:
+                result_by_page[page_number] = {
+                    "text": "",
+                    "text_blocks": [],
+                    "tables": [],
+                    "error": last_error,
+                }
         return result_by_page
 
     async def _extract_vision_batch(
@@ -331,43 +359,16 @@ class PdfParsingService:
             "model": settings.VISION_LM_STUDIO_MODEL,
             "messages": messages,
             "temperature": 0,
-            "max_tokens": 4096,
+            "max_tokens": self.VISION_MAX_TOKENS,
         }
-        async with httpx.AsyncClient(timeout=180) as client:
+        async with httpx.AsyncClient(timeout=settings.VISION_OCR_TIMEOUT_SECONDS) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
         return str(data["choices"][0]["message"]["content"])
 
     def _parse_vision_response(self, response: str, page_numbers: list[int]) -> dict[int, dict[str, Any]]:
-        try:
-            payload = json.loads(self._strip_code_fence(response))
-            pages = payload.get("pages", [])
-            parsed: dict[int, dict[str, Any]] = {}
-            for page in pages:
-                if "page_number" not in page:
-                    continue
-                text_blocks = self._normalize_vision_text_blocks(page)
-                tables = self._normalize_vision_tables(page.get("tables"))
-                joined_text = "\n\n".join(text_blocks).strip()
-                parsed[int(page["page_number"])] = {
-                    "text": joined_text or str(page.get("text", "")).strip(),
-                    "text_blocks": text_blocks,
-                    "tables": tables,
-                }
-            if parsed:
-                return parsed
-        except Exception:
-            pass
-
-        fallback_text = response.strip()
-        return {
-            page_numbers[0]: {
-                "text": fallback_text,
-                "text_blocks": [fallback_text] if fallback_text else [],
-                "tables": [],
-            }
-        }
+        return parse_pdf_vision_response(response, page_numbers)
 
     @staticmethod
     def _normalize_vision_text_blocks(page: dict[str, Any]) -> list[str]:
@@ -426,9 +427,24 @@ class PdfParsingService:
         page: PageParseResult,
         ocr_data: dict[str, Any] | None,
     ) -> PageParseResult:
-        if not ocr_data:
+        if not ocr_data or ocr_data.get("error"):
+            error = None
+            if isinstance(ocr_data, dict) and ocr_data.get("error"):
+                error = str(ocr_data["error"])
+            elif page.requires_ocr:
+                error = page.error or "OCR не вернул текст"
+            if page.text.strip() or page.text_blocks or page.tables:
+                return PageParseResult(
+                    **{
+                        **page.__dict__,
+                        "error": error,
+                    }
+                )
             return PageParseResult(
-                **{**page.__dict__, "error": page.error or "OCR не вернул текст"}
+                **{
+                    **page.__dict__,
+                    "error": error or "OCR не вернул текст",
+                }
             )
         text_blocks_raw = ocr_data.get("text_blocks") or []
         text_blocks = [

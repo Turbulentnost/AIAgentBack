@@ -38,7 +38,7 @@ class DocumentChunkingService:
 
     # Версия алгоритма chunking. Увеличивается при изменении логики разбиения,
     # чтобы переиндексация перепарсила документы со старыми чанками.
-    CHUNKING_VERSION = 2
+    CHUNKING_VERSION = 7
 
     DEFAULT_CHUNK_TOKENS = 850
     DEFAULT_OVERLAP_TOKENS = 120
@@ -191,6 +191,21 @@ class DocumentChunkingService:
             )
         return row_blocks or [block]
 
+    def _blocks_share_page(self, left: ParsedBlock, right: ParsedBlock) -> bool:
+        if left.page_number is None or right.page_number is None:
+            return True
+        return left.page_number == right.page_number
+
+    def _chunk_page_numbers(self, chunk: dict[str, Any]) -> set[int]:
+        metadata = chunk.get("metadata") or {}
+        pages = metadata.get("page_numbers") or []
+        if isinstance(metadata.get("page_number"), int):
+            pages = [metadata["page_number"], *pages]
+        return {int(page) for page in pages if isinstance(page, int)}
+
+    def _block_page_numbers(self, blocks: list[ParsedBlock]) -> set[int]:
+        return {block.page_number for block in blocks if block.page_number is not None}
+
     def _build_chunks(
         self,
         blocks: list[ParsedBlock],
@@ -202,19 +217,30 @@ class DocumentChunkingService:
         current_blocks: list[ParsedBlock] = []
         current_tokens = 0
 
-        def flush() -> None:
+        def flush(*, page_boundary: bool = False) -> None:
             nonlocal current_blocks, current_tokens
             if not current_blocks:
                 return
             text = "\n\n".join(block.text for block in current_blocks)
+            current_pages = self._block_page_numbers(current_blocks)
             if self._count_tokens(text) < self.min_chunk_tokens and chunks:
-                chunks[-1]["text"] = f"{chunks[-1]['text']}\n\n{text}"
-                prev_content = chunks[-1].get("content") or chunks[-1]["text"]
-                chunks[-1]["content"] = f"{prev_content}\n\n{text}"
-                chunks[-1]["metadata"] = self._merge_chunk_metadata(
-                    chunks[-1]["metadata"],
-                    self._metadata_for_blocks(current_blocks, source, base_metadata),
-                )
+                previous_pages = self._chunk_page_numbers(chunks[-1])
+                if previous_pages and current_pages and previous_pages.isdisjoint(current_pages):
+                    chunks.append(
+                        {
+                            "text": text,
+                            "content": text,
+                            "metadata": self._metadata_for_blocks(current_blocks, source, base_metadata),
+                        }
+                    )
+                else:
+                    chunks[-1]["text"] = f"{chunks[-1]['text']}\n\n{text}"
+                    prev_content = chunks[-1].get("content") or chunks[-1]["text"]
+                    chunks[-1]["content"] = f"{prev_content}\n\n{text}"
+                    chunks[-1]["metadata"] = self._merge_chunk_metadata(
+                        chunks[-1]["metadata"],
+                        self._metadata_for_blocks(current_blocks, source, base_metadata),
+                    )
             else:
                 chunks.append(
                     {
@@ -223,6 +249,10 @@ class DocumentChunkingService:
                         "metadata": self._metadata_for_blocks(current_blocks, source, base_metadata),
                     }
                 )
+            if page_boundary:
+                current_blocks = []
+                current_tokens = 0
+                return
             overlap = self._overlap_blocks(current_blocks)
             current_blocks = overlap
             current_tokens = sum(self._count_tokens(block.text) for block in current_blocks)
@@ -239,6 +269,9 @@ class DocumentChunkingService:
                     }
                 )
                 continue
+
+            if current_blocks and not self._blocks_share_page(current_blocks[-1], block):
+                flush(page_boundary=True)
 
             block_tokens = self._count_tokens(block.text)
             if block_tokens > self.chunk_size_tokens:
