@@ -31,6 +31,11 @@ from app.models.nd_change import (
     NdChangeResult,
     NdChangeTargetLocation,
 )
+from app.models.nd_control_registry import (
+    NdControlDepartment,
+    NdControlDepartmentKnowledgeBase,
+    NdDocumentCard,
+)
 from app.models.ope import OpeCard, OpeChecklist, OpeIssue, OpeReport
 from app.models.task import Task, TaskResult, TaskStep, task_documents
 from app.models.user import (
@@ -44,4 +49,4 @@ from app.models.user import (
     UserSession,
 )
 
-__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AgentBlueprint", "AgentBuilderAttempt", "AgentBuilderPlan", "AgentBuilderPlanStep", "AgentBuilderSession", "AgentBuilderSandboxRun", "AgentBuilderSandboxStep", "AuditLog", "BrowserRun", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "IntegrationSyncState", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "NdChangeRequest", "NdChangeCandidateDocument", "NdChangeTargetLocation", "NdChangeOperation", "NdChangeDraftFile", "NdChangeApprovalRoute", "NdChangeApprovalParticipant", "NdChangeResult", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]
+__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AgentBlueprint", "AgentBuilderAttempt", "AgentBuilderPlan", "AgentBuilderPlanStep", "AgentBuilderSession", "AgentBuilderSandboxRun", "AgentBuilderSandboxStep", "AuditLog", "BrowserRun", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "IntegrationSyncState", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "NdChangeRequest", "NdChangeCandidateDocument", "NdChangeTargetLocation", "NdChangeOperation", "NdChangeDraftFile", "NdChangeApprovalRoute", "NdChangeApprovalParticipant", "NdChangeResult", "NdControlDepartment", "NdControlDepartmentKnowledgeBase", "NdDocumentCard", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]

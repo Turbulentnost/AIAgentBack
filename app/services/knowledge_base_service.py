@@ -342,6 +342,9 @@ class KnowledgeBaseService:
             resource_id=str(kb.id),
             payload={"source_id": str(source.id), "document_id": str(document.id), "document_version_id": str(version.id)},
         )
+        from app.services.nd_document_card_service import NdDocumentCardService
+
+        await NdDocumentCardService(self.db).ensure_card_for_source(source)
         return source
 
     async def exclude_source(self, knowledge_base_id: uuid.UUID, source_id: uuid.UUID, *, current_user: User) -> KnowledgeBaseSource:
@@ -363,6 +366,9 @@ class KnowledgeBaseService:
         source = await self.db.get(KnowledgeBaseSource, source_id)
         if source is None or source.knowledge_base_id != knowledge_base_id:
             raise KnowledgeBaseServiceError("Источник базы знаний не найден")
+        from app.services.nd_document_card_service import NdDocumentCardService
+
+        await NdDocumentCardService(self.db).archive_card_for_source(source_id)
         await self.db.delete(source)
         await self.audit.log(
             action="kb.source_removed",

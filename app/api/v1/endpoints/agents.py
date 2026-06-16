@@ -5,12 +5,14 @@ from app.api.deps import CurrentUser, DbSession
 from app.schemas.agent import AgentAccessRead, AgentCreate, AgentRead, AgentUpdate
 from app.services.agent_service import AgentService
 from app.services.permission_service import PermissionService
+from app.services.nd_control_permission import append_nd_control_agent_for_quality_deputy
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
 @router.get("/available", response_model=list[AgentAccessRead])
 async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await PermissionService(db).list_available_agents(current_user)
+    agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
     return [
         AgentAccessRead.model_validate(
             {

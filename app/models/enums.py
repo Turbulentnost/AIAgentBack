@@ -300,3 +300,32 @@ class OpeDecision(str, enum.Enum):
     REFINE = "refine"
     EXTEND = "extend"
     TERMINATE = "terminate"
+
+
+class NdDocumentType(str, enum.Enum):
+    POLICY = "policy"
+    REGULATION = "regulation"
+    PROCEDURE = "procedure"
+    STO = "sto"
+    INSTRUCTION = "instruction"
+
+
+class NdQmsLevel(str, enum.Enum):
+    STRATEGIC = "strategic"
+    ORGANIZATIONAL = "organizational"
+    PROCESS = "process"
+    TECHNICAL = "technical"
+    OPERATIONAL = "operational"
+
+
+class NdDocumentCardStatus(str, enum.Enum):
+    ACTIVE = "active"
+    DRAFT = "draft"
+    SUPERSEDED = "superseded"
+    ARCHIVED = "archived"
+
+
+class NdConfidentialityLevel(str, enum.Enum):
+    PUBLIC = "public"
+    RESTRICTED = "restricted"
+    CONFIDENTIAL = "confidential"

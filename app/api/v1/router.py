@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     knowledge_base_indexing_ws,
     knowledge_bases,
     nd_change_requests,
+    nd_control,
     positions,
     roles,
     tasks,
@@ -32,4 +33,5 @@ api_router.include_router(knowledge_base_indexing_ws.router)
 api_router.include_router(roles.router)
 api_router.include_router(browser_runs.router)
 api_router.include_router(nd_change_requests.router)
+api_router.include_router(nd_control.router)
 api_router.include_router(agent_builder.router)
