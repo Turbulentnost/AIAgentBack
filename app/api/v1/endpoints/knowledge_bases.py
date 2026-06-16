@@ -59,7 +59,6 @@ from app.services.user_service import UserService
 from app.workers.tasks import (
     index_knowledge_base_full,
     index_knowledge_base_source,
-    reindex_knowledge_base_after_access_change,
     reindex_knowledge_base_embeddings,
     run_knowledge_base_search_query,
 )
@@ -382,22 +381,6 @@ async def replace_access(
             payload,
             current_user=current_user,
         )
-        indexing_service = KnowledgeBaseIndexingService(db)
-        # Если полная индексация уже в очереди/выполняется, она сама учтёт
-        # новые права (access_snapshot формируется в момент индексации) —
-        # дублирующий job только сбрасывает прогресс в UI.
-        if await indexing_service.has_active_full_job(knowledge_base_id):
-            await db.commit()
-            return KnowledgeBaseAccessRead(grants=grants, exceptions=exceptions)
-        await indexing_service.mark_indexing_queued(knowledge_base_id)
-        job = await indexing_service.create_job(
-            knowledge_base_id,
-            job_type=KnowledgeBaseIndexJobType.ACCESS_REINDEX,
-            started_by_user_id=current_user.id,
-        )
-        await db.commit()
-        async_result = reindex_knowledge_base_after_access_change.delay(str(knowledge_base_id), str(job.id))
-        job.processing_params = attach_celery_task_id(job.processing_params, async_result.id)
         await db.commit()
         return KnowledgeBaseAccessRead(grants=grants, exceptions=exceptions)
     except KnowledgeBaseServiceError as exc:
