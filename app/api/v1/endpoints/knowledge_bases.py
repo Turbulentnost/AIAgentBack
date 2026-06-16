@@ -154,6 +154,7 @@ async def list_knowledge_bases(
                 or admin_access.allowed
             )
         )
+        can_manage_access = current_user.is_superuser or kb.responsible_user_id == current_user.id
         base = KnowledgeBaseRead.model_validate(kb)
         result.append(
             KnowledgeBaseListItem(
@@ -162,6 +163,7 @@ async def list_knowledge_bases(
                 can_search=search_access.allowed,
                 can_delete=can_delete,
                 can_confirm_review=can_confirm_review,
+                can_manage_access=can_manage_access,
                 indexing_active=indexing_active,
             )
         )
@@ -400,7 +402,12 @@ async def replace_access(
         return KnowledgeBaseAccessRead(grants=grants, exceptions=exceptions)
     except KnowledgeBaseServiceError as exc:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        message = str(exc)
+        if "может только ответственный" in message:
+            status_code = status.HTTP_403_FORBIDDEN
+        else:
+            status_code = status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=message) from exc
 
 
 @router.get("/{knowledge_base_id}/agents", response_model=list[KnowledgeBaseAgentBindingRead])

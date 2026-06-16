@@ -96,6 +96,7 @@ class KnowledgeBaseListItem(KnowledgeBaseRead):
     can_search: bool = False
     can_delete: bool = False
     can_confirm_review: bool = False
+    can_manage_access: bool = False
     indexing_active: bool = False
 
 

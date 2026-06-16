@@ -463,6 +463,10 @@ class KnowledgeBaseService:
         if not payload.grants:
             raise KnowledgeBaseServiceError("База знаний не может быть без явных прав доступа")
         kb = await self.get_or_raise(knowledge_base_id)
+        if not current_user.is_superuser and kb.responsible_user_id != current_user.id:
+            raise KnowledgeBaseServiceError(
+                "Изменять доступ может только ответственный за эту базу знаний"
+            )
         for item in list(kb.access_grants):
             await self.db.delete(item)
         for item in list(kb.access_exceptions):
