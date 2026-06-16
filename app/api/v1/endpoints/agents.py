@@ -1,49 +1,118 @@
 from __future__ import annotations
 import uuid
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
+
 from app.api.deps import CurrentUser, DbSession
+from app.integrations.minio import MinioObjectError
 from app.schemas.agent import AgentAccessRead, AgentCreate, AgentRead, AgentUpdate
+from app.services.agent_icon_service import AgentIconService
 from app.services.agent_service import AgentService
-from app.services.permission_service import PermissionService
+from app.services.audit_service import AuditService
 from app.services.nd_control_permission import append_nd_control_agent_for_quality_deputy
+from app.services.permission_service import PermissionService
+from app.services.profile_image_service import AvatarValidationError
+
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+async def _agent_read(db: DbSession, agent) -> AgentRead:
+    data = AgentRead.model_validate(agent).model_dump()
+    data["icon_url"] = AgentIconService(db).build_icon_url(agent)
+    return AgentRead(**data)
+
+
+async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessRead:
+    data = (await _agent_read(db, agent)).model_dump()
+    data.update(
+        {
+            "access_level": "full" if current_user.is_superuser else "granted",
+            "can_run": True,
+            "can_view_results": True,
+            "can_approve": current_user.is_superuser,
+            "can_configure": current_user.is_superuser,
+        }
+    )
+    return AgentAccessRead(**data)
 
 
 @router.get("/available", response_model=list[AgentAccessRead])
 async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await PermissionService(db).list_available_agents(current_user)
     agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
-    return [
-        AgentAccessRead.model_validate(
-            {
-                **AgentRead.model_validate(agent).model_dump(),
-                "access_level": "full" if current_user.is_superuser else "granted",
-                "can_run": True,
-                "can_view_results": True,
-                "can_approve": current_user.is_superuser,
-                "can_configure": current_user.is_superuser,
-            }
-        )
-        for agent in agents
-    ]
+    return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 
 @router.get("", response_model=list[AgentRead])
 async def list_agents(db: DbSession, limit: int = 50, offset: int = 0):
-    return await AgentService(db).list(limit, offset)
+    agents = await AgentService(db).list(limit, offset)
+    return [await _agent_read(db, agent) for agent in agents]
+
+
 @router.post("", response_model=AgentRead, status_code=status.HTTP_201_CREATED)
 async def create_agent(db: DbSession, data: AgentCreate):
-    return await AgentService(db).create(data)
+    agent = await AgentService(db).create(data)
+    return await _agent_read(db, agent)
+
+
 @router.get("/{agent_id}", response_model=AgentRead)
 async def get_agent(db: DbSession, agent_id: uuid.UUID):
     agent = await AgentService(db).get(agent_id)
     if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Агент не найден")
-    return agent
+    return await _agent_read(db, agent)
+
+
 @router.patch("/{agent_id}", response_model=AgentRead)
 async def update_agent(db: DbSession, agent_id: uuid.UUID, data: AgentUpdate):
     service = AgentService(db)
     agent = await service.get(agent_id)
     if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Агент не найден")
-    return await service.update(agent, data)
+    updated = await service.update(agent, data)
+    return await _agent_read(db, updated)
+
+
+@router.post("/{agent_id}/icon", response_model=AgentRead)
+async def upload_agent_icon(
+    db: DbSession,
+    current_user: CurrentUser,
+    agent_id: uuid.UUID,
+    file: Annotated[UploadFile, File(...)],
+):
+    if not current_user.is_superuser:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+
+    agent = await AgentService(db).get(agent_id)
+    if agent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Агент не найден")
+
+    uploaded_object_name: str | None = None
+    try:
+        updated = await AgentIconService(db).upload_icon(agent, file)
+        uploaded_object_name = updated.icon_object_name
+        await AuditService(db).log(
+            action="agents.icon_upload",
+            actor_id=current_user.id,
+            resource_type="agent",
+            resource_id=str(agent.id),
+        )
+        await db.commit()
+    except AvatarValidationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except MinioObjectError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except Exception as exc:
+        await db.rollback()
+        if uploaded_object_name:
+            try:
+                AgentIconService(db).storage.delete(uploaded_object_name)
+            except MinioObjectError:
+                pass
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Иконка загружена в MinIO, но не сохранилась в базе данных.",
+        ) from exc
+
+    return await _agent_read(db, updated)

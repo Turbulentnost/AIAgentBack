@@ -23,6 +23,7 @@ class AgentRead(AgentBase, ORMModel):
     id: uuid.UUID
     status: AgentStatus
     owner_id: uuid.UUID | None = None
+    icon_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
