@@ -42,6 +42,11 @@ from app.models.enums import (
     NdStructuralDocumentType,
 )
 from app.models.nd_control_structural import DocumentCard, NdRelation, ProcessCard
+from app.services.nd_relation_display_mapper import (
+    EVIDENCE_REQUIRED_TYPES,
+    evidence_has_content,
+    format_document_name_parts,
+)
 from app.schemas.nd_document_extraction import (
     DocumentExtractionResult,
     Evidence,
@@ -187,6 +192,7 @@ class NdDocumentCardExtractionService:
             extraction=extraction,
             document_id=metadata.document_id,
             document_code=extraction.document.document_code or card.document_code,
+            document_title=extraction.document.title or card.title or card.file_name,
             process_cards=process_cards,
         )
         await self.db.flush()
@@ -395,18 +401,20 @@ class NdDocumentCardExtractionService:
         extraction: DocumentExtractionResult,
         document_id: uuid.UUID,
         document_code: str | None,
+        document_title: str | None,
         process_cards: dict[str, ProcessCard],
     ) -> None:
+        document_name = format_document_name_parts(document_code, document_title)
         for department in extraction.related_departments:
             await self._add_relation_if_missing(
                 source_type=NdGraphEntityType.DOCUMENT,
                 source_id=document_id,
-                source_name=document_code or str(document_id),
+                source_name=document_name,
                 relation_type=NdRelationType.DOCUMENT_MENTIONS_DEPARTMENT,
                 target_type=NdGraphEntityType.DEPARTMENT,
                 target_id=None,
                 target_name=department,
-                confidence=ConfidenceLevel.MEDIUM,
+                confidence=ConfidenceLevel.LOW,
                 extraction_type=NdRelationExtractionType.INFERRED,
                 evidence=[],
             )
@@ -419,7 +427,7 @@ class NdDocumentCardExtractionService:
             await self._add_relation_if_missing(
                 source_type=NdGraphEntityType.DOCUMENT,
                 source_id=document_id,
-                source_name=document_code or str(document_id),
+                source_name=document_name,
                 relation_type=NdRelationType.DOCUMENT_REGULATES_PROCESS,
                 target_type=NdGraphEntityType.PROCESS,
                 target_id=process_id,
@@ -433,7 +441,7 @@ class NdDocumentCardExtractionService:
                 await self._add_relation_if_missing(
                     source_type=NdGraphEntityType.DOCUMENT,
                     source_id=document_id,
-                    source_name=document_code or str(document_id),
+                    source_name=document_name,
                     relation_type=NdRelationType.DOCUMENT_MENTIONS_DEPARTMENT,
                     target_type=NdGraphEntityType.DEPARTMENT,
                     target_id=None,
@@ -559,7 +567,7 @@ class NdDocumentCardExtractionService:
                 relation_type=NdRelationType.ROLE_RESPONSIBLE_FOR_ACTION,
                 target_type=NdGraphEntityType.DOCUMENT,
                 target_id=document_id,
-                target_name=document_code or str(document_id),
+                target_name=document_name,
                 confidence=responsibility.confidence,
                 extraction_type=_extraction_type_from_evidence(resp_evidence),
                 evidence=resp_evidence,
@@ -579,6 +587,13 @@ class NdDocumentCardExtractionService:
         extraction_type: NdRelationExtractionType,
         evidence: list[dict[str, Any]],
     ) -> None:
+        if relation_type in EVIDENCE_REQUIRED_TYPES and not evidence_has_content(evidence):
+            if relation_type == NdRelationType.DOCUMENT_REGULATES_PROCESS:
+                extraction_type = NdRelationExtractionType.UNCERTAIN
+                confidence = ConfidenceLevel.LOW
+            else:
+                return
+
         if await self._relation_exists(
             source_type=source_type,
             source_id=source_id,

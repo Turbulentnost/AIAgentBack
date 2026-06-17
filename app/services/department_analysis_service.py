@@ -28,6 +28,7 @@ from app.services.nd_control_department_service import (
     NdControlDepartmentServiceError,
 )
 from app.services.nd_document_card_extraction_service import NdDocumentCardExtractionService
+from app.services.nd_relation_display_mapper import evidence_has_content, has_ownership_evidence
 
 logger = get_logger(__name__)
 
@@ -511,34 +512,80 @@ class DepartmentAnalysisService:
         dept: NdControlDepartment,
         kb_ids: list[uuid.UUID],
     ) -> int:
-        created = 0
-        result = await self.db.execute(
+        if not kb_ids:
+            return 0
+
+        doc_result = await self.db.execute(
+            select(DocumentCard.document_id).where(DocumentCard.knowledge_base_id.in_(kb_ids))
+        )
+        doc_ids = list(doc_result.scalars().all())
+        if not doc_ids:
+            return 0
+        doc_id_strs = {str(item) for item in doc_ids}
+
+        process_result = await self.db.execute(
             select(ProcessCard).where(ProcessCard.source_document_ids.is_not(None))
         )
-        processes = list(result.scalars().all())
+        processes = [
+            process
+            for process in process_result.scalars().all()
+            if any(str(source) in doc_id_strs for source in (process.source_document_ids or []))
+        ]
+
+        created = 0
         for process in processes:
+            regulating_result = await self.db.execute(
+                select(NdRelation).where(
+                    NdRelation.relation_type == NdRelationType.DOCUMENT_REGULATES_PROCESS,
+                    NdRelation.target_type == NdGraphEntityType.PROCESS,
+                    NdRelation.target_id == process.id,
+                    NdRelation.source_type == NdGraphEntityType.DOCUMENT,
+                    NdRelation.source_id.in_(doc_ids),
+                )
+            )
+            regulating = list(regulating_result.scalars().all())
+            combined_evidence: list[dict[str, Any]] = []
+            for relation in regulating:
+                if relation.evidence_json:
+                    combined_evidence.extend(
+                        item for item in relation.evidence_json if isinstance(item, dict)
+                    )
+
+            if not evidence_has_content(combined_evidence):
+                continue
+
+            if has_ownership_evidence(combined_evidence):
+                relation_type = NdRelationType.DEPARTMENT_OWNS_PROCESS
+                extraction_type = NdRelationExtractionType.EXPLICIT
+                confidence = ConfidenceLevel.HIGH
+            else:
+                relation_type = NdRelationType.DEPARTMENT_PARTICIPATES_IN_PROCESS
+                extraction_type = NdRelationExtractionType.INFERRED
+                confidence = ConfidenceLevel.LOW
+
             if await self._relation_exists(
                 source_type=NdGraphEntityType.DEPARTMENT,
                 source_id=dept.id,
                 source_name=dept.name,
-                relation_type=NdRelationType.DEPARTMENT_OWNS_PROCESS,
+                relation_type=relation_type,
                 target_type=NdGraphEntityType.PROCESS,
                 target_id=process.id,
                 target_name=process.canonical_name,
             ):
                 continue
+
             self.db.add(
                 NdRelation(
                     source_type=NdGraphEntityType.DEPARTMENT,
                     source_id=dept.id,
                     source_name=dept.name,
-                    relation_type=NdRelationType.DEPARTMENT_OWNS_PROCESS,
+                    relation_type=relation_type,
                     target_type=NdGraphEntityType.PROCESS,
                     target_id=process.id,
                     target_name=process.canonical_name,
-                    confidence=ConfidenceLevel.MEDIUM,
-                    extraction_type=NdRelationExtractionType.INFERRED,
-                    evidence_json=[{"source": "department_profile_build"}],
+                    confidence=confidence,
+                    extraction_type=extraction_type,
+                    evidence_json=combined_evidence,
                     is_confirmed=False,
                 )
             )

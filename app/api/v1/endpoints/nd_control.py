@@ -16,6 +16,8 @@ from app.schemas.nd_control_analysis import (
     DepartmentRelationPage,
     DepartmentReviewPendingRead,
     DepartmentSummaryRead,
+    BulkApproveRelationsRequest,
+    BulkApproveRelationsResponse,
     NdControlDepartmentCreateResponse,
 )
 from app.schemas.nd_control_registry import (
@@ -286,6 +288,7 @@ async def list_department_processes(
     current_user: CurrentUser,
     query: str | None = None,
     filter: str | None = Query(None, alias="filter"),
+    sort: str | None = Query(None, alias="sort"),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
@@ -293,7 +296,7 @@ async def list_department_processes(
     try:
         service = NdControlDepartmentDetailService(db)
         items, total = await service.list_processes(
-            department_id, query=query, filter_key=filter, page=page, size=size
+            department_id, query=query, filter_key=filter, sort_key=sort, page=page, size=size
         )
         return DepartmentProcessPage(items=items, total=total, page=page, size=size)
     except NdControlDepartmentServiceError as exc:
@@ -310,6 +313,7 @@ async def list_department_relations(
     relation_type: str | None = None,
     confidence: str | None = None,
     extraction_type: str | None = None,
+    process_id: uuid.UUID | None = None,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
@@ -323,6 +327,7 @@ async def list_department_relations(
             relation_type=relation_type,
             confidence=confidence,
             extraction_type=extraction_type,
+            process_id=process_id,
             page=page,
             size=size,
         )
@@ -363,6 +368,22 @@ async def list_review_pending(
         )
         return DepartmentReviewPendingRead.model_validate(payload)
     except NdControlDepartmentServiceError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/review/relations/bulk-approve", response_model=BulkApproveRelationsResponse)
+async def bulk_approve_relations(
+    payload: BulkApproveRelationsRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    await _require_agent_access(db, current_user)
+    try:
+        result = await NdControlDepartmentDetailService(db).bulk_approve_relations(payload.relation_ids)
+        await db.commit()
+        return BulkApproveRelationsResponse.model_validate(result)
+    except NdControlDepartmentDetailServiceError as exc:
+        await db.rollback()
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 

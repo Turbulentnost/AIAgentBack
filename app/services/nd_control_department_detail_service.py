@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.nd_control_agent.knowledge_base_access_service import KnowledgeBaseAccessService
 from app.models.enums import (
+    ConfidenceLevel,
     NdExtractionStatus,
     NdGraphEntityType,
-    NdRelationType,
 )
 from app.models.knowledge_base import KnowledgeBase
 from app.models.nd_control_analysis import DepartmentAnalysisRun
@@ -20,24 +20,60 @@ from app.services.nd_control_department_service import (
     NdControlDepartmentService,
     NdControlDepartmentServiceError,
 )
-
-RELATION_TYPE_LABELS: dict[NdRelationType, str] = {
-    NdRelationType.DEPARTMENT_OWNS_PROCESS: "Отдел владеет процессом",
-    NdRelationType.DEPARTMENT_PARTICIPATES_IN_PROCESS: "Отдел участвует в процессе",
-    NdRelationType.DOCUMENT_REGULATES_PROCESS: "Документ регулирует процесс",
-    NdRelationType.PROCESS_USES_FORM: "Процесс использует форму",
-    NdRelationType.PROCESS_USES_SYSTEM: "Процесс использует систему",
-    NdRelationType.PROCESS_HAS_ROLE: "В процессе есть роль",
-    NdRelationType.ROLE_RESPONSIBLE_FOR_ACTION: "Роль отвечает за действие",
-    NdRelationType.PROCESS_PRODUCES_OUTPUT: "Процесс создаёт результат",
-    NdRelationType.PROCESS_CONSUMES_INPUT: "Процесс потребляет вход",
-    NdRelationType.PROCESS_RELATED_TO_PROCESS: "Связанный процесс",
-    NdRelationType.DOCUMENT_MENTIONS_DEPARTMENT: "Документ упоминает отдел",
-}
+from app.services.nd_relation_display_mapper import (
+    CONFIDENCE_LABELS,
+    RelationResolutionCache,
+    evidence_has_content,
+    format_document_display_name,
+    map_relation_to_display,
+)
 
 
 class NdControlDepartmentDetailServiceError(Exception):
     pass
+
+
+def _parse_uuid_list(values: list | None) -> list[uuid.UUID]:
+    parsed: list[uuid.UUID] = []
+    for item in values or []:
+        try:
+            parsed.append(uuid.UUID(str(item)))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return parsed
+
+
+def _normalize_string_list(items: list | None) -> list[str]:
+    if not items:
+        return []
+    normalized: list[str] = []
+    for item in items:
+        if item is None:
+            continue
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                normalized.append(text)
+            continue
+        if isinstance(item, dict):
+            label = item.get("name") or item.get("title") or item.get("label") or item.get("action")
+            if label:
+                normalized.append(str(label).strip())
+            continue
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+from app.services.nd_process_display_mapper import (
+    EXTRACTION_STATUS_LABELS,
+    confidence_sort_key,
+    normalize_action_details,
+    owner_status_label,
+    process_matches_query,
+    systems_preview,
+)
 
 
 class NdControlDepartmentDetailService:
@@ -270,6 +306,7 @@ class NdControlDepartmentDetailService:
         *,
         query: str | None = None,
         filter_key: str | None = None,
+        sort_key: str | None = None,
         page: int = 1,
         size: int = 50,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -279,87 +316,209 @@ class NdControlDepartmentDetailService:
             return [], 0
 
         stmt = select(ProcessCard).where(ProcessCard.id.in_(process_ids))
-        if query:
-            pattern = f"%{query.strip()}%"
-            stmt = stmt.where(
-                or_(
-                    ProcessCard.canonical_name.ilike(pattern),
-                    ProcessCard.goal.ilike(pattern),
-                    ProcessCard.owner_candidate.ilike(pattern),
-                )
-            )
-        if filter_key == "needs_review":
-            stmt = stmt.where(ProcessCard.owner_confirmed.is_(False))
 
-        count_stmt = select(func.count()).select_from(ProcessCard).where(ProcessCard.id.in_(process_ids))
-        if query:
-            pattern = f"%{query.strip()}%"
-            name_filter = or_(
-                ProcessCard.canonical_name.ilike(pattern),
-                ProcessCard.goal.ilike(pattern),
-                ProcessCard.owner_candidate.ilike(pattern),
-            )
-            stmt = stmt.where(name_filter)
-            count_stmt = count_stmt.where(name_filter)
         if filter_key == "owner_confirmed":
             stmt = stmt.where(ProcessCard.owner_confirmed.is_(True))
-            count_stmt = count_stmt.where(ProcessCard.owner_confirmed.is_(True))
         elif filter_key in {"owner_unconfirmed", "needs_review"}:
             stmt = stmt.where(ProcessCard.owner_confirmed.is_(False))
-            count_stmt = count_stmt.where(ProcessCard.owner_confirmed.is_(False))
+        elif filter_key == "high_confidence":
+            stmt = stmt.where(ProcessCard.owner_confidence == ConfidenceLevel.HIGH)
+        elif filter_key == "medium_confidence":
+            stmt = stmt.where(ProcessCard.owner_confidence == ConfidenceLevel.MEDIUM)
+        elif filter_key == "low_confidence":
+            stmt = stmt.where(ProcessCard.owner_confidence == ConfidenceLevel.LOW)
 
-        total = int(await self.db.scalar(count_stmt) or 0)
-        result = await self.db.execute(
-            stmt.order_by(ProcessCard.canonical_name).offset((page - 1) * size).limit(size)
-        )
+        result = await self.db.execute(stmt.order_by(ProcessCard.canonical_name))
         processes = list(result.scalars().all())
         items = [await self._process_item(process, scope) for process in processes]
-        return items, total
+
+        if query:
+            items = [item for item in items if process_matches_query(item, query)]
+
+        if filter_key == "needs_review":
+            items = [item for item in items if item["needs_review"]]
+        elif filter_key == "has_relations":
+            items = [item for item in items if item["relations_count"] > 0]
+        elif filter_key == "no_relations":
+            items = [item for item in items if item["relations_count"] == 0]
+
+        sort = sort_key or "name"
+        if sort == "confidence":
+            items.sort(key=lambda item: (confidence_sort_key(item["owner"]["confidence"]), item["name"]))
+        elif sort == "relations_count":
+            items.sort(key=lambda item: (-item["relations_count"], item["name"]))
+        elif sort == "documents_count":
+            items.sort(key=lambda item: (-item["source_documents_count"], item["name"]))
+        elif sort == "needs_review":
+            items.sort(key=lambda item: (not item["needs_review"], item["name"]))
+        else:
+            items.sort(key=lambda item: item["name"].lower())
+
+        total = len(items)
+        start = (page - 1) * size
+        return items[start : start + size], total
+
+    async def _process_relations_summary(self, process_id: uuid.UUID) -> dict[str, int]:
+        result = await self.db.execute(
+            select(NdRelation).where(
+                or_(
+                    (NdRelation.source_type == NdGraphEntityType.PROCESS) & (NdRelation.source_id == process_id),
+                    (NdRelation.target_type == NdGraphEntityType.PROCESS) & (NdRelation.target_id == process_id),
+                )
+            )
+        )
+        relations = list(result.scalars().all())
+        confirmed = sum(1 for relation in relations if relation.is_confirmed)
+        without_evidence = sum(1 for relation in relations if not evidence_has_content(relation.evidence_json))
+        total = len(relations)
+        return {
+            "total": total,
+            "confirmed": confirmed,
+            "unconfirmed": total - confirmed,
+            "without_evidence": without_evidence,
+        }
 
     async def _process_item(self, process: ProcessCard, scope: dict[str, Any]) -> dict[str, Any]:
+        source_doc_ids = _parse_uuid_list(process.source_document_ids)
+        source_documents: list[dict[str, Any]] = []
+        if source_doc_ids:
+            result = await self.db.execute(
+                select(DocumentCard).where(DocumentCard.document_id.in_(source_doc_ids))
+            )
+            for card in result.scalars().all():
+                source_documents.append(
+                    {
+                        "document_id": card.document_id,
+                        "document_code": card.document_code,
+                        "title": card.title or card.file_name,
+                        "display_name": format_document_display_name(card),
+                        "document_type": card.document_type.value if card.document_type else None,
+                        "extraction_status": card.extraction_status.value,
+                        "extraction_status_label": EXTRACTION_STATUS_LABELS.get(
+                            card.extraction_status.value, card.extraction_status.value
+                        ),
+                    }
+                )
         source_count = len(process.source_document_ids or [])
-        relations_count = int(
-            await self.db.scalar(
-                select(func.count())
-                .select_from(NdRelation)
-                .where(
-                    or_(
-                        (NdRelation.source_type == NdGraphEntityType.PROCESS) & (NdRelation.source_id == process.id),
-                        (NdRelation.target_type == NdGraphEntityType.PROCESS) & (NdRelation.target_id == process.id),
-                    )
-                )
-            )
-            or 0
+        relations_summary = await self._process_relations_summary(process.id)
+        relations_count = relations_summary["total"]
+        pending_relations = relations_summary["unconfirmed"]
+
+        inputs = _normalize_string_list(process.inputs_json)
+        outputs = _normalize_string_list(process.outputs_json)
+        forms = _normalize_string_list(process.forms_json)
+        systems = _normalize_string_list(process.systems_json)
+        resources = _normalize_string_list(process.resources_json)
+        action_details = normalize_action_details(process.actions_json)
+        action_names = [item["name"] for item in action_details]
+
+        owner_confidence = process.owner_confidence.value if process.owner_confidence else None
+        owner_confidence_label = (
+            CONFIDENCE_LABELS.get(process.owner_confidence) if process.owner_confidence else None
         )
-        pending_relations = int(
-            await self.db.scalar(
-                select(func.count())
-                .select_from(NdRelation)
-                .where(
-                    or_(
-                        (NdRelation.source_type == NdGraphEntityType.PROCESS) & (NdRelation.source_id == process.id),
-                        (NdRelation.target_type == NdGraphEntityType.PROCESS) & (NdRelation.target_id == process.id),
-                    ),
-                    NdRelation.is_confirmed.is_(False),
-                )
-            )
-            or 0
+        needs_review = not process.owner_confirmed or pending_relations > 0
+        owner_status_label_value = owner_status_label(
+            confirmed=process.owner_confirmed,
+            candidate=process.owner_candidate,
+            pending_relations=pending_relations,
         )
+        owner = {
+            "candidate": process.owner_candidate,
+            "confirmed": process.owner_confirmed,
+            "confidence": owner_confidence,
+            "confidence_label": owner_confidence_label,
+            "status_label": owner_status_label_value,
+            "reason": None,
+        }
+
         return {
             "process_id": process.id,
+            "name": process.canonical_name,
             "canonical_name": process.canonical_name,
             "description": process.description,
             "goal": process.goal,
+            "owner": owner,
             "owner_candidate": process.owner_candidate,
             "owner_confirmed": process.owner_confirmed,
-            "owner_confidence": process.owner_confidence.value if process.owner_confidence else None,
+            "owner_confidence": owner_confidence,
+            "owner_confidence_label": owner_confidence_label,
+            "owner_status_label": owner_status_label_value,
+            "source_documents": source_documents,
+            "source_document_names": [doc["display_name"] for doc in source_documents],
             "source_documents_count": source_count,
+            "inputs": inputs,
+            "outputs": outputs,
+            "actions": action_details,
+            "action_names": action_names,
+            "forms": forms,
+            "systems": systems,
+            "resources": resources,
+            "systems_preview": systems_preview(systems, forms),
             "relations_count": relations_count,
-            "forms_count": len(process.forms_json or []),
-            "systems_count": len(process.systems_json or []),
-            "needs_review": not process.owner_confirmed or pending_relations > 0,
+            "relations_summary": relations_summary,
+            "forms_count": len(forms),
+            "systems_count": len(systems),
+            "needs_review": needs_review,
             "pending_relations_count": pending_relations,
         }
+
+    async def _load_resolution_cache(
+        self,
+        relations: list[NdRelation],
+        scope: dict[str, Any],
+    ) -> RelationResolutionCache:
+        cache = RelationResolutionCache()
+        cache.departments_by_id[scope["department"].id] = scope["department"].name
+
+        doc_ids: set[uuid.UUID] = set(scope.get("document_ids") or [])
+        process_ids: set[uuid.UUID] = set(scope.get("process_ids") or [])
+        for relation in relations:
+            if relation.source_type == NdGraphEntityType.DOCUMENT and relation.source_id:
+                doc_ids.add(relation.source_id)
+            if relation.target_type == NdGraphEntityType.DOCUMENT and relation.target_id:
+                doc_ids.add(relation.target_id)
+            if relation.source_type == NdGraphEntityType.PROCESS and relation.source_id:
+                process_ids.add(relation.source_id)
+            if relation.target_type == NdGraphEntityType.PROCESS and relation.target_id:
+                process_ids.add(relation.target_id)
+
+        if doc_ids:
+            result = await self.db.execute(
+                select(DocumentCard).where(DocumentCard.document_id.in_(doc_ids))
+            )
+            for card in result.scalars().all():
+                cache.documents_by_id[card.document_id] = card
+        if process_ids:
+            result = await self.db.execute(
+                select(ProcessCard).where(ProcessCard.id.in_(process_ids))
+            )
+            for process in result.scalars().all():
+                cache.processes_by_id[process.id] = process
+        return cache
+
+    def _apply_relation_display_filters(
+        self,
+        items: list[dict[str, Any]],
+        filter_key: str | None,
+    ) -> list[dict[str, Any]]:
+        key = filter_key or "primary"
+        if key == "all":
+            return items
+        if key == "primary":
+            return [
+                item
+                for item in items
+                if item["is_primary_relation"] and not item["is_weak_relation"]
+            ]
+        if key == "service":
+            return [item for item in items if item["is_service_relation"] or item["is_weak_relation"]]
+        if key == "no_evidence":
+            return [item for item in items if not item["has_evidence"]]
+        if key == "unconfirmed":
+            return [item for item in items if not item["is_confirmed"]]
+        if key == "confirmed":
+            return [item for item in items if item["is_confirmed"]]
+        return items
 
     async def list_relations(
         self,
@@ -370,6 +529,7 @@ class NdControlDepartmentDetailService:
         relation_type: str | None = None,
         confidence: str | None = None,
         extraction_type: str | None = None,
+        process_id: uuid.UUID | None = None,
         page: int = 1,
         size: int = 50,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -383,60 +543,33 @@ class NdControlDepartmentDetailService:
             stmt = stmt.where(
                 or_(NdRelation.source_name.ilike(pattern), NdRelation.target_name.ilike(pattern))
             )
-        if filter_key == "unconfirmed":
-            stmt = stmt.where(NdRelation.is_confirmed.is_(False))
-        elif filter_key == "confirmed":
-            stmt = stmt.where(NdRelation.is_confirmed.is_(True))
         if relation_type:
             stmt = stmt.where(NdRelation.relation_type == relation_type)
         if confidence:
             stmt = stmt.where(NdRelation.confidence == confidence)
         if extraction_type:
             stmt = stmt.where(NdRelation.extraction_type == extraction_type)
+        if process_id:
+            stmt = stmt.where(
+                or_(
+                    (NdRelation.source_type == NdGraphEntityType.PROCESS)
+                    & (NdRelation.source_id == process_id),
+                    (NdRelation.target_type == NdGraphEntityType.PROCESS)
+                    & (NdRelation.target_id == process_id),
+                )
+            )
 
-        count_stmt = select(func.count()).select_from(NdRelation).where(self._department_relation_filter(scope))
-        if query:
-            pattern = f"%{query.strip()}%"
-            rel_filter = or_(NdRelation.source_name.ilike(pattern), NdRelation.target_name.ilike(pattern))
-            count_stmt = count_stmt.where(rel_filter)
-        if filter_key == "unconfirmed":
-            count_stmt = count_stmt.where(NdRelation.is_confirmed.is_(False))
-        elif filter_key == "confirmed":
-            count_stmt = count_stmt.where(NdRelation.is_confirmed.is_(True))
-        if relation_type:
-            count_stmt = count_stmt.where(NdRelation.relation_type == relation_type)
-        if confidence:
-            count_stmt = count_stmt.where(NdRelation.confidence == confidence)
-        if extraction_type:
-            count_stmt = count_stmt.where(NdRelation.extraction_type == extraction_type)
-
-        total = int(await self.db.scalar(count_stmt) or 0)
-        result = await self.db.execute(
-            stmt.order_by(NdRelation.created_at.desc()).offset((page - 1) * size).limit(size)
-        )
+        result = await self.db.execute(stmt.order_by(NdRelation.created_at.desc()))
         relations = list(result.scalars().all())
-        return [self._relation_item(relation) for relation in relations], total
+        cache = await self._load_resolution_cache(relations, scope)
+        items = [map_relation_to_display(relation, cache) for relation in relations]
+        items = self._apply_relation_display_filters(items, filter_key)
+        total = len(items)
+        start = (page - 1) * size
+        return items[start : start + size], total
 
-    def _relation_item(self, relation: NdRelation) -> dict[str, Any]:
-        evidence = (relation.evidence_json or [{}])[0] if relation.evidence_json else {}
-        review_status = "confirmed" if relation.is_confirmed else "pending"
-        return {
-            "relation_id": relation.id,
-            "source_type": relation.source_type.value,
-            "source_name": relation.source_name,
-            "relation_type": relation.relation_type.value,
-            "relation_type_label": RELATION_TYPE_LABELS.get(
-                relation.relation_type, relation.relation_type.value
-            ),
-            "target_type": relation.target_type.value,
-            "target_name": relation.target_name,
-            "confidence": relation.confidence.value,
-            "extraction_type": relation.extraction_type.value,
-            "is_confirmed": relation.is_confirmed,
-            "review_status": review_status,
-            "evidence": evidence,
-            "created_at": relation.created_at,
-        }
+    def _relation_item(self, relation: NdRelation, cache: RelationResolutionCache) -> dict[str, Any]:
+        return map_relation_to_display(relation, cache)
 
     async def list_review_pending(
         self,
@@ -470,39 +603,46 @@ class NdControlDepartmentDetailService:
                         "process_name": process.canonical_name,
                         "owner_candidate": process.owner_candidate,
                         "confidence": process.owner_confidence.value if process.owner_confidence else None,
+                        "confidence_label": (
+                            CONFIDENCE_LABELS.get(process.owner_confidence)
+                            if process.owner_confidence
+                            else None
+                        ),
                         "evidence": None,
                     }
                 )
 
         relations: list[dict[str, Any]] = []
+        important_relations: list[dict[str, Any]] = []
+        relations_without_evidence: list[dict[str, Any]] = []
+        weak_relations: list[dict[str, Any]] = []
         if kb_ids:
             rel_stmt = select(NdRelation).where(
                 self._department_relation_filter(scope),
                 NdRelation.is_confirmed.is_(False),
             )
-            if filter_key == "high_confidence":
-                rel_stmt = rel_stmt.where(NdRelation.confidence == "high")
-            elif filter_key == "department_process":
-                rel_stmt = rel_stmt.where(
-                    NdRelation.relation_type == NdRelationType.DEPARTMENT_OWNS_PROCESS
-                )
-            elif filter_key == "document_process":
-                rel_stmt = rel_stmt.where(
-                    NdRelation.relation_type == NdRelationType.DOCUMENT_REGULATES_PROCESS
-                )
             if query:
                 pattern = f"%{query.strip()}%"
                 rel_stmt = rel_stmt.where(
                     or_(NdRelation.source_name.ilike(pattern), NdRelation.target_name.ilike(pattern))
                 )
-            for relation in (await self.db.execute(rel_stmt.limit(200))).scalars().all():
-                relations.append(self._relation_item(relation))
+            pending_relations = list((await self.db.execute(rel_stmt.limit(500))).scalars().all())
+            cache = await self._load_resolution_cache(pending_relations, scope)
+            for relation in pending_relations:
+                item = map_relation_to_display(relation, cache)
+                relations.append(item)
+                if item["is_weak_relation"]:
+                    weak_relations.append(item)
+                elif not item["has_evidence"]:
+                    relations_without_evidence.append(item)
+                elif item["is_primary_relation"]:
+                    important_relations.append(item)
 
+        extraction_errors: list[dict[str, Any]] = []
         documents: list[dict[str, Any]] = []
         if kb_ids:
             doc_stmt = select(DocumentCard).where(
                 DocumentCard.knowledge_base_id.in_(kb_ids),
-                DocumentCard.extraction_status == NdExtractionStatus.NEEDS_REVIEW,
             )
             if query:
                 pattern = f"%{query.strip()}%"
@@ -514,21 +654,38 @@ class NdControlDepartmentDetailService:
                     )
                 )
             for card in (await self.db.execute(doc_stmt)).scalars().all():
-                raw = card.raw_extracted_json or {}
-                documents.append(
-                    {
-                        "document_card_id": card.id,
-                        "document_id": card.document_id,
-                        "document_code": card.document_code,
-                        "title": card.title or card.file_name,
-                        "reason": raw.get("message") or raw.get("error") or "Требует проверки",
-                        "extraction_status": card.extraction_status.value,
-                    }
-                )
+                if card.extraction_status == NdExtractionStatus.FAILED:
+                    raw = card.raw_extracted_json or {}
+                    extraction_errors.append(
+                        {
+                            "document_card_id": card.id,
+                            "document_id": card.document_id,
+                            "document_code": card.document_code,
+                            "title": card.title or card.file_name,
+                            "reason": raw.get("error") or "Ошибка извлечения",
+                            "extraction_status": card.extraction_status.value,
+                        }
+                    )
+                if card.extraction_status == NdExtractionStatus.NEEDS_REVIEW:
+                    raw = card.raw_extracted_json or {}
+                    documents.append(
+                        {
+                            "document_card_id": card.id,
+                            "document_id": card.document_id,
+                            "document_code": card.document_code,
+                            "title": card.title or card.file_name,
+                            "reason": raw.get("message") or raw.get("error") or "Требует проверки",
+                            "extraction_status": card.extraction_status.value,
+                        }
+                    )
 
         return {
             "process_owners": process_owners,
             "relations": relations,
+            "important_relations": important_relations,
+            "relations_without_evidence": relations_without_evidence,
+            "weak_relations": weak_relations,
+            "extraction_errors": extraction_errors,
             "documents": documents,
             "conflicts": [],
         }
@@ -626,6 +783,24 @@ class NdControlDepartmentDetailService:
         relation.is_confirmed = True
         await self.db.flush()
         return relation
+
+    async def bulk_approve_relations(self, relation_ids: list[uuid.UUID]) -> dict[str, Any]:
+        approved: list[uuid.UUID] = []
+        skipped: list[uuid.UUID] = []
+        cache = RelationResolutionCache()
+        for relation_id in relation_ids:
+            relation = await self.db.get(NdRelation, relation_id)
+            if relation is None:
+                skipped.append(relation_id)
+                continue
+            display = map_relation_to_display(relation, cache)
+            if not display["can_bulk_approve"]:
+                skipped.append(relation_id)
+                continue
+            relation.is_confirmed = True
+            approved.append(relation_id)
+        await self.db.flush()
+        return {"approved": approved, "skipped": skipped}
 
     async def reject_relation(self, relation_id: uuid.UUID) -> None:
         relation = await self.db.get(NdRelation, relation_id)

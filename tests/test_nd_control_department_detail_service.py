@@ -7,7 +7,10 @@ import pytest
 
 from app.models.enums import NdExtractionStatus, NdGraphEntityType, NdRelationType
 from app.models.nd_control_structural import DocumentCard, NdRelation, ProcessCard
-from app.services.nd_control_department_detail_service import NdControlDepartmentDetailService
+from app.services.nd_control_department_detail_service import (
+    NdControlDepartmentDetailService,
+    _normalize_string_list,
+)
 
 
 def _dept(kb_ids: list[uuid.UUID] | None = None):
@@ -62,3 +65,15 @@ async def test_department_relation_filter_includes_department_and_documents() ->
     }
     clause = service._department_relation_filter(scope)
     assert clause is not None
+
+
+def test_normalize_action_names_skips_empty_dicts() -> None:
+    from app.services.nd_process_display_mapper import normalize_action_names
+
+    names = normalize_action_names([{"performer": "ИТ"}, {"name": "Оформить заявку"}, None])
+    assert names == ["Оформить заявку"]
+
+
+def test_normalize_string_list_coerces_mixed_values() -> None:
+    values = _normalize_string_list(["Вход 1", {"name": "Форма А"}, 42, None, ""])
+    assert values == ["Вход 1", "Форма А", "42"]
