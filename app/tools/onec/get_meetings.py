@@ -158,8 +158,12 @@ def fetch_documents_by_filter(
 
 def theme_matches(row: dict[str, Any], theme_key: str | None) -> bool:
     theme = meeting_theme()
-    if theme_key and row.get("ТемаСлужебнойЗаписки_Key") == theme_key:
-        return True
+    if theme_key:
+        if row.get("ТемаСлужебнойЗаписки_Key") == theme_key:
+            return True
+        theme_value = row.get("ТемаСлужебнойЗаписки")
+        if isinstance(theme_value, str) and theme_value.strip().lower() == theme_key.lower():
+            return True
     theme_value = row.get("ТемаСлужебнойЗаписки")
     if isinstance(theme_value, str) and theme_value.strip() == theme:
         return True
@@ -173,6 +177,73 @@ def theme_matches(row: dict[str, Any], theme_key: str | None) -> bool:
         if isinstance(value, str) and theme in value:
             return True
     return False
+
+
+def build_meeting_theme_text_filter(*, posted: bool = True) -> str:
+    theme = meeting_theme().replace("'", "''")
+    clauses = [f"ТемаСлужебнойЗаписки eq '{theme}'", "DeletionMark eq false"]
+    if posted:
+        clauses.append("Posted eq true")
+    return " and ".join(clauses)
+
+
+def fetch_meeting_memo_rows(
+    session: requests.Session,
+    config: ODataConfig,
+    extra_filter: str,
+    *,
+    limit: int,
+    fetch_pool: int,
+    metadata: ET.Element | None = None,
+) -> list[dict[str, Any]]:
+    """Документы темы «Организация совещаний»: OData по тексту темы + локальный отбор по GUID."""
+    if metadata is None:
+        metadata = load_metadata_xml(session, config)
+    theme_key = resolve_theme_key(session, config, metadata)
+    fetch_pool = max(fetch_pool, limit, 1)
+
+    text_filter = f"({build_meeting_theme_text_filter()}) and ({extra_filter})"
+    try:
+        text_rows = fetch_documents_by_filter(
+            session,
+            config,
+            text_filter,
+            limit=limit,
+            fetch_pool=fetch_pool,
+        )
+    except RuntimeError:
+        text_rows = []
+
+    broad_filter = f"Posted eq true and DeletionMark eq false and ({extra_filter})"
+    try:
+        broad_rows = fetch_documents_by_filter(
+            session,
+            config,
+            broad_filter,
+            limit=fetch_pool,
+            fetch_pool=fetch_pool,
+        )
+    except RuntimeError:
+        broad_rows = []
+
+    by_ref: dict[str, dict[str, Any]] = {}
+    for row in text_rows:
+        ref = row.get("Ref_Key")
+        if ref:
+            by_ref[ref] = row
+    for row in broad_rows:
+        if not theme_matches(row, theme_key):
+            continue
+        ref = row.get("Ref_Key")
+        if ref:
+            by_ref[ref] = row
+
+    rows = sorted(
+        by_ref.values(),
+        key=lambda item: (item.get("Date") or "", item.get("Number") or ""),
+        reverse=True,
+    )
+    return rows[:limit]
 
 
 def fetch_recent_documents(

@@ -5,12 +5,15 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from app.agents.meeting_agent.dashboard import load_login_context
+from app.agents.meeting_agent.memo_presenter import build_memo_detail
+from app.tools.onec.connection import CONFIG, create_session
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.meeting import (
     MeetingInviteDraftRead,
     MeetingInvitePreviewRequest,
     MeetingInviteSendRequest,
     MeetingLoginContext,
+    MeetingMemoDetailRead,
     MeetingMemoRead,
     MeetingPermissionsRead,
     MeetingRoomRead,
@@ -77,6 +80,27 @@ async def get_meeting_memo(
         )
     except MeetingServiceError as exc:
         raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+
+
+@router.get("/memos/{memo_ref_key}/detail", response_model=MeetingMemoDetailRead)
+async def get_meeting_memo_detail(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingMemoDetailRead:
+    await _require_agent_access(db, current_user)
+    try:
+        import asyncio
+
+        payload = await asyncio.to_thread(
+            build_memo_detail,
+            create_session(CONFIG),
+            CONFIG,
+            str(memo_ref_key),
+        )
+        return MeetingMemoDetailRead.model_validate(payload)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/slots", response_model=list[MeetingSlotRead])
