@@ -116,6 +116,23 @@ class ProcessCard(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     resources_json: Mapped[list | None] = mapped_column(JSONB)
 
 
+class ProcessUmlCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Кеш сгенерированной UML-диаграммы процесса."""
+
+    __tablename__ = "nd_process_uml_cache"
+    __table_args__ = (
+        UniqueConstraint("process_id", "content_version", name="uq_nd_process_uml_cache_process_version"),
+    )
+
+    process_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("nd_process_cards.id", ondelete="CASCADE"),
+        index=True,
+    )
+    content_version: Mapped[str] = mapped_column(String(64), index=True)
+    uml_type: Mapped[str] = mapped_column(String(64), default="mermaid_activity")
+    uml_code: Mapped[str] = mapped_column(Text)
+
+
 class NdRelation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Связь в графе нормативной документации."""
 

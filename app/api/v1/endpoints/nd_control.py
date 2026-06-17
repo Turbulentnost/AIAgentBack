@@ -19,6 +19,7 @@ from app.schemas.nd_control_analysis import (
     BulkApproveRelationsRequest,
     BulkApproveRelationsResponse,
     NdControlDepartmentCreateResponse,
+    ProcessUmlResponse,
 )
 from app.schemas.nd_control_registry import (
     NdControlDepartmentCreate,
@@ -48,6 +49,7 @@ from app.services.nd_control_department_detail_service import (
     NdControlDepartmentDetailServiceError,
 )
 from app.services.nd_document_card_service import NdDocumentCardService, NdDocumentCardServiceError
+from app.services.nd_process_uml_service import NdProcessUmlService, NdProcessUmlServiceError
 
 router = APIRouter(prefix="/nd-control", tags=["nd-control"])
 
@@ -434,6 +436,21 @@ async def confirm_process_owner(
     except NdControlDepartmentDetailServiceError as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/processes/{process_id}/uml", response_model=ProcessUmlResponse)
+async def get_process_uml(process_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    await _require_agent_access(db, current_user)
+    try:
+        result = await NdProcessUmlService(db).get_process_uml(process_id)
+        await db.commit()
+        return ProcessUmlResponse.model_validate(result)
+    except NdProcessUmlServiceError as exc:
+        await db.rollback()
+        status_code = status.HTTP_404_NOT_FOUND if exc.code == "process_not_found" else status.HTTP_502_BAD_GATEWAY
+        if exc.code in {"empty_llm_response", "invalid_mermaid"}:
+            status_code = status.HTTP_502_BAD_GATEWAY
+        raise HTTPException(status_code, detail=str(exc)) from exc
 
 
 @router.get("/document-cards", response_model=NdDocumentCardPage)

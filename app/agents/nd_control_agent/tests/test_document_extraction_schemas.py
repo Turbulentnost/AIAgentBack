@@ -218,6 +218,22 @@ def test_document_purpose_dict_is_coerced() -> None:
     assert result.document.purpose == "Обеспечение единообразия управления контрактами"
 
 
+def test_owner_candidate_role_type_is_stripped() -> None:
+    payload = _valid_payload()
+    payload["processes"][0]["owner_candidates"] = [
+        {
+            "name_or_role": "Начальник отдела",
+            "reason": "указан владельцем",
+            "confidence": "high",
+            "role_type": "process_owner",
+        }
+    ]
+
+    result = parse_document_extraction_result(payload)
+
+    assert result.processes[0].owner_candidates[0].name_or_role == "Начальник отдела"
+
+
 def test_llm_like_payload_normalizes_before_validation() -> None:
     payload = {
         "document": {

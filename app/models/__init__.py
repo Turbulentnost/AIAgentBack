@@ -42,6 +42,7 @@ from app.models.nd_control_structural import (
     DocumentCard,
     NdRelation,
     ProcessCard,
+    ProcessUmlCache,
 )
 from app.models.ope import OpeCard, OpeChecklist, OpeIssue, OpeReport
 from app.models.task import Task, TaskResult, TaskStep, task_documents

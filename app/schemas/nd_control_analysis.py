@@ -301,3 +301,10 @@ class DepartmentAnalysisRunPage(BaseModel):
 
 class ConfirmProcessOwnerRequest(BaseModel):
     owner_name: str | None = None
+
+
+class ProcessUmlResponse(BaseModel):
+    process_id: uuid.UUID
+    uml_type: str = "mermaid_activity"
+    uml_code: str
+    cached: bool = False

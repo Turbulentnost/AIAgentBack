@@ -240,6 +240,9 @@ def _normalize_action(value: Any) -> dict[str, Any]:
     return {"action": str(value)}
 
 
+_OWNER_CANDIDATE_KEYS = frozenset({"name_or_role", "reason", "confidence", "evidence"})
+
+
 def _normalize_owner_candidate(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {
@@ -256,10 +259,9 @@ def _normalize_owner_candidate(value: Any) -> dict[str, Any]:
             or candidate.get("reason")
             or "не указано"
         )
-    candidate.pop("candidate", None)
     candidate["confidence"] = _normalize_confidence(candidate.get("confidence"))
     candidate.setdefault("reason", "не указано")
-    return candidate
+    return {key: candidate[key] for key in _OWNER_CANDIDATE_KEYS if key in candidate}
 
 
 def _normalize_process(value: Any) -> dict[str, Any]:

@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     # Структурное извлечение nd_control (DocumentCard, анализ отдела).
     ND_CONTROL_EXTRACTION_MODEL: str = "openai/gpt-oss-120b"
     ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS: int = 600
+    ND_CONTROL_UML_MODEL: str | None = None
+    ND_CONTROL_UML_LLM_TIMEOUT_SECONDS: int = 180
     # OCR / vision для PDF и изображений — всегда qwen в LM Studio.
     VISION_LM_STUDIO_BASE_URL: str = ""
     VISION_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
