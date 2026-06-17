@@ -15,6 +15,8 @@ class Orchestrator:
     def select_agents(self, task_type: str | None) -> list[str]:
         if task_type == "nd_control":
             return ["nd_control_agent"]
+        if task_type == "meeting":
+            return ["meeting_agent"]
         return agent_registry.list_ids()
     async def run(self, task_type: str | None, input_payload: dict) -> dict[str, Any]:
         selected = self.select_agents(task_type)

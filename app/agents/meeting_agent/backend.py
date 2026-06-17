@@ -310,6 +310,7 @@ class MeetingBackend:
 
 
 _MEETING_TOOL_NAMES = [
+    "get_meeting_dashboard",
     "get_meeting_memos",
     "get_meeting_topics_registry",
     "lookup_email_by_fio",

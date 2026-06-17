@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Any
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from app.agents.common.schemas import AgentResult, BaseAgentInput, Finding
+from app.schemas.meeting import MeetingDashboardItem, MeetingLoginContext
 
 
 class MeetingInput(BaseAgentInput):
@@ -36,4 +36,12 @@ class MeetingStructuredResult(AgentResult):
 
 
 MeetingResult = MeetingStructuredResult
-__all__ = ["MeetingInput", "MeetingResult", "MeetingStructuredResult", "AgentResult", "Finding"]
+__all__ = [
+    "MeetingDashboardItem",
+    "MeetingInput",
+    "MeetingLoginContext",
+    "MeetingResult",
+    "MeetingStructuredResult",
+    "AgentResult",
+    "Finding",
+]

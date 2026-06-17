@@ -26,7 +26,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/login", response_model=Token)
 async def login(db: DbSession, credentials: LoginRequest, request: Request) -> Token:
     try:
-        _, token = await AuthService(db).authenticate(
+        user, token = await AuthService(db).authenticate(
             email=credentials.email,
             password=credentials.password,
             new_password=credentials.new_password,

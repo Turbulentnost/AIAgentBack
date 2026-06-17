@@ -36,11 +36,46 @@ def debug_task(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
 
 @celery_app.task(name="run_task", bind=True, max_retries=3)
 def run_task(self, task_id: str, task_type: str | None, input_payload: dict) -> dict[str, Any]:
+    if task_type == "meeting":
+        return run_meeting_task(task_id)
     import asyncio
 
     from app.orchestrator.orchestrator import orchestrator
 
     return asyncio.run(orchestrator.run(task_type, input_payload))
+
+
+@celery_app.task(name="run_meeting_task", bind=True, max_retries=3)
+def run_meeting_task(task_id: str) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.meeting_service import MeetingService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = MeetingService(db)
+            try:
+                result = await service.execute_task(uuid_module.UUID(task_id))
+                await db.commit()
+                return {
+                    "task_id": task_id,
+                    "task_name": "run_meeting_task",
+                    "status": "completed",
+                    "result": result,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as exc:  # noqa: BLE001
+                await db.commit()
+                return {
+                    "task_id": task_id,
+                    "task_name": "run_meeting_task",
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_run)
 
 
 @celery_app.task(name="run_sandbox", bind=True)

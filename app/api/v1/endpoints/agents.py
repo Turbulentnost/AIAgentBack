@@ -10,6 +10,7 @@ from app.schemas.agent import AgentAccessRead, AgentCreate, AgentRead, AgentUpda
 from app.services.agent_icon_service import AgentIconService
 from app.services.agent_service import AgentService
 from app.services.audit_service import AuditService
+from app.services.meeting_permission import append_meeting_agent_for_office_management
 from app.services.nd_control_permission import append_nd_control_agent_for_quality_deputy
 from app.services.permission_service import PermissionService
 from app.services.profile_image_service import AvatarValidationError
@@ -41,6 +42,7 @@ async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessR
 async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await PermissionService(db).list_available_agents(current_user)
     agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
+    agents = await append_meeting_agent_for_office_management(db, current_user, agents)
     return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 

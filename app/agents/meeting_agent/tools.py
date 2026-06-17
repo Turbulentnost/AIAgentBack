@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 TOOL_NAMES: list[str] = [
+    "get_meeting_dashboard",
     "get_meeting_memos",
     "get_meeting_topics_registry",
     "lookup_email_by_fio",

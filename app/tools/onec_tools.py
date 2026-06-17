@@ -83,6 +83,70 @@ class GetMeetingMemosTool(Tool):
 register_tool(GetMeetingMemosTool())
 
 
+class GetMeetingDashboardInput(BaseModel):
+    target_date: str | None = Field(
+        default=None,
+        description="Дата совещаний в формате YYYY-MM-DD (по умолчанию — сегодня)",
+    )
+    limit: int = Field(
+        default=500,
+        ge=1,
+        le=500,
+        description="Максимум документов в каждом списке",
+    )
+
+
+class GetMeetingDashboardOutput(BaseModel):
+    date: str
+    unapproved: list[dict[str, Any]]
+    today: list[dict[str, Any]]
+    counts: dict[str, int]
+
+
+async def get_meeting_dashboard_tool(
+    payload: GetMeetingDashboardInput,
+    context: ToolContext,
+) -> GetMeetingDashboardOutput:
+    del context
+    from datetime import date as date_type
+
+    from app.agents.meeting_agent.dashboard import get_meeting_dashboard
+
+    target_date = date_type.fromisoformat(payload.target_date) if payload.target_date else None
+    raw = await asyncio.to_thread(
+        get_meeting_dashboard,
+        target_date=target_date,
+        limit=payload.limit,
+    )
+    return GetMeetingDashboardOutput.model_validate(raw)
+
+
+class GetMeetingDashboardTool(Tool):
+    name = "get_meeting_dashboard"
+    description = (
+        "Возвращает несогласованные служебные записки по совещаниям и совещания на указанную дату из 1С."
+    )
+    agent_description = (
+        "Инструмент get_meeting_dashboard читает Document_ТД_СлужебнаяЗаписка из 1С по теме "
+        "ONEC_MEETING_MEMO_THEME. unapproved — Статус «НеСогласована»; today — совещания на дату "
+        "(target_date, по умолчанию сегодня). Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = GetMeetingDashboardInput
+    output_model = GetMeetingDashboardOutput
+    required_permissions = ["get_meeting_dashboard"]
+    preview_default_params = {"limit": 10}
+
+    async def execute(
+        self,
+        payload: GetMeetingDashboardInput,
+        context: ToolContext,
+    ) -> GetMeetingDashboardOutput:
+        return await get_meeting_dashboard_tool(payload, context)
+
+
+register_tool(GetMeetingDashboardTool())
+
+
 class LookupEmailByFioInput(BaseModel):
     fio: list[str] = Field(description="ФИО пользователей для поиска e-mail")
 
