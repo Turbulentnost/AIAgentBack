@@ -24,14 +24,14 @@ class MeetingAgent(BaseAgent):
 
     async def run(self, payload: dict) -> MeetingResult:
         data = MeetingInput(**payload)
-        if payload.get("service") is None or payload.get("current_user") is None:
+        if payload.get("backend") is None or payload.get("current_user") is None:
             return MeetingResult(
                 agent_id=self.agent_id,
                 status="failed",
-                summary="Для запуска агента нужен backend-контекст служебной записки, пользователя и интеграций",
+                summary="Для запуска агента нужен MeetingBackend, пользователь и сессия БД",
                 data_confidence=ConfidenceLevel.LOW,
                 requires_human_review=True,
-                warnings=["Агент должен запускаться через сервис совещаний или orchestrator с контекстом БД и инструментов"],
+                warnings=["Передайте backend=MeetingBackend(db) и current_user при запуске агента"],
             )
         final_state = await self._graph.ainvoke(
             {
@@ -47,7 +47,7 @@ class MeetingAgent(BaseAgent):
                 "participant_fio": data.participant_fio,
                 "room_name": data.room_name,
                 "initiator_comment": data.initiator_comment,
-                "service": payload.get("service"),
+                "backend": payload.get("backend"),
                 "current_user": payload.get("current_user"),
                 "findings": [],
                 "warnings": [],

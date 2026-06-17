@@ -21,7 +21,7 @@ class MeetingState(BaseAgentState, total=False):
     participant_fio: list[str]
     room_name: str | None
     initiator_comment: str | None
-    service: Any
+    backend: Any
     current_user: Any
     memo: dict | None
     validation_issues: list[dict]
@@ -48,10 +48,10 @@ async def validate_input(state: MeetingState) -> dict:
 
 async def load_meeting_memo(state: MeetingState) -> dict:
     logger.info("meeting.load_meeting_memo")
-    service = state.get("service")
-    if service is None:
+    backend = state.get("backend")
+    if backend is None:
         return {}
-    memo = await service.load_memo(
+    memo = await backend.load_memo(
         memo_ref_key=state.get("memo_ref_key"),
         memo_number=state.get("memo_number"),
         current_user=state.get("current_user"),
@@ -61,10 +61,10 @@ async def load_meeting_memo(state: MeetingState) -> dict:
 
 async def validate_memo(state: MeetingState) -> dict:
     logger.info("meeting.validate_memo")
-    service = state.get("service")
-    if service is None:
+    backend = state.get("backend")
+    if backend is None:
         return {}
-    issues = await service.validate_memo(state.get("memo"), current_user=state.get("current_user"))
+    issues = await backend.validate_memo(state.get("memo"), current_user=state.get("current_user"))
     issue_dicts = [_validation_issue_to_dict(item) for item in issues]
     if issue_dicts:
         return {
@@ -78,22 +78,22 @@ async def validate_memo(state: MeetingState) -> dict:
 
 async def resolve_participants(state: MeetingState) -> dict:
     logger.info("meeting.resolve_participants")
-    service = state.get("service")
-    if service is None:
+    backend = state.get("backend")
+    if backend is None:
         return {}
     fio_list = state.get("participant_fio") or []
     if not fio_list and state.get("memo"):
         fio_list = (state.get("memo") or {}).get("participant_fio", [])
-    participants = await service.resolve_participants(fio_list, current_user=state.get("current_user"))
+    participants = await backend.resolve_participants(fio_list, current_user=state.get("current_user"))
     return {"participants": [_participant_to_dict(item) for item in participants]}
 
 
 async def find_meeting_slot(state: MeetingState) -> dict:
     logger.info("meeting.find_meeting_slot")
-    service = state.get("service")
-    if service is None:
+    backend = state.get("backend")
+    if backend is None:
         return {}
-    slots = await service.find_slots(
+    slots = await backend.find_slots(
         memo=state.get("memo"),
         participants=state.get("participants", []),
         planned_start=state.get("planned_start"),
@@ -107,10 +107,10 @@ async def find_meeting_slot(state: MeetingState) -> dict:
 
 async def select_meeting_room(state: MeetingState) -> dict:
     logger.info("meeting.select_meeting_room")
-    service = state.get("service")
-    if service is None:
+    backend = state.get("backend")
+    if backend is None:
         return {}
-    rooms = await service.find_rooms(
+    rooms = await backend.find_rooms(
         selected_slot=state.get("selected_slot"),
         room_name=state.get("room_name"),
         current_user=state.get("current_user"),
@@ -122,10 +122,10 @@ async def select_meeting_room(state: MeetingState) -> dict:
 
 async def prepare_invite(state: MeetingState) -> dict:
     logger.info("meeting.prepare_invite")
-    service = state.get("service")
-    if service is None:
+    backend = state.get("backend")
+    if backend is None:
         return {}
-    invite = await service.prepare_invite(
+    invite = await backend.prepare_invite(
         memo=state.get("memo"),
         participants=state.get("participants", []),
         selected_slot=state.get("selected_slot"),
