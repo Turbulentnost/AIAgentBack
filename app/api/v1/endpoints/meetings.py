@@ -65,6 +65,18 @@ async def get_meetings_dashboard(db: DbSession, current_user: CurrentUser) -> Me
     return context
 
 
+@router.post("/dashboard/refresh", response_model=MeetingLoginContext)
+async def refresh_meetings_dashboard(db: DbSession, current_user: CurrentUser) -> MeetingLoginContext:
+    await _require_agent_access(db, current_user)
+    context = await load_login_context(db, current_user, force_refresh=True)
+    if context is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось загрузить данные dashboard",
+        )
+    return context
+
+
 @router.get("/memos/{memo_ref_key}", response_model=MeetingMemoRead)
 async def get_meeting_memo(
     memo_ref_key: uuid.UUID,

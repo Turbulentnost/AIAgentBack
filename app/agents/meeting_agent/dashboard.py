@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import quote
@@ -12,6 +11,7 @@ from app.agents.meeting_agent.memo_presenter import build_queue_item_from_row
 from app.core.logging import get_logger
 from app.models.user import User
 from app.schemas.meeting import MeetingDashboardItem, MeetingLoginContext
+from app.services.meeting_dashboard_cache import MeetingDashboardCacheService
 from app.services.meeting_permission import can_access_meeting_agent
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import (
@@ -149,13 +149,19 @@ def get_meeting_dashboard(
     }
 
 
-def _build_login_context(payload: dict[str, Any], *, fetched_at: datetime) -> MeetingLoginContext:
+def _build_login_context(
+    payload: dict[str, Any],
+    *,
+    fetched_at: datetime,
+    error: str | None = None,
+) -> MeetingLoginContext:
     return MeetingLoginContext(
         date=payload["date"],
         unapproved=[MeetingDashboardItem.model_validate(item) for item in payload["unapproved"]],
         today=[MeetingDashboardItem.model_validate(item) for item in payload["today"]],
         counts=payload.get("counts") or {},
         fetched_at=fetched_at,
+        error=error,
     )
 
 
@@ -164,20 +170,25 @@ async def load_login_context(
     user: User,
     *,
     target_date: date | None = None,
+    force_refresh: bool = False,
 ) -> MeetingLoginContext | None:
     if not await can_access_meeting_agent(db, user):
         return None
 
-    fetched_at = datetime.now(timezone.utc)
     day = target_date or date.today()
+    cache = MeetingDashboardCacheService()
+    fetch_error: str | None = None
     try:
-        payload = await asyncio.to_thread(get_meeting_dashboard, target_date=day)
+        if force_refresh:
+            payload, fetched_at, _from_cache, fetch_error = await cache.refresh_dashboard(target_date=day)
+        else:
+            payload, fetched_at, _from_cache = await cache.get_dashboard(target_date=day)
     except Exception as exc:
         logger.warning("meeting_login_context_failed", user_id=str(user.id), error=str(exc))
         return MeetingLoginContext(
             date=day.isoformat(),
-            fetched_at=fetched_at,
+            fetched_at=datetime.now(timezone.utc),
             error=str(exc),
         )
 
-    return _build_login_context(payload, fetched_at=fetched_at)
+    return _build_login_context(payload, fetched_at=fetched_at, error=fetch_error)

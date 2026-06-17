@@ -34,6 +34,28 @@ def debug_task(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+@celery_app.task(name="warm_meeting_dashboard_cache")
+def warm_meeting_dashboard_cache() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.services.meeting_dashboard_cache import MeetingDashboardCacheService
+
+    if not settings.MEETING_DASHBOARD_CACHE_ENABLED or not settings.MEETING_DASHBOARD_CACHE_WARMUP_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "cache_or_warmup_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _warm() -> dict[str, Any]:
+        result = await MeetingDashboardCacheService().warmup()
+        return {
+            **result,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return _run_async_task(_warm)
+
+
 @celery_app.task(name="run_task", bind=True, max_retries=3)
 def run_task(self, task_id: str, task_type: str | None, input_payload: dict) -> dict[str, Any]:
     if task_type == "meeting":

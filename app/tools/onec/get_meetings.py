@@ -203,6 +203,7 @@ def fetch_meeting_memo_rows(
     fetch_pool = max(fetch_pool, limit, 1)
 
     text_filter = f"({build_meeting_theme_text_filter()}) and ({extra_filter})"
+    text_error: RuntimeError | None = None
     try:
         text_rows = fetch_documents_by_filter(
             session,
@@ -211,10 +212,12 @@ def fetch_meeting_memo_rows(
             limit=limit,
             fetch_pool=fetch_pool,
         )
-    except RuntimeError:
+    except RuntimeError as exc:
+        text_error = exc
         text_rows = []
 
     broad_filter = f"Posted eq true and DeletionMark eq false and ({extra_filter})"
+    broad_error: RuntimeError | None = None
     try:
         broad_rows = fetch_documents_by_filter(
             session,
@@ -223,7 +226,8 @@ def fetch_meeting_memo_rows(
             limit=fetch_pool,
             fetch_pool=fetch_pool,
         )
-    except RuntimeError:
+    except RuntimeError as exc:
+        broad_error = exc
         broad_rows = []
 
     by_ref: dict[str, dict[str, Any]] = {}
@@ -237,6 +241,9 @@ def fetch_meeting_memo_rows(
         ref = row.get("Ref_Key")
         if ref:
             by_ref[ref] = row
+
+    if not by_ref and (text_error or broad_error):
+        raise text_error or broad_error
 
     rows = sorted(
         by_ref.values(),
