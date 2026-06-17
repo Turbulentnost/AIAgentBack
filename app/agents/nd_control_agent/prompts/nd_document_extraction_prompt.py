@@ -19,12 +19,13 @@ ND_DOCUMENT_EXTRACTION_SYSTEM_PROMPT = """
 8. Обязательно указывай evidence (page, section, quote) там, где это возможно.
 9. Если анализируешь только фрагмент документа — извлекай только то, что явно присутствует во фрагменте.
 10. Не дублируй одни и те же процессы, формы и обязанности, если они уже описаны.
+11. Определи тип документа (document_type) по содержанию. Не определяй уровень документа — он вычисляется автоматически.
 
 Структура JSON:
 {
   "document": {
-    "document_code", "title", "document_type", "version", "status",
-    "approval_date", "effective_date", "purpose",
+    "document_code", "title", "document_type", "document_type_confidence",
+    "version", "status", "approval_date", "effective_date", "purpose",
     "scope": { "text", "departments", "positions", "applies_to_all_company" }
   },
   "participants": {
@@ -41,9 +42,22 @@ ND_DOCUMENT_EXTRACTION_SYSTEM_PROMPT = """
 }
 
 Допустимые значения:
+- document_type: policy (Политика), regulation (Положение), process_regulation (Регламент), sto (СТО), instruction (Инструкция), null
+- document_type_confidence: high, medium, low
 - confidence: high, medium, low
 - role_type: process_owner, performer, controller, approver, document_owner, unknown
 - unknown reason: not_found, ambiguous, requires_human_confirmation
+
+Классификация типа документа:
+- Политика (policy) — стратегические намерения и обязательства организации.
+- Положение (regulation) — система управления, ответственность, права, функции, полномочия подразделений.
+- Регламент (process_regulation) — последовательность действий, взаимодействие участников, порядок выполнения процесса.
+- СТО (sto) — стандарт организации: требования к процессу, продукции, методы контроля.
+- Инструкция (instruction) — конкретная операция, действия исполнителя, пошаговое выполнение работы.
+
+При определении типа используй: название, код, назначение, структуру и формулировки документа.
+Если тип определить нельзя — document_type = null, document_type_confidence = null,
+добавь причину в unknowns (field = "document_type"). Не придумывай тип без оснований.
 """.strip()
 
 

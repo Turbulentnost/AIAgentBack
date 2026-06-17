@@ -55,6 +55,10 @@ from app.schemas.nd_document_extraction import (
     ResponsibilityExtraction,
     parse_document_extraction_result,
 )
+from app.utils.smk_document_classification import (
+    LEGACY_DOCUMENT_TYPE_VALUES,
+    sync_document_card_level,
+)
 
 logger = get_logger(__name__)
 
@@ -321,6 +325,8 @@ class NdDocumentCardExtractionService:
         card.document_code = doc.document_code or card.document_code
         card.title = doc.title or card.title or metadata.title
         card.document_type = _map_document_type(doc.document_type)
+        card.document_type_confidence = doc.document_type_confidence
+        sync_document_card_level(card)
         card.version = doc.version or card.version
         card.status = _map_document_status(doc.status)
         card.approval_date = _parse_date(doc.approval_date)
@@ -803,22 +809,26 @@ def _map_document_type(value: str | None) -> NdStructuralDocumentType | None:
         return None
     normalized = _norm(value)
     mapping = {
-        "instruction": NdStructuralDocumentType.INSTRUCTION,
-        "инструкция": NdStructuralDocumentType.INSTRUCTION,
-        "regulation": NdStructuralDocumentType.REGULATION,
-        "регламент": NdStructuralDocumentType.REGULATION,
-        "position": NdStructuralDocumentType.POSITION,
-        "положение": NdStructuralDocumentType.POSITION,
-        "sto": NdStructuralDocumentType.STO,
-        "сто": NdStructuralDocumentType.STO,
-        "form": NdStructuralDocumentType.FORM,
-        "форма": NdStructuralDocumentType.FORM,
         "policy": NdStructuralDocumentType.POLICY,
+        "POLICY": NdStructuralDocumentType.POLICY,
         "политика": NdStructuralDocumentType.POLICY,
-        "procedure": NdStructuralDocumentType.PROCEDURE,
-        "процедура": NdStructuralDocumentType.PROCEDURE,
+        "regulation": NdStructuralDocumentType.REGULATION,
+        "REGULATION": NdStructuralDocumentType.REGULATION,
+        "положение": NdStructuralDocumentType.REGULATION,
+        "process_regulation": NdStructuralDocumentType.PROCESS_REGULATION,
+        "PROCESS_REGULATION": NdStructuralDocumentType.PROCESS_REGULATION,
+        "process-regulation": NdStructuralDocumentType.PROCESS_REGULATION,
+        "регламент": NdStructuralDocumentType.PROCESS_REGULATION,
+        "sto": NdStructuralDocumentType.STO,
+        "STO": NdStructuralDocumentType.STO,
+        "сто": NdStructuralDocumentType.STO,
+        "instruction": NdStructuralDocumentType.INSTRUCTION,
+        "INSTRUCTION": NdStructuralDocumentType.INSTRUCTION,
+        "инструкция": NdStructuralDocumentType.INSTRUCTION,
     }
-    return mapping.get(normalized, NdStructuralDocumentType.OTHER)
+    if normalized in mapping:
+        return mapping[normalized]
+    return LEGACY_DOCUMENT_TYPE_VALUES.get(normalized)
 
 
 def _map_document_status(value: str | None) -> NdStructuralDocumentStatus:

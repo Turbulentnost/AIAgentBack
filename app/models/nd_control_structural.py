@@ -42,6 +42,8 @@ class DocumentCard(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_code: Mapped[str | None] = mapped_column(String(128), index=True)
     title: Mapped[str | None] = mapped_column(String(512))
     document_type: Mapped[NdStructuralDocumentType | None] = mapped_column(index=True)
+    document_type_confidence: Mapped[ConfidenceLevel | None] = mapped_column(index=True)
+    document_level: Mapped[str | None] = mapped_column(String(32), index=True)
     version: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[NdStructuralDocumentStatus] = mapped_column(
         default=NdStructuralDocumentStatus.DRAFT,

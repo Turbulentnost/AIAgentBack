@@ -41,6 +41,7 @@ class DocumentMetaExtraction(ExtractionBaseModel):
     document_code: str | None = None
     title: str | None = None
     document_type: str | None = None
+    document_type_confidence: ConfidenceLevel | None = None
     version: str | None = None
     status: str | None = None
     approval_date: str | None = None
@@ -144,6 +145,28 @@ def _ensure_str_list(value: Any) -> list[str]:
     return items
 
 
+def _coerce_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, dict):
+        for key in ("text", "value", "content", "description", "purpose", "title", "name"):
+            nested = value.get(key)
+            if nested is not None and nested is not value:
+                coerced = _coerce_text(nested)
+                if coerced:
+                    return coerced
+        return None
+    if isinstance(value, list):
+        parts = [_coerce_text(item) for item in value]
+        joined = "; ".join(part for part in parts if part)
+        return joined or None
+    text = str(value).strip()
+    return text or None
+
+
 def _normalize_confidence(value: Any) -> str:
     if value is None:
         return ConfidenceLevel.LOW.value
@@ -244,6 +267,8 @@ def _normalize_process(value: Any) -> dict[str, Any]:
         return {"name": str(value), "actions": []}
     process = dict(value)
     process.setdefault("name", process.get("title") or "Процесс")
+    for field in ("description", "goal"):
+        process[field] = _coerce_text(process.get(field))
     for field in ("inputs", "outputs", "roles", "forms", "systems", "resources", "related_departments"):
         process[field] = _ensure_str_list(process.get(field))
     process["actions"] = [_normalize_action(item) for item in _ensure_list(process.get("actions"))]
@@ -259,6 +284,7 @@ def _normalize_form(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         form = dict(value)
         form.setdefault("name", form.get("code") or "Форма")
+        form["purpose"] = _coerce_text(form.get("purpose"))
         related_process = form.get("related_process")
         if isinstance(related_process, list):
             form["related_process"] = ", ".join(str(item) for item in related_process)
@@ -299,9 +325,13 @@ def normalize_document_extraction_payload(payload: dict[str, Any]) -> dict[str, 
     document = normalized.get("document")
     if isinstance(document, dict):
         doc = dict(document)
+        doc["document_type_confidence"] = _normalize_confidence(doc.get("document_type_confidence"))
+        for field in ("title", "document_code", "version", "status", "purpose"):
+            doc[field] = _coerce_text(doc.get(field))
         scope = doc.get("scope")
         if isinstance(scope, dict):
             scope_data = dict(scope)
+            scope_data["text"] = _coerce_text(scope_data.get("text"))
             scope_data["departments"] = _ensure_str_list(scope_data.get("departments"))
             scope_data["positions"] = _ensure_str_list(scope_data.get("positions"))
             doc["scope"] = scope_data

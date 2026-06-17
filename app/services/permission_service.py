@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import literal, or_, select
+from sqlalchemy import literal, or_, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
@@ -28,17 +28,20 @@ class PermissionService:
             UserAgent.user_id == user.id,
             or_(UserAgent.expires_at.is_(None), UserAgent.expires_at > now),
         ]
-        agent_ids_query = select(UserAgent.agent_id).where(*conditions)
+        agent_id_queries = [select(UserAgent.agent_id).where(*conditions)]
 
         if user.department_id is not None:
-            department_agent_ids = select(DepartmentAgent.agent_id).where(
-                DepartmentAgent.department_id == user.department_id
+            agent_id_queries.append(
+                select(DepartmentAgent.agent_id).where(
+                    DepartmentAgent.department_id == user.department_id
+                )
             )
-            agent_ids_query = agent_ids_query.union(department_agent_ids)
 
         role_agent_ids = self._role_agent_ids_query(user, "run")
         if role_agent_ids is not None:
-            agent_ids_query = agent_ids_query.union(role_agent_ids)
+            agent_id_queries.append(role_agent_ids)
+
+        agent_ids_query = agent_id_queries[0] if len(agent_id_queries) == 1 else union(*agent_id_queries)
 
         result = await self.db.execute(
             select(Agent).where(Agent.id.in_(agent_ids_query)).order_by(Agent.name)

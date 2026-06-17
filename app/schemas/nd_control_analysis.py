@@ -86,6 +86,10 @@ class DepartmentDocumentCardListItem(BaseModel):
     document_code: str | None = None
     title: str | None = None
     document_type: str | None = None
+    document_type_label: str | None = None
+    document_type_confidence: str | None = None
+    document_level: str | None = None
+    document_level_label: str | None = None
     version: str | None = None
     status: str | None = None
     extraction_status: str

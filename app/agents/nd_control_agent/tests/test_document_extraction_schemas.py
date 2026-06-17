@@ -107,6 +107,16 @@ def _valid_payload() -> dict:
     }
 
 
+def test_document_type_confidence_is_parsed() -> None:
+    payload = _valid_payload()
+    payload["document"]["document_type"] = "policy"
+    payload["document"]["document_type_confidence"] = "high"
+    result = parse_document_extraction_result(payload)
+    assert result.document.document_type == "policy"
+    assert result.document.document_type_confidence.value == "high"
+    assert not hasattr(result, "document_level")
+
+
 def test_valid_json_passes() -> None:
     result = parse_document_extraction_result(_valid_payload())
 
@@ -197,6 +207,15 @@ def test_invalid_role_type_is_normalized() -> None:
     result = parse_document_extraction_result(payload)
 
     assert result.responsibilities[0].role_type.value == "unknown"
+
+
+def test_document_purpose_dict_is_coerced() -> None:
+    payload = _valid_payload()
+    payload["document"]["purpose"] = {"text": "Обеспечение единообразия управления контрактами"}
+
+    result = parse_document_extraction_result(payload)
+
+    assert result.document.purpose == "Обеспечение единообразия управления контрактами"
 
 
 def test_llm_like_payload_normalizes_before_validation() -> None:

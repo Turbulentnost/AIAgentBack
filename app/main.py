@@ -19,8 +19,21 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("app.startup", environment=settings.ENVIRONMENT)
+    _run_database_migrations()
     yield
     logger.info("app.shutdown")
+
+
+def _run_database_migrations() -> None:
+    try:
+        from alembic import command
+        from alembic.config import Config
+
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        logger.info("app.migrations.upgraded")
+    except Exception as exc:
+        logger.exception("app.migrations.failed", error=str(exc))
 
 
 def create_app(app_settings: Settings = settings) -> FastAPI:
