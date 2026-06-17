@@ -31,6 +31,7 @@ celery_app.conf.update(
         "reindex_knowledge_base_after_access_change": {"queue": "indexing"},
         "generate_report": {"queue": "reports"},
         "update_task_status": {"queue": "default"},
+        "run_department_analysis": {"queue": "default"},
     },
     task_serializer="json",
     task_track_started=True,

@@ -15,9 +15,21 @@ class LLMGateway:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
-    async def chat(self, messages: list[dict[str, str]], model: str | None = None, **kwargs: Any) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{self.base_url}/chat/completions", json={"model": model or settings.LLM_DEFAULT_MODEL, "messages": messages, **kwargs}, headers=self._headers())
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        *,
+        timeout: float | httpx.Timeout | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        request_timeout = timeout if timeout is not None else 120
+        async with httpx.AsyncClient(timeout=request_timeout) as client:
+            resp = await client.post(
+                f"{self.base_url}/chat/completions",
+                json={"model": model or settings.LLM_DEFAULT_MODEL, "messages": messages, **kwargs},
+                headers=self._headers(),
+            )
             resp.raise_for_status()
             return resp.json()
     async def embeddings(self, texts: list[str], model: str | None = None) -> list[list[float]]:

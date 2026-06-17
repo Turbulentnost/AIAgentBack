@@ -329,3 +329,102 @@ class NdConfidentialityLevel(str, enum.Enum):
     PUBLIC = "public"
     RESTRICTED = "restricted"
     CONFIDENTIAL = "confidential"
+
+
+class NdExtractionStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+
+
+class NdBuildStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+
+
+class NdStructuralDocumentStatus(str, enum.Enum):
+    ACTIVE = "active"
+    PROJECT = "project"
+    DRAFT = "draft"
+    ARCHIVED = "archived"
+    SUPERSEDED = "superseded"
+
+
+class NdStructuralDocumentType(str, enum.Enum):
+    INSTRUCTION = "instruction"
+    REGULATION = "regulation"
+    POSITION = "position"
+    STO = "sto"
+    FORM = "form"
+    POLICY = "policy"
+    PROCEDURE = "procedure"
+    OTHER = "other"
+
+
+class NdGraphEntityType(str, enum.Enum):
+    DEPARTMENT = "Department"
+    PROCESS = "Process"
+    DOCUMENT = "Document"
+    ROLE = "Role"
+    FORM = "Form"
+    SYSTEM = "System"
+    RESOURCE = "Resource"
+
+
+class NdRelationType(str, enum.Enum):
+    DEPARTMENT_OWNS_PROCESS = "DEPARTMENT_OWNS_PROCESS"
+    DEPARTMENT_PARTICIPATES_IN_PROCESS = "DEPARTMENT_PARTICIPATES_IN_PROCESS"
+    PROCESS_USES_FORM = "PROCESS_USES_FORM"
+    PROCESS_USES_SYSTEM = "PROCESS_USES_SYSTEM"
+    PROCESS_HAS_ROLE = "PROCESS_HAS_ROLE"
+    PROCESS_PRODUCES_OUTPUT = "PROCESS_PRODUCES_OUTPUT"
+    PROCESS_CONSUMES_INPUT = "PROCESS_CONSUMES_INPUT"
+    PROCESS_RELATED_TO_PROCESS = "PROCESS_RELATED_TO_PROCESS"
+    DOCUMENT_REGULATES_PROCESS = "DOCUMENT_REGULATES_PROCESS"
+    DOCUMENT_MENTIONS_DEPARTMENT = "DOCUMENT_MENTIONS_DEPARTMENT"
+    ROLE_RESPONSIBLE_FOR_ACTION = "ROLE_RESPONSIBLE_FOR_ACTION"
+
+
+class NdRelationExtractionType(str, enum.Enum):
+    EXPLICIT = "explicit"
+    INFERRED = "inferred"
+    UNCERTAIN = "uncertain"
+
+
+class NdResponsibilityRoleType(str, enum.Enum):
+    PROCESS_OWNER = "process_owner"
+    PERFORMER = "performer"
+    CONTROLLER = "controller"
+    APPROVER = "approver"
+    DOCUMENT_OWNER = "document_owner"
+    UNKNOWN = "unknown"
+
+
+class NdUnknownReason(str, enum.Enum):
+    NOT_FOUND = "not_found"
+    AMBIGUOUS = "ambiguous"
+    REQUIRES_HUMAN_CONFIRMATION = "requires_human_confirmation"
+
+
+class DepartmentAnalysisRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    COMPLETED_WITH_WARNINGS = "completed_with_warnings"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DepartmentAnalysisStep(str, enum.Enum):
+    INITIALIZING = "initializing"
+    LOADING_KNOWLEDGE_BASES = "loading_knowledge_bases"
+    EXTRACTING_DOCUMENT_CARDS = "extracting_document_cards"
+    BUILDING_DEPARTMENT_PROFILE = "building_department_profile"
+    BUILDING_RELATIONS = "building_relations"
+    COMPLETED = "completed"
+    FAILED = "failed"

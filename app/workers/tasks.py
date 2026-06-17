@@ -638,6 +638,32 @@ def migrate_legacy_knowledge_base_documents(self) -> dict[str, Any]:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="run_department_analysis", bind=True, max_retries=0)
+def run_department_analysis(self, run_id: str, force_reextract: bool = False) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.department_analysis_service import DepartmentAnalysisService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = DepartmentAnalysisService(db)
+            run = await service.execute_department_analysis(
+                uuid_module.UUID(run_id),
+                force_reextract=force_reextract,
+            )
+            await db.commit()
+            return {
+                "celery_task_id": self.request.id,
+                "task_name": "run_department_analysis",
+                "run_id": run_id,
+                "status": run.status.value,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            }
+
+    return _run_async_task(_run)
+
+
 @celery_app.task(name="generate_report", bind=True, max_retries=3)
 def generate_report(self, task_id: str, report_type: str = "default") -> dict[str, Any]:
     return _placeholder_result(self.request.id, "generate_report", task_id=task_id, report_type=report_type)

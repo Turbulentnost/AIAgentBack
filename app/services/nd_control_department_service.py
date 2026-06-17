@@ -6,13 +6,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.enums import KnowledgeBaseAccessType
+from app.models.enums import DepartmentAnalysisRunStatus, KnowledgeBaseAccessType
 from app.models.knowledge_base import KnowledgeBase
+from app.models.nd_control_analysis import DepartmentAnalysisRun
 from app.models.nd_control_registry import (
     NdControlDepartment,
     NdControlDepartmentKnowledgeBase,
-    NdDocumentCard,
 )
+from app.models.nd_control_structural import DocumentCard
 from app.models.user import User
 from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
 from app.services.nd_control_permission import can_manage_nd_control_departments
@@ -40,26 +41,68 @@ class NdControlDepartmentService:
             stmt.options(selectinload(NdControlDepartment.knowledge_base_links))
         )
         departments = list(result.scalars().unique().all())
+        run_rows = await self._latest_runs_by_department([dept.id for dept in departments])
+        detail_service = None
         items: list[dict] = []
         for dept in departments:
             kb_count = len(dept.knowledge_base_links)
-            cards_count = int(
-                await self.db.scalar(
-                    select(func.count())
-                    .select_from(NdDocumentCard)
-                    .where(NdDocumentCard.department_id == dept.id)
+            kb_ids = [link.knowledge_base_id for link in dept.knowledge_base_links]
+            cards_count = 0
+            documents_count = 0
+            processes_count = 0
+            pending_review_count = 0
+            if kb_ids:
+                from app.services.nd_control_department_detail_service import NdControlDepartmentDetailService
+
+                if detail_service is None:
+                    detail_service = NdControlDepartmentDetailService(self.db)
+                scope = await detail_service.get_department_scope(dept.id)
+                cards_count = int(
+                    await self.db.scalar(
+                        select(func.count())
+                        .select_from(DocumentCard)
+                        .where(DocumentCard.knowledge_base_id.in_(kb_ids))
+                    )
+                    or 0
                 )
-                or 0
-            )
+                for kb_id in kb_ids:
+                    docs_meta = await detail_service.kb_access.list_documents(str(kb_id))
+                    documents_count += len(docs_meta)
+                processes_count = await detail_service.count_department_processes(scope)
+                pending_review_count = await detail_service.count_department_pending_review(scope)
+            latest_run = run_rows.get(dept.id)
             items.append(
                 {
                     "department": dept,
                     "knowledge_bases_count": kb_count,
                     "cards_count": cards_count,
+                    "documents_count": documents_count,
+                    "processes_count": processes_count,
+                    "pending_review_count": pending_review_count,
                     "knowledge_base_ids": [link.knowledge_base_id for link in dept.knowledge_base_links],
+                    "analysis_status": latest_run.status.value if latest_run else None,
+                    "analysis_progress_percent": latest_run.progress_percent if latest_run else None,
                 }
             )
         return items
+
+    async def _latest_runs_by_department(
+        self,
+        department_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, DepartmentAnalysisRun]:
+        if not department_ids:
+            return {}
+        result = await self.db.execute(
+            select(DepartmentAnalysisRun)
+            .where(DepartmentAnalysisRun.department_id.in_(department_ids))
+            .order_by(DepartmentAnalysisRun.department_id, DepartmentAnalysisRun.created_at.desc())
+        )
+        runs = list(result.scalars().all())
+        latest: dict[uuid.UUID, DepartmentAnalysisRun] = {}
+        for run in runs:
+            if run.department_id not in latest:
+                latest[run.department_id] = run
+        return latest
 
     async def get_department(self, department_id: uuid.UUID) -> NdControlDepartment | None:
         return await self.db.scalar(

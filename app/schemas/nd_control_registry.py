@@ -24,6 +24,7 @@ class NdControlDepartmentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     knowledge_base_ids: list[uuid.UUID] = Field(..., min_length=1)
+    auto_start_analysis: bool = True
 
 
 class NdControlDepartmentUpdate(BaseModel):
@@ -45,7 +46,12 @@ class NdControlDepartmentRead(ORMModel):
     created_by_user_id: uuid.UUID | None
     knowledge_bases_count: int = 0
     cards_count: int = 0
+    documents_count: int = 0
+    processes_count: int = 0
+    pending_review_count: int = 0
     knowledge_base_ids: list[uuid.UUID] = Field(default_factory=list)
+    analysis_status: str | None = None
+    analysis_progress_percent: int | None = None
 
 
 class NdDocumentCardRead(ORMModel):
