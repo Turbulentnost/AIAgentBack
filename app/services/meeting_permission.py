@@ -9,6 +9,11 @@ MEETING_AGENT_SLUG = "meeting_agent"
 MEETING_RUN_PERMISSION = "agents.meeting_agent.run"
 
 _OFFICE_MANAGEMENT_MARKER = "управление делами"
+_MEETING_AGENT_POSITIONS = frozenset(
+    {
+        "руководитель инспекционной группы",
+    }
+)
 
 
 def is_office_management_department_name(name: str | None) -> bool:
@@ -20,6 +25,12 @@ def is_office_management_department_name(name: str | None) -> bool:
     return _OFFICE_MANAGEMENT_MARKER in normalized
 
 
+def is_meeting_agent_position(position: str | None) -> bool:
+    if not position or not position.strip():
+        return False
+    return position.strip().casefold() in _MEETING_AGENT_POSITIONS
+
+
 async def is_office_management_user(db: AsyncSession, user: User) -> bool:
     if user.department_id is None:
         return False
@@ -27,6 +38,12 @@ async def is_office_management_user(db: AsyncSession, user: User) -> bool:
     if department is None:
         return False
     return is_office_management_department_name(department.name)
+
+
+async def is_meeting_agent_auto_access_user(db: AsyncSession, user: User) -> bool:
+    if is_meeting_agent_position(user.position):
+        return True
+    return await is_office_management_user(db, user)
 
 
 async def user_has_admin_role(db: AsyncSession, user: User) -> bool:
@@ -51,7 +68,7 @@ async def can_access_meeting_agent(db: AsyncSession, user: User) -> bool:
         return True
     if await user_has_admin_role(db, user):
         return True
-    if await is_office_management_user(db, user):
+    if await is_meeting_agent_auto_access_user(db, user):
         return True
 
     from app.models.agent import Agent
@@ -68,10 +85,10 @@ async def append_meeting_agent_for_office_management(
     user: User,
     agents: list,
 ) -> list:
-    """Добавляет meeting_agent в каталог для сотрудников Управления делами без RBAC-роли."""
+    """Добавляет meeting_agent в каталог без RBAC-роли (УД и разрешённые должности)."""
     from app.models.agent import Agent
 
-    if user.is_superuser or not await is_office_management_user(db, user):
+    if user.is_superuser or not await is_meeting_agent_auto_access_user(db, user):
         return agents
 
     agent = await db.scalar(select(Agent).where(Agent.slug == MEETING_AGENT_SLUG))

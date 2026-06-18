@@ -16,6 +16,7 @@ logger = get_logger(__name__)
 class MeetingAgent(BaseAgent):
     agent_id = config.AGENT_ID
     name = config.AGENT_NAME
+    purpose = config.AGENT_PURPOSE
     version = config.AGENT_VERSION
     allowed_tools = TOOL_NAMES
 
