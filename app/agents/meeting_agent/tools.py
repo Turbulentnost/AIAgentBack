@@ -11,4 +11,5 @@ TOOL_NAMES: list[str] = [
     "reschedule_meeting",
     "cancel_meeting",
     "create_service_memo",
+    "send_desktop_notification",
 ]

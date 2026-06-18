@@ -15,6 +15,7 @@ from app.tools.onec.create_service_memo import (
 from app.tools.onec.get_meetings import get_last_meeting_memos
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
 from app.tools.onec.meeting_topics_registry import query_meeting_topics
+from app.tools.onec.send_desktop_notification import send_desktop_notifications
 from app.tools.registry import register_tool
 from app.tools.schemas import ToolContext
 
@@ -418,3 +419,107 @@ class CreateServiceMemoTool(Tool):
 
 
 register_tool(CreateServiceMemoTool())
+
+
+class SendDesktopNotificationInput(BaseModel):
+    message: str = Field(description="Текст уведомления на рабочий стол 1С")
+    recipients_fio: list[str] | None = Field(
+        default=None,
+        description="ФИО получателей (Catalog_Пользователи). Если не указано — ONEC_NOTIFICATION_DEFAULT_RECIPIENT_FIOS",
+    )
+    source_user_fio: str | None = Field(
+        default=None,
+        description="ФИО отправителя для поля Источник, если source_ref не задан",
+    )
+    source_ref: str | None = Field(
+        default=None,
+        description="GUID объекта-источника (например, служебной записки)",
+    )
+    source_type: str | None = Field(
+        default=None,
+        description="Тип объекта-источника, например Document_ТД_СлужебнаяЗаписка",
+    )
+    period_close_date: str | None = Field(
+        default=None,
+        description="Дата закрытия периода (ISO). Сдвигает ВремяСобытия и СрокНапоминания",
+    )
+    reminder_time_setting_method: str | None = Field(
+        default=None,
+        description="Способ установки времени: ВУказанноеВремя или ОтносительноТекущегоВремени",
+    )
+    reminder_time_interval: int | None = Field(
+        default=None,
+        ge=1,
+        description="Интервал напоминания в секундах",
+    )
+
+
+class DesktopNotificationRecipient(BaseModel):
+    recipient_fio: str
+    user_ref: str
+    event_time: str
+    reminder_deadline: str
+    reminder_id: str
+
+
+class SendDesktopNotificationOutput(BaseModel):
+    register_entity: str
+    message: str
+    source_user_fio: str
+    source_user_ref: str
+    source_ref: str | None = None
+    source_type: str | None = None
+    sent_count: int
+    failed_count: int
+    notifications: list[DesktopNotificationRecipient]
+    errors: list[dict[str, str]]
+
+
+async def send_desktop_notification_tool(
+    payload: SendDesktopNotificationInput,
+    context: ToolContext,
+) -> SendDesktopNotificationOutput:
+    del context
+    raw = await asyncio.to_thread(
+        send_desktop_notifications,
+        message=payload.message,
+        recipients_fio=payload.recipients_fio,
+        source_user_fio=payload.source_user_fio,
+        source_ref=payload.source_ref,
+        source_type=payload.source_type,
+        period_close_date=payload.period_close_date,
+        reminder_time_setting_method=payload.reminder_time_setting_method,
+        reminder_time_interval=payload.reminder_time_interval,
+    )
+    return SendDesktopNotificationOutput.model_validate(raw)
+
+
+class SendDesktopNotificationTool(Tool):
+    name = "send_desktop_notification"
+    description = (
+        "Отправляет уведомление на рабочий стол 1С через регистр напоминаний пользователя."
+    )
+    agent_description = (
+        "Инструмент send_desktop_notification создаёт запись в "
+        "InformationRegister_НапоминанияПользователя (аналог "
+        "ОтправитьУведомлениеНаРабочийСтол). message — текст; recipients_fio — "
+        "получатели по ФИО; source_ref/source_type — объект-источник (например СЗ); "
+        "period_close_date — дата события/дедлайна. Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = SendDesktopNotificationInput
+    output_model = SendDesktopNotificationOutput
+    required_permissions = ["send_desktop_notification"]
+    preview_default_params = {
+        "message": "Требуется согласование служебной записки.",
+        "recipients_fio": ["Комарькова Анастасия Эдуардовна"],
+    }
+
+    async def execute(
+        self,
+        payload: SendDesktopNotificationInput,
+        context: ToolContext,
+    ) -> SendDesktopNotificationOutput:
+        return await send_desktop_notification_tool(payload, context)
+
+
+register_tool(SendDesktopNotificationTool())

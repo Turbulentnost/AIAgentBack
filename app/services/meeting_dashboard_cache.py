@@ -122,6 +122,13 @@ class MeetingDashboardCacheService:
         client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
         try:
             raw = await client.get(_cache_key(day))
+        except Exception as exc:
+            logger.warning(
+                "meeting_dashboard_cache_read_failed",
+                date=day.isoformat(),
+                error=str(exc),
+            )
+            return None
         finally:
             await client.aclose()
         if not raw:
@@ -139,6 +146,12 @@ class MeetingDashboardCacheService:
                 _cache_key(day),
                 settings.MEETING_DASHBOARD_CACHE_TTL_SECONDS,
                 json.dumps(_serialize_payload(payload, fetched_at=fetched_at), ensure_ascii=False, default=str),
+            )
+        except Exception as exc:
+            logger.warning(
+                "meeting_dashboard_cache_write_failed",
+                date=day.isoformat(),
+                error=str(exc),
             )
         finally:
             await client.aclose()
