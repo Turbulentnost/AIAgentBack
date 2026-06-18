@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
@@ -19,8 +20,27 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("app.startup", environment=settings.ENVIRONMENT)
+    await _run_database_migrations()
     yield
     logger.info("app.shutdown")
+
+
+async def _run_database_migrations() -> None:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "alembic",
+            "upgrade",
+            "head",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            output = (stdout or b"").decode(errors="replace").strip()
+            raise RuntimeError(output or f"alembic exit code {proc.returncode}")
+        logger.info("app.migrations.upgraded")
+    except Exception as exc:
+        logger.exception("app.migrations.failed", error=str(exc))
 
 
 def create_app(app_settings: Settings = settings) -> FastAPI:

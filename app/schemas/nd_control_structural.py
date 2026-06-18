@@ -11,6 +11,7 @@ from app.models.enums import (
     ConfidenceLevel,
     KnowledgeBaseSourceStatus,
     NdBuildStatus,
+    NdDocumentLevel,
     NdExtractionStatus,
     NdGraphEntityType,
     NdRelationExtractionType,
@@ -68,6 +69,7 @@ class DocumentCardCreate(BaseModel):
     document_code: str | None = None
     title: str | None = None
     document_type: NdStructuralDocumentType | None = None
+    document_type_confidence: ConfidenceLevel | None = None
     version: str | None = None
     status: NdStructuralDocumentStatus = NdStructuralDocumentStatus.DRAFT
     approval_date: date | None = None
@@ -85,6 +87,7 @@ class DocumentCardUpdate(BaseModel):
     document_code: str | None = None
     title: str | None = None
     document_type: NdStructuralDocumentType | None = None
+    document_type_confidence: ConfidenceLevel | None = None
     version: str | None = None
     status: NdStructuralDocumentStatus | None = None
     approval_date: date | None = None
@@ -105,6 +108,8 @@ class DocumentCardRead(ORMModel):
     document_code: str | None
     title: str | None
     document_type: NdStructuralDocumentType | None
+    document_type_confidence: ConfidenceLevel | None
+    document_level: str | None
     version: str | None
     status: NdStructuralDocumentStatus
     approval_date: date | None

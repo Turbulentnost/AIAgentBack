@@ -47,6 +47,10 @@ class DepartmentAnalysisServiceError(Exception):
     pass
 
 
+class DepartmentAnalysisCancelledError(DepartmentAnalysisServiceError):
+    pass
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -65,6 +69,9 @@ class DepartmentAnalysisService:
         force_reextract: bool = False,
     ) -> DepartmentAnalysisRun:
         dept = await self.department_service.get_department_or_raise(department_id)
+        active = await self._get_active_runs(department_id)
+        if active:
+            await self.cancel_active_runs(department_id)
         run = DepartmentAnalysisRun(
             department_id=dept.id,
             status=DepartmentAnalysisRunStatus.PENDING,
@@ -81,6 +88,49 @@ class DepartmentAnalysisService:
         )
         return run
 
+    async def cancel_active_runs(self, department_id: uuid.UUID) -> list[DepartmentAnalysisRun]:
+        from app.services.department_analysis_dispatch import revoke_department_analysis_task
+
+        runs = await self._get_active_runs(department_id)
+        if not runs:
+            return []
+
+        now = _utcnow()
+        for run in runs:
+            run.status = DepartmentAnalysisRunStatus.CANCELLED
+            run.finished_at = now
+            run.error_message = "Анализ остановлен пользователем"
+            revoke_department_analysis_task(run.celery_task_id)
+            logger.info("nd_control.analysis.cancelled", run_id=str(run.id), department_id=str(department_id))
+        await self.db.flush()
+        return runs
+
+    async def _get_active_runs(self, department_id: uuid.UUID) -> list[DepartmentAnalysisRun]:
+        result = await self.db.execute(
+            select(DepartmentAnalysisRun).where(
+                DepartmentAnalysisRun.department_id == department_id,
+                DepartmentAnalysisRun.status.in_(
+                    [DepartmentAnalysisRunStatus.PENDING, DepartmentAnalysisRunStatus.RUNNING]
+                ),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def cancel_department_analysis(self, department_id: uuid.UUID) -> DepartmentAnalysisRun | None:
+        await self.department_service.get_department_or_raise(department_id)
+        cancelled = await self.cancel_active_runs(department_id)
+        return cancelled[0] if cancelled else None
+
+    async def _is_run_cancelled(self, run_id: uuid.UUID) -> bool:
+        status = await self.db.scalar(
+            select(DepartmentAnalysisRun.status).where(DepartmentAnalysisRun.id == run_id)
+        )
+        return status == DepartmentAnalysisRunStatus.CANCELLED
+
+    async def _ensure_not_cancelled(self, run_id: uuid.UUID) -> None:
+        if await self._is_run_cancelled(run_id):
+            raise DepartmentAnalysisCancelledError("Анализ остановлен пользователем")
+
     async def execute_department_analysis(
         self,
         run_id: uuid.UUID,
@@ -88,6 +138,9 @@ class DepartmentAnalysisService:
         force_reextract: bool = False,
     ) -> DepartmentAnalysisRun:
         run = await self._get_run_or_raise(run_id)
+        if run.status == DepartmentAnalysisRunStatus.CANCELLED:
+            logger.info("nd_control.analysis.skip_cancelled_run", run_id=str(run_id))
+            return run
         dept = await self.department_service.get_department_or_raise(run.department_id)
         now = _utcnow()
         run.status = DepartmentAnalysisRunStatus.RUNNING
@@ -114,6 +167,7 @@ class DepartmentAnalysisService:
             run.current_step = DepartmentAnalysisStep.LOADING_KNOWLEDGE_BASES
             run.total_knowledge_bases = len(kb_ids)
             run.total_documents = await self.count_department_documents(dept.id)
+            await self._ensure_not_cancelled(run.id)
             run.current_step = DepartmentAnalysisStep.EXTRACTING_DOCUMENT_CARDS
             run.progress_percent = calculate_progress_percent(
                 DepartmentAnalysisStep.EXTRACTING_DOCUMENT_CARDS,
@@ -130,7 +184,9 @@ class DepartmentAnalysisService:
                     run,
                     counts=counts,
                 ),
+                should_stop=lambda: self._is_run_cancelled(run.id),
             )
+            await self._ensure_not_cancelled(run.id)
             summary["knowledge_bases"] = extraction_summary.get("knowledge_bases", [])
             summary["documents"] = extraction_summary.get("documents", [])
             run.total_documents = int(extraction_summary.get("total_documents", 0))
@@ -148,6 +204,7 @@ class DepartmentAnalysisService:
                 total=run.total_documents,
             )
             await self.db.flush()
+            await self._ensure_not_cancelled(run.id)
             profile_result = await self.build_department_profile_after_extraction(dept.id)
             summary["profile_status"] = profile_result.get("status")
             summary["processes_created"] = profile_result.get("processes_count", 0)
@@ -159,6 +216,7 @@ class DepartmentAnalysisService:
                 total=run.total_documents,
             )
             await self.db.flush()
+            await self._ensure_not_cancelled(run.id)
             relations_created = await self._build_department_relations(dept, kb_ids)
             summary["relations_created"] = relations_created
 
@@ -177,6 +235,15 @@ class DepartmentAnalysisService:
                 run.status = DepartmentAnalysisRunStatus.COMPLETED
                 run.current_step = DepartmentAnalysisStep.COMPLETED
 
+        except DepartmentAnalysisCancelledError as exc:
+            logger.info("nd_control.analysis.cancelled_during_run", run_id=str(run_id))
+            await self.db.refresh(run)
+            if run.status != DepartmentAnalysisRunStatus.CANCELLED:
+                run.status = DepartmentAnalysisRunStatus.CANCELLED
+                run.error_message = str(exc)
+                run.finished_at = _utcnow()
+            summary["cancelled"] = True
+            run.summary_json = summary
         except Exception as exc:
             logger.exception("nd_control.analysis.failed", run_id=str(run_id))
             run.status = DepartmentAnalysisRunStatus.FAILED
@@ -203,6 +270,7 @@ class DepartmentAnalysisService:
         *,
         force_reextract: bool = False,
         progress_callback: Any | None = None,
+        should_stop: Any | None = None,
     ) -> dict[str, Any]:
         dept = await self.department_service.get_department_or_raise(department_id)
         kb_ids = [link.knowledge_base_id for link in dept.knowledge_base_links]
@@ -217,6 +285,8 @@ class DepartmentAnalysisService:
         }
 
         for kb_id in kb_ids:
+            if should_stop is not None and await should_stop():
+                raise DepartmentAnalysisCancelledError("Анализ остановлен пользователем")
             kb_offset = {key: totals[key] for key in ("processed", "skipped", "failed", "needs_review")}
 
             async def on_document_complete(kb_summary: dict[str, Any]) -> None:
@@ -235,6 +305,7 @@ class DepartmentAnalysisService:
                 kb_id,
                 force_reextract=force_reextract,
                 on_document_complete=on_document_complete if progress_callback else None,
+                should_stop=should_stop,
             )
             kb_summaries.append(kb_summary)
             documents.extend(kb_summary.get("documents", []))
@@ -249,6 +320,7 @@ class DepartmentAnalysisService:
         *,
         force_reextract: bool = False,
         on_document_complete: Any | None = None,
+        should_stop: Any | None = None,
     ) -> dict[str, Any]:
         kb = await self.db.get(KnowledgeBase, knowledge_base_id)
         kb_name = kb.name if kb else str(knowledge_base_id)
@@ -266,6 +338,8 @@ class DepartmentAnalysisService:
         }
 
         for item in documents_meta:
+            if should_stop is not None and await should_stop():
+                raise DepartmentAnalysisCancelledError("Анализ остановлен пользователем")
             doc_id = item.document_id
             entry = {
                 "document_id": str(doc_id),
@@ -425,6 +499,8 @@ class DepartmentAnalysisService:
         message = STEP_MESSAGES.get(run.current_step, run.current_step.value)
         if run.status == DepartmentAnalysisRunStatus.PENDING and run.started_at is None:
             message = "Ожидание запуска анализа…"
+        elif run.status == DepartmentAnalysisRunStatus.CANCELLED:
+            message = run.error_message or "Анализ остановлен"
         elif run.status == DepartmentAnalysisRunStatus.FAILED and run.error_message:
             message = run.error_message
         elif run.current_step == DepartmentAnalysisStep.EXTRACTING_DOCUMENT_CARDS and run.total_documents:

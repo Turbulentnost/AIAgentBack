@@ -55,6 +55,10 @@ from app.schemas.nd_document_extraction import (
     ResponsibilityExtraction,
     parse_document_extraction_result,
 )
+from app.utils.smk_document_classification import (
+    LEGACY_DOCUMENT_TYPE_VALUES,
+    sync_document_card_level,
+)
 
 logger = get_logger(__name__)
 
@@ -85,7 +89,7 @@ class NdDocumentCardExtractionService:
         text_result = await self.kb_access.get_document_text(document_id)
         full_text = text_result.text.strip() if text_result.text else ""
 
-        if full_text and len(full_text) <= config.ND_EXTRACTION_FULL_TEXT_MAX_CHARS:
+        if full_text and len(full_text) <= config.ND_EXTRACTION_SINGLE_CALL_MAX_CHARS:
             return DocumentContext(
                 mode="full_text",
                 full_text=full_text,
@@ -123,6 +127,21 @@ class NdDocumentCardExtractionService:
 
         if context_chunks:
             total_chars = sum(len(chunk.text) for chunk in context_chunks)
+            if (
+                len(context_chunks) > 8
+                or total_chars > config.ND_EXTRACTION_SINGLE_CALL_MAX_CHARS
+            ):
+                warnings.append("kb_chunks_merged_for_extraction")
+                merged_text = "\n\n".join(chunk.text for chunk in context_chunks)
+                merged_chunks = _split_text_into_chunks(merged_text, config.ND_EXTRACTION_CHUNK_MAX_CHARS)
+                return DocumentContext(
+                    mode="chunked",
+                    full_text=None,
+                    chunks=merged_chunks,
+                    total_chars=len(merged_text),
+                    total_chunks=len(merged_chunks),
+                    warnings=warnings,
+                )
             return DocumentContext(
                 mode="chunked",
                 full_text=None,
@@ -133,7 +152,7 @@ class NdDocumentCardExtractionService:
             )
 
         if full_text:
-            synthetic_chunks = _split_text_into_chunks(full_text, config.ND_EXTRACTION_FULL_TEXT_MAX_CHARS)
+            synthetic_chunks = _split_text_into_chunks(full_text, config.ND_EXTRACTION_CHUNK_MAX_CHARS)
             warnings.append("synthetic_text_chunks")
             return DocumentContext(
                 mode="chunked",
@@ -241,22 +260,34 @@ class NdDocumentCardExtractionService:
         return _enrich_partial_result(merged, metadata.document_id, chunk=None)
 
     async def _call_llm(self, *, user_prompt: str) -> str:
-        try:
-            response = await self._llm_chat(
-                [
-                    {"role": "system", "content": ND_DOCUMENT_EXTRACTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                model=self._llm_model,
-                temperature=0.1,
-                max_tokens=8000,
-                timeout=settings.ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:
-            detail = str(exc).strip() or repr(exc)
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                response = await self._llm_chat(
+                    [
+                        {"role": "system", "content": ND_DOCUMENT_EXTRACTION_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    model=self._llm_model,
+                    temperature=0.1,
+                    max_tokens=8000,
+                    timeout=settings.ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS,
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                detail = str(exc).strip() or repr(exc)
+                is_timeout = "timeout" in detail.lower() or type(exc).__name__ in {"ReadTimeout", "TimeoutException"}
+                if attempt == 0 and is_timeout:
+                    logger.warning("nd_control.extraction.llm_timeout_retry", error=detail)
+                    continue
+                raise NdDocumentCardExtractionServiceError(
+                    f"Ошибка вызова LLM ({type(exc).__name__}): {detail}"
+                ) from exc
+        else:
             raise NdDocumentCardExtractionServiceError(
-                f"Ошибка вызова LLM ({type(exc).__name__}): {detail}"
-            ) from exc
+                f"Ошибка вызова LLM ({type(last_exc).__name__}): {last_exc}"
+            ) from last_exc
 
         choice = (response.get("choices") or [{}])[0]
         message = choice.get("message") or {}
@@ -321,6 +352,8 @@ class NdDocumentCardExtractionService:
         card.document_code = doc.document_code or card.document_code
         card.title = doc.title or card.title or metadata.title
         card.document_type = _map_document_type(doc.document_type)
+        card.document_type_confidence = doc.document_type_confidence
+        sync_document_card_level(card)
         card.version = doc.version or card.version
         card.status = _map_document_status(doc.status)
         card.approval_date = _parse_date(doc.approval_date)
@@ -803,22 +836,26 @@ def _map_document_type(value: str | None) -> NdStructuralDocumentType | None:
         return None
     normalized = _norm(value)
     mapping = {
-        "instruction": NdStructuralDocumentType.INSTRUCTION,
-        "инструкция": NdStructuralDocumentType.INSTRUCTION,
-        "regulation": NdStructuralDocumentType.REGULATION,
-        "регламент": NdStructuralDocumentType.REGULATION,
-        "position": NdStructuralDocumentType.POSITION,
-        "положение": NdStructuralDocumentType.POSITION,
-        "sto": NdStructuralDocumentType.STO,
-        "сто": NdStructuralDocumentType.STO,
-        "form": NdStructuralDocumentType.FORM,
-        "форма": NdStructuralDocumentType.FORM,
         "policy": NdStructuralDocumentType.POLICY,
+        "POLICY": NdStructuralDocumentType.POLICY,
         "политика": NdStructuralDocumentType.POLICY,
-        "procedure": NdStructuralDocumentType.PROCEDURE,
-        "процедура": NdStructuralDocumentType.PROCEDURE,
+        "regulation": NdStructuralDocumentType.REGULATION,
+        "REGULATION": NdStructuralDocumentType.REGULATION,
+        "положение": NdStructuralDocumentType.REGULATION,
+        "process_regulation": NdStructuralDocumentType.PROCESS_REGULATION,
+        "PROCESS_REGULATION": NdStructuralDocumentType.PROCESS_REGULATION,
+        "process-regulation": NdStructuralDocumentType.PROCESS_REGULATION,
+        "регламент": NdStructuralDocumentType.PROCESS_REGULATION,
+        "sto": NdStructuralDocumentType.STO,
+        "STO": NdStructuralDocumentType.STO,
+        "сто": NdStructuralDocumentType.STO,
+        "instruction": NdStructuralDocumentType.INSTRUCTION,
+        "INSTRUCTION": NdStructuralDocumentType.INSTRUCTION,
+        "инструкция": NdStructuralDocumentType.INSTRUCTION,
     }
-    return mapping.get(normalized, NdStructuralDocumentType.OTHER)
+    if normalized in mapping:
+        return mapping[normalized]
+    return LEGACY_DOCUMENT_TYPE_VALUES.get(normalized)
 
 
 def _map_document_status(value: str | None) -> NdStructuralDocumentStatus:

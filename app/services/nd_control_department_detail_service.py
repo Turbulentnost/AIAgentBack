@@ -12,6 +12,7 @@ from app.models.enums import (
     ConfidenceLevel,
     NdExtractionStatus,
     NdGraphEntityType,
+    NdStructuralDocumentType,
 )
 from app.models.knowledge_base import KnowledgeBase
 from app.models.nd_control_analysis import DepartmentAnalysisRun
@@ -26,6 +27,10 @@ from app.services.nd_relation_display_mapper import (
     evidence_has_content,
     format_document_display_name,
     map_relation_to_display,
+)
+from app.utils.smk_document_classification import (
+    get_document_level_label,
+    get_document_type_label,
 )
 
 
@@ -192,6 +197,8 @@ class NdControlDepartmentDetailService:
         department_id: uuid.UUID,
         *,
         query: str | None = None,
+        document_type: str | None = None,
+        document_level: str | None = None,
         page: int = 1,
         size: int = 50,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -211,6 +218,16 @@ class NdControlDepartmentDetailService:
             )
             stmt = stmt.where(filter_clause)
             count_stmt = count_stmt.where(filter_clause)
+        if document_type:
+            try:
+                type_value = NdStructuralDocumentType(document_type)
+                stmt = stmt.where(DocumentCard.document_type == type_value)
+                count_stmt = count_stmt.where(DocumentCard.document_type == type_value)
+            except ValueError:
+                pass
+        if document_level:
+            stmt = stmt.where(DocumentCard.document_level == document_level)
+            count_stmt = count_stmt.where(DocumentCard.document_level == document_level)
         total = int(await self.db.scalar(count_stmt) or 0)
         result = await self.db.execute(
             stmt.order_by(DocumentCard.updated_at.desc()).offset((page - 1) * size).limit(size)
@@ -288,6 +305,12 @@ class NdControlDepartmentDetailService:
             "document_code": card.document_code,
             "title": card.title,
             "document_type": card.document_type.value if card.document_type else None,
+            "document_type_label": get_document_type_label(card.document_type),
+            "document_type_confidence": (
+                card.document_type_confidence.value if card.document_type_confidence else None
+            ),
+            "document_level": card.document_level,
+            "document_level_label": get_document_level_label(card.document_level),
             "version": card.version,
             "status": card.status.value if card.status else None,
             "extraction_status": card.extraction_status.value,

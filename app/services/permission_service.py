@@ -41,9 +41,7 @@ class PermissionService:
         if role_agent_ids is not None:
             agent_id_queries.append(role_agent_ids)
 
-        agent_ids_query = (
-            union(*agent_id_queries) if len(agent_id_queries) > 1 else agent_id_queries[0]
-        )
+        agent_ids_query = agent_id_queries[0] if len(agent_id_queries) == 1 else union(*agent_id_queries)
 
         result = await self.db.execute(
             select(Agent).where(Agent.id.in_(agent_ids_query)).order_by(Agent.name)

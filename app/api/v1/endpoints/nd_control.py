@@ -19,6 +19,7 @@ from app.schemas.nd_control_analysis import (
     BulkApproveRelationsRequest,
     BulkApproveRelationsResponse,
     NdControlDepartmentCreateResponse,
+    ProcessUmlResponse,
 )
 from app.schemas.nd_control_registry import (
     NdControlDepartmentCreate,
@@ -48,6 +49,7 @@ from app.services.nd_control_department_detail_service import (
     NdControlDepartmentDetailServiceError,
 )
 from app.services.nd_document_card_service import NdDocumentCardService, NdDocumentCardServiceError
+from app.services.nd_process_uml_service import NdProcessUmlService, NdProcessUmlServiceError
 
 router = APIRouter(prefix="/nd-control", tags=["nd-control"])
 
@@ -224,6 +226,24 @@ async def analyze_nd_control_department(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.post("/departments/{department_id}/analyze/cancel", response_model=DepartmentAnalysisRunRead)
+async def cancel_nd_control_department_analysis(
+    department_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    await _require_agent_access(db, current_user)
+    try:
+        run = await DepartmentAnalysisService(db).cancel_department_analysis(department_id)
+        await db.commit()
+        if run is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Нет активного анализа для остановки")
+        return DepartmentAnalysisRunRead.model_validate(run)
+    except NdControlDepartmentServiceError as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.get("/departments/{department_id}/analysis-status", response_model=DepartmentAnalysisStatusRead)
 async def get_nd_control_department_analysis_status(
     department_id: uuid.UUID,
@@ -269,13 +289,22 @@ async def list_department_structural_document_cards(
     db: DbSession,
     current_user: CurrentUser,
     query: str | None = None,
+    document_type: str | None = None,
+    document_level: str | None = None,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
     await _require_agent_access(db, current_user)
     try:
         service = NdControlDepartmentDetailService(db)
-        items, total = await service.list_document_cards(department_id, query=query, page=page, size=size)
+        items, total = await service.list_document_cards(
+            department_id,
+            query=query,
+            document_type=document_type,
+            document_level=document_level,
+            page=page,
+            size=size,
+        )
         return DepartmentDocumentCardPage(items=items, total=total, page=page, size=size)
     except NdControlDepartmentServiceError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -425,6 +454,31 @@ async def confirm_process_owner(
     except NdControlDepartmentDetailServiceError as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/processes/{process_id}/uml", response_model=ProcessUmlResponse)
+async def get_process_uml(
+    process_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    force: bool = Query(False),
+):
+    await _require_agent_access(db, current_user)
+    try:
+        result = await NdProcessUmlService(db).get_process_uml(process_id, force=force)
+        await db.commit()
+        return ProcessUmlResponse.model_validate(result)
+    except NdProcessUmlServiceError as exc:
+        await db.rollback()
+        if exc.code == "process_not_found":
+            status_code = status.HTTP_404_NOT_FOUND
+        elif exc.code == "insufficient_data":
+            status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        else:
+            status_code = status.HTTP_502_BAD_GATEWAY
+        if exc.code in {"empty_llm_response", "invalid_mermaid"}:
+            status_code = status.HTTP_502_BAD_GATEWAY
+        raise HTTPException(status_code, detail=str(exc)) from exc
 
 
 @router.get("/document-cards", response_model=NdDocumentCardPage)

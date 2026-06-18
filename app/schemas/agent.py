@@ -34,3 +34,53 @@ class AgentAccessRead(AgentRead):
     can_view_results: bool = False
     can_approve: bool = False
     can_configure: bool = False
+
+
+class AgentDepartmentGrantRead(ORMModel):
+    id: uuid.UUID
+    department_id: uuid.UUID
+    access_level: str
+    can_run: bool
+    can_view_results: bool
+    can_approve: bool
+    can_configure: bool
+
+
+class AgentUserGrantRead(ORMModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    access_level: str
+    can_run: bool
+    can_view_results: bool
+    can_approve: bool
+    can_configure: bool
+    expires_at: datetime | None = None
+
+
+class AgentAccessManagementRead(BaseModel):
+    department_grants: list[AgentDepartmentGrantRead]
+    user_grants: list[AgentUserGrantRead]
+
+
+class AgentDepartmentGrantInput(BaseModel):
+    department_id: uuid.UUID
+    access_level: str = Field(default="run", max_length=64)
+    can_run: bool = True
+    can_view_results: bool = True
+    can_approve: bool = False
+    can_configure: bool = False
+
+
+class AgentUserGrantInput(BaseModel):
+    user_id: uuid.UUID
+    access_level: str = Field(default="run", max_length=64)
+    can_run: bool = True
+    can_view_results: bool = True
+    can_approve: bool = False
+    can_configure: bool = False
+    expires_at: datetime | None = None
+
+
+class AgentAccessUpdate(BaseModel):
+    department_grants: list[AgentDepartmentGrantInput] = Field(default_factory=list)
+    user_grants: list[AgentUserGrantInput] = Field(default_factory=list)

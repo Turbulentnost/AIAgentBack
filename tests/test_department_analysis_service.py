@@ -197,6 +197,8 @@ async def test_start_department_analysis_creates_run() -> None:
     service = DepartmentAnalysisService(db)
     dept = _dept()
     service.department_service.get_department_or_raise = AsyncMock(return_value=dept)
+    service._get_active_runs = AsyncMock(return_value=[])
+    service.cancel_active_runs = AsyncMock(return_value=[])
     db.flush = AsyncMock()
 
     run = await service.start_department_analysis(dept.id)
@@ -204,3 +206,23 @@ async def test_start_department_analysis_creates_run() -> None:
     assert run.department_id == dept.id
     assert run.status == DepartmentAnalysisRunStatus.PENDING
     db.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_active_runs_marks_cancelled() -> None:
+    db = AsyncMock()
+    service = DepartmentAnalysisService(db)
+    run = DepartmentAnalysisRun(
+        id=uuid.uuid4(),
+        department_id=uuid.uuid4(),
+        status=DepartmentAnalysisRunStatus.RUNNING,
+        celery_task_id="task-1",
+    )
+    service._get_active_runs = AsyncMock(return_value=[run])
+
+    with patch("app.services.department_analysis_dispatch.revoke_department_analysis_task") as revoke:
+        cancelled = await service.cancel_active_runs(run.department_id)
+
+    assert len(cancelled) == 1
+    assert cancelled[0].status == DepartmentAnalysisRunStatus.CANCELLED
+    revoke.assert_called_once_with("task-1")

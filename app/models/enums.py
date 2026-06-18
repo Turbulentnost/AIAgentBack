@@ -356,14 +356,23 @@ class NdStructuralDocumentStatus(str, enum.Enum):
 
 
 class NdStructuralDocumentType(str, enum.Enum):
-    INSTRUCTION = "instruction"
-    REGULATION = "regulation"
-    POSITION = "position"
-    STO = "sto"
-    FORM = "form"
-    POLICY = "policy"
-    PROCEDURE = "procedure"
-    OTHER = "other"
+    """Тип нормативного документа СМК (классификация DocumentType)."""
+
+    POLICY = "POLICY"
+    REGULATION = "REGULATION"
+    PROCESS_REGULATION = "PROCESS_REGULATION"
+    STO = "STO"
+    INSTRUCTION = "INSTRUCTION"
+
+
+class NdDocumentLevel(str, enum.Enum):
+    """Уровень документа в иерархии СМК (классификация DocumentLevel)."""
+
+    STRATEGIC = "strategic"
+    ORGANIZATIONAL = "organizational"
+    PROCESS = "process"
+    TECHNICAL = "technical"
+    OPERATIONAL = "operational"
 
 
 class NdGraphEntityType(str, enum.Enum):

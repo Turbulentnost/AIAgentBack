@@ -41,6 +41,7 @@ class DocumentMetaExtraction(ExtractionBaseModel):
     document_code: str | None = None
     title: str | None = None
     document_type: str | None = None
+    document_type_confidence: ConfidenceLevel | None = None
     version: str | None = None
     status: str | None = None
     approval_date: str | None = None
@@ -144,6 +145,28 @@ def _ensure_str_list(value: Any) -> list[str]:
     return items
 
 
+def _coerce_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, dict):
+        for key in ("text", "value", "content", "description", "purpose", "title", "name"):
+            nested = value.get(key)
+            if nested is not None and nested is not value:
+                coerced = _coerce_text(nested)
+                if coerced:
+                    return coerced
+        return None
+    if isinstance(value, list):
+        parts = [_coerce_text(item) for item in value]
+        joined = "; ".join(part for part in parts if part)
+        return joined or None
+    text = str(value).strip()
+    return text or None
+
+
 def _normalize_confidence(value: Any) -> str:
     if value is None:
         return ConfidenceLevel.LOW.value
@@ -185,13 +208,43 @@ def _normalize_unknown_reason(value: Any) -> str:
     return NdUnknownReason.REQUIRES_HUMAN_CONFIRMATION.value
 
 
+_PARTICIPANT_KEYS = frozenset({"name", "role", "department", "date", "evidence"})
+_ACTION_KEYS = frozenset({
+    "action",
+    "performer",
+    "controller",
+    "deadline",
+    "system_or_resource",
+    "input",
+    "output",
+    "evidence",
+})
+
+
+def _normalize_participant(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"name": value.strip(), "role": None}
+    if not isinstance(value, dict):
+        return {"name": str(value), "role": None}
+    participant = dict(value)
+    if not participant.get("name"):
+        participant["name"] = (
+            participant.get("full_name")
+            or participant.get("employee")
+            or participant.get("person")
+            or participant.get("title")
+        )
+    if participant.get("position") and not participant.get("role"):
+        participant["role"] = participant.get("position")
+    if participant.get("position") and not participant.get("department"):
+        participant["department"] = participant.get("position")
+    return {key: participant[key] for key in _PARTICIPANT_KEYS if key in participant}
+
+
 def _normalize_participant_list(value: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for item in _ensure_list(value):
-        if isinstance(item, str):
-            items.append({"name": item, "role": None})
-        elif isinstance(item, dict):
-            items.append(item)
+        items.append(_normalize_participant(item))
     return items
 
 
@@ -209,12 +262,18 @@ def _normalize_action(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
         return {"action": value}
     if isinstance(value, dict):
-        if "action" not in value:
-            action_text = value.get("name") or value.get("description") or value.get("text")
+        action = dict(value)
+        if "action" not in action:
+            action_text = action.get("name") or action.get("description") or action.get("text")
             if action_text:
-                return {"action": str(action_text), **value}
-        return value
+                action["action"] = str(action_text)
+        if not action.get("action"):
+            action["action"] = "Действие"
+        return {key: action[key] for key in _ACTION_KEYS if key in action}
     return {"action": str(value)}
+
+
+_OWNER_CANDIDATE_KEYS = frozenset({"name_or_role", "reason", "confidence", "evidence"})
 
 
 def _normalize_owner_candidate(value: Any) -> dict[str, Any]:
@@ -233,10 +292,9 @@ def _normalize_owner_candidate(value: Any) -> dict[str, Any]:
             or candidate.get("reason")
             or "не указано"
         )
-    candidate.pop("candidate", None)
     candidate["confidence"] = _normalize_confidence(candidate.get("confidence"))
     candidate.setdefault("reason", "не указано")
-    return candidate
+    return {key: candidate[key] for key in _OWNER_CANDIDATE_KEYS if key in candidate}
 
 
 def _normalize_process(value: Any) -> dict[str, Any]:
@@ -244,6 +302,8 @@ def _normalize_process(value: Any) -> dict[str, Any]:
         return {"name": str(value), "actions": []}
     process = dict(value)
     process.setdefault("name", process.get("title") or "Процесс")
+    for field in ("description", "goal"):
+        process[field] = _coerce_text(process.get(field))
     for field in ("inputs", "outputs", "roles", "forms", "systems", "resources", "related_departments"):
         process[field] = _ensure_str_list(process.get(field))
     process["actions"] = [_normalize_action(item) for item in _ensure_list(process.get("actions"))]
@@ -259,6 +319,7 @@ def _normalize_form(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         form = dict(value)
         form.setdefault("name", form.get("code") or "Форма")
+        form["purpose"] = _coerce_text(form.get("purpose"))
         related_process = form.get("related_process")
         if isinstance(related_process, list):
             form["related_process"] = ", ".join(str(item) for item in related_process)
@@ -299,9 +360,13 @@ def normalize_document_extraction_payload(payload: dict[str, Any]) -> dict[str, 
     document = normalized.get("document")
     if isinstance(document, dict):
         doc = dict(document)
+        doc["document_type_confidence"] = _normalize_confidence(doc.get("document_type_confidence"))
+        for field in ("title", "document_code", "version", "status", "purpose"):
+            doc[field] = _coerce_text(doc.get(field))
         scope = doc.get("scope")
         if isinstance(scope, dict):
             scope_data = dict(scope)
+            scope_data["text"] = _coerce_text(scope_data.get("text"))
             scope_data["departments"] = _ensure_str_list(scope_data.get("departments"))
             scope_data["positions"] = _ensure_str_list(scope_data.get("positions"))
             doc["scope"] = scope_data

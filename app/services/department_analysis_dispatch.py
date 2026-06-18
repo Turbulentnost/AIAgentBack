@@ -33,6 +33,22 @@ def is_celery_department_analysis_available() -> bool:
         return False
 
 
+def revoke_department_analysis_task(celery_task_id: str | None) -> None:
+    if not celery_task_id:
+        return
+    try:
+        from app.workers.celery_app import celery_app
+
+        celery_app.control.revoke(celery_task_id, terminate=True, signal="SIGTERM")
+        logger.info("nd_control.analysis.celery_revoked", celery_task_id=celery_task_id)
+    except Exception as exc:
+        logger.warning(
+            "nd_control.analysis.celery_revoke_failed",
+            celery_task_id=celery_task_id,
+            error=str(exc),
+        )
+
+
 async def run_department_analysis_background(run_id: uuid.UUID, force_reextract: bool) -> None:
     async with AsyncSessionLocal() as session:
         try:
@@ -118,22 +134,11 @@ async def maybe_recover_stale_pending_run(
     if not is_stale_running_run(run):
         return False
 
-    force_reextract = bool((run.summary_json or {}).get("force_reextract", False))
-    logger.warning("nd_control.analysis.recover_stale_running", run_id=str(run.id))
+    logger.warning("nd_control.analysis.stale_running_detected", run_id=str(run.id))
     run.status = DepartmentAnalysisRunStatus.FAILED
     run.current_step = DepartmentAnalysisStep.FAILED
-    run.error_message = "Анализ прерван или завис. Запускаем повторно."
+    run.error_message = "Анализ прерван или завис. Запустите анализ снова."
     run.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    await db.flush()
-    new_run = DepartmentAnalysisRun(
-        department_id=run.department_id,
-        status=DepartmentAnalysisRunStatus.PENDING,
-        current_step=DepartmentAnalysisStep.INITIALIZING,
-        progress_percent=0,
-        summary_json={"force_reextract": force_reextract, "recovered_from_run_id": str(run.id)},
-    )
-    db.add(new_run)
-    await db.flush()
-    await enqueue_department_analysis_run(db, new_run, force_reextract, background_tasks)
+    revoke_department_analysis_task(run.celery_task_id)
     await db.commit()
     return True
