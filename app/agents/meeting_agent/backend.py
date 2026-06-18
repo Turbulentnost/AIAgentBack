@@ -89,6 +89,19 @@ class MeetingBackend:
         memo_number: str | None = None,
         current_user: User,
     ) -> MeetingMemo:
+        if memo_ref_key and settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            from app.services.meeting_memo_cache import (
+                MeetingMemoCacheService,
+                MemoCacheMissError,
+                detail_to_memo_document,
+            )
+
+            try:
+                detail, _, _ = await MeetingMemoCacheService().get_memo_detail(memo_ref_key)
+                return _normalize_memo(detail_to_memo_document(detail))
+            except MemoCacheMissError as exc:
+                raise MeetingBackendError(str(exc)) from exc
+
         payload = await self._invoke(
             "get_meeting_memos",
             {"limit": MEMO_FETCH_LIMIT, "fetch_pool": MEMO_FETCH_POOL, "compact": False},

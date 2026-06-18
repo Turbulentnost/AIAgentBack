@@ -5,8 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from app.agents.meeting_agent.dashboard import load_login_context
-from app.agents.meeting_agent.memo_presenter import build_memo_detail
-from app.tools.onec.connection import CONFIG, create_session
+from app.services.meeting_memo_cache import MeetingMemoCacheService, MemoCacheMissError
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.meeting import (
     MeetingInviteDraftRead,
@@ -99,18 +98,17 @@ async def get_meeting_memo_detail(
     memo_ref_key: uuid.UUID,
     db: DbSession,
     current_user: CurrentUser,
+    force_refresh: bool = False,
 ) -> MeetingMemoDetailRead:
     await _require_agent_access(db, current_user)
     try:
-        import asyncio
-
-        payload = await asyncio.to_thread(
-            build_memo_detail,
-            create_session(CONFIG),
-            CONFIG,
+        payload, _fetched_at, _from_cache = await MeetingMemoCacheService().get_memo_detail(
             str(memo_ref_key),
+            force_refresh=force_refresh,
         )
         return MeetingMemoDetailRead.model_validate(payload)
+    except MemoCacheMissError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

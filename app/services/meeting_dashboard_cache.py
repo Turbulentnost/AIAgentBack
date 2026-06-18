@@ -6,10 +6,9 @@ from datetime import date, datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from redis.asyncio import Redis
-
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 
 logger = get_logger(__name__)
 
@@ -57,6 +56,15 @@ def business_date() -> date:
 
 
 class MeetingDashboardCacheService:
+    """Кэш dashboard СЗ в Redis.
+
+    1С вызывается только если:
+      1. нет кэша за сегодня (первый запрос);
+      2. Celery-прогрев в 10:00 и 15:00;
+      3. POST /meetings/dashboard/refresh (force_refresh).
+    Все остальные GET /meetings/dashboard — только Redis.
+    """
+
     async def get_dashboard(
         self,
         *,
@@ -116,12 +124,14 @@ class MeetingDashboardCacheService:
         payload = await asyncio.to_thread(get_meeting_dashboard, target_date=day)
         if settings.MEETING_DASHBOARD_CACHE_ENABLED:
             await self._write_cache(day, payload, fetched_at=fetched_at)
+            from app.services.meeting_memo_cache import warm_memo_details_from_dashboard
+
+            await warm_memo_details_from_dashboard(payload)
         return payload, fetched_at
 
     async def _read_cache(self, day: date) -> dict[str, Any] | None:
-        client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
         try:
-            raw = await client.get(_cache_key(day))
+            raw = await meeting_redis_get(_cache_key(day))
         except Exception as exc:
             logger.warning(
                 "meeting_dashboard_cache_read_failed",
@@ -129,8 +139,6 @@ class MeetingDashboardCacheService:
                 error=str(exc),
             )
             return None
-        finally:
-            await client.aclose()
         if not raw:
             return None
         try:
@@ -140,9 +148,8 @@ class MeetingDashboardCacheService:
             return None
 
     async def _write_cache(self, day: date, payload: dict[str, Any], *, fetched_at: datetime) -> None:
-        client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
         try:
-            await client.setex(
+            await meeting_redis_setex(
                 _cache_key(day),
                 settings.MEETING_DASHBOARD_CACHE_TTL_SECONDS,
                 json.dumps(_serialize_payload(payload, fetched_at=fetched_at), ensure_ascii=False, default=str),
@@ -153,5 +160,3 @@ class MeetingDashboardCacheService:
                 date=day.isoformat(),
                 error=str(exc),
             )
-        finally:
-            await client.aclose()

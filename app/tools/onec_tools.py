@@ -112,14 +112,19 @@ async def get_meeting_dashboard_tool(
     del context
     from datetime import date as date_type
 
-    from app.agents.meeting_agent.dashboard import get_meeting_dashboard
+    from app.services.meeting_dashboard_cache import MeetingDashboardCacheService
 
     target_date = date_type.fromisoformat(payload.target_date) if payload.target_date else None
-    raw = await asyncio.to_thread(
-        get_meeting_dashboard,
+    cache = MeetingDashboardCacheService()
+    raw, _fetched_at, _from_cache = await cache.get_dashboard(
         target_date=target_date,
-        limit=payload.limit,
     )
+    raw["unapproved"] = (raw.get("unapproved") or [])[: payload.limit]
+    raw["today"] = (raw.get("today") or [])[: payload.limit]
+    raw["counts"] = {
+        "unapproved": len(raw["unapproved"]),
+        "today": len(raw["today"]),
+    }
     return GetMeetingDashboardOutput.model_validate(raw)
 
 
