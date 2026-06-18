@@ -19,6 +19,7 @@ from app.tools.onec.get_meetings import (
     build_meeting_theme_text_filter,
     entity_url,
     fetch_meeting_memo_rows,
+    load_metadata_xml,
     meeting_theme,
     odata_get_json,
 )
@@ -86,6 +87,7 @@ def _fetch_rows(
     extra_filter: str,
     *,
     limit: int,
+    metadata,
 ) -> list[dict[str, Any]]:
     fetch_pool = max(limit, 1)
     try:
@@ -95,6 +97,7 @@ def _fetch_rows(
             extra_filter,
             limit=limit,
             fetch_pool=fetch_pool,
+            metadata=metadata,
         )
     except RuntimeError:
         odata_filter = f"{build_meeting_theme_base_filter()} and ({extra_filter})"
@@ -118,12 +121,14 @@ def get_meeting_dashboard(
     """Возвращает несогласованные СЗ и совещания на указанную дату из 1С OData."""
     day = target_date or date.today()
     session = create_session(config)
+    metadata = load_metadata_xml(session, config)
 
     unapproved_rows = _fetch_rows(
         session,
         config,
         f"Статус eq '{UNAPPROVED_STATUS}'",
         limit=limit,
+        metadata=metadata,
     )
     today_rows = _fetch_rows(
         session,
@@ -133,6 +138,7 @@ def get_meeting_dashboard(
             f"and Date lt datetime'{day.isoformat()}T23:59:59'"
         ),
         limit=limit,
+        metadata=metadata,
     )
 
     unapproved = [summarize_meeting_memo(row) for row in unapproved_rows]

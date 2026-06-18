@@ -15,6 +15,7 @@ from app.tools.onec.create_service_memo import (
 from app.tools.onec.get_meetings import get_last_meeting_memos
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
 from app.tools.onec.meeting_topics_registry import query_meeting_topics
+from app.tools.onec.get_porucheniya import query_porucheniya
 from app.tools.onec.send_desktop_notification import send_desktop_notifications
 from app.tools.registry import register_tool
 from app.tools.schemas import ToolContext
@@ -523,3 +524,73 @@ class SendDesktopNotificationTool(Tool):
 
 
 register_tool(SendDesktopNotificationTool())
+
+
+class GetPorucheniyaInput(BaseModel):
+    period_start: str | None = Field(
+        default=None,
+        description="Начало периода (YYYY-MM-DD). По умолчанию — 90 дней до period_end",
+    )
+    period_end: str | None = Field(
+        default=None,
+        description="Конец периода (YYYY-MM-DD). По умолчанию — сегодня",
+    )
+    limit: int = Field(
+        default=500,
+        ge=1,
+        le=1000,
+        description="Максимум строк поручений",
+    )
+
+
+class GetPorucheniyaOutput(BaseModel):
+    document_entity: str
+    tabular_entity: str
+    period_start: str
+    period_end: str
+    limit: int
+    count: int
+    selection_method: str
+    items: list[dict[str, Any]]
+
+
+async def get_porucheniya_tool(
+    payload: GetPorucheniyaInput,
+    context: ToolContext,
+) -> GetPorucheniyaOutput:
+    del context
+    raw = await asyncio.to_thread(
+        query_porucheniya,
+        period_start=payload.period_start,
+        period_end=payload.period_end,
+        limit=payload.limit,
+    )
+    return GetPorucheniyaOutput.model_validate(raw)
+
+
+class GetPorucheniyaTool(Tool):
+    name = "get_porucheniya"
+    description = (
+        "Возвращает поручения (Document_ТД_Поручения) из 1С:ERP за указанный период."
+    )
+    agent_description = (
+        "Инструмент get_porucheniya читает Document_ТД_Поручения_Поручения "
+        "(фильтр по сроку исполнения) и обогащает строки шапкой документа. "
+        "period_start/period_end — период YYYY-MM-DD; limit — максимум строк. "
+        "Возвращает мероприятие, ответственного, руководителя, срок, приоритет. "
+        "Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = GetPorucheniyaInput
+    output_model = GetPorucheniyaOutput
+    required_permissions = ["get_porucheniya"]
+    preview_default_params = {"limit": 5}
+
+    async def execute(
+        self,
+        payload: GetPorucheniyaInput,
+        context: ToolContext,
+    ) -> GetPorucheniyaOutput:
+        return await get_porucheniya_tool(payload, context)
+
+
+register_tool(GetPorucheniyaTool())

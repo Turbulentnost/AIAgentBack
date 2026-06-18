@@ -216,19 +216,23 @@ def fetch_meeting_memo_rows(
         text_error = exc
         text_rows = []
 
-    broad_filter = f"Posted eq true and DeletionMark eq false and ({extra_filter})"
-    broad_error: RuntimeError | None = None
-    try:
-        broad_rows = fetch_documents_by_filter(
-            session,
-            config,
-            broad_filter,
-            limit=fetch_pool,
-            fetch_pool=fetch_pool,
-        )
-    except RuntimeError as exc:
-        broad_error = exc
-        broad_rows = []
+    broad_rows: list[dict[str, Any]] = []
+    if not text_rows:
+        broad_filter = f"Posted eq true and DeletionMark eq false and ({extra_filter})"
+        broad_error: RuntimeError | None = None
+        try:
+            broad_rows = fetch_documents_by_filter(
+                session,
+                config,
+                broad_filter,
+                limit=fetch_pool,
+                fetch_pool=fetch_pool,
+            )
+        except RuntimeError as exc:
+            broad_error = exc
+            broad_rows = []
+    else:
+        broad_error = None
 
     by_ref: dict[str, dict[str, Any]] = {}
     for row in text_rows:
