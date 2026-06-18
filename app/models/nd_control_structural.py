@@ -114,6 +114,15 @@ class ProcessCard(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     forms_json: Mapped[list | None] = mapped_column(JSONB)
     systems_json: Mapped[list | None] = mapped_column(JSONB)
     resources_json: Mapped[list | None] = mapped_column(JSONB)
+    effectiveness_criteria_json: Mapped[list | None] = mapped_column(JSONB)
+    risks_json: Mapped[list | None] = mapped_column(JSONB)
+    documentation_and_archive_json: Mapped[list | None] = mapped_column(JSONB)
+    applications_json: Mapped[list | None] = mapped_column(JSONB)
+    change_registration_json: Mapped[list | None] = mapped_column(JSONB)
+    issue_and_acquaintance_json: Mapped[list | None] = mapped_column(JSONB)
+    storage_locations_json: Mapped[list | None] = mapped_column(JSONB)
+    retention_terms_json: Mapped[list | None] = mapped_column(JSONB)
+    responsible_for_storage_json: Mapped[list | None] = mapped_column(JSONB)
 
 
 class ProcessUmlCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -129,8 +138,18 @@ class ProcessUmlCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     content_version: Mapped[str] = mapped_column(String(64), index=True)
-    uml_type: Mapped[str] = mapped_column(String(64), default="mermaid_activity")
+    uml_type: Mapped[str] = mapped_column(String(64), default="mermaid_flowchart_sto")
     uml_code: Mapped[str] = mapped_column(Text)
+    generator_version: Mapped[str] = mapped_column(String(64), default="2.0.0-sto", index=True)
+    standard_profile: Mapped[str] = mapped_column(
+        String(128),
+        default="STO-34-003_GOST-19.701-90",
+        index=True,
+    )
+    input_hash: Mapped[str | None] = mapped_column(String(64))
+    validation_status: Mapped[str] = mapped_column(String(32), default="valid", index=True)
+    validation_errors: Mapped[list | None] = mapped_column(JSONB)
+    detail_level: Mapped[str] = mapped_column(String(32), default="standard", index=True)
 
 
 class NdRelation(UUIDPrimaryKeyMixin, TimestampMixin, Base):

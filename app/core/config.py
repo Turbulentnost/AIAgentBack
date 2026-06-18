@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     )
 
     MINIO_ENDPOINT: str = "192.168.1.157:9000"
+    # Адрес MinIO для presigned URL в браузере (LAN/IP). В Docker backend использует minio:9000,
+    # а клиенту отдаём публичный host:port, иначе <img src> не загрузится.
+    MINIO_PUBLIC_ENDPOINT: str = ""
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "ai-documents"
@@ -193,6 +196,19 @@ class Settings(BaseSettings):
                 path=self.POSTGRES_DB,
             )
         )
+
+    @computed_field
+    @property
+    def minio_presign_endpoint(self) -> str:
+        """Host:port для presigned URL в браузере."""
+        public = self.MINIO_PUBLIC_ENDPOINT.strip()
+        if public:
+            return public
+        internal_host = self.MINIO_ENDPOINT.split(":", 1)[0].strip()
+        if internal_host in {"minio", "localhost", "127.0.0.1"}:
+            # Backend в Docker: MinIO снаружи на POSTGRES_HOST:9000 (проброс порта compose).
+            return f"{self.POSTGRES_HOST}:9000"
+        return self.MINIO_ENDPOINT
 
     @computed_field
     @property

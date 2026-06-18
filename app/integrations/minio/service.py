@@ -5,6 +5,8 @@ from datetime import timedelta
 
 from minio import Minio
 
+from app.integrations.minio.client import get_minio_presign_client
+
 
 class MinioObjectError(RuntimeError):
     pass
@@ -40,7 +42,8 @@ class MinioObjectService:
 
     def presigned_get_url(self, object_name: str, expires_minutes: int = 20) -> str:
         try:
-            return self.client.presigned_get_object(
+            presign_client = get_minio_presign_client()
+            return presign_client.presigned_get_object(
                 self.bucket,
                 object_name,
                 expires=timedelta(minutes=expires_minutes),

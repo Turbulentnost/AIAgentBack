@@ -402,7 +402,34 @@ class NdDocumentCardExtractionService:
             existing.roles_json = _merge_string_lists(existing.roles_json or [], process.roles)
             existing.forms_json = _merge_string_lists(existing.forms_json or [], process.forms)
             existing.systems_json = _merge_string_lists(existing.systems_json or [], process.systems)
-            existing.resources_json = _merge_string_lists(existing.resources_json or [], process.resources)
+            existing.resources_json = _merge_json_object_lists(
+                existing.resources_json, process.resources, key="name"
+            )
+            existing.effectiveness_criteria_json = _merge_json_object_lists(
+                existing.effectiveness_criteria_json, process.effectiveness_criteria, key="name"
+            )
+            existing.risks_json = _merge_json_object_lists(existing.risks_json, process.risks, key="risk")
+            existing.documentation_and_archive_json = _merge_json_object_lists(
+                existing.documentation_and_archive_json, process.documentation_and_archive, key="document"
+            )
+            existing.applications_json = _merge_json_object_lists(
+                existing.applications_json, process.applications, key="name"
+            )
+            existing.change_registration_json = _merge_json_object_lists(
+                existing.change_registration_json, process.change_registration, key="title"
+            )
+            existing.issue_and_acquaintance_json = _merge_json_object_lists(
+                existing.issue_and_acquaintance_json, process.issue_and_acquaintance, key="title"
+            )
+            existing.storage_locations_json = _merge_string_lists(
+                existing.storage_locations_json or [], process.storage_locations
+            )
+            existing.retention_terms_json = _merge_string_lists(
+                existing.retention_terms_json or [], process.retention_terms
+            )
+            existing.responsible_for_storage_json = _merge_string_lists(
+                existing.responsible_for_storage_json or [], process.responsible_for_storage
+            )
             if owner and not existing.owner_candidate:
                 existing.owner_candidate = owner.name_or_role
                 existing.owner_confidence = owner.confidence
@@ -422,7 +449,24 @@ class NdDocumentCardExtractionService:
             roles_json=process.roles,
             forms_json=process.forms,
             systems_json=process.systems,
-            resources_json=process.resources,
+            resources_json=[item.model_dump(mode="json") for item in process.resources],
+            effectiveness_criteria_json=[
+                item.model_dump(mode="json") for item in process.effectiveness_criteria
+            ],
+            risks_json=[item.model_dump(mode="json") for item in process.risks],
+            documentation_and_archive_json=[
+                item.model_dump(mode="json") for item in process.documentation_and_archive
+            ],
+            applications_json=[item.model_dump(mode="json") for item in process.applications],
+            change_registration_json=[
+                item.model_dump(mode="json") for item in process.change_registration
+            ],
+            issue_and_acquaintance_json=[
+                item.model_dump(mode="json") for item in process.issue_and_acquaintance
+            ],
+            storage_locations_json=process.storage_locations,
+            retention_terms_json=process.retention_terms,
+            responsible_for_storage_json=process.responsible_for_storage,
         )
         self.db.add(card)
         await self.db.flush()
@@ -882,6 +926,24 @@ def _parse_kb_status(value: str | None) -> KnowledgeBaseSourceStatus | None:
         return KnowledgeBaseSourceStatus(value)
     except ValueError:
         return None
+
+
+def _merge_json_object_lists(current: list[Any] | None, incoming: list[Any], *, key: str) -> list[Any]:
+    merged: dict[str, Any] = {}
+    for item in current or []:
+        if isinstance(item, dict):
+            item_key = str(item.get(key) or "").strip().casefold()
+            if item_key:
+                merged[item_key] = item
+    for item in incoming:
+        payload = item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+        if not isinstance(payload, dict):
+            continue
+        item_key = str(payload.get(key) or "").strip().casefold()
+        if not item_key or item_key in merged:
+            continue
+        merged[item_key] = payload
+    return list(merged.values())
 
 
 def _merge_string_lists(current: list[Any], incoming: list[Any]) -> list[Any]:

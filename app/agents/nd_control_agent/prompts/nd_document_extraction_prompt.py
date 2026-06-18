@@ -33,7 +33,10 @@ ND_DOCUMENT_EXTRACTION_SYSTEM_PROMPT = """
   },
   "processes": [{
     "name", "description", "goal", "inputs", "outputs", "actions",
-    "roles", "forms", "systems", "resources", "related_departments", "owner_candidates"
+    "roles", "forms", "systems", "resources", "related_departments", "owner_candidates",
+    "effectiveness_criteria", "measurement_methods", "risks", "documentation_and_archive",
+    "applications", "change_registration", "issue_and_acquaintance",
+    "storage_locations", "retention_terms", "responsible_for_storage"
   }],
   "responsibilities": [{ "subject", "responsibility", "role_type", "confidence", "evidence" }],
   "forms": [{ "name", "code", "purpose", "related_process", "evidence" }],
@@ -58,6 +61,21 @@ ND_DOCUMENT_EXTRACTION_SYSTEM_PROMPT = """
 При определении типа используй: название, код, назначение, структуру и формулировки документа.
 Если тип определить нельзя — document_type = null, document_type_confidence = null,
 добавь причину в unknowns (field = "document_type"). Не придумывай тип без оснований.
+
+При извлечении процесса обязательно ищи и структурируй разделы СТО-34-003:
+- effectiveness_criteria — критерии результативности (name, measurement_method, reporting_period, evidence)
+- measurement_methods — методы измерения (если отдельным списком)
+- resources — ресурсы процесса (name, type: personnel|equipment|system|other, evidence)
+- risks — риски (risk, consequence, control_measure, responsible, related_action, evidence)
+- documentation_and_archive — документирование и архивирование (document, storage_place, responsible, retention_term, evidence)
+- storage_locations, retention_terms, responsible_for_storage — при наличии отдельных разделов
+- applications — приложения (name, code, description, evidence)
+- change_registration — лист регистрации изменений (title, description, evidence)
+- issue_and_acquaintance — лист выдачи и ознакомления (title, description, evidence)
+
+Если раздел найден в документе, но не привязан к конкретному процессу — отнеси к основному процессу документа.
+Если данных нет — верни пустой массив []. Не выдумывай.
+Для каждого элемента по возможности добавляй evidence: document_id, page, section, quote.
 """.strip()
 
 

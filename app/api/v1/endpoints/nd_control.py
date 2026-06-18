@@ -462,10 +462,15 @@ async def get_process_uml(
     db: DbSession,
     current_user: CurrentUser,
     force: bool = Query(False),
+    detail_level: str = Query("standard", description="compact | standard | detailed"),
 ):
     await _require_agent_access(db, current_user)
     try:
-        result = await NdProcessUmlService(db).get_process_uml(process_id, force=force)
+        result = await NdProcessUmlService(db).get_process_uml(
+            process_id,
+            force=force,
+            detail_level=detail_level,
+        )
         await db.commit()
         return ProcessUmlResponse.model_validate(result)
     except NdProcessUmlServiceError as exc:
