@@ -1,9 +1,37 @@
 from __future__ import annotations
 
-from app.models.user import User
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.agent import Agent
+from app.models.user import Role, User
+from app.services.permission_service import PermissionService
+
+TASKS_AGENT_SLUG = "tasks_agent"
+TASKS_RUN_PERMISSION = "agents.tasks_agent.run"
+EMPLOYEE_ROLE_CODE = "employee"
 
 
-def can_access_tasks_agent(user: User) -> bool:
-    """Проверка доступа к агенту поручений. Будет расширена при подключении RBAC."""
-    del user
-    return True
+async def user_has_admin_role(db: AsyncSession, user: User) -> bool:
+    if user.role is not None and user.role.code == "admin":
+        return True
+    from app.models.user import Role as RoleModel, user_roles
+
+    result = await db.execute(
+        select(RoleModel.code)
+        .join(user_roles, user_roles.c.role_id == RoleModel.id)
+        .where(user_roles.c.user_id == user.id)
+    )
+    return "admin" in {row[0] for row in result.all()}
+
+
+async def can_access_tasks_agent(db: AsyncSession, user: User) -> bool:
+    if user.is_superuser:
+        return True
+    if await user_has_admin_role(db, user):
+        return True
+
+    agent = await db.scalar(select(Agent).where(Agent.slug == TASKS_AGENT_SLUG))
+    if agent is None:
+        return False
+    return await PermissionService(db).can_access_agent(user, agent.id, action="run")
