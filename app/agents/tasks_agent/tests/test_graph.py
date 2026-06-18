@@ -8,6 +8,7 @@ def test_node_sequence_has_tasks_steps() -> None:
     assert [name for name, _ in NODE_SEQUENCE] == [
         "validate_input",
         "load_porucheniya",
+        "build_tasks_table",
         "summarize_priorities",
         "save_result",
         "wait_user_review",

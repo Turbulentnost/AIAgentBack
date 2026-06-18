@@ -16,6 +16,7 @@ from app.tools.onec.get_meetings import get_last_meeting_memos
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
 from app.tools.onec.meeting_topics_registry import query_meeting_topics
 from app.tools.onec.get_porucheniya import query_porucheniya
+from app.services.tasks_manager_resolver import resolve_porucheniya_manager_fio
 from app.tools.onec.send_desktop_notification import send_desktop_notifications
 from app.tools.registry import register_tool
 from app.tools.schemas import ToolContext
@@ -544,45 +545,81 @@ class GetPorucheniyaInput(BaseModel):
         default=500,
         ge=1,
         le=1000,
-        description="Максимум строк поручений",
+        description="Максимум документов на источник (поручения и протоколы)",
+    )
+    author_fio: str | None = Field(
+        default=None,
+        description=(
+            "ФИО руководителя поручения. По умолчанию определяется автоматически: "
+            "для роли «помощник ПСД» — Амураль Игорь Борисович, иначе full_name пользователя."
+        ),
     )
 
 
 class GetPorucheniyaOutput(BaseModel):
     document_entity: str
     tabular_entity: str
+    register_entity: str | None = None
+    protocol_entity: str | None = None
     period_start: str
     period_end: str
     limit: int
     count: int
+    counts: dict[str, int] = Field(default_factory=dict)
+    author_fio: str | None = None
+    manager_fio_source: str | None = None
     selection_method: str
-    items: list[dict[str, Any]]
+    porucheniya: list[dict[str, Any]] = Field(default_factory=list)
+    protocols: list[dict[str, Any]] = Field(default_factory=list)
+    protocol_tasks: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Плоский список задач протоколов (для обратной совместимости)",
+    )
+    items: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Плоский список всех задач (мероприятия + задачи протоколов) для сводок",
+    )
 
 
 async def get_porucheniya_tool(
     payload: GetPorucheniyaInput,
     context: ToolContext,
 ) -> GetPorucheniyaOutput:
-    del context
+    manager_fio_source = "explicit"
+    author_fio = (payload.author_fio or "").strip() or None
+    if author_fio is None:
+        if context.user is None:
+            raise ValueError(
+                "Не указано ФИО руководителя: передайте author_fio "
+                "или запускайте инструмент от имени пользователя"
+            )
+        author_fio, manager_fio_source = await resolve_porucheniya_manager_fio(
+            context.db,
+            context.user,
+        )
     raw = await asyncio.to_thread(
         query_porucheniya,
         period_start=payload.period_start,
         period_end=payload.period_end,
         limit=payload.limit,
+        author_fio=author_fio,
     )
+    raw["manager_fio_source"] = manager_fio_source
     return GetPorucheniyaOutput.model_validate(raw)
 
 
 class GetPorucheniyaTool(Tool):
     name = "get_porucheniya"
     description = (
-        "Возвращает поручения (Document_ТД_Поручения) из 1С:ERP за указанный период."
+        "Возвращает поручения и задачи протоколов из 1С:ERP за указанный период."
     )
     agent_description = (
-        "Инструмент get_porucheniya читает Document_ТД_Поручения_Поручения "
-        "(фильтр по сроку исполнения) и обогащает строки шапкой документа. "
-        "period_start/period_end — период YYYY-MM-DD; limit — максимум строк. "
-        "Возвращает мероприятие, ответственного, руководителя, срок, приоритет. "
+        "Поручения: Document_ТД_Поручения за период по дате документа, все мероприятия внутри; "
+        "протоколы: Document_ТД_Протокол за период по дате документа, все задачи из "
+        "InformationRegister_ТД_ЗадачиПротоколов. "
+        "По умолчанию возвращает записи, где Руководитель совпадает с full_name пользователя; "
+        "для роли «помощник ПСД» — записи руководителя Амураль Игорь Борисович. "
+        "period_start/period_end — период YYYY-MM-DD; limit — максимум документов на источник. "
         "Нужны ONEC_ODATA_* в .env."
     )
     input_model = GetPorucheniyaInput

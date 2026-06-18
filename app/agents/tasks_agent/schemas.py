@@ -18,6 +18,9 @@ class TasksStructuredResult(AgentResult):
     period_start: date | None = None
     period_end: date | None = None
     porucheniya: list[dict[str, Any]] = Field(default_factory=list)
+    protocols: list[dict[str, Any]] = Field(default_factory=list)
+    protocol_tasks: list[dict[str, Any]] = Field(default_factory=list)
+    tasks_table: dict[str, Any] = Field(default_factory=dict)
     priority_summary: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     requires_user_review: bool = True

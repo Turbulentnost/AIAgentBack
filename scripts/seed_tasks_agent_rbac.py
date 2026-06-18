@@ -12,6 +12,7 @@ from app.models.agent import Agent
 from app.models.enums import AgentStatus
 from app.models.user import Department, DepartmentAgent, Permission, Role, role_permissions
 from app.services.tasks_permission import EMPLOYEE_ROLE_CODE, TASKS_RUN_PERMISSION
+from app.services.tasks_manager_resolver import PSD_ASSISTANT_ROLE_CODE, PSD_ASSISTANT_ROLE_NAME
 
 
 async def _ensure_role_permission(db, role: Role, permission: Permission) -> bool:
@@ -72,6 +73,20 @@ async def seed_tasks_agent_rbac() -> None:
                 continue
             if await _ensure_role_permission(db, role, permission):
                 print(f"Linked permission to role: {role_code}")
+
+        psd_role = await db.scalar(select(Role).where(Role.code == PSD_ASSISTANT_ROLE_CODE))
+        if psd_role is None:
+            psd_role = Role(
+                code=PSD_ASSISTANT_ROLE_CODE,
+                name=PSD_ASSISTANT_ROLE_NAME.capitalize(),
+                description="Помощник ПСД: видит поручения руководителя Амураль И.Б.",
+                is_system=True,
+            )
+            db.add(psd_role)
+            await db.flush()
+            print(f"Created role: {PSD_ASSISTANT_ROLE_CODE}")
+        if await _ensure_role_permission(db, psd_role, permission):
+            print(f"Linked permission to role: {PSD_ASSISTANT_ROLE_CODE}")
 
         departments = list((await db.execute(select(Department).where(Department.is_active.is_(True)))).scalars().all())
         linked = 0
