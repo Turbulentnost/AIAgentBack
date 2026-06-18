@@ -226,6 +226,24 @@ async def analyze_nd_control_department(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.post("/departments/{department_id}/analyze/cancel", response_model=DepartmentAnalysisRunRead)
+async def cancel_nd_control_department_analysis(
+    department_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    await _require_agent_access(db, current_user)
+    try:
+        run = await DepartmentAnalysisService(db).cancel_department_analysis(department_id)
+        await db.commit()
+        if run is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Нет активного анализа для остановки")
+        return DepartmentAnalysisRunRead.model_validate(run)
+    except NdControlDepartmentServiceError as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.get("/departments/{department_id}/analysis-status", response_model=DepartmentAnalysisStatusRead)
 async def get_nd_control_department_analysis_status(
     department_id: uuid.UUID,
@@ -439,15 +457,25 @@ async def confirm_process_owner(
 
 
 @router.get("/processes/{process_id}/uml", response_model=ProcessUmlResponse)
-async def get_process_uml(process_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+async def get_process_uml(
+    process_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    force: bool = Query(False),
+):
     await _require_agent_access(db, current_user)
     try:
-        result = await NdProcessUmlService(db).get_process_uml(process_id)
+        result = await NdProcessUmlService(db).get_process_uml(process_id, force=force)
         await db.commit()
         return ProcessUmlResponse.model_validate(result)
     except NdProcessUmlServiceError as exc:
         await db.rollback()
-        status_code = status.HTTP_404_NOT_FOUND if exc.code == "process_not_found" else status.HTTP_502_BAD_GATEWAY
+        if exc.code == "process_not_found":
+            status_code = status.HTTP_404_NOT_FOUND
+        elif exc.code == "insufficient_data":
+            status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        else:
+            status_code = status.HTTP_502_BAD_GATEWAY
         if exc.code in {"empty_llm_response", "invalid_mermaid"}:
             status_code = status.HTTP_502_BAD_GATEWAY
         raise HTTPException(status_code, detail=str(exc)) from exc

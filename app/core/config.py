@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     AGENT_BUILDER_FALLBACK_MODEL: str = "openai/gpt-oss-120b"
     # Структурное извлечение nd_control (DocumentCard, анализ отдела).
     ND_CONTROL_EXTRACTION_MODEL: str = "openai/gpt-oss-120b"
-    ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS: int = 600
+    ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS: int = 1200
     ND_CONTROL_UML_MODEL: str | None = None
     ND_CONTROL_UML_LLM_TIMEOUT_SECONDS: int = 180
     # OCR / vision для PDF и изображений — всегда qwen в LM Studio.

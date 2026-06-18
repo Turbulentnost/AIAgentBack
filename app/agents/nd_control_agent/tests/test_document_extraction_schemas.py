@@ -234,6 +234,18 @@ def test_owner_candidate_role_type_is_stripped() -> None:
     assert result.processes[0].owner_candidates[0].name_or_role == "Начальник отдела"
 
 
+def test_participant_position_is_normalized() -> None:
+    payload = _valid_payload()
+    payload["participants"]["developed_by"] = [
+        {"name": "Иванов И.И.", "position": "Инженер", "department": "ОТК"}
+    ]
+
+    result = parse_document_extraction_result(payload)
+
+    assert result.participants.developed_by[0].name == "Иванов И.И."
+    assert result.participants.developed_by[0].role == "Инженер"
+
+
 def test_llm_like_payload_normalizes_before_validation() -> None:
     payload = {
         "document": {

@@ -16,11 +16,13 @@ from app.agents.nd_control_agent.prompts.nd_process_uml_prompt import (
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.llm.gateway import llm_gateway
-from app.models.enums import NdGraphEntityType, NdRelationType
-from app.models.nd_control_structural import NdRelation, ProcessCard, ProcessUmlCache
-from app.services.nd_control_department_detail_service import _normalize_string_list
-from app.services.nd_process_display_mapper import normalize_action_details
-from app.services.nd_relation_display_mapper import RELATION_TYPE_LABELS
+from app.models.nd_control_structural import ProcessUmlCache
+from app.schemas.nd_process_graph import ProcessGraphDTO
+from app.services.process_graph_builder import (
+    ProcessGraphBuilder,
+    ProcessGraphBuilderError,
+    process_graph_to_uml_context,
+)
 
 logger = get_logger(__name__)
 
@@ -37,181 +39,12 @@ class NdProcessUmlServiceError(Exception):
         self.code = code
 
 
-def compute_content_version(
-    process: ProcessCard,
-    relations: list[NdRelation],
-    neighbor_processes: list[ProcessCard],
-) -> str:
-    payload = {
-        "process": {
-            "id": str(process.id),
-            "updated_at": process.updated_at.isoformat() if process.updated_at else None,
-            "canonical_name": process.canonical_name,
-            "description": process.description,
-            "goal": process.goal,
-            "owner_candidate": process.owner_candidate,
-            "inputs_json": process.inputs_json,
-            "outputs_json": process.outputs_json,
-            "actions_json": process.actions_json,
-            "roles_json": process.roles_json,
-            "forms_json": process.forms_json,
-            "systems_json": process.systems_json,
-            "resources_json": process.resources_json,
-        },
-        "relations": [
-            {
-                "id": str(relation.id),
-                "updated_at": relation.updated_at.isoformat() if relation.updated_at else None,
-                "relation_type": relation.relation_type.value,
-                "source_type": relation.source_type.value,
-                "source_id": str(relation.source_id) if relation.source_id else None,
-                "target_type": relation.target_type.value,
-                "target_id": str(relation.target_id) if relation.target_id else None,
-            }
-            for relation in sorted(relations, key=lambda item: str(item.id))
-        ],
-        "neighbors": [
-            {
-                "id": str(item.id),
-                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-                "canonical_name": item.canonical_name,
-            }
-            for item in sorted(neighbor_processes, key=lambda item: str(item.id))
-        ],
-    }
+def compute_content_version(graph: ProcessGraphDTO) -> str:
+    payload = graph.model_dump(mode="json")
     digest = hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     return digest[:32]
-
-
-def _unique_strings(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        text = value.strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
-
-
-def _relation_direction(relation: NdRelation, process_id: uuid.UUID) -> str:
-    if relation.source_type == NdGraphEntityType.PROCESS and relation.source_id == process_id:
-        return "outgoing"
-    if relation.target_type == NdGraphEntityType.PROCESS and relation.target_id == process_id:
-        return "incoming"
-    return "related"
-
-
-def _relation_counterparty(relation: NdRelation, process_id: uuid.UUID) -> tuple[str, str | None]:
-    if relation.source_type == NdGraphEntityType.PROCESS and relation.source_id == process_id:
-        return relation.target_type.value, relation.target_name
-    if relation.target_type == NdGraphEntityType.PROCESS and relation.target_id == process_id:
-        return relation.source_type.value, relation.source_name
-    return relation.target_type.value, relation.target_name
-
-
-def build_process_uml_context(
-    process: ProcessCard,
-    relations: list[NdRelation],
-    neighbor_processes: dict[uuid.UUID, ProcessCard],
-) -> dict[str, Any]:
-    process_id = process.id
-    actors = _unique_strings(_normalize_string_list(process.roles_json))
-    inputs = _unique_strings(_normalize_string_list(process.inputs_json))
-    outputs = _unique_strings(_normalize_string_list(process.outputs_json))
-    systems = _unique_strings(_normalize_string_list(process.systems_json))
-    forms = _unique_strings(_normalize_string_list(process.forms_json))
-    steps = normalize_action_details(process.actions_json)
-
-    dependencies: list[dict[str, Any]] = []
-    related_processes: list[dict[str, Any]] = []
-
-    for relation in relations:
-        entity_type, counterparty_name = _relation_counterparty(relation, process_id)
-        direction = _relation_direction(relation, process_id)
-        relation_label = RELATION_TYPE_LABELS.get(relation.relation_type, relation.relation_type.value)
-        dependency = {
-            "relation_type": relation.relation_type.value,
-            "relation_type_label": relation_label,
-            "direction": direction,
-            "entity_type": entity_type,
-            "entity_name": counterparty_name,
-            "confidence": relation.confidence.value,
-            "is_confirmed": relation.is_confirmed,
-        }
-        dependencies.append(dependency)
-
-        if relation.relation_type == NdRelationType.PROCESS_HAS_ROLE:
-            role_name = (
-                relation.target_name
-                if relation.target_type == NdGraphEntityType.ROLE
-                else relation.source_name
-            )
-            if role_name:
-                actors.append(role_name)
-        elif relation.relation_type == NdRelationType.ROLE_RESPONSIBLE_FOR_ACTION:
-            role_name = (
-                relation.source_name
-                if relation.source_type == NdGraphEntityType.ROLE
-                else relation.target_name
-            )
-            if role_name:
-                actors.append(role_name)
-        elif relation.relation_type == NdRelationType.PROCESS_CONSUMES_INPUT:
-            if counterparty_name:
-                inputs.append(counterparty_name)
-        elif relation.relation_type == NdRelationType.PROCESS_PRODUCES_OUTPUT:
-            if counterparty_name:
-                outputs.append(counterparty_name)
-        elif relation.relation_type == NdRelationType.PROCESS_USES_SYSTEM:
-            if counterparty_name:
-                systems.append(counterparty_name)
-        elif relation.relation_type == NdRelationType.PROCESS_USES_FORM:
-            if counterparty_name:
-                forms.append(counterparty_name)
-        elif relation.relation_type == NdRelationType.PROCESS_RELATED_TO_PROCESS:
-            neighbor_id = None
-            if relation.source_type == NdGraphEntityType.PROCESS and relation.source_id != process_id:
-                neighbor_id = relation.source_id
-            elif relation.target_type == NdGraphEntityType.PROCESS and relation.target_id != process_id:
-                neighbor_id = relation.target_id
-            neighbor = neighbor_processes.get(neighbor_id) if neighbor_id else None
-            related_processes.append(
-                {
-                    "process_id": str(neighbor_id) if neighbor_id else None,
-                    "name": neighbor.canonical_name if neighbor else counterparty_name,
-                    "relation_type": relation.relation_type.value,
-                    "relation_type_label": relation_label,
-                    "direction": direction,
-                }
-            )
-
-    actors = _unique_strings(actors)
-    inputs = _unique_strings(inputs)
-    outputs = _unique_strings(outputs)
-    systems = _unique_strings(systems)
-    forms = _unique_strings(forms)
-
-    return {
-        "process": {
-            "id": str(process.id),
-            "name": process.canonical_name,
-            "description": process.description,
-            "goal": process.goal,
-            "owner": process.owner_candidate,
-        },
-        "actors": actors,
-        "steps": steps,
-        "inputs": inputs,
-        "outputs": outputs,
-        "systems": systems,
-        "forms": forms,
-        "dependencies": dependencies,
-        "related_processes": related_processes,
-    }
 
 
 def extract_mermaid_code(content: str) -> str:
@@ -239,7 +72,23 @@ def extract_mermaid_code(content: str) -> str:
             "Ответ LLM не содержит валидный Mermaid (ожидается flowchart/graph/sequenceDiagram)",
             code="invalid_mermaid",
         )
-    return text
+    from app.services.mermaid_sanitize import sanitize_mermaid_code
+
+    return sanitize_mermaid_code(text)
+
+
+def _graph_is_empty(graph: ProcessGraphDTO) -> bool:
+    return not any(
+        [
+            graph.steps,
+            graph.actors,
+            graph.inputs,
+            graph.outputs,
+            graph.systems,
+            graph.forms,
+            graph.subprocesses,
+        ]
+    )
 
 
 class NdProcessUmlService:
@@ -247,100 +96,64 @@ class NdProcessUmlService:
         self,
         db: AsyncSession,
         *,
+        graph_builder: ProcessGraphBuilder | None = None,
         llm_chat: LLMChatFn | None = None,
         llm_model: str | None = None,
     ) -> None:
         self.db = db
+        self._graph_builder = graph_builder or ProcessGraphBuilder(db)
         self._llm_chat = llm_chat or llm_gateway.chat
         self._llm_model = llm_model or settings.ND_CONTROL_UML_MODEL or settings.ND_CONTROL_EXTRACTION_MODEL
 
-    async def get_process_uml(self, process_id: uuid.UUID) -> dict[str, Any]:
-        logger.info("nd_control.uml.start", process_id=str(process_id))
-        process = await self._load_process(process_id)
-        relations = await self._load_relations(process_id)
-        neighbor_processes = await self._load_one_hop_processes(process_id, relations)
-        content_version = compute_content_version(process, relations, list(neighbor_processes.values()))
+    async def get_process_uml(self, process_id: uuid.UUID, *, force: bool = False) -> dict[str, Any]:
+        logger.info("nd_control.uml.start", process_id=str(process_id), force=force)
+        try:
+            graph = await self._graph_builder.build_process_graph(str(process_id))
+        except ProcessGraphBuilderError as exc:
+            if exc.code == "process_not_found":
+                raise NdProcessUmlServiceError(str(exc), code=exc.code) from exc
+            raise NdProcessUmlServiceError(str(exc), code=exc.code) from exc
+
+        if _graph_is_empty(graph):
+            raise NdProcessUmlServiceError(
+                "Недостаточно связей или данных для построения диаграммы",
+                code="insufficient_data",
+            )
+
+        content_version = compute_content_version(graph)
         logger.info(
             "nd_control.uml.context_ready",
             process_id=str(process_id),
-            relations_count=len(relations),
-            neighbors_count=len(neighbor_processes),
+            steps_count=len(graph.steps),
+            subprocesses_count=len(graph.subprocesses),
             content_version=content_version,
         )
 
-        cached = await self._get_cache(process_id, content_version)
+        cached = None if force else await self._get_cache(process_id, content_version)
         if cached:
             logger.info("nd_control.uml.cache_hit", process_id=str(process_id), content_version=content_version)
+            from app.services.mermaid_sanitize import sanitize_mermaid_code
+
             return {
                 "process_id": process_id,
+                "process_name": graph.process_name,
                 "uml_type": cached.uml_type,
-                "uml_code": cached.uml_code,
+                "uml_code": sanitize_mermaid_code(cached.uml_code),
                 "cached": True,
             }
 
-        context = build_process_uml_context(process, relations, neighbor_processes)
+        context = process_graph_to_uml_context(graph)
         uml_code = await self._generate_mermaid(context)
         await self._save_cache(process_id, content_version, uml_code)
         await self.db.flush()
         logger.info("nd_control.uml.completed", process_id=str(process_id), content_version=content_version)
         return {
             "process_id": process_id,
+            "process_name": graph.process_name,
             "uml_type": UML_TYPE,
             "uml_code": uml_code,
             "cached": False,
         }
-
-    async def _load_process(self, process_id: uuid.UUID) -> ProcessCard:
-        process = await self.db.get(ProcessCard, process_id)
-        if not process:
-            raise NdProcessUmlServiceError("Процесс не найден", code="process_not_found")
-        return process
-
-    async def _load_relations(self, process_id: uuid.UUID) -> list[NdRelation]:
-        from sqlalchemy import or_
-
-        result = await self.db.execute(
-            select(NdRelation).where(
-                or_(
-                    (NdRelation.source_type == NdGraphEntityType.PROCESS) & (NdRelation.source_id == process_id),
-                    (NdRelation.target_type == NdGraphEntityType.PROCESS) & (NdRelation.target_id == process_id),
-                )
-            )
-        )
-        relations = list(result.scalars().all())
-        logger.info("nd_control.uml.relations_loaded", process_id=str(process_id), count=len(relations))
-        return relations
-
-    async def _load_one_hop_processes(
-        self,
-        process_id: uuid.UUID,
-        relations: list[NdRelation],
-    ) -> dict[uuid.UUID, ProcessCard]:
-        neighbor_ids: set[uuid.UUID] = set()
-        for relation in relations:
-            if relation.relation_type != NdRelationType.PROCESS_RELATED_TO_PROCESS:
-                continue
-            if (
-                relation.source_type == NdGraphEntityType.PROCESS
-                and relation.source_id
-                and relation.source_id != process_id
-            ):
-                neighbor_ids.add(relation.source_id)
-            if (
-                relation.target_type == NdGraphEntityType.PROCESS
-                and relation.target_id
-                and relation.target_id != process_id
-            ):
-                neighbor_ids.add(relation.target_id)
-
-        if not neighbor_ids:
-            logger.info("nd_control.uml.neighbors_loaded", process_id=str(process_id), count=0)
-            return {}
-
-        result = await self.db.execute(select(ProcessCard).where(ProcessCard.id.in_(neighbor_ids)))
-        neighbors = {item.id: item for item in result.scalars().all()}
-        logger.info("nd_control.uml.neighbors_loaded", process_id=str(process_id), count=len(neighbors))
-        return neighbors
 
     async def _get_cache(self, process_id: uuid.UUID, content_version: str) -> ProcessUmlCache | None:
         result = await self.db.execute(

@@ -305,6 +305,7 @@ class ConfirmProcessOwnerRequest(BaseModel):
 
 class ProcessUmlResponse(BaseModel):
     process_id: uuid.UUID
+    process_name: str
     uml_type: str = "mermaid_activity"
     uml_code: str
     cached: bool = False

@@ -28,3 +28,6 @@ HIGH_CONFIDENCE_THRESHOLD = 0.80
 MEDIUM_CONFIDENCE_THRESHOLD = 0.55
 # Максимальный объём текста для одного LLM-вызова (символы).
 ND_EXTRACTION_FULL_TEXT_MAX_CHARS = 120_000
+# Документы длиннее порога извлекаются по чанкам (избегаем ReadTimeout на одном вызове).
+ND_EXTRACTION_SINGLE_CALL_MAX_CHARS = 20_000
+ND_EXTRACTION_CHUNK_MAX_CHARS = 20_000

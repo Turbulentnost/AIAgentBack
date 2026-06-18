@@ -208,13 +208,43 @@ def _normalize_unknown_reason(value: Any) -> str:
     return NdUnknownReason.REQUIRES_HUMAN_CONFIRMATION.value
 
 
+_PARTICIPANT_KEYS = frozenset({"name", "role", "department", "date", "evidence"})
+_ACTION_KEYS = frozenset({
+    "action",
+    "performer",
+    "controller",
+    "deadline",
+    "system_or_resource",
+    "input",
+    "output",
+    "evidence",
+})
+
+
+def _normalize_participant(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"name": value.strip(), "role": None}
+    if not isinstance(value, dict):
+        return {"name": str(value), "role": None}
+    participant = dict(value)
+    if not participant.get("name"):
+        participant["name"] = (
+            participant.get("full_name")
+            or participant.get("employee")
+            or participant.get("person")
+            or participant.get("title")
+        )
+    if participant.get("position") and not participant.get("role"):
+        participant["role"] = participant.get("position")
+    if participant.get("position") and not participant.get("department"):
+        participant["department"] = participant.get("position")
+    return {key: participant[key] for key in _PARTICIPANT_KEYS if key in participant}
+
+
 def _normalize_participant_list(value: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for item in _ensure_list(value):
-        if isinstance(item, str):
-            items.append({"name": item, "role": None})
-        elif isinstance(item, dict):
-            items.append(item)
+        items.append(_normalize_participant(item))
     return items
 
 
@@ -232,11 +262,14 @@ def _normalize_action(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
         return {"action": value}
     if isinstance(value, dict):
-        if "action" not in value:
-            action_text = value.get("name") or value.get("description") or value.get("text")
+        action = dict(value)
+        if "action" not in action:
+            action_text = action.get("name") or action.get("description") or action.get("text")
             if action_text:
-                return {"action": str(action_text), **value}
-        return value
+                action["action"] = str(action_text)
+        if not action.get("action"):
+            action["action"] = "Действие"
+        return {key: action[key] for key in _ACTION_KEYS if key in action}
     return {"action": str(value)}
 
 
