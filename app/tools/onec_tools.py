@@ -535,11 +535,11 @@ register_tool(SendDesktopNotificationTool())
 class GetPorucheniyaInput(BaseModel):
     period_start: str | None = Field(
         default=None,
-        description="Начало периода (YYYY-MM-DD). По умолчанию — 90 дней до period_end",
+        description="Начало периода (YYYY-MM-DD). По умолчанию — вчера",
     )
     period_end: str | None = Field(
         default=None,
-        description="Конец периода (YYYY-MM-DD). По умолчанию — сегодня",
+        description="Конец периода (YYYY-MM-DD). По умолчанию — вчера",
     )
     limit: int = Field(
         default=500,
@@ -551,7 +551,8 @@ class GetPorucheniyaInput(BaseModel):
         default=None,
         description=(
             "ФИО руководителя поручения. По умолчанию определяется автоматически: "
-            "для роли «помощник ПСД» — Амураль Игорь Борисович, иначе full_name пользователя."
+            "для ролей «помощник ПСД» и «Помощник Председателя совета директоров» — "
+            "Амураль Игорь Борисович, иначе full_name пользователя."
         ),
     )
 
@@ -618,8 +619,9 @@ class GetPorucheniyaTool(Tool):
         "протоколы: Document_ТД_Протокол за период по дате документа, все задачи из "
         "InformationRegister_ТД_ЗадачиПротоколов. "
         "По умолчанию возвращает записи, где Руководитель совпадает с full_name пользователя; "
-        "для роли «помощник ПСД» — записи руководителя Амураль Игорь Борисович. "
-        "period_start/period_end — период YYYY-MM-DD; limit — максимум документов на источник. "
+        "для ролей «помощник ПСД» и «Помощник Председателя совета директоров» — "
+        "записи руководителя Амураль Игорь Борисович. "
+        "period_start/period_end — период YYYY-MM-DD (по умолчанию вчера); limit — максимум документов на источник. "
         "Нужны ONEC_ODATA_* в .env."
     )
     input_model = GetPorucheniyaInput

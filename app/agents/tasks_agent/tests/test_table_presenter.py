@@ -36,7 +36,7 @@ def test_build_porucheniya_tasks_table_matches_template_columns() -> None:
     assert row["task_text"] == "Обеспечить проведение совета директоров"
     assert row["assignee"] == "Ростовцева Анастасия Вадимовна"
     assert row["reviewer"] == "Ильченко Екатерина Александровна"
-    assert row["department"] == "Департамент цифровизации / Управление проектами"
+    assert row["department"] == "Управление проектами"
     assert row["due_date"] == "02.06.2026"
     assert row["status"] == "Просрочено"
     assert row["overdue_days"] == 16

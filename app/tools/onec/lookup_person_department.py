@@ -19,6 +19,15 @@ EMPTY = "00000000-0000-0000-0000-000000000000"
 EMPTY_DATE = "0001-01-01T00:00:00"
 
 
+def department_leaf_name(value: str | None) -> str:
+    """Возвращает последнее подразделение из иерархического пути «A / B / C»."""
+    text = (value or "").strip()
+    if not text or "/" not in text:
+        return text
+    parts = [part.strip() for part in text.split("/") if part.strip()]
+    return parts[-1] if parts else text
+
+
 def _normalize_text(value: str | None) -> str:
     value = (value or "").lower().replace("ё", "е")
     return " ".join("".join(ch if ch.isalnum() else " " for ch in value).split())
@@ -109,9 +118,9 @@ def _resolve_department_display(
         structure_name_index,
     )
     if enterprise_key:
-        return _structure_path(enterprise_key, structure)
+        return department_leaf_name(_structure_path(enterprise_key, structure))
     if dept_key in org_depts:
-        return (org_depts[dept_key].get("Description") or "").strip()
+        return department_leaf_name((org_depts[dept_key].get("Description") or "").strip())
     return ""
 
 

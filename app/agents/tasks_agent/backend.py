@@ -52,6 +52,8 @@ class TasksBackend:
             )
         except ToolExecutionError as exc:
             raise TasksBackendError(f"Не удалось загрузить поручения из 1С: {exc}") from exc
+        except Exception as exc:
+            raise TasksBackendError(f"Не удалось загрузить поручения из 1С: {exc}") from exc
         return payload
 
     async def _invoke(

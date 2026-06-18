@@ -1006,6 +1006,21 @@ def load_protocol_documents(
 load_protocol_task_items = load_protocol_documents
 
 
+def resolve_porucheniya_period(
+    period_start: date | str | None,
+    period_end: date | str | None,
+    *,
+    today: date | None = None,
+) -> tuple[date, date]:
+    """Период по умолчанию — вчерашняя дата (один календарный день)."""
+    yesterday = (today or date.today()) - timedelta(days=1)
+    if period_start is None and period_end is None:
+        return yesterday, yesterday
+    end = parse_input_date(period_end, default=yesterday)
+    start = parse_input_date(period_start, default=end)
+    return start, end
+
+
 def query_porucheniya(
     *,
     period_start: date | str | None = None,
@@ -1017,8 +1032,7 @@ def query_porucheniya(
     if limit < 1:
         raise ValueError("limit must be >= 1")
 
-    end = parse_input_date(period_end, default=date.today())
-    start = parse_input_date(period_start, default=end - timedelta(days=90))
+    start, end = resolve_porucheniya_period(period_start, period_end)
     if start > end:
         raise ValueError("period_start не может быть позже period_end")
 

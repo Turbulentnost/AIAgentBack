@@ -1,4 +1,16 @@
-from app.tools.onec.lookup_person_department import person_key_for_responsible
+from app.tools.onec.lookup_person_department import department_leaf_name, person_key_for_responsible
+
+
+def test_department_leaf_name_returns_last_segment() -> None:
+    path = (
+        "Председатель Совета Директоров / ОПЕРАЦИОННЫЙ ДИРЕКТОР / "
+        "Служба развития / Сектор по внедрению искусственного интеллекта"
+    )
+    assert department_leaf_name(path) == "Сектор по внедрению искусственного интеллекта"
+
+
+def test_department_leaf_name_keeps_plain_name() -> None:
+    assert department_leaf_name("Отдел качества") == "Отдел качества"
 
 
 def test_person_key_for_responsible_from_person_catalog() -> None:

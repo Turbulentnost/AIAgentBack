@@ -4,6 +4,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from app.tools.onec.lookup_person_department import department_leaf_name
+
 PORUCHENIYA_TASK_TABLE_COLUMNS: list[dict[str, str]] = [
     {"key": "document_number", "title": "№ протокола / решения / поручения"},
     {"key": "document_date", "title": "Дата"},
@@ -79,7 +81,7 @@ def build_porucheniya_task_row(
         "task_text": task.get("activity") or "",
         "assignee": task.get("responsible") or "",
         "reviewer": document.get("reviewer") or "",
-        "department": task.get("department") or document.get("department") or "",
+        "department": department_leaf_name(task.get("department") or document.get("department") or ""),
         "due_date": format_display_date(task.get("due_date")),
         "status": format_task_status(document.get("status"), overdue_days=overdue_days),
         "artifact": task.get("has_file") or "",

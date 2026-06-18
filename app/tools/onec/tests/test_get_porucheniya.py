@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from app.tools.onec.get_porucheniya import (
     build_document_period_filter,
@@ -11,12 +11,24 @@ from app.tools.onec.get_porucheniya import (
     group_porucheniya_documents,
     group_protocol_documents,
     parse_input_date,
+    resolve_porucheniya_period,
     row_has_file,
 )
 
 
 def test_parse_input_date_accepts_iso_string() -> None:
     assert parse_input_date("2026-03-01") == parse_input_date("2026-03-01T12:00:00")
+
+
+def test_resolve_porucheniya_period_defaults_to_yesterday() -> None:
+    today = date(2026, 6, 18)
+    start, end = resolve_porucheniya_period(None, None, today=today)
+    assert start == end == date(2026, 6, 17)
+
+
+def test_resolve_porucheniya_period_single_end_date() -> None:
+    start, end = resolve_porucheniya_period(None, "2026-05-20", today=date(2026, 6, 18))
+    assert start == end == date(2026, 5, 20)
 
 
 def test_compute_priority_marks_due_today_as_high() -> None:

@@ -13,8 +13,10 @@ EMPLOYEE_ROLE_CODE = "employee"
 
 
 async def user_has_admin_role(db: AsyncSession, user: User) -> bool:
-    if user.role is not None and user.role.code == "admin":
-        return True
+    if user.role_id is not None:
+        primary_code = await db.scalar(select(Role.code).where(Role.id == user.role_id))
+        if primary_code == "admin":
+            return True
     from app.models.user import Role as RoleModel, user_roles
 
     result = await db.execute(
