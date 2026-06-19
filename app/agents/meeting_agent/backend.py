@@ -474,7 +474,7 @@ def _preferred_from_memo(memo: MeetingMemo | dict[str, Any] | None) -> str | Non
     header = document.get("header") or {}
     memo_fields = document.get("memo") or {}
     for source in (header, memo_fields):
-        for key in ("ДатаСовещания", "PlannedStart", "НачалоСовещания", "Date"):
+        for key in ("ДатаСовещания", "PlannedStart", "НачалоСовещания", "ВремяНачалаСовещания", "Date"):
             value = source.get(key)
             if isinstance(value, str) and value.strip():
                 return _normalize_datetime_string(value.strip())

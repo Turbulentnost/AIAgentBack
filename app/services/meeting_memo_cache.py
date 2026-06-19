@@ -9,7 +9,7 @@ from app.agents.meeting_agent.memo_presenter import build_memo_detail
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
-from app.tools.onec.connection import CONFIG, create_session
+from app.services.meeting_attendees import attendee_fio_from_detail
 
 logger = get_logger(__name__)
 
@@ -65,8 +65,18 @@ def find_dashboard_item(payload: dict[str, Any], ref_key: str) -> dict[str, Any]
 
 
 def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Сводный detail из карточки dashboard (без участников и полной шапки 1С)."""
+    """Сводный detail из карточки dashboard (без полной шапки 1С)."""
     queue = dict(item)
+    participant_names = [
+        name.strip()
+        for name in (item.get("participant_names") or [])
+        if isinstance(name, str) and name.strip()
+    ]
+    participants = [
+        {"full_name": name, "ref_key": None, "department": None}
+        for name in participant_names
+    ]
+    participants_count = max(item.get("participants_count") or 0, len(participants))
     return {
         "ref_key": item.get("ref_key"),
         "number": item.get("number"),
@@ -77,8 +87,8 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
         "application": {
             "initiator": None,
             "manager": None,
-            "participants": [],
-            "participants_count": item.get("participants_count") or 0,
+            "participants": participants,
+            "participants_count": participants_count,
             "agenda": item.get("subject") or item.get("title"),
             "scheduled_label": item.get("scheduled_label"),
             "document_date": item.get("document_date"),
@@ -100,13 +110,15 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
 def detail_to_memo_document(detail: dict[str, Any]) -> dict[str, Any]:
     """Преобразует кэшированный detail в структуру документа для MeetingBackend."""
     app = detail.get("application") or {}
-    participants: list[dict[str, str]] = []
-    for participant in app.get("participants") or []:
-        if not isinstance(participant, dict):
-            continue
-        name = participant.get("full_name") or participant.get("ФИО") or participant.get("Description")
-        if isinstance(name, str) and name.strip():
-            participants.append({"ФИО": name.strip()})
+    queue = dict(detail.get("queue") or {})
+    if app.get("meeting_start"):
+        queue["ВремяНачалаСовещания"] = app.get("meeting_start")
+    if app.get("meeting_end"):
+        queue["ВремяОкончанияСовещания"] = app.get("meeting_end")
+    if queue.get("desired_meeting_date"):
+        queue["ЖелаемаяДатаПроведенияСовещания"] = queue.get("desired_meeting_date")
+
+    participants = [{"ФИО": name} for name in attendee_fio_from_detail(detail)]
     return {
         "memo": {
             "Ref_Key": detail.get("ref_key"),
@@ -117,7 +129,7 @@ def detail_to_memo_document(detail: dict[str, Any]) -> dict[str, Any]:
             "ВремяОкончанияСовещания": app.get("meeting_end"),
             "Комментарий": detail.get("title") or app.get("agenda"),
         },
-        "header": detail.get("queue") or {},
+        "header": queue,
         "participants": participants,
     }
 

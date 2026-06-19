@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,13 +14,21 @@ from app.agents.meeting_agent.backend import (
     MeetingMemo,
     MeetingRoomOption,
     MeetingSlot,
+    ResolvedParticipant,
+    _duration_from_memo,
+    _normalize_memo,
 )
 from app.agents.meeting_agent.config import AGENT_NAME
 from app.models.agent import Agent
 from app.models.enums import TaskStatus
-from app.models.task import Task, TaskResult
+from app.models.task import Task
 from app.models.user import User
 from app.schemas.meeting import (
+    MeetingAgentSlotApproveRead,
+    MeetingAgentSlotApproveRequest,
+    MeetingAgentSlotPreviewRead,
+    MeetingAgentSlotPreviewRequest,
+    MeetingAttendeeRead,
     MeetingInviteDraftRead,
     MeetingInvitePreviewRequest,
     MeetingInviteSendRequest,
@@ -34,9 +43,23 @@ from app.schemas.meeting import (
 )
 from app.schemas.task import TaskResultCreate
 from app.services.audit_service import AuditService
+from app.services.meeting_agent_approve import (
+    ATTENDEE_ROLE_LABELS,
+    MeetingApproveError,
+    build_approve_invite_body,
+    resolve_approve_recipients,
+)
+from app.services.meeting_attendees import collect_attendees_from_detail, emails_by_fio_from_detail
+from app.services.meeting_memo_cache import (
+    MeetingMemoCacheService,
+    MemoCacheMissError,
+    detail_to_memo_document,
+)
 from app.services.meeting_permission import MEETING_AGENT_SLUG, can_access_meeting_agent
+from app.services.meeting_slot import format_slot_label, slot_duration_minutes
 from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
+from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
 
 
 class MeetingServiceError(ValueError):
@@ -96,6 +119,192 @@ class MeetingService:
         except MeetingBackendError as exc:
             raise MeetingServiceError(str(exc)) from exc
         return [_slot_read(item) for item in slots]
+
+    async def _resolve_memo_attendees(
+        self,
+        detail: dict,
+        *,
+        backend: MeetingBackend,
+        current_user: User,
+    ) -> tuple[MeetingMemo, list[ResolvedParticipant], list[MeetingAttendeeRead], list[str]]:
+        attendee_specs = collect_attendees_from_detail(detail)
+        if not attendee_specs:
+            raise MeetingServiceError(
+                "В заявке нет участников, инициатора или руководителя для отправки приглашений"
+            )
+
+        memo = _normalize_memo(detail_to_memo_document(detail))
+        cached_emails = emails_by_fio_from_detail(detail)
+        need_lookup = [fio for fio, _role in attendee_specs if fio not in cached_emails]
+        resolved_lookup = (
+            await backend.resolve_participants(need_lookup, current_user=current_user)
+            if need_lookup
+            else []
+        )
+        resolved_by_fio = {item.fio: item for item in resolved_lookup}
+
+        attendees: list[MeetingAttendeeRead] = []
+        missing_emails: list[str] = []
+        resolved: list[ResolvedParticipant] = []
+        for fio, role in attendee_specs:
+            cached_email = cached_emails.get(fio)
+            match = resolved_by_fio.get(fio)
+            email = cached_email or (match.email if match else None)
+            found = bool(email)
+            if not found:
+                missing_emails.append(fio)
+            else:
+                resolved.append(ResolvedParticipant(fio=fio, email=email, found=True))
+            attendees.append(
+                MeetingAttendeeRead(
+                    fio=fio,
+                    email=email,
+                    role=role,
+                    role_label=ATTENDEE_ROLE_LABELS.get(role, role),
+                    found=found,
+                )
+            )
+        return memo, resolved, attendees, missing_emails
+
+    async def suggest_agent_slot(
+        self,
+        memo_ref_key: str,
+        payload: MeetingAgentSlotPreviewRequest,
+        *,
+        current_user: User,
+    ) -> MeetingAgentSlotPreviewRead:
+        """Ближайший слот для модалки «Запустить агента»: участники + инициатор + руководитель."""
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        try:
+            detail, _fetched_at, _from_cache = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
+        except MemoCacheMissError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+
+        backend = self._backend()
+        memo, resolved, attendees, missing_emails = await self._resolve_memo_attendees(
+            detail,
+            backend=backend,
+            current_user=current_user,
+        )
+
+        application = detail.get("application") or {}
+        duration = payload.duration_minutes or application.get("duration_minutes") or _duration_from_memo(memo)
+        planned_start = application.get("meeting_start")
+        if isinstance(planned_start, str):
+            planned_start = planned_start.replace("T", " ")[:16]
+
+        if missing_emails:
+            return MeetingAgentSlotPreviewRead(
+                memo_ref_key=normalized_ref,
+                duration_minutes=duration,
+                attendees=attendees,
+                missing_emails=missing_emails,
+                error="Не найден корпоративный e-mail: " + ", ".join(missing_emails),
+            )
+
+        try:
+            slots = await backend.find_slots(
+                memo=memo,
+                participants=resolved,
+                planned_start=planned_start,
+                duration_minutes=duration,
+                current_user=current_user,
+            )
+        except MeetingBackendError as exc:
+            return MeetingAgentSlotPreviewRead(
+                memo_ref_key=normalized_ref,
+                duration_minutes=duration,
+                attendees=attendees,
+                missing_emails=missing_emails,
+                error=str(exc),
+            )
+
+        if not slots:
+            return MeetingAgentSlotPreviewRead(
+                memo_ref_key=normalized_ref,
+                duration_minutes=duration,
+                attendees=attendees,
+                missing_emails=missing_emails,
+                error="Свободный слот не найден в заданном окне поиска",
+            )
+
+        slot = _slot_read(slots[0])
+        return MeetingAgentSlotPreviewRead(
+            memo_ref_key=normalized_ref,
+            slot=slot,
+            slot_label=format_slot_label(slot.start, slot.end),
+            duration_minutes=duration,
+            attendees=attendees,
+            missing_emails=missing_emails,
+        )
+
+    async def approve_agent_slot(
+        self,
+        memo_ref_key: str,
+        payload: MeetingAgentSlotApproveRequest,
+        *,
+        current_user: User,
+    ) -> MeetingAgentSlotApproveRead:
+        """Отправляет приглашения через Outlook/EWS. Без 1С: только e-mail и слот из запроса."""
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+
+        try:
+            attendee_details, resolved = resolve_approve_recipients(payload)
+        except MeetingApproveError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+
+        emails = [item.email for item in resolved if item.email]
+        if not emails:
+            raise MeetingServiceError("Не указаны e-mail участников для отправки приглашения")
+
+        subject = (payload.subject or "").strip() or "Совещание"
+        location = (payload.location or "").strip()
+        duration = slot_duration_minutes(payload.slot_start, payload.slot_end)
+        body = build_approve_invite_body(subject)
+
+        try:
+            sent_payload = await asyncio.to_thread(
+                dispatch_meeting_invite,
+                attendee=emails[0],
+                attendees=emails,
+                subject=subject,
+                start=payload.slot_start,
+                duration_minutes=duration,
+                body=body,
+                location=location,
+                resources=[],
+            )
+        except Exception as exc:
+            raise MeetingServiceError(
+                f"Не удалось отправить приглашение через Outlook/Exchange: {exc}"
+            ) from exc
+
+        await self.audit.log(
+            action="meeting.agent_slot_approved",
+            actor_id=current_user.id,
+            resource_type="meeting_memo",
+            resource_id=normalized_ref,
+            payload={
+                "subject": subject,
+                "start": payload.slot_start,
+                "end": payload.slot_end,
+                "attendees": emails,
+            },
+        )
+
+        return MeetingAgentSlotApproveRead(
+            memo_ref_key=normalized_ref,
+            subject=subject,
+            start=payload.slot_start,
+            end=payload.slot_end,
+            slot_label=format_slot_label(payload.slot_start, payload.slot_end),
+            location=location or None,
+            attendees=sent_payload.get("attendees") or emails,
+            attendee_details=attendee_details,
+            sent=True,
+        )
 
     async def find_rooms(
         self,
@@ -268,7 +477,7 @@ class MeetingService:
             raise MeetingServiceError("Инициатор задачи не найден")
 
         task.status = TaskStatus.RUNNING
-        task.started_at = datetime.now(timezone.utc)
+        task.started_at = datetime.now(UTC)
         task.error_message = None
         await self.db.flush()
 
@@ -285,7 +494,7 @@ class MeetingService:
             )
             task.requires_human_review = result.requires_human_review
             task.final_result = dumped
-            task.finished_at = datetime.now(timezone.utc)
+            task.finished_at = datetime.now(UTC)
 
             await TaskService(self.db).save_result(
                 task,
@@ -316,7 +525,7 @@ class MeetingService:
         except Exception as exc:  # noqa: BLE001
             task.status = TaskStatus.FAILED
             task.error_message = str(exc)
-            task.finished_at = datetime.now(timezone.utc)
+            task.finished_at = datetime.now(UTC)
             await self.audit.log(
                 action="meeting.run_failed",
                 actor_id=user.id,

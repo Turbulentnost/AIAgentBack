@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class MeetingDashboardItem(BaseModel):
@@ -21,6 +21,7 @@ class MeetingDashboardItem(BaseModel):
     meeting_start: str | None = None
     meeting_end: str | None = None
     participants_count: int = 0
+    participant_names: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     location: str | None = None
     comment: str | None = None
@@ -169,6 +170,57 @@ class MeetingSlotsRequest(BaseModel):
     participant_fio: list[str] = Field(default_factory=list)
     planned_start: datetime | None = None
     duration_minutes: int | None = Field(default=None, ge=15, le=480)
+
+
+class MeetingAgentSlotPreviewRequest(BaseModel):
+    duration_minutes: int | None = Field(default=None, ge=15, le=480)
+
+
+class MeetingAttendeeRead(BaseModel):
+    fio: str
+    email: str | None = None
+    role: str
+    role_label: str
+    found: bool = False
+
+
+class MeetingAgentSlotPreviewRead(BaseModel):
+    memo_ref_key: str
+    slot: MeetingSlotRead | None = None
+    slot_label: str | None = None
+    duration_minutes: int | None = None
+    attendees: list[MeetingAttendeeRead] = Field(default_factory=list)
+    missing_emails: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class MeetingAgentSlotApproveRequest(BaseModel):
+    slot_start: str
+    slot_end: str
+    attendees: list[MeetingAttendeeRead] | None = None
+    attendee_emails: list[str] | None = None
+    subject: str | None = None
+    location: str | None = None
+
+    @model_validator(mode="after")
+    def require_recipients(self) -> MeetingAgentSlotApproveRequest:
+        if not self.attendees and not self.attendee_emails:
+            raise ValueError(
+                "Укажите attendees из ответа slot-preview или список attendee_emails"
+            )
+        return self
+
+
+class MeetingAgentSlotApproveRead(BaseModel):
+    memo_ref_key: str
+    subject: str
+    start: str
+    end: str
+    slot_label: str | None = None
+    location: str | None = None
+    attendees: list[str] = Field(default_factory=list)
+    attendee_details: list[MeetingAttendeeRead] = Field(default_factory=list)
+    sent: bool = True
 
 
 class MeetingRoomsRequest(BaseModel):

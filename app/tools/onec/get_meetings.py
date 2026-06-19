@@ -131,8 +131,6 @@ def build_filter_candidates(theme_key: str | None) -> list[str]:
         f"ТемаСлужебнойЗаписки eq '{safe_theme}'",
         f"contains(ТемаСлужебнойЗаписки, '{safe_theme}')",
     ]
-    if theme_key:
-        filters.insert(0, f"ТемаСлужебнойЗаписки_Key eq guid'{theme_key}'")
     posted = "Posted eq true and DeletionMark eq false"
     return [f"({item}) and {posted}" for item in filters]
 
@@ -179,12 +177,17 @@ def theme_matches(row: dict[str, Any], theme_key: str | None) -> bool:
     return False
 
 
-def build_meeting_theme_text_filter(*, posted: bool = True) -> str:
+def build_meeting_theme_odata_filter(*, theme_key: str | None = None, posted: bool = True) -> str:
     theme = meeting_theme().replace("'", "''")
-    clauses = [f"ТемаСлужебнойЗаписки eq '{theme}'", "DeletionMark eq false"]
+    theme_clause = f"ТемаСлужебнойЗаписки eq '{theme}'"
+    clauses = [theme_clause, "DeletionMark eq false"]
     if posted:
         clauses.append("Posted eq true")
     return " and ".join(clauses)
+
+
+def build_meeting_theme_text_filter(*, posted: bool = True) -> str:
+    return build_meeting_theme_odata_filter(theme_key=None, posted=posted)
 
 
 def fetch_meeting_memo_rows(
@@ -217,9 +220,9 @@ def fetch_meeting_memo_rows(
         text_rows = []
 
     broad_rows: list[dict[str, Any]] = []
-    if not text_rows:
+    broad_error: RuntimeError | None = None
+    if theme_key or not text_rows:
         broad_filter = f"Posted eq true and DeletionMark eq false and ({extra_filter})"
-        broad_error: RuntimeError | None = None
         try:
             broad_rows = fetch_documents_by_filter(
                 session,
@@ -231,8 +234,6 @@ def fetch_meeting_memo_rows(
         except RuntimeError as exc:
             broad_error = exc
             broad_rows = []
-    else:
-        broad_error = None
 
     by_ref: dict[str, dict[str, Any]] = {}
     for row in text_rows:

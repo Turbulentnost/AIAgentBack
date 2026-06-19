@@ -59,10 +59,10 @@ class MeetingDashboardCacheService:
     """Кэш dashboard СЗ в Redis.
 
     1С вызывается только если:
-      1. нет кэша за сегодня (первый запрос);
+      1. нет кэша за сегодня (первый GET /meetings/dashboard);
       2. Celery-прогрев в 10:00 и 15:00;
-      3. POST /meetings/dashboard/refresh (force_refresh).
-    Все остальные GET /meetings/dashboard — только Redis.
+      3. POST /meetings/dashboard/refresh (кнопка «Обновить»).
+    GET /meetings/dashboard — только Redis (не путать с F5 и не использовать для принудительного refresh).
     """
 
     async def get_dashboard(

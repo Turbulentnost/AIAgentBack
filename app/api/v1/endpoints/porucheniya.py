@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Body, HTTPException, Query, status
 
 from app.agents.tasks_agent.config import DEFAULT_PORUCHENIYA_LIMIT
 from app.api.deps import CurrentUser, DbSession
@@ -55,9 +55,9 @@ async def get_tasks_dashboard(
 
 @router.post("/dashboard/refresh", response_model=TasksDashboardRead)
 async def refresh_tasks_dashboard(
-    body: TasksDashboardRefreshRequest,
     db: DbSession,
     current_user: CurrentUser,
+    body: TasksDashboardRefreshRequest = Body(default_factory=TasksDashboardRefreshRequest),
 ) -> TasksDashboardRead:
     await _require_agent_access(db, current_user)
     try:

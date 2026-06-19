@@ -102,12 +102,14 @@ def test_build_detail_from_dashboard_item_uses_queue_fields() -> None:
         "status": "НеСогласована",
         "status_label": "Не согласована",
         "participants_count": 2,
+        "participant_names": ["Иванов Иван Иванович", "Петров Петр Петрович"],
         "warnings": ["Нет времени"],
     }
     detail = build_detail_from_dashboard_item(item)
     assert detail["ref_key"] == item["ref_key"]
     assert detail["queue"]["number"] == "0001"
     assert detail["application"]["participants_count"] == 2
+    assert detail["application"]["participants"][0]["full_name"] == "Иванов Иван Иванович"
     assert detail["warnings"] == ["Нет времени"]
 
 

@@ -94,16 +94,37 @@ def resolve_attendee(address: str) -> Attendee:
 
 
 def parse_start(value: str, tz_name: str) -> datetime:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("Пустая дата начала совещания")
+
+    iso_candidate = normalized.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(iso_candidate)
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(ZoneInfo(tz_name))
+        return parsed.replace(tzinfo=ZoneInfo(tz_name))
+    except ValueError:
+        pass
+
     tz = ZoneInfo(tz_name)
-    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%d.%m.%Y %H:%M"):
+    for fmt in (
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%d.%m.%Y %H:%M",
+        "%d.%m.%Y %H:%M:%S",
+    ):
         try:
-            naive = datetime.strptime(value, fmt)
+            naive = datetime.strptime(normalized, fmt)
             return naive.replace(tzinfo=tz)
         except ValueError:
             continue
     raise ValueError(
         f"Не удалось разобрать дату «{value}». "
-        "Форматы: YYYY-MM-DD HH:MM, YYYY-MM-DDTHH:MM, DD.MM.YYYY HH:MM"
+        "Форматы: ISO 8601 (2026-06-22T08:00:00+03:00), YYYY-MM-DD HH:MM, "
+        "YYYY-MM-DDTHH:MM, DD.MM.YYYY HH:MM"
     )
 
 

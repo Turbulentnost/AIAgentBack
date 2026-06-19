@@ -7,7 +7,12 @@ from urllib.parse import quote
 import requests
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.meeting_agent.memo_presenter import build_queue_item_from_row
+from app.agents.meeting_agent.memo_presenter import (
+    ROOM_CATALOG,
+    build_queue_item_from_row,
+    collect_location_keys,
+    load_catalog_descriptions,
+)
 from app.core.logging import get_logger
 from app.models.user import User
 from app.schemas.meeting import MeetingDashboardItem, MeetingLoginContext
@@ -77,8 +82,12 @@ def _clean_odata_value(value: str | None) -> str | None:
     return normalized
 
 
-def summarize_meeting_memo(row: dict[str, Any]) -> dict[str, Any]:
-    return build_queue_item_from_row(row)
+def summarize_meeting_memo(
+    row: dict[str, Any],
+    *,
+    location_labels: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    return build_queue_item_from_row(row, location_labels=location_labels)
 
 
 def _fetch_rows(
@@ -141,8 +150,21 @@ def get_meeting_dashboard(
         metadata=metadata,
     )
 
-    unapproved = [summarize_meeting_memo(row) for row in unapproved_rows]
-    today = [summarize_meeting_memo(row) for row in today_rows if is_memo_document_date_on_date(row, day)]
+    location_labels = load_catalog_descriptions(
+        session,
+        config,
+        ROOM_CATALOG,
+        collect_location_keys(unapproved_rows + today_rows),
+    )
+    unapproved = [
+        build_queue_item_from_row(row, location_labels=location_labels, session=session, config=config)
+        for row in unapproved_rows
+    ]
+    today = [
+        build_queue_item_from_row(row, location_labels=location_labels, session=session, config=config)
+        for row in today_rows
+        if is_memo_document_date_on_date(row, day)
+    ]
 
     return {
         "date": day.isoformat(),

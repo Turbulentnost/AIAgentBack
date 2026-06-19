@@ -8,6 +8,10 @@ from app.agents.meeting_agent.dashboard import load_login_context
 from app.services.meeting_memo_cache import MeetingMemoCacheService, MemoCacheMissError
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.meeting import (
+    MeetingAgentSlotApproveRead,
+    MeetingAgentSlotApproveRequest,
+    MeetingAgentSlotPreviewRead,
+    MeetingAgentSlotPreviewRequest,
     MeetingInviteDraftRead,
     MeetingInvitePreviewRequest,
     MeetingInviteSendRequest,
@@ -32,6 +36,22 @@ from app.services.meeting_service import MeetingService, MeetingServiceError
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 
+async def _load_dashboard_context(
+    db: DbSession,
+    current_user: CurrentUser,
+    *,
+    force_refresh: bool,
+) -> MeetingLoginContext:
+    await _require_agent_access(db, current_user)
+    context = await load_login_context(db, current_user, force_refresh=force_refresh)
+    if context is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось загрузить данные dashboard",
+        )
+    return context
+
+
 async def _require_agent_access(db: DbSession, user: CurrentUser) -> None:
     if not await can_access_meeting_agent(db, user):
         raise HTTPException(
@@ -54,26 +74,14 @@ async def meeting_permissions(db: DbSession, current_user: CurrentUser) -> Meeti
 
 @router.get("/dashboard", response_model=MeetingLoginContext)
 async def get_meetings_dashboard(db: DbSession, current_user: CurrentUser) -> MeetingLoginContext:
-    await _require_agent_access(db, current_user)
-    context = await load_login_context(db, current_user)
-    if context is None:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Не удалось загрузить данные dashboard",
-        )
-    return context
+    """Загрузка очереди: Redis-кэш (или 1С, если кэша ещё нет). Не обновляет данные из 1С принудительно."""
+    return await _load_dashboard_context(db, current_user, force_refresh=False)
 
 
 @router.post("/dashboard/refresh", response_model=MeetingLoginContext)
 async def refresh_meetings_dashboard(db: DbSession, current_user: CurrentUser) -> MeetingLoginContext:
-    await _require_agent_access(db, current_user)
-    context = await load_login_context(db, current_user, force_refresh=True)
-    if context is None:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Не удалось загрузить данные dashboard",
-        )
-    return context
+    """Принудительное обновление из 1С — только для кнопки «Обновить», не для F5/перезагрузки страницы."""
+    return await _load_dashboard_context(db, current_user, force_refresh=True)
 
 
 @router.get("/memos/{memo_ref_key}", response_model=MeetingMemoRead)
@@ -111,6 +119,47 @@ async def get_meeting_memo_detail(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/memos/{memo_ref_key}/agent/slot-preview", response_model=MeetingAgentSlotPreviewRead)
+async def preview_meeting_agent_slot(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingAgentSlotPreviewRequest | None = None,
+) -> MeetingAgentSlotPreviewRead:
+    """Ближайший свободный слот для модалки «Запустить агента» (участники + инициатор + руководитель)."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await MeetingService(db).suggest_agent_slot(
+            str(memo_ref_key),
+            payload or MeetingAgentSlotPreviewRequest(),
+            current_user=current_user,
+        )
+    except MeetingServiceError as exc:
+        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+
+
+@router.post("/memos/{memo_ref_key}/agent/approve", response_model=MeetingAgentSlotApproveRead)
+async def approve_meeting_agent_slot(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingAgentSlotApproveRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingAgentSlotApproveRead:
+    """Утвердить слот и разослать приглашения через Outlook/EWS (без запросов в 1С)."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).approve_agent_slot(
+            str(memo_ref_key),
+            payload,
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
 
 
 @router.post("/slots", response_model=list[MeetingSlotRead])
