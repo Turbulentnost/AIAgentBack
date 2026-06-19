@@ -36,7 +36,7 @@ def _is_protocol_task(task: dict[str, Any]) -> bool:
 def derive_task_status(
     task: dict[str, Any],
     *,
-    overdue_days: int | None,
+    overdue_days: int,
     document_status: str | None = None,
 ) -> str:
     """Статус строки задачи (не документа-основания)."""
@@ -45,7 +45,7 @@ def derive_task_status(
             return "Подтверждена"
         if task.get("completed"):
             return "Выполнена"
-        if overdue_days is not None:
+        if overdue_days > 0:
             return "Просрочено"
         if task.get("sent"):
             return "Отправлена"
@@ -53,7 +53,7 @@ def derive_task_status(
 
     if document_status == "Отменено":
         return "Отменено"
-    if overdue_days is not None:
+    if overdue_days > 0:
         return "Просрочено"
     return "На исполнении"
 
@@ -73,15 +73,15 @@ def format_display_date(value: str | date | datetime | None) -> str:
     return parsed.strftime("%d.%m.%Y")
 
 
-def compute_overdue_days(due_date: str | None, *, now: datetime) -> int | None:
+def compute_overdue_days(due_date: str | None, *, now: datetime) -> int:
     if not due_date:
-        return None
+        return 0
     normalized = str(due_date).strip()
     if not normalized or normalized.startswith("0001-01-01"):
-        return None
+        return 0
     parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00")[:19])
     delta = (now.date() - parsed.date()).days
-    return delta if delta > 0 else None
+    return delta if delta > 0 else 0
 
 
 def build_porucheniya_task_row(
@@ -107,7 +107,7 @@ def build_porucheniya_task_row(
             document_status=document.get("status"),
         ),
         "artifact": task.get("has_file") or "",
-        "overdue_days": overdue_days if overdue_days is not None else "",
+        "overdue_days": overdue_days,
         "overdue_reason": task.get("overdue_reason") or "",
         "postponement_request": task.get("postponement_request") or "",
         "postponement_basis": task.get("postponement_basis") or "",

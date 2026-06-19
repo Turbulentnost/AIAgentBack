@@ -5,9 +5,9 @@ from app.agents.tasks_agent.table_presenter import build_porucheniya_tasks_table
 
 def test_derive_task_status_for_protocol_task() -> None:
     task = {"item_type": "protocol_task", "completed": False, "confirmed": False, "sent": False}
-    assert derive_task_status(task, overdue_days=None) == "На исполнении"
+    assert derive_task_status(task, overdue_days=0) == "На исполнении"
     assert derive_task_status(task, overdue_days=3) == "Просрочено"
-    assert derive_task_status({**task, "sent": True}, overdue_days=None) == "Отправлена"
+    assert derive_task_status({**task, "sent": True}, overdue_days=0) == "Отправлена"
     assert derive_task_status({**task, "completed": True}, overdue_days=3) == "Выполнена"
     assert derive_task_status({**task, "completed": True, "confirmed": True}, overdue_days=3) == "Подтверждена"
 
