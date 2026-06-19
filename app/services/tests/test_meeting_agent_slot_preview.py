@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.agents.meeting_agent.backend import MeetingSlot, ResolvedParticipant
+from app.agents.meeting_agent.backend import MeetingBackendError, MeetingSlot, ResolvedParticipant
 from app.schemas.meeting import (
     MeetingAgentSlotApproveRequest,
     MeetingAgentSlotPreviewRequest,
@@ -126,6 +126,36 @@ async def test_suggest_agent_slot_uses_cached_emails_without_onec_lookup(user) -
     assert result.slot is not None
     backend.resolve_participants.assert_not_called()
     backend.find_slots.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_suggest_agent_slot_reports_resolve_errors(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    detail = {
+        "ref_key": "abc",
+        "queue": {},
+        "application": {
+            "initiator": {"full_name": "A"},
+            "participants": [],
+        },
+    }
+    backend = AsyncMock()
+    backend.resolve_participants = AsyncMock(
+        side_effect=MeetingBackendError("Не удалось найти e-mail участников: Exchange timeout")
+    )
+    service._backend = lambda: backend
+
+    with patch(
+        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
+        AsyncMock(return_value=(detail, None, True)),
+    ):
+        result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
+
+    assert result.slot is None
+    assert "e-mail" in (result.error or "").lower()
 
 
 @pytest.mark.asyncio

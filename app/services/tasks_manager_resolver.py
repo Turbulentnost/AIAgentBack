@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Role, User, user_roles
+from app.tools.onec.lookup_user_ref import normalize_lookup_fio
 
 PSD_ASSISTANT_ROLE_CODE = "psd_assistant"
 PSD_ASSISTANT_ROLE_NAME = "помощник ПСД"
@@ -111,7 +112,7 @@ async def resolve_porucheniya_manager_fio(
     if delegated:
         return delegated
 
-    full_name = (user.full_name or "").strip()
+    full_name = normalize_lookup_fio(user.full_name)
     if full_name:
         return full_name, "user_full_name"
 

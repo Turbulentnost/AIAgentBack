@@ -30,6 +30,7 @@ from app.agents.nd_control_agent.prompts.nd_document_extraction_prompt import (
 )
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.llm.errors import format_llm_call_error
 from app.llm.gateway import llm_gateway
 from app.models.enums import (
     ConfidenceLevel,
@@ -281,13 +282,9 @@ class NdDocumentCardExtractionService:
                 if attempt == 0 and is_timeout:
                     logger.warning("nd_control.extraction.llm_timeout_retry", error=detail)
                     continue
-                raise NdDocumentCardExtractionServiceError(
-                    f"Ошибка вызова LLM ({type(exc).__name__}): {detail}"
-                ) from exc
+                raise NdDocumentCardExtractionServiceError(format_llm_call_error(exc)) from exc
         else:
-            raise NdDocumentCardExtractionServiceError(
-                f"Ошибка вызова LLM ({type(last_exc).__name__}): {last_exc}"
-            ) from last_exc
+            raise NdDocumentCardExtractionServiceError(format_llm_call_error(last_exc)) from last_exc
 
         choice = (response.get("choices") or [{}])[0]
         message = choice.get("message") or {}

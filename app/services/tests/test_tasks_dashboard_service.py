@@ -5,7 +5,31 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.agents.tasks_agent.backend import TasksBackendError
 from app.services.tasks_dashboard_service import TasksDashboardService
+
+
+@pytest.mark.asyncio
+async def test_load_dashboard_returns_empty_state_when_manager_missing_in_onec() -> None:
+    user = AsyncMock()
+    service = TasksDashboardService(db=AsyncMock())
+
+    with patch(
+        "app.services.tasks_dashboard_service.resolve_porucheniya_manager_fio",
+        AsyncMock(return_value=("Иванов Иван Иванович", "user_full_name")),
+    ):
+        with patch(
+            "app.services.tasks_dashboard_service.TasksBackend.load_porucheniya",
+            AsyncMock(
+                side_effect=TasksBackendError('Пользователь не найден: «Иванов Иван Иванович»')
+            ),
+        ):
+            result = await service.load_dashboard(user)
+
+    assert result.error
+    assert "Иванов Иван Иванович" in result.error
+    assert result.tasks_table.row_count == 0
+    assert result.counts.total_tasks == 0
 
 
 @pytest.mark.asyncio

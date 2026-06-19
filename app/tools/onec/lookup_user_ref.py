@@ -22,6 +22,11 @@ def normalize_name(value: str | None) -> str:
     return " ".join("".join(ch if ch.isalnum() else " " for ch in value).split())
 
 
+def normalize_lookup_fio(value: str | None) -> str:
+    """Нормализация ФИО перед поиском в 1С (лишние пробелы, точка в конце)."""
+    return " ".join((value or "").split()).strip(" .")
+
+
 def is_empty_key(value: str | None) -> bool:
     return not value or value == EMPTY
 
@@ -129,6 +134,7 @@ def resolve_user_by_fio(
     config: ODataConfig = CONFIG,
 ) -> tuple[str, str, list[dict[str, Any]]]:
     """Возвращает (user_ref, resolved_fio, matched_users)."""
+    fio = normalize_lookup_fio(fio)
     users = search_users_by_fio(session, fio, config=config)
     if not users:
         raise ValueError(f"Пользователь не найден: «{fio}»")

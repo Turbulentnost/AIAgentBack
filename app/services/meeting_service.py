@@ -182,13 +182,27 @@ class MeetingService:
             raise MeetingServiceError(str(exc)) from exc
 
         backend = self._backend()
-        memo, resolved, attendees, missing_emails = await self._resolve_memo_attendees(
-            detail,
-            backend=backend,
-            current_user=current_user,
-        )
-
         application = detail.get("application") or {}
+        try:
+            memo, resolved, attendees, missing_emails = await self._resolve_memo_attendees(
+                detail,
+                backend=backend,
+                current_user=current_user,
+            )
+        except MeetingBackendError as exc:
+            duration = (
+                payload.duration_minutes
+                or application.get("duration_minutes")
+                or 60
+            )
+            return MeetingAgentSlotPreviewRead(
+                memo_ref_key=normalized_ref,
+                duration_minutes=duration,
+                attendees=[],
+                missing_emails=[],
+                error=str(exc),
+            )
+
         duration = payload.duration_minutes or application.get("duration_minutes") or _duration_from_memo(memo)
         planned_start = application.get("meeting_start")
         if isinstance(planned_start, str):

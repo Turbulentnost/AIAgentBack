@@ -210,6 +210,14 @@ def parse_freebusy_events(events: list[Any], config: OutlookConfig) -> list[tupl
     return intervals
 
 
+def calendar_events_from_freebusy_view(view: Any, attendee: str) -> list[Any]:
+    events = getattr(view, "calendar_events", None)
+    if events is not None:
+        return list(events or [])
+    message = getattr(view, "message", None) or str(view)
+    raise RuntimeError(f"Exchange не вернул занятость для {attendee}: {message}")
+
+
 def fetch_busy_intervals_freebusy(
     config: OutlookConfig,
     attendees: list[str],
@@ -239,7 +247,7 @@ def fetch_busy_intervals_freebusy(
 
     busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] = {}
     for email, view in zip(attendees, views):
-        events = list(view.calendar_events or [])
+        events = calendar_events_from_freebusy_view(view, email)
         with timed_step("parse.freebusy_intervals", attendee=email):
             intervals = parse_freebusy_events(events, config)
         busy_by_attendee[email] = intervals

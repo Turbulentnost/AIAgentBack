@@ -15,6 +15,7 @@ from app.agents.nd_control_agent.prompts.nd_process_uml_prompt import (
 )
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.llm.errors import format_llm_call_error
 from app.llm.gateway import llm_gateway
 from app.models.nd_control_structural import ProcessUmlCache
 from app.schemas.nd_process_graph import ProcessGraphDTO, build_schema_composition
@@ -343,12 +344,9 @@ class NdProcessUmlService:
                 timeout=settings.ND_CONTROL_UML_LLM_TIMEOUT_SECONDS,
             )
         except Exception as exc:
-            detail = str(exc).strip() or repr(exc)
+            detail = format_llm_call_error(exc)
             logger.warning("nd_control.uml.llm_failed", error=detail)
-            raise NdProcessUmlServiceError(
-                f"Ошибка вызова LLM ({type(exc).__name__}): {detail}",
-                code="llm_error",
-            ) from exc
+            raise NdProcessUmlServiceError(detail, code="llm_error") from exc
 
         choice = (response.get("choices") or [{}])[0]
         message = choice.get("message") or {}
