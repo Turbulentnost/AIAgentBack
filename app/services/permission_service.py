@@ -131,10 +131,9 @@ class PermissionService:
         if user.role_id is not None:
             role_queries.append(select(literal(user.role_id).label("role_id")))
         role_queries.append(select(user_roles.c.role_id).where(user_roles.c.user_id == user.id))
-        query = role_queries[0]
-        for next_query in role_queries[1:]:
-            query = query.union(next_query)
-        return query
+        if len(role_queries) == 1:
+            return role_queries[0]
+        return union(*role_queries)
 
     async def _has_role_agent_permission(self, user: User, agent_id: uuid.UUID, action: str) -> bool:
         role_ids_query = self._user_role_ids_query(user)

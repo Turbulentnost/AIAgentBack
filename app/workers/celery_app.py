@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.core.config import settings
 
@@ -10,6 +11,17 @@ celery_app = Celery(
     backend=settings.celery_backend(),
     include=["app.workers.tasks"],
 )
+
+_beat_schedule = {}
+if settings.MEETING_DASHBOARD_CACHE_WARMUP_ENABLED:
+    _beat_schedule["warm-meeting-dashboard-cache"] = {
+        "task": "warm_meeting_dashboard_cache",
+        "schedule": crontab(
+            hour=settings.MEETING_DASHBOARD_CACHE_WARMUP_HOURS,
+            minute=settings.MEETING_DASHBOARD_CACHE_WARMUP_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -22,6 +34,7 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     task_routes={
         "debug_task": {"queue": "default"},
+        "warm_meeting_dashboard_cache": {"queue": "default"},
         "process_document": {"queue": "documents"},
         "run_agent": {"queue": "agents"},
         "index_document": {"queue": "indexing"},
@@ -35,6 +48,7 @@ celery_app.conf.update(
     },
     task_serializer="json",
     task_track_started=True,
-    timezone="UTC",
+    timezone=settings.MEETING_DASHBOARD_CACHE_WARMUP_TIMEZONE,
     worker_prefetch_multiplier=1,
+    beat_schedule=_beat_schedule,
 )

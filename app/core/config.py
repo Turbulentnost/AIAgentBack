@@ -138,6 +138,33 @@ class Settings(BaseSettings):
     # Задеплоенные production-агенты остаются на ограничительном allowlist (allow_open_web=False).
     BROWSER_SANDBOX_OPEN_WEB: bool = True
 
+    # 1С: ERP OData — значения только из .env (см. .env.example).
+    ONEC_ODATA_URL: str = ""
+    ONEC_ODATA_USER: str = ""
+    ONEC_ODATA_PASSWORD: str = ""
+    ONEC_ODATA_TIMEOUT: int = 120
+    ONEC_MEETING_MEMO_THEME: str = ""
+    ONEC_CORPORATE_EMAIL_DOMAIN: str = "turbo-don.ru"
+    ONEC_NOTIFICATION_DEFAULT_RECIPIENT_FIOS: str = ""
+    ONEC_NOTIFICATION_SOURCE_USER_FIO: str = ""
+    MEETING_DASHBOARD_CACHE_ENABLED: bool = True
+    MEETING_DASHBOARD_CACHE_TTL_SECONDS: int = 60 * 60 * 24
+    MEETING_DASHBOARD_CACHE_WARMUP_ENABLED: bool = True
+    MEETING_DASHBOARD_CACHE_WARMUP_HOURS: str = "10,15"
+    MEETING_DASHBOARD_CACHE_WARMUP_MINUTE: int = 0
+    MEETING_DASHBOARD_CACHE_WARMUP_TIMEZONE: str = "Europe/Moscow"
+
+    # Outlook / Exchange (COM-календарь, EWS, SMTP) — значения из .env.
+    OUTLOOK_EMAIL: str = ""
+    OUTLOOK_PASSWORD: str = ""
+    OUTLOOK_SERVER: str = ""
+    OUTLOOK_MAILBOX: str = ""
+    OUTLOOK_TIMEZONE: str = "Europe/Moscow"
+    OUTLOOK_SMTP_HOST: str = ""
+    OUTLOOK_SMTP_PORT: int = 587
+    OUTLOOK_SMTP_TLS: str = "true"
+    OUTLOOK_SMTP_FROM: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         return self._parse_csv(self.BACKEND_CORS_ORIGINS)
