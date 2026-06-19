@@ -50,8 +50,10 @@ from app.services.nd_control_department_detail_service import (
 )
 from app.services.nd_document_card_service import NdDocumentCardService, NdDocumentCardServiceError
 from app.services.nd_process_uml_service import NdProcessUmlService, NdProcessUmlServiceError
+from app.api.v1.endpoints.nd_control_eskd import router as eskd_router
 
 router = APIRouter(prefix="/nd-control", tags=["nd-control"])
+router.include_router(eskd_router)
 
 
 async def _require_agent_access(db: DbSession, user: CurrentUser) -> None:

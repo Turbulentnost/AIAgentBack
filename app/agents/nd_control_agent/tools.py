@@ -9,6 +9,7 @@ TOOL_NAMES: list[str] = [
     "find_document_by_code",
     "find_related_documents",
     "get_document_sections",
+    "list_enterprise_departments_from_1c",
     "apply_document_change",
     "generate_change_notice",
     "generate_docx_report",

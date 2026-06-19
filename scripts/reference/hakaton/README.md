@@ -1,0 +1,1 @@
+# model_for_hakaton

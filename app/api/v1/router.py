@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     auth,
     browser_runs,
     departments,
+    document_cards,
     documents,
     health,
     knowledge_base_indexing_ws,
@@ -28,6 +29,7 @@ api_router.include_router(positions.router)
 api_router.include_router(agents.router)
 api_router.include_router(tasks.router)
 api_router.include_router(documents.router)
+api_router.include_router(document_cards.router)
 api_router.include_router(knowledge_bases.router)
 api_router.include_router(knowledge_base_indexing_ws.router)
 api_router.include_router(roles.router)

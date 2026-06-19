@@ -12,3 +12,36 @@ venv/
 !.env.example
 alembic/versions/*.py
 !alembic/versions/.gitkeep
+
+# Build / coverage
+dist/
+build/
+htmlcov/
+.coverage
+coverage.xml
+*.egg
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & runtime output
+*.log
+_kb_import_log.txt
+reports/
+
+# Local binaries (install Tesseract separately; see tesseract_ocr.py)
+tools/tesseract/
+
+# Local documents & path notes (not repo content)
+/*.pdf
+*-путь.txt
+ескд-путь.txt
+
+# One-off / scratch scripts
+scripts/_*.py
