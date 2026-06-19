@@ -5,6 +5,7 @@ from app.tools.onec.get_porucheniya import (
     build_manager_filter,
     collect_protocol_lookup_keys,
     compute_priority,
+    extract_postponement_fields,
     filter_protocol_documents_by_manager_fio,
     filter_protocol_tasks_by_manager,
     filter_rows_by_manager,
@@ -185,6 +186,22 @@ def test_group_porucheniya_documents_builds_tasks_under_document() -> None:
     assert activities == {"Задача 1", "Задача 2"}
     departments = {task["department"] for task in document["tasks"]}
     assert departments == {"Департамент цифровизации", "Управление проектами"}
+
+
+def test_extract_postponement_fields_from_protocol_note() -> None:
+    note = (
+        "Перенос с 14.02 на 03.03 Донцова А. Е.(03.02.2025 11:47:35) "
+        "в Протокол ДЛ__068_О_030 от 03.02.2025;"
+    )
+    parsed = extract_postponement_fields(note=note)
+    assert parsed["postponement_from"] == "14.02"
+    assert parsed["postponement_to"] == "03.03"
+    assert parsed["postponement_approved_by"] == "Донцова А. Е."
+    assert parsed["postponement_request"] == "с 14.02 на 03.03; Согласовано: Донцова А. Е."
+    assert parsed["postponement_basis"] == ""
+    assert parsed["postponement_approved"] is True
+    assert extract_postponement_fields(note="") == {}
+    assert extract_postponement_fields(note="обычное примечание") == {}
 
 
 def test_collect_protocol_lookup_keys_includes_header_without_register_rows() -> None:

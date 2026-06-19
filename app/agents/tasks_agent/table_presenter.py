@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.tools.onec.lookup_person_department import department_leaf_name
+from app.tools.onec.get_porucheniya import extract_postponement_fields
 
 PORUCHENIYA_TASK_TABLE_COLUMNS: list[dict[str, str]] = [
     {"key": "document_number", "title": "№ протокола / решения / поручения"},
@@ -19,7 +20,6 @@ PORUCHENIYA_TASK_TABLE_COLUMNS: list[dict[str, str]] = [
     {"key": "overdue_days", "title": "Просрочка, дней"},
     {"key": "overdue_reason", "title": "Причина просрочки"},
     {"key": "postponement_request", "title": "Запрос переноса"},
-    {"key": "postponement_basis", "title": "Основание переноса"},
     {"key": "controller_action", "title": "Действие контролера"},
     {"key": "rk_required", "title": "Требуется РК"},
 ]
@@ -84,6 +84,27 @@ def compute_overdue_days(due_date: str | None, *, now: datetime) -> int:
     return delta if delta > 0 else 0
 
 
+def _resolve_postponement_row_fields(task: dict[str, Any]) -> dict[str, str]:
+    if task.get("postponement_request") or task.get("postponement_from"):
+        return {
+            "postponement_request": str(task.get("postponement_request") or ""),
+            "postponement_from": str(task.get("postponement_from") or ""),
+            "postponement_to": str(task.get("postponement_to") or ""),
+            "postponement_approved_by": str(task.get("postponement_approved_by") or ""),
+        }
+
+    extracted = extract_postponement_fields(
+        note=task.get("note"),
+        comment=task.get("comment"),
+    )
+    return {
+        "postponement_request": str(extracted.get("postponement_request") or ""),
+        "postponement_from": str(extracted.get("postponement_from") or ""),
+        "postponement_to": str(extracted.get("postponement_to") or ""),
+        "postponement_approved_by": str(extracted.get("postponement_approved_by") or ""),
+    }
+
+
 def build_porucheniya_task_row(
     document: dict[str, Any],
     task: dict[str, Any],
@@ -92,6 +113,7 @@ def build_porucheniya_task_row(
 ) -> dict[str, Any]:
     current = (now or datetime.now()).replace(microsecond=0)
     overdue_days = compute_overdue_days(task.get("due_date"), now=current)
+    postponement = _resolve_postponement_row_fields(task)
 
     return {
         "document_number": document.get("document_number") or "",
@@ -109,8 +131,7 @@ def build_porucheniya_task_row(
         "artifact": task.get("has_file") or "",
         "overdue_days": overdue_days,
         "overdue_reason": task.get("overdue_reason") or "",
-        "postponement_request": task.get("postponement_request") or "",
-        "postponement_basis": task.get("postponement_basis") or "",
+        **postponement,
         "controller_action": task.get("controller_action") or "",
         "rk_required": task.get("rk_required") or "",
         "_meta": {

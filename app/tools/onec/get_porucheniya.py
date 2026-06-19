@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -45,6 +46,72 @@ EMPTY_DATE = "0001-01-01T00:00:00"
 CRITICAL_MANAGER_FIO = "Амураль Игорь Борисович"
 THREE_DAYS = timedelta(seconds=259200)
 TEN_DAYS = timedelta(seconds=864000)
+POSTPONEMENT_APPLIED_RE = re.compile(
+    r"Перенос\s+с\s+.+\s+на\s+",
+    re.IGNORECASE,
+)
+POSTPONEMENT_TRANSFER_RE = re.compile(
+    r"Перенос\s+с\s+([\d.]+)\s+на\s+([\d.]+)\s+(.+?)\(",
+    re.IGNORECASE,
+)
+POSTPONEMENT_DATES_RE = re.compile(
+    r"Перенос\s+с\s+([\d.]+)\s+на\s+([\d.]+)",
+    re.IGNORECASE,
+)
+
+
+def format_postponement_request_display(
+    *,
+    from_date: str = "",
+    to_date: str = "",
+    approved_by: str = "",
+) -> str:
+    parts: list[str] = []
+    if from_date or to_date:
+        parts.append(f"с {from_date or '—'} на {to_date or '—'}")
+    approver = approved_by.strip()
+    if approver:
+        parts.append(f"Согласовано: {approver}")
+    return "; ".join(parts)
+
+
+def extract_postponement_fields(
+    *,
+    note: str | None = None,
+    comment: str | None = None,
+) -> dict[str, Any]:
+    """Извлекает перенос срока из Примечание/Комментарий задачи протокола."""
+    chunks = [str(note or "").strip(), str(comment or "").strip()]
+    transfer_text = next((chunk for chunk in chunks if chunk and "перенос" in chunk.lower()), "")
+    if not transfer_text:
+        return {}
+
+    from_date = ""
+    to_date = ""
+    approved_by = ""
+    transfer_match = POSTPONEMENT_TRANSFER_RE.search(transfer_text)
+    if transfer_match:
+        from_date = transfer_match.group(1).strip()
+        to_date = transfer_match.group(2).strip()
+        approved_by = transfer_match.group(3).strip()
+    else:
+        dates_match = POSTPONEMENT_DATES_RE.search(transfer_text)
+        if dates_match:
+            from_date = dates_match.group(1).strip()
+            to_date = dates_match.group(2).strip()
+
+    return {
+        "postponement_from": from_date,
+        "postponement_to": to_date,
+        "postponement_approved_by": approved_by,
+        "postponement_request": format_postponement_request_display(
+            from_date=from_date,
+            to_date=to_date,
+            approved_by=approved_by,
+        ),
+        "postponement_basis": "",
+        "postponement_approved": bool(POSTPONEMENT_APPLIED_RE.search(transfer_text)),
+    }
 
 
 def parse_input_date(value: str | date | None, *, default: date | None = None) -> date:
@@ -711,6 +778,8 @@ def normalize_protocol_register_task_row(
     if not responsible:
         responsible = users.get(row.get("Ответственный_Key") or "", {})
     has_file = row_has_file(row)
+    comment = row.get("Комментарий") or ""
+    note = row.get("Примечание") or ""
 
     return {
         "item_type": "protocol_task",
@@ -726,8 +795,9 @@ def normalize_protocol_register_task_row(
         "sent": bool(row.get("Отправлена")),
         "completed": completed,
         "confirmed": confirmed,
-        "comment": row.get("Комментарий") or "",
-        "note": row.get("Примечание") or "",
+        "comment": comment,
+        "note": note,
+        **extract_postponement_fields(note=note, comment=comment),
         "overdue": overdue,
         "has_file": format_has_file(has_file),
         "priority": compute_priority(
