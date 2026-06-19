@@ -190,6 +190,37 @@ async def test_suggest_agent_slot_reports_missing_emails(user) -> None:
 
 
 @pytest.mark.asyncio
+async def test_suggest_agent_slot_reports_unexpected_calendar_errors(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    detail = {
+        "ref_key": "abc",
+        "queue": {},
+        "application": {
+            "initiator": {"full_name": "A", "email": "a@turbo-don.ru"},
+            "participants": [],
+            "duration_minutes": 20,
+        },
+    }
+    backend = AsyncMock()
+    backend.resolve_participants = AsyncMock()
+    backend.find_slots = AsyncMock(side_effect=RuntimeError("Exchange calendar failed"))
+    service._backend = lambda: backend
+
+    with patch(
+        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
+        AsyncMock(return_value=(detail, None, True)),
+    ):
+        result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
+
+    assert result.slot is None
+    assert result.error == "Exchange calendar failed"
+    backend.find_slots.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_approve_agent_slot_sends_outlook_invite_only(user) -> None:
     db = AsyncMock()
     service = MeetingService(db)

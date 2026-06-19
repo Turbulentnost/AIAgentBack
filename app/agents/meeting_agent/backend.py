@@ -135,7 +135,7 @@ class MeetingBackend:
 
         try:
             payload = await self._invoke("lookup_email_by_fio", {"fio": normalized}, current_user=current_user)
-        except ToolExecutionError as exc:
+        except Exception as exc:
             raise MeetingBackendError(f"Не удалось найти e-mail участников: {exc}") from exc
 
         by_query = {item["fio_query"]: item for item in payload.get("results") or []}
@@ -180,7 +180,7 @@ class MeetingBackend:
                 },
                 current_user=current_user,
             )
-        except ToolExecutionError as exc:
+        except Exception as exc:
             raise MeetingBackendError(f"Не удалось подобрать время совещания: {exc}") from exc
 
         slot_start = payload.get("slot_start")
@@ -213,7 +213,7 @@ class MeetingBackend:
 
         try:
             payload = await self._invoke("meeting_rooms", params, current_user=current_user)
-        except ToolExecutionError as exc:
+        except Exception as exc:
             raise MeetingBackendError(f"Не удалось получить переговорные: {exc}") from exc
 
         rooms = _rooms_from_payload(payload, room_name=room_name)

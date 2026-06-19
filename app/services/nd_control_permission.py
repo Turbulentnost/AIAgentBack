@@ -36,8 +36,15 @@ def is_process_management_specialist_position(position: str | None) -> bool:
 
 
 async def user_has_admin_role(db: AsyncSession, user: User) -> bool:
-    if user.role is not None and user.role.code == "admin":
+    loaded_role = user.__dict__.get("role")
+    if loaded_role is not None and loaded_role.code == "admin":
         return True
+    if user.role_id is not None:
+        primary_role_code = await db.scalar(
+            select(Role.code).where(Role.id == user.role_id)
+        )
+        if primary_role_code == "admin":
+            return True
     result = await db.execute(
         select(Role.code)
         .join(user_roles, user_roles.c.role_id == Role.id)

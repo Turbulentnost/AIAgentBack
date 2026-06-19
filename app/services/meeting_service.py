@@ -136,11 +136,14 @@ class MeetingService:
         memo = _normalize_memo(detail_to_memo_document(detail))
         cached_emails = emails_by_fio_from_detail(detail)
         need_lookup = [fio for fio, _role in attendee_specs if fio not in cached_emails]
-        resolved_lookup = (
-            await backend.resolve_participants(need_lookup, current_user=current_user)
-            if need_lookup
-            else []
-        )
+        try:
+            resolved_lookup = (
+                await backend.resolve_participants(need_lookup, current_user=current_user)
+                if need_lookup
+                else []
+            )
+        except MeetingBackendError:
+            resolved_lookup = []
         resolved_by_fio = {item.fio: item for item in resolved_lookup}
 
         attendees: list[MeetingAttendeeRead] = []
@@ -179,7 +182,13 @@ class MeetingService:
         try:
             detail, _fetched_at, _from_cache = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
         except MemoCacheMissError as exc:
-            raise MeetingServiceError(str(exc)) from exc
+            return MeetingAgentSlotPreviewRead(
+                memo_ref_key=normalized_ref,
+                duration_minutes=payload.duration_minutes,
+                attendees=[],
+                missing_emails=[],
+                error=str(exc),
+            )
 
         backend = self._backend()
         application = detail.get("application") or {}
@@ -189,7 +198,7 @@ class MeetingService:
                 backend=backend,
                 current_user=current_user,
             )
-        except MeetingBackendError as exc:
+        except Exception as exc:
             duration = (
                 payload.duration_minutes
                 or application.get("duration_minutes")
@@ -226,7 +235,7 @@ class MeetingService:
                 duration_minutes=duration,
                 current_user=current_user,
             )
-        except MeetingBackendError as exc:
+        except Exception as exc:
             return MeetingAgentSlotPreviewRead(
                 memo_ref_key=normalized_ref,
                 duration_minutes=duration,
