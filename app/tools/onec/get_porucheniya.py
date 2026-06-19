@@ -645,6 +645,24 @@ def filter_protocol_tasks_by_manager(
     return filtered
 
 
+def _collect_protocol_header_lookup_keys(
+    protocol: dict[str, Any],
+    *,
+    user_keys: set[str],
+    person_keys: set[str],
+    topic_keys: set[str],
+) -> None:
+    for key_name in ("Руководитель_Key", "Ответственный_Key", "Подготовил_Key"):
+        key = protocol.get(key_name)
+        if not is_empty_key(key):
+            user_keys.add(key)
+        if key_name == "Ответственный_Key" and not is_empty_key(key):
+            person_keys.add(key)
+    topic_key = protocol.get("ТемаСовещания_Key")
+    if not is_empty_key(topic_key):
+        topic_keys.add(topic_key)
+
+
 def collect_protocol_lookup_keys(
     rows: list[dict[str, Any]],
     protocols: dict[str, dict[str, Any]],
@@ -653,14 +671,16 @@ def collect_protocol_lookup_keys(
     person_keys: set[str] = set()
     topic_keys: set[str] = set()
 
+    for protocol in protocols.values():
+        _collect_protocol_header_lookup_keys(
+            protocol,
+            user_keys=user_keys,
+            person_keys=person_keys,
+            topic_keys=topic_keys,
+        )
+
     for row in rows:
         protocol = protocols.get(row.get("Протокол_Key") or "", {})
-        for key_name in ("Руководитель_Key", "Ответственный_Key", "Подготовил_Key"):
-            key = protocol.get(key_name)
-            if not is_empty_key(key):
-                user_keys.add(key)
-            if key_name == "Ответственный_Key" and not is_empty_key(key):
-                person_keys.add(key)
         for key_name in ("Ответственный_Key", "Автор_Key"):
             key = row.get(key_name)
             if not is_empty_key(key):

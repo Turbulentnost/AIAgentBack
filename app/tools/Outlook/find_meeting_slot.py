@@ -142,7 +142,7 @@ def next_workday_start(dt: datetime, config: OutlookConfig) -> datetime:
 
 
 def align_preferred(preferred: datetime, config: OutlookConfig) -> datetime:
-    """Первая точка поиска — желаемая дата/время (с учётом рабочего дня)."""
+    """Первая точка перебора с учётом рабочего дня (не раньше WORK_START)."""
     current = to_local(preferred, config).replace(second=0, microsecond=0)
     if not is_workday(current, config):
         while not is_workday(current, config):
@@ -150,6 +150,9 @@ def align_preferred(preferred: datetime, config: OutlookConfig) -> datetime:
         return combine(current, WORK_START, config)
     if current.time() < WORK_START:
         return combine(current, WORK_START, config)
+    latest_start = combine(current, WORK_END, config) - timedelta(minutes=1)
+    if current > latest_start:
+        return next_workday_start(current - timedelta(days=1), config)
     return current
 
 
@@ -389,6 +392,40 @@ def advance_candidate(
         return current
 
 
+def merge_busy_intervals(
+    *sources: dict[str, list[tuple[datetime, datetime]]],
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    merged: dict[str, list[tuple[datetime, datetime]]] = {}
+    for source in sources:
+        for email, intervals in source.items():
+            bucket = merged.setdefault(email, [])
+            bucket.extend(intervals)
+    return merged
+
+
+def verify_slot_with_calendar(
+    *,
+    config: OutlookConfig,
+    attendees: list[str],
+    slot_start: datetime,
+    duration: timedelta,
+    max_items: int,
+    workers: int,
+) -> tuple[bool, dict[str, list[tuple[datetime, datetime]]]]:
+    window_start = slot_start - timedelta(hours=2)
+    window_end = slot_start + duration + timedelta(hours=2)
+    calendar_busy = fetch_all_busy_intervals(
+        config,
+        attendees,
+        window_start,
+        window_end,
+        source="calendar",
+        max_items=max_items,
+        workers=workers,
+    )
+    return is_free_for_all(slot_start, duration, calendar_busy), calendar_busy
+
+
 def find_nearest_slot(
     *,
     config: OutlookConfig,
@@ -409,11 +446,14 @@ def find_nearest_slot(
         raise ValueError("--max-days должно быть >= 1.")
 
     with timed_step("align.preferred"):
-        preferred = align_preferred(preferred, config)
-    search_end = preferred + timedelta(days=max_days)
+        requested = to_local(preferred, config).replace(second=0, microsecond=0)
+        search_start = align_preferred(requested, config)
+        earliest_allowed = max(requested, search_start)
+    search_end = earliest_allowed + timedelta(days=max_days)
     logger.info(
-        "Поиск: preferred=%s, until=%s, attendees=%d, step=%s, duration=%s, source=%s",
-        preferred.isoformat(),
+        "Поиск: requested=%s, earliest=%s, until=%s, attendees=%d, step=%s, duration=%s, source=%s",
+        requested.isoformat(),
+        earliest_allowed.isoformat(),
         search_end.isoformat(),
         len(attendees),
         step,
@@ -430,38 +470,55 @@ def find_nearest_slot(
     busy_by_attendee = fetch_all_busy_intervals(
         config,
         attendees,
-        preferred,
+        earliest_allowed,
         search_end,
         source=source,
         max_items=max_items,
         workers=workers,
     )
 
-    candidate = preferred
+    candidate = earliest_allowed
     checked = 0
     with timed_step("scan.slots", max_days=max_days, step_minutes=int(step.total_seconds() // 60)):
         while candidate <= search_end:
             checked += 1
+            if candidate < earliest_allowed:
+                candidate = earliest_allowed
             if slot_respects_rules(candidate, duration, config) and is_free_for_all(
                 candidate, duration, busy_by_attendee
             ):
-                end = candidate + duration
-                logger.info("Слот найден после %d проверок", checked)
-                return {
-                    "preferred": preferred.isoformat(),
-                    "slot_start": candidate.isoformat(),
-                    "slot_end": end.isoformat(),
-                    "duration_minutes": int(duration.total_seconds() // 60),
-                    "attendees": attendees,
-                    "checked_candidates": checked,
-                    "search_until": search_end.isoformat(),
-                    "availability_source": source,
-                }
+                calendar_ok, calendar_busy = verify_slot_with_calendar(
+                    config=config,
+                    attendees=attendees,
+                    slot_start=candidate,
+                    duration=duration,
+                    max_items=max_items,
+                    workers=workers,
+                )
+                if calendar_ok:
+                    end = candidate + duration
+                    logger.info("Слот найден после %d проверок", checked)
+                    return {
+                        "preferred": requested.isoformat(),
+                        "earliest_allowed": earliest_allowed.isoformat(),
+                        "slot_start": candidate.isoformat(),
+                        "slot_end": end.isoformat(),
+                        "duration_minutes": int(duration.total_seconds() // 60),
+                        "attendees": attendees,
+                        "checked_candidates": checked,
+                        "search_until": search_end.isoformat(),
+                        "availability_source": source,
+                    }
+                busy_by_attendee = merge_busy_intervals(busy_by_attendee, calendar_busy)
+                logger.info(
+                    "Слот %s свободен по free/busy, но занят по calendar — продолжаем поиск",
+                    candidate.isoformat(),
+                )
             candidate = advance_candidate(candidate, step, duration, config)
 
     logger.info("Слот не найден, проверено %d вариантов", checked)
     raise RuntimeError(
-        f"Свободный слот не найден в течение {max_days} дн. от {preferred.isoformat()}."
+        f"Свободный слот не найден в течение {max_days} дн. от {earliest_allowed.isoformat()}."
     )
 
 

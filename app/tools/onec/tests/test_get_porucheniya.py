@@ -3,7 +3,9 @@ from datetime import date, datetime
 from app.tools.onec.get_porucheniya import (
     build_document_period_filter,
     build_manager_filter,
+    collect_protocol_lookup_keys,
     compute_priority,
+    filter_protocol_documents_by_manager_fio,
     filter_protocol_tasks_by_manager,
     filter_rows_by_manager,
     fio_matches,
@@ -183,6 +185,56 @@ def test_group_porucheniya_documents_builds_tasks_under_document() -> None:
     assert activities == {"Задача 1", "Задача 2"}
     departments = {task["department"] for task in document["tasks"]}
     assert departments == {"Департамент цифровизации", "Управление проектами"}
+
+
+def test_collect_protocol_lookup_keys_includes_header_without_register_rows() -> None:
+    protocols = {
+        "proto-1": {
+            "Руководитель_Key": "mgr-key",
+            "Ответственный_Key": "reviewer-key",
+            "ТемаСовещания_Key": "topic-1",
+        }
+    }
+    user_keys, person_keys, topic_keys = collect_protocol_lookup_keys([], protocols)
+    assert user_keys == {"mgr-key", "reviewer-key"}
+    assert person_keys == {"reviewer-key"}
+    assert topic_keys == {"topic-1"}
+
+
+def test_group_protocol_documents_without_tasks_keeps_manager() -> None:
+    now = datetime(2026, 6, 18, 15, 0, 0)
+    protocol = {
+        "Ref_Key": "proto-1",
+        "Number": "ЗДК_040_О_196",
+        "Date": "2026-06-18T10:00:00",
+        "Статус": "ВРаботе",
+        "Руководитель_Key": "mgr-key",
+        "Ответственный_Key": "reviewer-key",
+        "ТемаСовещания_Key": "topic-1",
+    }
+    users = {
+        "mgr-key": {"Description": "Арсуноев Михаил Магомедович"},
+        "reviewer-key": {"Description": "Арсуноев Михаил Магомедович"},
+    }
+    topics = {"topic-1": {"Description": "Заседание ЗДК"}}
+    documents = group_protocol_documents(
+        {"proto-1": protocol},
+        [],
+        users=users,
+        persons={},
+        topics=topics,
+        departments_by_responsible={},
+        now=now,
+    )
+    assert len(documents) == 1
+    document = documents[0]
+    assert document["manager"] == "Арсуноев Михаил Магомедович"
+    assert document["tasks_count"] == 0
+    filtered = filter_protocol_documents_by_manager_fio(
+        documents,
+        "Арсуноев Михаил Магомедович",
+    )
+    assert len(filtered) == 1
 
 
 def test_group_protocol_documents_builds_tasks_under_document() -> None:

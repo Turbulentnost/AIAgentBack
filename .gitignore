@@ -11,6 +11,6 @@ exports/
 _tmp_*
 .env
 .env.*
-!.env.example
+.env.example
 alembic/versions/*.py
 !alembic/versions/.gitkeep
