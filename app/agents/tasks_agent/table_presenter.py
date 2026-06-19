@@ -24,12 +24,38 @@ PORUCHENIYA_TASK_TABLE_COLUMNS: list[dict[str, str]] = [
     {"key": "rk_required", "title": "Требуется РК"},
 ]
 
-_STATUS_LABELS = {
-    "ВРаботе": "В работе",
-    "Выполнено": "Выполнено",
-    "Закрыто": "Закрыто",
-    "Черновик": "Черновик",
-}
+def _is_protocol_task(task: dict[str, Any]) -> bool:
+    item_type = task.get("item_type")
+    if item_type == "protocol_task":
+        return True
+    if item_type == "poruchenie_task":
+        return False
+    return task.get("task_id") is not None or "confirmed" in task or "sent" in task
+
+
+def derive_task_status(
+    task: dict[str, Any],
+    *,
+    overdue_days: int | None,
+    document_status: str | None = None,
+) -> str:
+    """Статус строки задачи (не документа-основания)."""
+    if _is_protocol_task(task):
+        if task.get("confirmed"):
+            return "Подтверждена"
+        if task.get("completed"):
+            return "Выполнена"
+        if overdue_days is not None:
+            return "Просрочено"
+        if task.get("sent"):
+            return "Отправлена"
+        return "На исполнении"
+
+    if document_status == "Отменено":
+        return "Отменено"
+    if overdue_days is not None:
+        return "Просрочено"
+    return "На исполнении"
 
 
 def format_display_date(value: str | date | datetime | None) -> str:
@@ -58,14 +84,6 @@ def compute_overdue_days(due_date: str | None, *, now: datetime) -> int | None:
     return delta if delta > 0 else None
 
 
-def format_task_status(document_status: str | None, *, overdue_days: int | None) -> str:
-    if overdue_days is not None:
-        return "Просрочено"
-    if document_status:
-        return _STATUS_LABELS.get(document_status, document_status)
-    return ""
-
-
 def build_porucheniya_task_row(
     document: dict[str, Any],
     task: dict[str, Any],
@@ -83,7 +101,11 @@ def build_porucheniya_task_row(
         "reviewer": document.get("reviewer") or "",
         "department": department_leaf_name(task.get("department") or document.get("department") or ""),
         "due_date": format_display_date(task.get("due_date")),
-        "status": format_task_status(document.get("status"), overdue_days=overdue_days),
+        "status": derive_task_status(
+            task,
+            overdue_days=overdue_days,
+            document_status=document.get("status"),
+        ),
         "artifact": task.get("has_file") or "",
         "overdue_days": overdue_days if overdue_days is not None else "",
         "overdue_reason": task.get("overdue_reason") or "",

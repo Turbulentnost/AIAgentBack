@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "ai_agents"
 
     REDIS_HOST: str = "192.168.1.157"
-    REDIS_PORT: int = 6379
+    REDIS_PORT: int = 16379
     REDIS_DB: int = 0
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""

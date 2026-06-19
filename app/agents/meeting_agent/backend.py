@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.meeting_agent.config import AGENT_NAME, DEFAULT_MODEL
 from app.agents.meeting_agent.memo_validation import MemoValidationIssue, validate_meeting_memo_document
+from app.agents.meeting_agent.memo_presenter import resolve_meeting_schedule
 from app.core.config import settings
 from app.models.user import User
 from app.tools.executor import ToolExecutor, ToolExecutionError
@@ -166,6 +167,7 @@ class MeetingBackend:
 
         duration = duration_minutes or _duration_from_memo(memo) or DEFAULT_DURATION_MINUTES
         preferred = planned_start or _preferred_from_memo(memo) or _default_preferred()
+        attendee_emails = _participant_emails_with_organizer(attendee_emails)
 
         try:
             payload = await self._invoke(
@@ -471,7 +473,11 @@ def _preferred_from_memo(memo: MeetingMemo | dict[str, Any] | None) -> str | Non
     document = memo.raw if isinstance(memo, MeetingMemo) else memo
     if not document:
         return None
-    header = document.get("header") or {}
+    header = document.get("header") or document.get("memo") or {}
+    start, _end = resolve_meeting_schedule(header)
+    if start is not None:
+        return start.strftime("%Y-%m-%d %H:%M")
+
     memo_fields = document.get("memo") or {}
     for source in (header, memo_fields):
         for key in ("ДатаСовещания", "PlannedStart", "НачалоСовещания", "ВремяНачалаСовещания", "Date"):
@@ -479,6 +485,21 @@ def _preferred_from_memo(memo: MeetingMemo | dict[str, Any] | None) -> str | Non
             if isinstance(value, str) and value.strip():
                 return _normalize_datetime_string(value.strip())
     return None
+
+
+def _organizer_email() -> str | None:
+    mailbox = (settings.OUTLOOK_MAILBOX or settings.OUTLOOK_EMAIL or "").strip()
+    return mailbox or None
+
+
+def _participant_emails_with_organizer(emails: list[str]) -> list[str]:
+    organizer = _organizer_email()
+    if not organizer:
+        return emails
+    normalized = {email.lower(): email for email in emails}
+    if organizer.lower() not in normalized:
+        return [*emails, organizer]
+    return emails
 
 
 def _default_preferred() -> str:

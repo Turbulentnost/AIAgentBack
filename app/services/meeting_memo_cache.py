@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 from app.services.meeting_attendees import attendee_fio_from_detail
+from app.tools.onec.connection import CONFIG, create_session
 
 logger = get_logger(__name__)
 

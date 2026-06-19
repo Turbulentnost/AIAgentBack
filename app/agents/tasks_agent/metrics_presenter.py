@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from app.agents.tasks_agent.table_presenter import compute_overdue_days, format_task_status
+from app.agents.tasks_agent.table_presenter import compute_overdue_days, derive_task_status
 from app.tools.onec.get_porucheniya import parse_onec_datetime
 
 METRICS_DEFINITIONS: list[tuple[str, str]] = [
@@ -110,9 +110,10 @@ def _iter_control_tasks(
                     "has_file": _has_artifact(task.get("has_file")),
                     "overdue_days": compute_overdue_days(task.get("due_date"), now=now),
                     "priority": str(task.get("priority") or ""),
-                    "status": format_task_status(
-                        document_status,
+                    "status": derive_task_status(
+                        task,
                         overdue_days=compute_overdue_days(task.get("due_date"), now=now),
+                        document_status=document_status,
                     ),
                     "rk_required": task.get("rk_required"),
                     "controller_action": str(task.get("controller_action") or ""),
@@ -121,9 +122,9 @@ def _iter_control_tasks(
             )
 
     for document in protocols:
-        document_status = document.get("status")
         for task in document.get("tasks") or []:
-            completed = bool(task.get("completed")) or document_status in _COMPLETED_STATUSES
+            completed = bool(task.get("completed"))
+            overdue_days = compute_overdue_days(task.get("due_date"), now=now)
             request, basis, approved = _postponement_fields(task)
             tasks.append(
                 {
@@ -134,12 +135,9 @@ def _iter_control_tasks(
                     "completed": completed,
                     "confirmed": bool(task.get("confirmed")),
                     "has_file": _has_artifact(task.get("has_file")),
-                    "overdue_days": compute_overdue_days(task.get("due_date"), now=now),
+                    "overdue_days": overdue_days,
                     "priority": str(task.get("priority") or ""),
-                    "status": format_task_status(
-                        document_status,
-                        overdue_days=compute_overdue_days(task.get("due_date"), now=now),
-                    ),
+                    "status": derive_task_status(task, overdue_days=overdue_days),
                     "rk_required": task.get("rk_required"),
                     "controller_action": str(task.get("controller_action") or ""),
                     "postponement_request": request,

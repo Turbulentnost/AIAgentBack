@@ -56,7 +56,7 @@ from app.services.meeting_memo_cache import (
     detail_to_memo_document,
 )
 from app.services.meeting_permission import MEETING_AGENT_SLUG, can_access_meeting_agent
-from app.services.meeting_slot import format_slot_label, slot_duration_minutes
+from app.services.meeting_slot import format_planned_start_for_search, format_slot_label, slot_duration_minutes
 from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
@@ -204,9 +204,10 @@ class MeetingService:
             )
 
         duration = payload.duration_minutes or application.get("duration_minutes") or _duration_from_memo(memo)
-        planned_start = application.get("meeting_start")
-        if isinstance(planned_start, str):
-            planned_start = planned_start.replace("T", " ")[:16]
+        planned_start = format_planned_start_for_search(
+            application.get("meeting_start"),
+            detail.get("queue") or {},
+        )
 
         if missing_emails:
             return MeetingAgentSlotPreviewRead(
