@@ -16,6 +16,8 @@ from app.models.enums import (
     KnowledgeBaseStatus,
     NdChangeApprovalStatus,
     NdChangeDraftFileStatus,
+    NdChangeJournalEventType,
+    NdChangeJournalSource,
     NdChangeLocationStatus,
     NdChangeOperationStatus,
     NdChangeRequestStatus,
@@ -37,6 +39,7 @@ from app.services.audit_service import AuditService
 from app.services.document_editing import DocumentEditService
 from app.services.document_editing.schemas import LocatedChange
 from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
+from app.services.nd_change_journal_service import NdChangeJournalService
 
 DOCUMENT_CODE_RE = re.compile(r"\b(?:СТО|И|РГ|ПЛ|ДИ|РИ|ПП)-\d{2}-\d{3}\b", re.IGNORECASE)
 
@@ -78,6 +81,22 @@ class NdChangeService:
             resource_type="nd_change_request",
             resource_id=str(request.id),
             payload={"number": request.number},
+        )
+        await NdChangeJournalService(self.db).log_event(
+            event_type=NdChangeJournalEventType.ND_CHANGE_REQUEST_CREATED,
+            actor_user_id=current_user.id,
+            resource_type="nd_change_request",
+            resource_id=request.id,
+            department_id=request.department_id,
+            document_id=request.selected_document_id,
+            document_code=payload.assumed_document_code,
+            summary=f"Создана заявка на изменение НД №{request.number}",
+            source=NdChangeJournalSource.ND_CHANGE_WORKFLOW,
+            payload={
+                "number": request.number,
+                "reason": request.reason,
+                "assumed_document_code": payload.assumed_document_code,
+            },
         )
         return request
 
@@ -330,6 +349,22 @@ class NdChangeService:
             resource_id=str(request.id),
             payload={"draft_object_name": edit_result.draft_file.object_name},
         )
+        await NdChangeJournalService(self.db).log_event(
+            event_type=NdChangeJournalEventType.ND_CHANGE_DRAFT_APPLIED,
+            actor_user_id=current_user.id,
+            resource_type="nd_change_request",
+            resource_id=request.id,
+            department_id=request.department_id,
+            document_id=document.id,
+            document_name=document.title or document.original_filename,
+            summary=f"Сформирован проект изменения НД по заявке №{request.number}",
+            source=NdChangeJournalSource.ND_CHANGE_WORKFLOW,
+            payload={
+                "draft_object_name": edit_result.draft_file.object_name,
+                "diff": operation.diff,
+                "warnings": edit_result.warnings,
+            },
+        )
         await self.audit.log(
             action="nd_diff_generated",
             actor_id=current_user.id,
@@ -341,6 +376,18 @@ class NdChangeService:
             actor_id=current_user.id,
             resource_type="nd_change_request",
             resource_id=str(request.id),
+        )
+        await NdChangeJournalService(self.db).log_event(
+            event_type=NdChangeJournalEventType.ND_CHANGE_NOTICE_GENERATED,
+            actor_user_id=current_user.id,
+            resource_type="nd_change_request",
+            resource_id=request.id,
+            department_id=request.department_id,
+            document_id=document.id,
+            document_name=document.title or document.original_filename,
+            summary=f"Сформировано извещение об изменении по заявке №{request.number}",
+            source=NdChangeJournalSource.ND_CHANGE_WORKFLOW,
+            payload={"notice_object_name": edit_result.notice_file.object_name},
         )
         await self.db.flush()
         return request
@@ -385,6 +432,17 @@ class NdChangeService:
             actor_id=current_user.id,
             resource_type="nd_change_request",
             resource_id=str(request.id),
+            payload={"participants": [str(item) for item in approval_user_ids]},
+        )
+        await NdChangeJournalService(self.db).log_event(
+            event_type=NdChangeJournalEventType.ND_CHANGE_REQUEST_COMPLETED,
+            actor_user_id=current_user.id,
+            resource_type="nd_change_request",
+            resource_id=request.id,
+            department_id=request.department_id,
+            document_id=request.selected_document_id,
+            summary=f"Заявка на изменение НД №{request.number} отправлена на согласование",
+            source=NdChangeJournalSource.ND_CHANGE_WORKFLOW,
             payload={"participants": [str(item) for item in approval_user_ids]},
         )
         await self.db.flush()

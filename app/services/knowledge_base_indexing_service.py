@@ -664,6 +664,7 @@ class KnowledgeBaseIndexingService:
         version.qdrant_points_count = len(points)
         document.is_indexed = True
         await self.db.flush()
+        await self._enqueue_template_classification_for_source(source.id)
         return {
             "created_fragments_count": created,
             "updated_fragments_count": updated,
@@ -672,6 +673,21 @@ class KnowledgeBaseIndexingService:
             "qdrant_points_count": len(points),
             "fulltext_chunks_count": fts_count,
         }
+
+    async def _enqueue_template_classification_for_source(self, source_id: uuid.UUID) -> None:
+        from app.models.enums import NdTemplateClassificationStatus
+        from app.models.nd_control_templates import NdControlTemplateDocument
+        from app.workers.tasks import classify_template_document
+
+        result = await self.db.execute(
+            select(NdControlTemplateDocument).where(
+                NdControlTemplateDocument.knowledge_base_source_id == source_id
+            )
+        )
+        for link in result.scalars().all():
+            link.classification_status = NdTemplateClassificationStatus.PENDING
+            await self.db.flush()
+            classify_template_document.delay(str(link.id))
 
     async def _run_qc(self, kb: KnowledgeBase, job: KnowledgeBaseIndexingJob) -> None:
         empty_chunks = await self.db.scalar(

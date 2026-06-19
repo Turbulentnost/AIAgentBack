@@ -721,6 +721,44 @@ def run_department_analysis(self, run_id: str, force_reextract: bool = False) ->
     return _run_async_task(_run)
 
 
+@celery_app.task(name="classify_template_document", bind=True, max_retries=1)
+def classify_template_document(self, document_link_id: str) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.nd_template_classification_service import (
+        NdTemplateClassificationService,
+        NdTemplateClassificationServiceError,
+    )
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            link_id = uuid_module.UUID(document_link_id)
+            service = NdTemplateClassificationService(db)
+            try:
+                link = await service.classify_template_document(link_id)
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "classify_template_document",
+                    "document_link_id": document_link_id,
+                    "status": link.classification_status.value,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except NdTemplateClassificationServiceError as exc:
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "classify_template_document",
+                    "document_link_id": document_link_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_run)
+
+
 @celery_app.task(name="generate_report", bind=True, max_retries=3)
 def generate_report(self, task_id: str, report_type: str = "default") -> dict[str, Any]:
     return _placeholder_result(self.request.id, "generate_report", task_id=task_id, report_type=report_type)

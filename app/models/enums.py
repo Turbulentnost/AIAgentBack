@@ -310,6 +310,54 @@ class NdDocumentType(str, enum.Enum):
     INSTRUCTION = "instruction"
 
 
+class NdTemplateType(str, enum.Enum):
+    POLICY = "policy"
+    REGULATION = "regulation"
+    DEPARTMENT_REGULATION = "department_regulation"
+    PROCESS_REGULATION = "process_regulation"
+    STO = "sto"
+    INSTRUCTION = "instruction"
+    WORK_INSTRUCTION = "work_instruction"
+    JOB_DESCRIPTION = "job_description"
+    CHANGE_NOTICE = "change_notice"
+    DOCUMENT_INTRODUCTION_ORDER = "document_introduction_order"
+    IMPLEMENTATION_PLAN = "implementation_plan"
+    CHANGE_REGISTRATION_SHEET = "change_registration_sheet"
+    ISSUANCE_ACKNOWLEDGEMENT_SHEET = "issuance_acknowledgement_sheet"
+    TRAINING_PROTOCOL = "training_protocol"
+    PROCESS_PASSPORT = "process_passport"
+
+
+class NdTemplateClassificationStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+
+
+class NdChangeJournalEventType(str, enum.Enum):
+    DOCUMENT_CREATED = "document_created"
+    DOCUMENT_UPDATED = "document_updated"
+    DOCUMENT_DELETED = "document_deleted"
+    TEMPLATE_DOCUMENT_ADDED = "template_document_added"
+    TEMPLATE_DOCUMENT_CLASSIFIED = "template_document_classified"
+    DEPARTMENT_ANALYSIS_STARTED = "department_analysis_started"
+    ND_CHANGE_REQUEST_CREATED = "nd_change_request_created"
+    ND_CHANGE_REQUEST_UPDATED = "nd_change_request_updated"
+    ND_CHANGE_REQUEST_COMPLETED = "nd_change_request_completed"
+    ND_CHANGE_DRAFT_APPLIED = "nd_change_draft_applied"
+    ND_CHANGE_NOTICE_GENERATED = "nd_change_notice_generated"
+    ND_CONTROL_DEPARTMENT_CREATED = "nd_control_department_created"
+    ND_CONTROL_DEPARTMENT_DELETED = "nd_control_department_deleted"
+
+
+class NdChangeJournalSource(str, enum.Enum):
+    MANUAL = "manual"
+    SYSTEM = "system"
+    ND_CHANGE_WORKFLOW = "nd_change_workflow"
+
+
 class NdQmsLevel(str, enum.Enum):
     STRATEGIC = "strategic"
     ORGANIZATIONAL = "organizational"
