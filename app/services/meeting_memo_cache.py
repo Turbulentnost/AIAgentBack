@@ -108,6 +108,19 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def detail_is_agent_ready(detail: dict[str, Any]) -> bool:
+    """True для полного detail из build_memo_detail, False для dashboard-fallback."""
+    application = detail.get("application") or {}
+    if application.get("initiator") or application.get("manager"):
+        return True
+    for person in application.get("participants") or []:
+        if not isinstance(person, dict):
+            continue
+        if person.get("ref_key") or person.get("email"):
+            return True
+    return False
+
+
 def detail_to_memo_document(detail: dict[str, Any]) -> dict[str, Any]:
     """Преобразует кэшированный detail в структуру документа для MeetingBackend."""
     app = detail.get("application") or {}
@@ -167,6 +180,34 @@ class MeetingMemoCacheService:
             "Детали служебной записки не найдены в кэше. "
             "Обновите dashboard или дождитесь прогрева в 10:00/15:00."
         )
+
+    async def get_memo_detail_for_agent(
+        self,
+        ref_key: str,
+    ) -> tuple[dict[str, Any], datetime, bool]:
+        """Полный detail для slot-preview: только memo-кэш, без dashboard-fallback."""
+        normalized = ref_key.strip().lower()
+
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            raise MemoCacheMissError(
+                "Кэш СЗ отключён. Включите MEETING_DASHBOARD_CACHE_ENABLED или обновите dashboard."
+            )
+
+        cached = await self._read_cache(normalized)
+        if cached is None:
+            raise MemoCacheMissError(
+                "Полные данные служебной записки ещё не прогреты. "
+                "Нажмите «Обновить» на dashboard и повторите через несколько секунд."
+            )
+
+        payload = cached["payload"]
+        if not detail_is_agent_ready(payload):
+            raise MemoCacheMissError(
+                "Данные служебной записки в кэше неполные (только карточка dashboard). "
+                "Нажмите «Обновить» на dashboard и дождитесь прогрева."
+            )
+
+        return payload, cached["fetched_at"], True
 
     async def _read_detail_from_dashboard_cache(
         self,

@@ -177,7 +177,9 @@ class MeetingService:
         await self._ensure_access(current_user)
         normalized_ref = memo_ref_key.strip().lower()
         try:
-            detail, _fetched_at, _from_cache = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
+            detail, _fetched_at, _from_cache = await MeetingMemoCacheService().get_memo_detail_for_agent(
+                normalized_ref
+            )
         except MemoCacheMissError as exc:
             raise MeetingServiceError(str(exc)) from exc
 
