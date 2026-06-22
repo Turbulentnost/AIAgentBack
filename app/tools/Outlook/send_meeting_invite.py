@@ -18,8 +18,12 @@ from exchangelib import DELEGATE, Account, CalendarItem, Configuration, Credenti
 from exchangelib.errors import ErrorNonExistentMailbox
 from exchangelib.items import SEND_ONLY_TO_ALL
 from exchangelib.properties import Attendee
+from exchangelib.version import EXCHANGE_2013_SP1, Version
 
 from app.tools.Outlook.outlook_config import OutlookConfig, build_outlook_config
+
+
+_EWS_VERSION = Version(build=EXCHANGE_2013_SP1)
 
 
 def load_config() -> OutlookConfig:
@@ -48,7 +52,11 @@ def connect_account(config: OutlookConfig, *, verify_mailbox: bool = True) -> Ac
     smtp = primary_smtp_address(config)
     credentials = Credentials(username=config.email, password=config.password)
     if config.server:
-        configuration = Configuration(server=config.server, credentials=credentials)
+        configuration = Configuration(
+            server=config.server,
+            credentials=credentials,
+            version=_EWS_VERSION,
+        )
         account = Account(
             primary_smtp_address=smtp,
             config=configuration,

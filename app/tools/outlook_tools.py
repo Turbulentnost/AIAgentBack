@@ -400,6 +400,10 @@ class FindMeetingSlotInput(BaseModel):
         description="JSON со списком переговорных",
     )
     skip_rooms: bool = Field(default=False, description="Не проверять переговорные")
+    skip_calendar_verify: bool = Field(
+        default=False,
+        description="Не делать медленную повторную проверку calendar.view для каждого слота",
+    )
 
 
 class FindMeetingSlotOutput(BaseModel):
@@ -432,6 +436,7 @@ async def find_meeting_slot_tool(
         timezone=payload.timezone,
         rooms_file=payload.rooms_file,
         skip_rooms=payload.skip_rooms,
+        skip_calendar_verify=payload.skip_calendar_verify,
     )
     return FindMeetingSlotOutput.model_validate(raw)
 

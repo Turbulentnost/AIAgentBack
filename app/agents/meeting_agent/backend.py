@@ -177,6 +177,8 @@ class MeetingBackend:
                     "preferred": preferred,
                     "duration_minutes": duration,
                     "skip_rooms": True,
+                    "skip_calendar_verify": True,
+                    "max_days": 14,
                 },
                 current_user=current_user,
             )

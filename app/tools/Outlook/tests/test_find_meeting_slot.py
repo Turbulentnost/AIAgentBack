@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 
 from app.tools.Outlook.find_meeting_slot import (
     align_preferred,
+    busy_intervals_from_freebusy_view,
+    busy_intervals_from_merged_string,
     find_nearest_slot,
     is_free_for_all,
     merge_busy_intervals,
@@ -101,3 +103,61 @@ def test_merge_busy_intervals_combines_sources() -> None:
     )
 
     assert len(merged["a@x.ru"]) == 2
+
+
+def test_busy_intervals_from_merged_string_all_free() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    range_start = datetime(2026, 6, 19, 8, 0, tzinfo=tz)
+    range_end = datetime(2026, 6, 19, 17, 0, tzinfo=tz)
+
+    intervals = busy_intervals_from_merged_string(
+        "0" * 18,
+        range_start,
+        range_end,
+        config,
+    )
+
+    assert intervals == []
+
+
+def test_busy_intervals_from_merged_string_detects_busy_block() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    range_start = datetime(2026, 6, 19, 8, 0, tzinfo=tz)
+    range_end = datetime(2026, 6, 19, 17, 0, tzinfo=tz)
+
+    intervals = busy_intervals_from_merged_string(
+        "002200",
+        range_start,
+        range_end,
+        config,
+    )
+
+    assert intervals == [
+        (
+            datetime(2026, 6, 19, 9, 0, tzinfo=tz),
+            datetime(2026, 6, 19, 10, 0, tzinfo=tz),
+        )
+    ]
+
+
+def test_busy_intervals_from_freebusy_view_uses_merged_when_no_events() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    range_start = datetime(2026, 6, 19, 8, 0, tzinfo=tz)
+    range_end = datetime(2026, 6, 19, 17, 0, tzinfo=tz)
+
+    class FakeView:
+        calendar_events = None
+        merged = "0" * 24
+
+    intervals = busy_intervals_from_freebusy_view(
+        FakeView(),
+        "postagant@turbo-don.ru",
+        range_start,
+        range_end,
+        config,
+    )
+
+    assert intervals == []
