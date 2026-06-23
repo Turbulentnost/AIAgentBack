@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 from app.services.meeting_attendees import attendee_fio_from_detail
+from app.services.meeting_agent_errors import format_onec_load_error, format_participants_missing_error
 from app.tools.onec.connection import CONFIG, create_session
 
 logger = get_logger(__name__)
@@ -185,7 +186,7 @@ class MeetingMemoCacheService:
         self,
         ref_key: str,
     ) -> tuple[dict[str, Any], datetime, bool]:
-        """Полный detail для slot-preview: только memo-кэш, без dashboard-fallback."""
+        """Полный detail для slot-preview: memo-кэш или загрузка из 1С (без dashboard-fallback)."""
         normalized = ref_key.strip().lower()
 
         if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
@@ -194,20 +195,23 @@ class MeetingMemoCacheService:
             )
 
         cached = await self._read_cache(normalized)
-        if cached is None:
-            raise MemoCacheMissError(
-                "Полные данные служебной записки ещё не прогреты. "
-                "Нажмите «Обновить» на dashboard и повторите через несколько секунд."
-            )
+        if cached is not None and detail_is_agent_ready(cached["payload"]):
+            return cached["payload"], cached["fetched_at"], True
 
-        payload = cached["payload"]
+        logger.info(
+            "meeting_memo_agent_fetch",
+            ref_key=normalized,
+            reason="cache_miss_or_incomplete",
+        )
+        try:
+            payload, fetched_at = await self._fetch_and_store(normalized)
+        except Exception as exc:
+            raise MemoCacheMissError(format_onec_load_error(exc)) from exc
+
         if not detail_is_agent_ready(payload):
-            raise MemoCacheMissError(
-                "Данные служебной записки в кэше неполные (только карточка dashboard). "
-                "Нажмите «Обновить» на dashboard и дождитесь прогрева."
-            )
+            raise MemoCacheMissError(format_participants_missing_error())
 
-        return payload, cached["fetched_at"], True
+        return payload, fetched_at, False
 
     async def _read_detail_from_dashboard_cache(
         self,

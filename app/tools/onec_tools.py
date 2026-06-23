@@ -191,13 +191,11 @@ async def lookup_email_by_fio_tool(
 
 class LookupEmailByFioTool(Tool):
     name = "lookup_email_by_fio"
-    description = "Ищет корпоративный e-mail (@turbo-don.ru) сотрудника по ФИО через 1С OData."
+    description = "Ищет корпоративный e-mail (@turbo-don.ru) сотрудника по ФИО через Exchange GAL (EWS)."
     agent_description = (
-        "Инструмент lookup_email_by_fio находит корпоративный e-mail по ФИО в 1С:ERP. "
+        "Инструмент lookup_email_by_fio находит корпоративный e-mail по ФИО в адресной книге Exchange. "
         "Возвращает только адреса @{corporate_domain}. "
-        "Передай fio — список ФИО. Источники: регистр CRM, каталог учётных записей, "
-        "Catalog_СтроковыеКонтактыВзаимодействий, Exchange GAL (OWA/EWS), CRM_ЕмейлДляСинхронизации, "
-        "контакты пользователя. Нужны ONEC_ODATA_* и OUTLOOK_* в .env."
+        "Передай fio — список ФИО. Нужны OUTLOOK_EMAIL / OUTLOOK_PASSWORD в .env."
     ).format(corporate_domain=settings.ONEC_CORPORATE_EMAIL_DOMAIN or "turbo-don.ru")
     input_model = LookupEmailByFioInput
     output_model = LookupEmailByFioOutput

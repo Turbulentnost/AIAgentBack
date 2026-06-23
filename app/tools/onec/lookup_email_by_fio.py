@@ -1,20 +1,12 @@
 """
-Поиск e-mail по ФИО через 1С OData.
+Поиск корпоративного e-mail по ФИО через Exchange GAL (EWS ResolveNames).
 
-Целевой объект: РегистрСведений.CRM_УчетныеЗаписиЭлектроннойПочты.
-Если регистр не опубликован в OData (типичный случай), используется эквивалент:
-  Catalog_УчетныеЗаписиЭлектроннойПочты (поле ВладелецУчетнойЗаписи_Key).
+Источник: глобальная адресная книга Outlook/Exchange (mail.turbo-don.ru).
+В 1С CRM и каталоги учётных записей почты не обращаемся.
 
-Дополнительные источники:
-  - CRM_ЕмейлДляСинхронизации в Catalog_Пользователи
-  - Catalog_Пользователи_КонтактнаяИнформация (тип АдресЭлектроннойПочты)
-  - InformationRegister_CRM_УчетныеЗаписиЭлектроннойПочты → Catalog_УчетныеЗаписиЭлектроннойПочты
-  - Catalog_СтроковыеКонтактыВзаимодействий (строка «ФИО <email@domain>»)
-  - Exchange GAL / OWA (EWS ResolveNames) — каталог mail.turbo-don.ru
+Возвращаются только адреса @{ONEC_CORPORATE_EMAIL_DOMAIN} (по умолчанию turbo-don.ru).
 
-Возвращаются только корпоративные адреса (@ONEC_CORPORATE_EMAIL_DOMAIN, по умолчанию turbo-don.ru).
-
-Примеры:
+Пример:
   python -m app.tools.onec.lookup_email_by_fio "Кербенева Ольга Владимировна"
 """
 
@@ -34,7 +26,7 @@ from app.core.config import settings
 from app.integrations.onec_odata import fetch_all
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.exchange_gal_lookup import EXCHANGE_GAL_SOURCE, load_exchange_gal_emails_for_fio
-from app.tools.onec.lookup_user_ref import normalize_name, resolve_user_by_fio
+from app.tools.onec.lookup_user_ref import normalize_name
 
 print = functools.partial(print, flush=True)
 log = functools.partial(print, flush=True, file=sys.stderr)
@@ -414,30 +406,13 @@ def lookup_emails_for_user_ref(
     register_index: dict[str, list[dict[str, Any]]] | None = None,
     exchange_account: Any | None = None,
 ) -> list[dict[str, str]]:
-    if register_published is None:
-        register_published = register_available(session, config)
-
-    entries: list[dict[str, str]] = []
-    if register_published:
-        entries.extend(
-            load_register_emails_for_user(
-                session,
-                config,
-                user_ref,
-                register_index=register_index,
-            )
-        )
-    entries.extend(load_mail_emails_for_user(session, config, user_ref))
-    entries.extend(load_sync_email_for_user(session, config, user_ref))
-    entries.extend(load_contact_emails_for_user(session, config, user_ref))
-    if resolved_fio:
-        entries.extend(load_string_contact_emails_for_fio(session, config, resolved_fio))
-        entries.extend(
-            load_exchange_gal_emails_for_fio(
-                resolved_fio,
-                account=exchange_account,
-            )
-        )
+    del session, config, user_ref, register_published, register_index
+    if not resolved_fio:
+        return []
+    entries = load_exchange_gal_emails_for_fio(
+        resolved_fio,
+        account=exchange_account,
+    )
     return rank_corporate_email_entries([entry for entry in entries if entry.get("email")])
 
 
@@ -599,34 +574,24 @@ def lookup_email_by_fio(
     register_index: dict[str, list[dict[str, Any]]] | None = None,
     exchange_account: Any | None = None,
 ) -> dict[str, Any]:
-    session = session or create_session(config)
-    user_ref, resolved_fio, _users = resolve_user_by_fio(session, fio, config=config)
-
-    if register_published is None:
-        register_published = register_available(session, config)
-
-    emails = lookup_emails_for_user_ref(
-        session,
-        config,
-        user_ref,
-        resolved_fio=resolved_fio,
-        register_published=register_published,
-        register_index=register_index,
-        exchange_account=exchange_account,
+    del session, config, register_published, register_index
+    query = fio.strip()
+    emails = rank_corporate_email_entries(
+        load_exchange_gal_emails_for_fio(query, account=exchange_account)
     )
 
     if not emails:
         domain = corporate_email_domain()
         raise LookupError(
-            f"Корпоративный e-mail @{domain} не найден для «{resolved_fio}» ({user_ref}). "
-            "Проверьте 1С OData и каталог пользователей Exchange (OWA)."
+            f"Корпоративный e-mail @{domain} не найден для «{query}» в Exchange GAL. "
+            "Проверьте ФИО и доступ EWS к адресной книге."
         )
 
     return {
-        "fio_query": fio.strip(),
-        "fio": resolved_fio,
-        "user_ref": user_ref,
-        "register_published": register_published,
+        "fio_query": query,
+        "fio": query,
+        "user_ref": "",
+        "register_published": False,
         "emails": emails,
     }
 
@@ -636,11 +601,8 @@ def dispatch_lookup_emails_by_fio(
     *,
     config: ODataConfig | None = None,
 ) -> dict[str, Any]:
-    """Ищет e-mail по списку ФИО и возвращает JSON для API/агента."""
-    config = config or CONFIG
-    session = create_session(config)
-    register_published = register_available(session, config)
-    register_index = load_crm_register_mail_index(session, config) if register_published else {}
+    """Ищет e-mail по списку ФИО через Exchange GAL."""
+    del config
 
     exchange_account = None
     try:
@@ -662,10 +624,6 @@ def dispatch_lookup_emails_by_fio(
             results.append(
                 lookup_email_by_fio(
                     query,
-                    session=session,
-                    config=config,
-                    register_published=register_published,
-                    register_index=register_index,
                     exchange_account=exchange_account,
                 )
             )
@@ -677,7 +635,7 @@ def dispatch_lookup_emails_by_fio(
 
     return {
         "register_entity": REGISTER_ENTITY,
-        "register_published": register_published,
+        "register_published": False,
         "corporate_email_domain": corporate_email_domain(),
         "results": results,
         "errors": errors,
@@ -687,13 +645,8 @@ def dispatch_lookup_emails_by_fio(
 def format_result(result: dict[str, Any]) -> str:
     lines = [
         f"ФИО: {result['fio']}",
-        f"Ref_Key: {result['user_ref']}",
+        "Источник: Exchange GAL (EWS ResolveNames)",
     ]
-    if not result["register_published"]:
-        lines.append(
-            f"Примечание: {REGISTER_ENTITY} не опубликован в OData; "
-            f"использован {MAIL_CATALOG}."
-        )
     lines.append("E-mail:")
     for item in result["emails"]:
         lines.append(f"  - {item['email']}  ({item['source']})")
@@ -701,7 +654,7 @@ def format_result(result: dict[str, Any]) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Поиск e-mail по ФИО (1С OData).")
+    parser = argparse.ArgumentParser(description="Поиск e-mail по ФИО (Exchange GAL).")
     parser.add_argument(
         "fio",
         nargs="+",

@@ -160,20 +160,31 @@ async def test_get_memo_detail_for_agent_returns_full_cache(agent_ready_detail) 
 
 
 @pytest.mark.asyncio
-async def test_get_memo_detail_for_agent_raises_without_memo_cache() -> None:
+async def test_get_memo_detail_for_agent_fetches_from_onec_on_cache_miss(agent_ready_detail) -> None:
+    fetched_at = datetime(2026, 6, 18, 11, 0, tzinfo=timezone.utc)
     service = MeetingMemoCacheService()
     ref_key = "11111111-1111-1111-1111-111111111111"
 
     with patch.object(service, "_read_cache", AsyncMock(return_value=None)):
-        with patch.object(service, "_read_detail_from_dashboard_cache", AsyncMock()) as dashboard:
-            with pytest.raises(MemoCacheMissError, match="не прогреты"):
-                await service.get_memo_detail_for_agent(ref_key)
+        with patch.object(
+            service,
+            "_fetch_and_store",
+            AsyncMock(return_value=(agent_ready_detail, fetched_at)),
+        ) as fetch:
+            with patch.object(service, "_read_detail_from_dashboard_cache", AsyncMock()) as dashboard:
+                payload, result_fetched_at, from_cache = await service.get_memo_detail_for_agent(ref_key)
 
+    fetch.assert_awaited_once_with(ref_key)
     dashboard.assert_not_called()
+    assert from_cache is False
+    assert payload == agent_ready_detail
+    assert result_fetched_at == fetched_at
 
 
 @pytest.mark.asyncio
-async def test_get_memo_detail_for_agent_rejects_dashboard_shaped_cache() -> None:
+async def test_get_memo_detail_for_agent_refetches_when_cache_is_dashboard_shaped(
+    agent_ready_detail,
+) -> None:
     fetched_at = datetime(2026, 6, 18, 10, 0, tzinfo=timezone.utc)
     dashboard_detail = build_detail_from_dashboard_item(
         {
@@ -185,10 +196,20 @@ async def test_get_memo_detail_for_agent_rejects_dashboard_shaped_cache() -> Non
     cached = {"payload": dashboard_detail, "fetched_at": fetched_at}
     service = MeetingMemoCacheService()
     ref_key = "11111111-1111-1111-1111-111111111111"
+    refetched_at = datetime(2026, 6, 18, 11, 0, tzinfo=timezone.utc)
 
     with patch.object(service, "_read_cache", AsyncMock(return_value=cached)):
-        with pytest.raises(MemoCacheMissError, match="неполные"):
-            await service.get_memo_detail_for_agent(ref_key)
+        with patch.object(
+            service,
+            "_fetch_and_store",
+            AsyncMock(return_value=(agent_ready_detail, refetched_at)),
+        ) as fetch:
+            payload, result_fetched_at, from_cache = await service.get_memo_detail_for_agent(ref_key)
+
+    fetch.assert_awaited_once_with(ref_key)
+    assert from_cache is False
+    assert payload == agent_ready_detail
+    assert result_fetched_at == refetched_at
 
 
 @pytest.mark.asyncio

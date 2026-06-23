@@ -400,6 +400,18 @@ class FindMeetingSlotInput(BaseModel):
         description="JSON со списком переговорных",
     )
     skip_rooms: bool = Field(default=False, description="Не проверять переговорные")
+    verify_calendar: bool = Field(
+        default=False,
+        description="Дополнительно сверять слот с calendar.view (медленно)",
+    )
+    quiet: bool = Field(
+        default=True,
+        description="Без подробных логов поиска (False — только при явном запросе пользователя)",
+    )
+    include_timing: bool = Field(
+        default=False,
+        description="Печатать тайминги шагов EWS в stderr",
+    )
 
 
 class FindMeetingSlotOutput(BaseModel):
@@ -432,6 +444,9 @@ async def find_meeting_slot_tool(
         timezone=payload.timezone,
         rooms_file=payload.rooms_file,
         skip_rooms=payload.skip_rooms,
+        verify_calendar=payload.verify_calendar,
+        quiet=payload.quiet,
+        include_timing=payload.include_timing,
     )
     return FindMeetingSlotOutput.model_validate(raw)
 

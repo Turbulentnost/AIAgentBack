@@ -417,7 +417,7 @@ def _attach_cached_emails(
     *,
     config: ODataConfig,
 ) -> None:
-    """Сохраняет e-mail в detail при прогреве, чтобы slot-preview не ходил в 1С повторно."""
+    """Сохраняет e-mail в detail при прогреве через Exchange GAL (без CRM 1С)."""
     names: list[str] = []
 
     def collect(person: dict[str, Any] | None) -> None:
