@@ -1,0 +1,99 @@
+"""Доменные модели: письмо, вложения, результаты узлов графа."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import StrEnum
+
+from pydantic import BaseModel, Field
+
+
+class Priority(StrEnum):
+    """Приоритет по СТО-34-238 п. 6.2."""
+
+    URGENT = "urgent"   # госорганы (суд, ФНС, ПФР, трудовая инспекция)
+    HIGH = "high"       # претензионные письма
+    NORMAL = "normal"   # расчётные документы, прочее
+
+
+class ProcessingStatus(StrEnum):
+    PROCESSING = "processing"
+    DONE = "done"
+    SPAM = "spam"
+    ERROR = "error"
+    AWAITING_HUMAN = "awaiting_human"
+
+
+class Attachment(BaseModel):
+    filename: str
+    mime_type: str
+    size_bytes: int
+    content: bytes | None = None        # сырьё для Document Service
+    extracted_text: str | None = None   # результат извлечения (узел 4)
+    ocr_used: bool = False
+
+
+class EmailMessage(BaseModel):
+    """Распарсенное входящее письмо (узел 1)."""
+
+    message_id: str
+    mailbox: str
+    sender_email: str
+    sender_name: str | None = None
+    subject: str = ""
+    body_text: str = ""
+    body_html: str | None = None
+    received_at: datetime
+    cc: list[str] = Field(default_factory=list)
+    reply_to: str | None = None
+    list_unsubscribe: str | None = None
+    attachments: list[Attachment] = Field(default_factory=list)
+
+
+class SpamResult(BaseModel):
+    is_spam: bool
+    confidence: float          # 0.0–1.0
+    reason: str
+    rule_hit: str | None = None  # какое правило сработало (этап 2.1)
+
+
+class Contractor(BaseModel):
+    """Запись RAG-коллекции contractors."""
+
+    contractor_id: str
+    name: str
+    emails: list[str]
+    department_codes: list[str]   # допустимые отделы
+    contractor_type: str          # клиент / поставщик / партнёр / госорган
+
+
+class SenderIdentity(BaseModel):
+    found: bool
+    contractor: Contractor | None = None
+    is_new_contractor: bool = False
+    allowed_departments: list[str] = Field(default_factory=list)
+
+
+class Department(BaseModel):
+    """Запись RAG-коллекции departments."""
+
+    department_id: str
+    department_name: str
+    head_name: str                # ФИО руководителя — для задачи в 1С
+    responsibility: str = ""
+    keywords: list[str] = Field(default_factory=list)
+
+
+class RoutingResult(BaseModel):
+    department_id: str
+    department_name: str
+    confidence: float
+    reasoning: str
+    priority: Priority = Priority.NORMAL
+
+
+class ErpTaskResult(BaseModel):
+    success: bool
+    erp_document_number: str | None = None
+    erp_task_id: str | None = None
+    error: str | None = None
