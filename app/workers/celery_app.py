@@ -22,9 +22,17 @@ if settings.MEETING_DASHBOARD_CACHE_WARMUP_ENABLED:
         ),
         "options": {"queue": "default"},
     }
+_beat_schedule["recover-stale-knowledge-base-indexing-jobs"] = {
+    "task": "recover_stale_knowledge_base_indexing_jobs",
+    "schedule": settings.KB_INDEXING_RECOVERY_INTERVAL_SECONDS,
+    "options": {"queue": "indexing"},
+}
 
 celery_app.conf.update(
     accept_content=["json"],
+    broker_transport_options={
+        "visibility_timeout": settings.CELERY_VISIBILITY_TIMEOUT_SECONDS,
+    },
     broker_connection_retry_on_startup=True,
     enable_utc=True,
     result_expires=60 * 60 * 24,
@@ -42,6 +50,7 @@ celery_app.conf.update(
         "index_knowledge_base_source": {"queue": "indexing"},
         "reindex_knowledge_base_embeddings": {"queue": "indexing"},
         "reindex_knowledge_base_after_access_change": {"queue": "indexing"},
+        "recover_stale_knowledge_base_indexing_jobs": {"queue": "indexing"},
         "generate_report": {"queue": "reports"},
         "update_task_status": {"queue": "default"},
         "run_department_analysis": {"queue": "default"},
@@ -50,5 +59,6 @@ celery_app.conf.update(
     task_track_started=True,
     timezone=settings.MEETING_DASHBOARD_CACHE_WARMUP_TIMEZONE,
     worker_prefetch_multiplier=1,
+    visibility_timeout=settings.CELERY_VISIBILITY_TIMEOUT_SECONDS,
     beat_schedule=_beat_schedule,
 )
