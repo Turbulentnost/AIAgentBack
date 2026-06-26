@@ -12,6 +12,7 @@ from app.tools.onec.create_service_memo import (
     DEFAULT_THEME,
     create_and_send_service_memo,
 )
+from app.tools.onec.create_protocol import create_meeting_protocol, delete_meeting_protocol
 from app.tools.onec.get_meetings import get_last_meeting_memos
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
 from app.tools.onec.meeting_topics_registry import query_meeting_topics
@@ -424,6 +425,175 @@ class CreateServiceMemoTool(Tool):
 
 
 register_tool(CreateServiceMemoTool())
+
+
+class ProtocolTaskInput(BaseModel):
+    item_number: int | None = Field(
+        default=None,
+        ge=1,
+        description="Номер пункта протокола (если не указан — порядковый)",
+    )
+    text: str = Field(description="Текст пункта / поручения")
+    due_date: str | None = Field(
+        default=None,
+        description="Срок исполнения в ISO-формате",
+    )
+    responsible_fio: str | None = Field(
+        default=None,
+        description="ФИО ответственного за пункт",
+    )
+
+
+class CreateProtocolInput(BaseModel):
+    number: str = Field(description="Номер протокола, например НСР_001_О_001")
+    comment: str = Field(default="", description="Комментарий документа")
+    template_ref_key: str | None = Field(
+        default=None,
+        description="Ref_Key протокола-шаблона для копирования реквизитов",
+    )
+    template_number_prefix: str | None = Field(
+        default=None,
+        description="Префикс номера для выбора шаблона, например НСР",
+    )
+    manager_fio: str | None = Field(default=None, description="ФИО руководителя")
+    responsible_fio: str | None = Field(default=None, description="ФИО ответственного")
+    prepared_by_fio: str | None = Field(default=None, description="ФИО подготовившего")
+    topic_key: str | None = Field(default=None, description="Ref_Key темы совещания")
+    meeting_type: str | None = Field(
+        default=None,
+        description="Вид совещания, например Отчетное",
+    )
+    tasks: list[ProtocolTaskInput] = Field(
+        default_factory=list,
+        description="Пункты протокола для регистра задач",
+    )
+
+
+class ProtocolInfo(BaseModel):
+    ref_key: str | None = None
+    number: str | None = None
+    date: str | None = None
+    status: str | None = None
+    posted: bool | None = None
+    comment: str | None = None
+
+
+class ProtocolTemplateInfo(BaseModel):
+    ref_key: str | None = None
+    number: str | None = None
+
+
+class ProtocolTaskInfo(BaseModel):
+    item_number: str | int | None = None
+    task_id: str | None = None
+    text: str | None = None
+    due_date: str | None = None
+    responsible_ref: str | None = None
+
+
+class CreateProtocolOutput(BaseModel):
+    protocol: ProtocolInfo
+    template: ProtocolTemplateInfo
+    tasks: list[ProtocolTaskInfo] = Field(default_factory=list)
+
+
+async def create_protocol_tool(
+    payload: CreateProtocolInput,
+    context: ToolContext,
+) -> CreateProtocolOutput:
+    del context
+    raw = await asyncio.to_thread(
+        create_meeting_protocol,
+        number=payload.number,
+        comment=payload.comment,
+        template_ref_key=payload.template_ref_key,
+        template_number_prefix=payload.template_number_prefix,
+        manager_fio=payload.manager_fio,
+        responsible_fio=payload.responsible_fio,
+        prepared_by_fio=payload.prepared_by_fio,
+        topic_key=payload.topic_key,
+        meeting_type=payload.meeting_type,
+        tasks=[task.model_dump(exclude_none=True) for task in payload.tasks],
+    )
+    return CreateProtocolOutput.model_validate(raw)
+
+
+class CreateProtocolTool(Tool):
+    name = "create_protocol"
+    description = "Создаёт протокол совещания в 1С:ERP и при необходимости пункты в регистре задач."
+    agent_description = (
+        "Инструмент create_protocol создаёт Document_ТД_Протокол в 1С:ERP через OData. "
+        "number — номер документа (серия задаётся явно, например НСР_001_О_001); "
+        "template_ref_key или template_number_prefix — откуда взять реквизиты по умолчанию; "
+        "manager_fio, responsible_fio, prepared_by_fio — переопределение участников; "
+        "tasks — пункты для InformationRegister_ТД_ЗадачиПротоколов. "
+        "Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = CreateProtocolInput
+    output_model = CreateProtocolOutput
+    required_permissions = ["create_protocol"]
+    preview_default_params = {
+        "number": "НСР_001_О_001",
+        "comment": "Тестовый протокол",
+        "tasks": [{"text": "Тестовое поручение"}],
+    }
+
+    async def execute(
+        self,
+        payload: CreateProtocolInput,
+        context: ToolContext,
+    ) -> CreateProtocolOutput:
+        return await create_protocol_tool(payload, context)
+
+
+register_tool(CreateProtocolTool())
+
+
+class DeleteProtocolInput(BaseModel):
+    ref_key: str | None = Field(default=None, description="Ref_Key протокола")
+    number: str | None = Field(default=None, description="Номер протокола")
+
+
+class DeleteProtocolOutput(BaseModel):
+    ref_key: str
+    number: str | None = None
+    deleted: bool
+
+
+async def delete_protocol_tool(
+    payload: DeleteProtocolInput,
+    context: ToolContext,
+) -> DeleteProtocolOutput:
+    del context
+    raw = await asyncio.to_thread(
+        delete_meeting_protocol,
+        ref_key=payload.ref_key,
+        number=payload.number,
+    )
+    return DeleteProtocolOutput.model_validate(raw)
+
+
+class DeleteProtocolTool(Tool):
+    name = "delete_protocol"
+    description = "Удаляет протокол совещания в 1С:ERP по Ref_Key или номеру."
+    agent_description = (
+        "Инструмент delete_protocol удаляет Document_ТД_Протокол в 1С:ERP через OData. "
+        "Нужен ref_key или number. Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = DeleteProtocolInput
+    output_model = DeleteProtocolOutput
+    required_permissions = ["delete_protocol"]
+    preview_default_params = {"number": "НСР_001_О_001"}
+
+    async def execute(
+        self,
+        payload: DeleteProtocolInput,
+        context: ToolContext,
+    ) -> DeleteProtocolOutput:
+        return await delete_protocol_tool(payload, context)
+
+
+register_tool(DeleteProtocolTool())
 
 
 class SendDesktopNotificationInput(BaseModel):
