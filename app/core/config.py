@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
+    CELERY_VISIBILITY_TIMEOUT_SECONDS: int = 60 * 60 * 24
+    KB_INDEXING_STALE_AFTER_SECONDS: int = 60 * 45
+    KB_INDEXING_RECOVERY_INTERVAL_SECONDS: int = 60 * 10
+    KB_INDEXING_RECOVERY_MAX_JOBS: int = 5
+    KB_DOCUMENT_PARSE_TIMEOUT_SECONDS: int = 60 * 10
 
     QDRANT_HOST: str = "192.168.1.157"
     QDRANT_PORT: int = 6333
@@ -111,6 +116,7 @@ class Settings(BaseSettings):
     # Структурное извлечение nd_control (DocumentCard, анализ отдела).
     ND_CONTROL_EXTRACTION_MODEL: str = "openai/gpt-oss-120b"
     ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS: int = 1200
+    ND_TEMPLATE_CLASSIFICATION_MODEL: str | None = None
     ND_CONTROL_UML_MODEL: str | None = None
     ND_CONTROL_UML_LLM_TIMEOUT_SECONDS: int = 180
     # OCR / vision для PDF и изображений — всегда qwen в LM Studio.

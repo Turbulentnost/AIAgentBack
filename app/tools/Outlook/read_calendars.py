@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from exchangelib import DELEGATE, EWSDateTime, EWSTimeZone, Account, Configuration, Credentials
 from exchangelib.errors import ErrorFolderNotFound, ErrorNonExistentMailbox
 from exchangelib.folders import Calendar, Folder
+from exchangelib.version import EXCHANGE_2013_SP1, Version
 
 from app.tools.Outlook.outlook_config import OutlookConfig
 from app.tools.Outlook.send_meeting_invite import connect_account, load_config, primary_smtp_address
@@ -39,20 +40,35 @@ def date_range(*, days: int, config: OutlookConfig) -> tuple[EWSDateTime, EWSDat
     return start, end
 
 
-def connect_as_owner(config: OutlookConfig, owner_smtp: str) -> Account:
-    """Календарь другого пользователя: логин Postagent, mailbox = owner."""
+_EWS_VERSION = Version(build=EXCHANGE_2013_SP1)
+
+
+def ews_configuration(config: OutlookConfig) -> Configuration:
     credentials = Credentials(username=config.email, password=config.password)
     if config.server:
-        configuration = Configuration(server=config.server, credentials=credentials)
+        return Configuration(
+            server=config.server,
+            credentials=credentials,
+            version=_EWS_VERSION,
+        )
+    return Configuration(
+        credentials=credentials,
+        version=_EWS_VERSION,
+    )
+
+
+def connect_as_owner(config: OutlookConfig, owner_smtp: str) -> Account:
+    """Календарь другого пользователя: логин Postagent, mailbox = owner."""
+    if config.server:
         return Account(
             primary_smtp_address=owner_smtp.strip(),
-            config=configuration,
+            config=ews_configuration(config),
             autodiscover=False,
             access_type=DELEGATE,
         )
     return Account(
         primary_smtp_address=owner_smtp.strip(),
-        credentials=credentials,
+        credentials=Credentials(username=config.email, password=config.password),
         autodiscover=True,
         access_type=DELEGATE,
     )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.workers.celery_app import celery_app
@@ -520,6 +520,186 @@ def index_knowledge_base_source(
     return _run_async_task(_run)
 
 
+@celery_app.task(name="recover_stale_knowledge_base_indexing_jobs", bind=True, max_retries=0)
+def recover_stale_knowledge_base_indexing_jobs(self) -> dict[str, Any]:
+    """Cancel stale/duplicated KB indexing jobs and requeue recoverable ones."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.models.enums import (
+        KnowledgeBaseIndexJobStatus,
+        KnowledgeBaseIndexJobType,
+        KnowledgeBaseSourceStatus,
+        KnowledgeBaseStatus,
+    )
+    from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseIndexingJob
+    from app.services.knowledge_base_celery import (
+        attach_celery_task_id,
+        read_celery_task_id,
+        revoke_active_indexing_tasks,
+        revoke_indexing_celery_task,
+    )
+    from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+
+    indexing_task_names = {
+        "index_knowledge_base_full",
+        "index_knowledge_base_source",
+        "reindex_knowledge_base_embeddings",
+        "reindex_knowledge_base_after_access_change",
+    }
+
+    def active_tasks_by_job() -> dict[str, list[str]]:
+        try:
+            active = celery_app.control.inspect(timeout=2.0).active() or {}
+        except Exception:
+            return {}
+        result: dict[str, list[str]] = {}
+        for tasks in active.values():
+            for task in tasks:
+                if str(task.get("name") or "") not in indexing_task_names:
+                    continue
+                args = [str(item) for item in (task.get("args") or [])]
+                if len(args) < 2:
+                    continue
+                task_id = str(task.get("id") or "")
+                if task_id:
+                    result.setdefault(args[-1], []).append(task_id)
+        return result
+
+    async def _run() -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        stale_before = now - timedelta(seconds=settings.KB_INDEXING_STALE_AFTER_SECONDS)
+        active_by_job = active_tasks_by_job()
+        recovered: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+
+        async with AsyncSessionLocal() as db:
+            query = (
+                select(KnowledgeBaseIndexingJob)
+                .options(
+                    selectinload(KnowledgeBaseIndexingJob.knowledge_base).selectinload(
+                        KnowledgeBase.sources
+                    )
+                )
+                .where(
+                    KnowledgeBaseIndexingJob.status.in_(
+                        [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                    )
+                )
+                .order_by(KnowledgeBaseIndexingJob.updated_at.asc())
+                .limit(settings.KB_INDEXING_RECOVERY_MAX_JOBS)
+            )
+            jobs = list((await db.execute(query)).scalars().all())
+            service = KnowledgeBaseIndexingService(db)
+
+            for job in jobs:
+                kb = job.knowledge_base
+                if kb is None:
+                    continue
+                updated_at = job.updated_at
+                if updated_at is not None and updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                is_stale = updated_at is None or updated_at <= stale_before
+                active_task_ids = active_by_job.get(str(job.id), [])
+                has_duplicates = len(active_task_ids) > 1
+                is_orphan = job.status == KnowledgeBaseIndexJobStatus.RUNNING and not active_task_ids
+                is_stale_queued = job.status == KnowledgeBaseIndexJobStatus.QUEUED and is_stale
+
+                if not (has_duplicates or is_orphan or is_stale_queued):
+                    skipped.append(
+                        {
+                            "job_id": str(job.id),
+                            "knowledge_base_id": str(job.knowledge_base_id),
+                            "active_tasks": len(active_task_ids),
+                            "reason": "active_or_recent",
+                        }
+                    )
+                    continue
+
+                revoke_indexing_celery_task(read_celery_task_id(job.processing_params), terminate=True)
+                revoke_active_indexing_tasks(
+                    knowledge_base_id=str(job.knowledge_base_id),
+                    job_ids=[str(job.id)],
+                    terminate=True,
+                )
+
+                job.status = KnowledgeBaseIndexJobStatus.CANCELLED
+                job.cancel_requested = True
+                job.cancel_requested_at = now
+                job.cancel_reason = "Автовосстановление зависшей индексации"
+                job.finished_at = now
+                job.processing_params = {
+                    **(job.processing_params or {}),
+                    "current_stage": "stopped",
+                    "last_observed_stage": "stopped",
+                    "recovered_by": "recover_stale_knowledge_base_indexing_jobs",
+                }
+
+                for source in kb.sources:
+                    if source.processing_status == KnowledgeBaseSourceStatus.PROCESSING:
+                        source.processing_status = KnowledgeBaseSourceStatus.READY_TO_INDEX
+
+                requeued_job_id: str | None = None
+                if kb.status != KnowledgeBaseStatus.ARCHIVED and kb.deleted_at is None:
+                    await service.mark_indexing_queued(kb.id)
+                    new_job = await service.create_job(
+                        kb.id,
+                        job_type=job.job_type,
+                        started_by_user_id=job.started_by_user_id,
+                        target_source_id=job.target_source_id,
+                        target_chunk_id=job.target_chunk_id,
+                    )
+                    await db.flush()
+                    if job.job_type == KnowledgeBaseIndexJobType.SOURCE and job.target_source_id is not None:
+                        async_result = index_knowledge_base_source.apply_async(
+                            args=[str(kb.id), str(job.target_source_id), str(new_job.id)],
+                            queue="indexing",
+                        )
+                    elif job.job_type == KnowledgeBaseIndexJobType.EMBEDDINGS:
+                        async_result = reindex_knowledge_base_embeddings.apply_async(
+                            args=[str(kb.id), str(new_job.id)],
+                            queue="indexing",
+                        )
+                    else:
+                        async_result = index_knowledge_base_full.apply_async(
+                            args=[str(kb.id), str(new_job.id)],
+                            queue="indexing",
+                        )
+                    new_job.processing_params = attach_celery_task_id(
+                        new_job.processing_params,
+                        async_result.id,
+                    )
+                    requeued_job_id = str(new_job.id)
+                elif kb.fragments_count > 0:
+                    kb.status = KnowledgeBaseStatus.READY
+                else:
+                    kb.status = KnowledgeBaseStatus.DRAFT
+
+                recovered.append(
+                    {
+                        "job_id": str(job.id),
+                        "knowledge_base_id": str(job.knowledge_base_id),
+                        "knowledge_base_name": kb.name,
+                        "active_tasks": len(active_task_ids),
+                        "reason": "duplicate_active_tasks" if has_duplicates else "stale_or_orphan",
+                        "requeued_job_id": requeued_job_id,
+                    }
+                )
+
+            await db.commit()
+
+        return {
+            "task_id": self.request.id,
+            "recovered": recovered,
+            "skipped": skipped,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return _run_async_task(_run)
+
+
 @celery_app.task(name="run_knowledge_base_search_query", bind=True, max_retries=0)
 def run_knowledge_base_search_query(self, search_query_id: str) -> dict[str, Any]:
     """Фоновый поиск по базе знаний: выполняется до конца, даже если
@@ -717,6 +897,44 @@ def run_department_analysis(self, run_id: str, force_reextract: bool = False) ->
                 "status": run.status.value,
                 "finished_at": run.finished_at.isoformat() if run.finished_at else None,
             }
+
+    return _run_async_task(_run)
+
+
+@celery_app.task(name="classify_template_document", bind=True, max_retries=1)
+def classify_template_document(self, document_link_id: str) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.nd_template_classification_service import (
+        NdTemplateClassificationService,
+        NdTemplateClassificationServiceError,
+    )
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            link_id = uuid_module.UUID(document_link_id)
+            service = NdTemplateClassificationService(db)
+            try:
+                link = await service.classify_template_document(link_id)
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "classify_template_document",
+                    "document_link_id": document_link_id,
+                    "status": link.classification_status.value,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except NdTemplateClassificationServiceError as exc:
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "classify_template_document",
+                    "document_link_id": document_link_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
 
     return _run_async_task(_run)
 
