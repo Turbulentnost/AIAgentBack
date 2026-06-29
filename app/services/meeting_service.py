@@ -67,6 +67,7 @@ from app.services.meeting_memo_cache import (
 )
 from app.services.meeting_permission import MEETING_AGENT_SLUG, can_access_meeting_agent
 from app.core.logging import get_logger
+from app.services.meeting_duration import resolve_duration_minutes
 from app.services.meeting_slot import format_planned_start_for_search, format_slot_label, slot_duration_minutes
 from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
@@ -225,7 +226,11 @@ class MeetingService:
                 error_stage="email",
             )
 
-        duration = payload.duration_minutes or application.get("duration_minutes") or _duration_from_memo(memo)
+        duration = resolve_duration_minutes(
+            payload.duration_minutes,
+            application.get("duration_minutes"),
+            _duration_from_memo(memo),
+        )
         planned_start = format_planned_start_for_search(
             application.get("meeting_start"),
             detail.get("queue") or {},
@@ -248,7 +253,7 @@ class MeetingService:
             planned_start=planned_start,
             duration_minutes=duration,
             max_days=SLOT_PREVIEW_MAX_DAYS,
-            verify_calendar=False,
+            verify_calendar=True,
             timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS,
         )
         try:
@@ -260,7 +265,7 @@ class MeetingService:
                     duration_minutes=duration,
                     current_user=current_user,
                     max_days=SLOT_PREVIEW_MAX_DAYS,
-                    verify_calendar=False,
+                    verify_calendar=True,
                     quiet=False,
                     include_timing=True,
                 ),

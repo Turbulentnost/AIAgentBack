@@ -51,7 +51,8 @@ FORBIDDEN_BLOCKS = (
     (dt_time(15, 0), dt_time(15, 15)),
 )
 BUSY_STATUSES = frozenset({"Busy", "Tentative", "OOF", "WorkingElsewhere"})
-MERGED_BUSY_CHARS = frozenset("23")
+FREE_BUSY_MERGED_INTERVAL_MINUTES = 30
+MERGED_FREE_CHARS = frozenset({"0", ""})
 
 logger = logging.getLogger("find_meeting_slot")
 _timing_report: list[dict[str, Any]] = []
@@ -231,32 +232,34 @@ def busy_intervals_from_merged_string(
     range_start: datetime,
     range_end: datetime,
     config: OutlookConfig,
+    *,
+    interval_minutes: int = FREE_BUSY_MERGED_INTERVAL_MINUTES,
 ) -> list[tuple[datetime, datetime]]:
+    """Парсит merged-строку FreeBusyView (0=свободен, 1+=занят/предварительно/OOF)."""
     if not merged:
         return []
 
     local_start = to_local(range_start, config).replace(second=0, microsecond=0)
     local_end = to_local(range_end, config).replace(second=0, microsecond=0)
-    total_seconds = (local_end - local_start).total_seconds()
-    if total_seconds <= 0:
-        return []
-
-    slot_seconds = total_seconds / len(merged)
+    step = timedelta(minutes=interval_minutes)
     intervals: list[tuple[datetime, datetime]] = []
     busy_start: datetime | None = None
+    slot_start = local_start
 
-    for index, char in enumerate(merged):
-        slot_start = local_start + timedelta(seconds=slot_seconds * index)
-        if char not in MERGED_BUSY_CHARS:
-            if busy_start is not None:
-                intervals.append((busy_start, slot_start))
-                busy_start = None
-            continue
-        if busy_start is None:
-            busy_start = slot_start
+    for char in merged:
+        slot_end = slot_start + step
+        if slot_start >= local_end:
+            break
+        if char not in MERGED_FREE_CHARS:
+            if busy_start is None:
+                busy_start = slot_start
+        elif busy_start is not None:
+            intervals.append((busy_start, slot_start))
+            busy_start = None
+        slot_start = slot_end
 
     if busy_start is not None:
-        intervals.append((busy_start, local_end))
+        intervals.append((busy_start, min(slot_start, local_end)))
     return intervals
 
 
@@ -283,30 +286,55 @@ def freebusy_busy_intervals(
     raise RuntimeError(f"Exchange не вернул занятость для {attendee}: пустой ответ FreeBusyView")
 
 
+def freebusy_events_busy_intervals(
+    view: Any,
+    *,
+    attendee: str,
+    range_start: datetime,
+    range_end: datetime,
+    config: OutlookConfig,
+) -> list[tuple[datetime, datetime]]:
+    """Для проверки слота: calendar_events из GetUserAvailability, затем merged."""
+    events = getattr(view, "calendar_events", None)
+    if events is not None and list(events or []):
+        intervals = parse_freebusy_events(list(events), config)
+        if intervals:
+            return intervals
+
+    merged = getattr(view, "merged", None)
+    if isinstance(merged, str) and merged:
+        return busy_intervals_from_merged_string(merged, range_start, range_end, config)
+
+    message = getattr(view, "message", None)
+    if message:
+        raise RuntimeError(f"Exchange не вернул занятость для {attendee}: {message}")
+    return []
+
+
 def calendar_events_from_freebusy_view(view: Any, attendee: str) -> list[Any]:
     events = getattr(view, "calendar_events", None)
     if events is not None:
         return list(events or [])
     merged = getattr(view, "merged", None)
-    if isinstance(merged, str) and merged and all(char not in MERGED_BUSY_CHARS for char in merged):
+    if isinstance(merged, str) and merged and all(char in MERGED_FREE_CHARS for char in merged):
         return []
     message = getattr(view, "message", None) or getattr(view, "view_type", None) or "FreeBusyView"
     raise RuntimeError(f"Exchange не вернул занятость для {attendee}: {message}")
 
 
-def fetch_busy_intervals_freebusy(
+def fetch_free_busy_views(
     config: OutlookConfig,
     attendees: list[str],
     range_start: datetime,
     range_end: datetime,
-) -> dict[str, list[tuple[datetime, datetime]]]:
-    """GetUserAvailability — один запрос на всех участников (быстро)."""
-    attendees = [email.strip() for email in attendees]
+) -> dict[str, Any]:
+    """GetUserAvailability — один запрос, ответ по каждому участнику."""
+    attendee_list = [email.strip() for email in attendees]
     with timed_step("ews.connect.service"):
         service_account = connect_account(config)
 
-    mailbox_data = [(email, "Required", False) for email in attendees]
-    with timed_step("ews.freebusy.get", attendees=len(attendees)):
+    mailbox_data = [(email, "Required", False) for email in attendee_list]
+    with timed_step("ews.freebusy.get", attendees=len(attendee_list)):
         views = list(
             service_account.protocol.get_free_busy_info(
                 mailbox_data,
@@ -316,13 +344,24 @@ def fetch_busy_intervals_freebusy(
             )
         )
 
-    if len(views) != len(attendees):
+    if len(views) != len(attendee_list):
         raise RuntimeError(
-            f"Free/busy вернул {len(views)} ответов для {len(attendees)} участников"
+            f"Free/busy вернул {len(views)} ответов для {len(attendee_list)} участников"
         )
+    return dict(zip(attendee_list, views))
+
+
+def fetch_busy_intervals_freebusy(
+    config: OutlookConfig,
+    attendees: list[str],
+    range_start: datetime,
+    range_end: datetime,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    """GetUserAvailability — один запрос на всех участников (быстро)."""
+    views_by_email = fetch_free_busy_views(config, attendees, range_start, range_end)
 
     busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] = {}
-    for email, view in zip(attendees, views):
+    for email, view in views_by_email.items():
         with timed_step("parse.freebusy_intervals", attendee=email):
             try:
                 intervals = freebusy_busy_intervals(
@@ -349,7 +388,7 @@ def fetch_busy_intervals_freebusy(
         merged = getattr(view, "merged", None)
         merged_len = len(merged) if isinstance(merged, str) else 0
         busy_chars = (
-            sum(1 for char in merged if char in MERGED_BUSY_CHARS)
+            sum(1 for char in merged if char not in MERGED_FREE_CHARS)
             if isinstance(merged, str)
             else 0
         )
@@ -360,6 +399,29 @@ def fetch_busy_intervals_freebusy(
             merged_len,
             busy_chars,
         )
+    return busy_by_attendee
+
+
+def fetch_busy_intervals_freebusy_events(
+    config: OutlookConfig,
+    attendees: list[str],
+    range_start: datetime,
+    range_end: datetime,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    """Проверка занятости через calendar_events из GetUserAvailability (без Delegate на папку)."""
+    views_by_email = fetch_free_busy_views(config, attendees, range_start, range_end)
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] = {}
+    for email, view in views_by_email.items():
+        with timed_step("parse.freebusy_events", attendee=email):
+            intervals = freebusy_events_busy_intervals(
+                view,
+                attendee=email,
+                range_start=range_start,
+                range_end=range_end,
+                config=config,
+            )
+        busy_by_attendee[email] = intervals
+        logger.info("  %s: занятых интервалов (events)=%d", email, len(intervals))
     return busy_by_attendee
 
 
@@ -642,18 +704,17 @@ def verify_slot_with_calendar(
     max_items: int,
     workers: int,
 ) -> tuple[bool, dict[str, list[tuple[datetime, datetime]]]]:
+    del max_items, workers
     window_start = slot_start - timedelta(hours=2)
     window_end = slot_start + duration + timedelta(hours=2)
-    calendar_busy = fetch_all_busy_intervals(
-        config,
-        attendees,
-        window_start,
-        window_end,
-        source="calendar",
-        max_items=max_items,
-        workers=workers,
-    )
-    return is_free_for_all(slot_start, duration, calendar_busy, config), calendar_busy
+    with timed_step("verify.freebusy_events", attendees=len(attendees)):
+        busy_by_attendee = fetch_busy_intervals_freebusy_events(
+            config,
+            attendees,
+            window_start,
+            window_end,
+        )
+    return is_free_for_all(slot_start, duration, busy_by_attendee, config), busy_by_attendee
 
 
 def _slot_search_result(
@@ -692,7 +753,7 @@ def find_nearest_slot(
     max_items: int,
     source: AvailabilitySource = "freebusy",
     workers: int = 4,
-    verify_calendar: bool = False,
+    verify_calendar: bool = True,
 ) -> dict[str, Any]:
     if not attendees:
         raise ValueError("Укажите хотя бы одного участника (--attendee).")
@@ -745,16 +806,21 @@ def find_nearest_slot(
     )
 
     checked = 0
+    union_busy_search = list(union_busy)
+    max_calendar_retries = 50
     with timed_step("scan.slots", max_days=max_days, step_minutes=int(step.total_seconds() // 60)):
-        slot, checked = find_slot_via_busy_gaps(
-            earliest_allowed=earliest_allowed,
-            search_end=search_end,
-            duration=duration,
-            step=step,
-            union_busy=union_busy,
-            config=config,
-        )
-        if slot is not None:
+        for _attempt in range(max_calendar_retries):
+            slot, step_checked = find_slot_via_busy_gaps(
+                earliest_allowed=earliest_allowed,
+                search_end=search_end,
+                duration=duration,
+                step=step,
+                union_busy=union_busy_search,
+                config=config,
+            )
+            checked += step_checked
+            if slot is None:
+                break
             if not verify_calendar:
                 logger.info("Слот найден после %d проверок (free/busy, по промежуткам)", checked)
                 return _slot_search_result(
@@ -767,7 +833,7 @@ def find_nearest_slot(
                     search_end=search_end,
                     source=source,
                 )
-            calendar_ok, calendar_busy = verify_slot_with_calendar(
+            calendar_ok, _calendar_busy = verify_slot_with_calendar(
                 config=config,
                 attendees=attendees,
                 slot_start=slot,
@@ -776,7 +842,7 @@ def find_nearest_slot(
                 workers=workers,
             )
             if calendar_ok:
-                logger.info("Слот найден после %d проверок", checked)
+                logger.info("Слот найден после %d проверок (free/busy + events)", checked)
                 return _slot_search_result(
                     requested=requested,
                     earliest_allowed=earliest_allowed,
@@ -788,8 +854,14 @@ def find_nearest_slot(
                     source=source,
                 )
             logger.info(
-                "Слот %s свободен по free/busy, но занят по calendar — повторный поиск не выполняется",
+                "Слот %s свободен по merged, но занят по free/busy events — ищем следующий",
                 slot.isoformat(),
+            )
+            union_busy_search = coalesce_intervals(
+                union_busy_search + [(slot, slot + duration)],
+                config,
+                clip_start=earliest_allowed,
+                clip_end=search_end,
             )
 
     busy_summary = ", ".join(

@@ -401,8 +401,8 @@ class FindMeetingSlotInput(BaseModel):
     )
     skip_rooms: bool = Field(default=False, description="Не проверять переговорные")
     verify_calendar: bool = Field(
-        default=False,
-        description="Дополнительно сверять слот с calendar.view (медленно)",
+        default=True,
+        description="Сверять найденный слот с calendar_events из GetUserAvailability (рекомендуется)",
     )
     quiet: bool = Field(
         default=True,

@@ -163,7 +163,7 @@ class MeetingBackend:
         duration_minutes: int | None,
         current_user: User,
         max_days: int = 30,
-        verify_calendar: bool = False,
+        verify_calendar: bool = True,
         quiet: bool = True,
         include_timing: bool = False,
     ) -> list[MeetingSlot]:

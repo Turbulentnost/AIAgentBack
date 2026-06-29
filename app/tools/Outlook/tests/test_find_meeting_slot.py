@@ -9,6 +9,7 @@ from app.tools.Outlook.find_meeting_slot import (
     find_nearest_slot,
     find_slot_via_busy_gaps,
     freebusy_busy_intervals,
+    freebusy_events_busy_intervals,
     freebusy_event_interval,
     is_free_for_all,
     merge_busy_intervals,
@@ -198,7 +199,25 @@ def test_freebusy_busy_intervals_prefers_merged_when_events_empty() -> None:
     tz = ZoneInfo("Europe/Moscow")
     start = datetime(2026, 6, 20, 8, 0, tzinfo=tz)
     end = datetime(2026, 6, 20, 9, 0, tzinfo=tz)
-    view = type("View", (), {"calendar_events": [], "merged": "2"})()
+    view = type("View", (), {"calendar_events": [], "merged": "22"})()
+
+    intervals = freebusy_busy_intervals(
+        view,
+        attendee="user@turbo-don.ru",
+        range_start=start,
+        range_end=end,
+        config=config,
+    )
+
+    assert intervals == [(start, end)]
+
+
+def test_busy_intervals_from_merged_string_treats_tentative_as_busy() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 6, 20, 10, 0, tzinfo=tz)
+    end = datetime(2026, 6, 20, 11, 0, tzinfo=tz)
+    view = type("View", (), {"calendar_events": [], "merged": "11"})()
 
     intervals = freebusy_busy_intervals(
         view,
@@ -238,6 +257,33 @@ def test_freebusy_busy_intervals_prefers_merged_over_calendar_events() -> None:
     assert intervals == []
 
 
+def test_freebusy_events_busy_intervals_prefers_events_over_merged() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 6, 20, 8, 0, tzinfo=tz)
+    end = datetime(2026, 6, 20, 10, 0, tzinfo=tz)
+    busy_event = type(
+        "Event",
+        (),
+        {
+            "busy_type": "Busy",
+            "start": datetime(2026, 6, 20, 8, 0, tzinfo=tz),
+            "end": datetime(2026, 6, 20, 10, 0, tzinfo=tz),
+        },
+    )()
+    view = type("View", (), {"calendar_events": [busy_event], "merged": "0000"})()
+
+    intervals = freebusy_events_busy_intervals(
+        view,
+        attendee="user@turbo-don.ru",
+        range_start=start,
+        range_end=end,
+        config=config,
+    )
+
+    assert intervals == [(start, end)]
+
+
 def test_union_busy_finds_gap_between_participants() -> None:
     config = _config()
     tz = ZoneInfo("Europe/Moscow")
@@ -274,3 +320,55 @@ def test_coalesce_intervals_merges_overlap() -> None:
     )
     assert len(merged) == 1
     assert merged[0][1].hour == 12
+
+
+def test_find_nearest_slot_retries_when_calendar_rejects_freebusy_slot(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    attendee = "user@turbo-don.ru"
+    requested = datetime(2026, 6, 23, 8, 0, tzinfo=tz)
+    fixed_now = datetime(2026, 6, 23, 8, 0, tzinfo=tz)
+    accepted_slot = datetime(2026, 6, 23, 11, 0, tzinfo=tz)
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        lambda *_args, **_kwargs: {attendee: []},
+    )
+
+    def fake_verify(*, slot_start, **_kwargs):
+        if slot_start < accepted_slot:
+            return False, {attendee: [(slot_start, slot_start + timedelta(minutes=30))]}
+        return True, {attendee: []}
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.verify_slot_with_calendar",
+        fake_verify,
+    )
+
+    result = find_nearest_slot(
+        config=config,
+        attendees=[attendee],
+        preferred=requested,
+        duration=timedelta(minutes=30),
+        max_days=1,
+        step=timedelta(minutes=15),
+        max_items=50,
+        source="freebusy",
+        workers=1,
+        verify_calendar=True,
+    )
+
+    slot_start = datetime.fromisoformat(result["slot_start"])
+    assert slot_start >= accepted_slot

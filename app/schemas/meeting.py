@@ -3,7 +3,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.services.meeting_duration import normalize_request_duration_minutes
 
 
 class MeetingDashboardItem(BaseModel):
@@ -141,11 +143,16 @@ class MeetingRunCreate(BaseModel):
     meeting_type: str | None = None
     subject: str | None = None
     planned_start: datetime | None = None
-    duration_minutes: int | None = Field(default=None, ge=15, le=480)
+    duration_minutes: int | None = None
     participant_fio: list[str] = Field(default_factory=list)
     room_name: str | None = None
     initiator_comment: str | None = None
     title: str | None = Field(default=None, max_length=512)
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def normalize_duration(cls, value: object) -> int | None:
+        return normalize_request_duration_minutes(value)
 
 
 class MeetingRunRead(BaseModel):
@@ -169,11 +176,21 @@ class MeetingSlotsRequest(BaseModel):
     memo_number: str | None = None
     participant_fio: list[str] = Field(default_factory=list)
     planned_start: datetime | None = None
-    duration_minutes: int | None = Field(default=None, ge=15, le=480)
+    duration_minutes: int | None = None
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def normalize_duration(cls, value: object) -> int | None:
+        return normalize_request_duration_minutes(value)
 
 
 class MeetingAgentSlotPreviewRequest(BaseModel):
-    duration_minutes: int | None = Field(default=None, ge=15, le=480)
+    duration_minutes: int | None = None
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def normalize_duration(cls, value: object) -> int | None:
+        return normalize_request_duration_minutes(value)
 
 
 class MeetingAttendeeRead(BaseModel):
@@ -231,7 +248,12 @@ class MeetingRoomsRequest(BaseModel):
     slot_start: str
     slot_end: str | None = None
     room_name: str | None = None
-    duration_minutes: int | None = Field(default=None, ge=15, le=480)
+    duration_minutes: int | None = None
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def normalize_duration(cls, value: object) -> int | None:
+        return normalize_request_duration_minutes(value)
 
 
 class MeetingInvitePreviewRequest(BaseModel):
