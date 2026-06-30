@@ -68,6 +68,10 @@ from app.services.meeting_memo_cache import (
 from app.services.meeting_permission import MEETING_AGENT_SLUG, can_access_meeting_agent
 from app.core.logging import get_logger
 from app.services.meeting_duration import resolve_duration_minutes
+from app.services.meeting_invite_format import (
+    format_invite_location_from_detail,
+    resolve_invite_subject,
+)
 from app.services.meeting_slot import format_planned_start_for_search, format_slot_label, slot_duration_minutes
 from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
@@ -369,6 +373,11 @@ class MeetingService:
         """Отправляет приглашения через Outlook/EWS. Без 1С: только e-mail и слот из запроса."""
         await self._ensure_access(current_user)
         normalized_ref = memo_ref_key.strip().lower()
+        memo_detail: dict | None = None
+        try:
+            memo_detail, _, _ = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
+        except MemoCacheMissError:
+            pass
 
         try:
             attendee_details, resolved = resolve_approve_recipients(payload)
@@ -379,10 +388,10 @@ class MeetingService:
         if not emails:
             raise MeetingServiceError("Не указаны e-mail участников для отправки приглашения")
 
-        subject = (payload.subject or "").strip() or "Совещание"
-        location = (payload.location or "").strip()
+        subject = resolve_invite_subject(memo_detail, override=payload.subject)
+        location = format_invite_location_from_detail(memo_detail, override=payload.location)
         duration = slot_duration_minutes(payload.slot_start, payload.slot_end)
-        body = build_approve_invite_body(subject)
+        body = build_approve_invite_body(attendee_details)
 
         try:
             sent_payload = await asyncio.to_thread(

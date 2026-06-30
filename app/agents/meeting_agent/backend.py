@@ -8,8 +8,10 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.meeting_agent.config import AGENT_NAME, DEFAULT_MODEL
-from app.agents.meeting_agent.memo_validation import MemoValidationIssue, validate_meeting_memo_document
+from app.services.meeting_invite_format import (
+    format_invite_location,
+    invite_body_from_attendees,
+)
 from app.agents.meeting_agent.memo_presenter import resolve_meeting_schedule
 from app.core.config import settings
 from app.models.user import User
@@ -256,8 +258,8 @@ class MeetingBackend:
             return None
 
         invite_subject = subject or memo_obj.subject or f"Совещание {memo_obj.number or ''}".strip()
-        location = room.get("name") or ""
-        body = _invite_body(memo_obj)
+        location = format_invite_location(None, None, fallback=room.get("name") or "")
+        body = invite_body_from_attendees(participants)
 
         return InviteDraft(
             subject=invite_subject,
@@ -346,6 +348,7 @@ _MEETING_TOOL_NAMES = [
     "reschedule_meeting",
     "cancel_meeting",
     "create_service_memo",
+    "approve_service_memo",
     "send_desktop_notification",
 ]
 
@@ -594,10 +597,5 @@ def _rooms_from_payload(payload: dict[str, Any], *, room_name: str | None) -> li
 
 
 def _invite_body(memo: MeetingMemo) -> str:
-    parts = ["Приглашение на совещание."]
-    if memo.number:
-        parts.append(f"Служебная записка №{memo.number}.")
-    if memo.subject:
-        parts.append(memo.subject)
-    parts.append(f"Подготовлено агентом {AGENT_NAME} ({DEFAULT_MODEL}).")
-    return "\n".join(parts)
+    del memo
+    return invite_body_from_attendees([])

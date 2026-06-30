@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.tools.base import Tool
 from app.core.config import settings
+from app.tools.onec.approve_service_memo import approve_service_memo
 from app.tools.onec.create_service_memo import (
     DEFAULT_TASK_DESCRIPTION,
     DEFAULT_THEME,
@@ -425,6 +426,73 @@ class CreateServiceMemoTool(Tool):
 
 
 register_tool(CreateServiceMemoTool())
+
+
+class ApproveServiceMemoInput(BaseModel):
+    ref_key: str | None = Field(default=None, description="Ref_Key служебной записки")
+    number: str | None = Field(default=None, description="Номер служебной записки, например 000010430")
+    approver_fio: str | None = Field(
+        default=None,
+        description="ФИО согласующего (Catalog_Пользователи) для поля ИсполнительУД",
+    )
+    comment: str | None = Field(default=None, description="Комментарий к согласованию")
+
+
+class ApproveServiceMemoOutput(BaseModel):
+    ref_key: str
+    number: str | None = None
+    date: str | None = None
+    posted: bool | None = None
+    status: str | None = None
+    previous_status: str | None = None
+    already_approved: bool = False
+    changed: bool = False
+    approver_fio: str | None = None
+    comment: str | None = None
+
+
+async def approve_service_memo_tool(
+    payload: ApproveServiceMemoInput,
+    context: ToolContext,
+) -> ApproveServiceMemoOutput:
+    del context
+    raw = await asyncio.to_thread(
+        approve_service_memo,
+        ref_key=payload.ref_key,
+        number=payload.number,
+        approver_fio=payload.approver_fio,
+        comment=payload.comment,
+    )
+    return ApproveServiceMemoOutput.model_validate(raw)
+
+
+class ApproveServiceMemoTool(Tool):
+    name = "approve_service_memo"
+    description = (
+        "Согласовывает служебную записку по совещанию в 1С:ERP "
+        "(Статус «НеСогласована» → «Согласована»)."
+    )
+    agent_description = (
+        "Инструмент approve_service_memo согласует Document_ТД_СлужебнаяЗаписка в 1С:ERP. "
+        "Передай ref_key или number (например 000010430). "
+        "approver_fio — ФИО согласующего для поля ИсполнительУД; comment — комментарий. "
+        "Если СЗ уже согласована, возвращает already_approved=true без повторного PATCH. "
+        "Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = ApproveServiceMemoInput
+    output_model = ApproveServiceMemoOutput
+    required_permissions = ["approve_service_memo"]
+    preview_default_params = {"number": "000010430"}
+
+    async def execute(
+        self,
+        payload: ApproveServiceMemoInput,
+        context: ToolContext,
+    ) -> ApproveServiceMemoOutput:
+        return await approve_service_memo_tool(payload, context)
+
+
+register_tool(ApproveServiceMemoTool())
 
 
 class ProtocolTaskInput(BaseModel):

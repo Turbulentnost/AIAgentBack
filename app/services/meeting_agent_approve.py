@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from app.agents.meeting_agent.backend import ResolvedParticipant
-from app.agents.meeting_agent.config import AGENT_NAME, DEFAULT_MODEL
 from app.schemas.meeting import MeetingAgentSlotApproveRequest, MeetingAttendeeRead
+from app.services.meeting_invite_format import invite_body_from_attendees
 
 ATTENDEE_ROLE_LABELS = {
     "initiator": "Инициатор",
@@ -61,11 +61,5 @@ def resolve_approve_recipients(
     return attendee_details, resolved
 
 
-def build_approve_invite_body(subject: str) -> str:
-    return "\n".join(
-        [
-            "Приглашение на совещание.",
-            subject,
-            f"Подготовлено агентом {AGENT_NAME} ({DEFAULT_MODEL}).",
-        ]
-    )
+def build_approve_invite_body(attendees: list[MeetingAttendeeRead]) -> str:
+    return invite_body_from_attendees(attendees)
