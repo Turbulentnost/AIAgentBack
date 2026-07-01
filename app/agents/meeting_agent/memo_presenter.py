@@ -7,18 +7,26 @@ from urllib.parse import quote
 
 import requests
 
-from app.agents.meeting_agent.memo_validation import validate_meeting_memo_document
+from app.agents.meeting_agent.memo_validation import (
+    STO_DIRECTION_LABEL,
+    build_sto_payload,
+    is_office_management_direction,
+    validate_meeting_memo_document,
+    validate_meeting_memo_sto,
+)
 from app.tools.onec.connection import ODataConfig
 from app.tools.onec.get_meetings import (
     DOCUMENT_ENTITY,
     enrich_document,
     entity_url,
+    fetch_document_header,
     load_metadata_xml,
     odata_get_json,
     tabular_entities_from_metadata,
 )
 from app.tools.onec.lookup_user_ref import USER_CATALOG, is_empty_key, load_persons_for_keys, user_fio
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
+from app.services.meeting_invite_format import format_invite_location
 
 EMPTY_DATE_PREFIX = "0001-01-01"
 ROOM_CATALOG = "Catalog_CRM_Помещения"
@@ -27,8 +35,9 @@ GUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 STATUS_LABELS = {
-    "НеСогласована": "Ожидает подтверждения УД",
+    "НеСогласована": "Не согласована",
     "Согласована": "Согласована",
+    "Отклонена": "Отклонена",
 }
 MEETING_TYPE_LABELS = {
     "Плановое": "Плановое",
@@ -412,6 +421,109 @@ def _person_from_user(user: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def _user_from_map(users_by_key: dict[str, dict[str, Any]], key: str | None) -> dict[str, Any] | None:
+    if not key or is_empty_key(key):
+        return None
+    if key in users_by_key:
+        return users_by_key[key]
+    normalized = key.strip().lower()
+    for user_key, user in users_by_key.items():
+        if isinstance(user_key, str) and user_key.strip().lower() == normalized:
+            return user
+    return None
+
+
+def _header_has_people_keys(header: dict[str, Any]) -> bool:
+    return any(
+        header.get(field) and not is_empty_key(header.get(field))
+        for field in ("Ответственный_Key", "РуководительСовещания_Key")
+    )
+
+
+def _header_with_people_keys(
+    row: dict[str, Any],
+    *,
+    session: requests.Session | None = None,
+    config: ODataConfig | None = None,
+) -> dict[str, Any]:
+    if not session or not config or _header_has_people_keys(row):
+        return row
+    ref_key = row.get("Ref_Key")
+    if not ref_key:
+        return row
+    try:
+        full_header = fetch_document_header(session, config, ref_key)
+        return {**row, **full_header}
+    except RuntimeError:
+        return row
+
+
+def _resolve_initiator_manager(
+    header: dict[str, Any],
+    *,
+    session: requests.Session | None = None,
+    config: ODataConfig | None = None,
+    users_by_key: dict[str, dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    responsible_key = header.get("Ответственный_Key")
+    manager_key = header.get("РуководительСовещания_Key")
+    user_keys = {
+        key
+        for key in (responsible_key, manager_key)
+        if key and not is_empty_key(key)
+    }
+    if not user_keys or session is None or config is None:
+        return None, None
+
+    users = dict(users_by_key or {})
+    missing = [key for key in user_keys if _user_from_map(users, key) is None]
+    if missing:
+        users.update(_load_users_by_keys(session, config, missing))
+
+    initiator_user = _user_from_map(users, responsible_key) if responsible_key else None
+    manager_user = _user_from_map(users, manager_key) if manager_key else None
+    if manager_user is None:
+        manager_user = initiator_user
+    if initiator_user is None:
+        initiator_user = manager_user
+    return _person_from_user(initiator_user), _person_from_user(manager_user)
+
+
+def _resolve_queue_people(
+    header: dict[str, Any],
+    *,
+    session: requests.Session | None = None,
+    config: ODataConfig | None = None,
+    users_by_key: dict[str, dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
+    initiator, manager = _resolve_initiator_manager(
+        header,
+        session=session,
+        config=config,
+        users_by_key=users_by_key,
+    )
+    if initiator or manager or not session or not config:
+        return header, initiator, manager
+
+    ref_key = header.get("Ref_Key")
+    if not ref_key:
+        return header, initiator, manager
+
+    try:
+        full_header = fetch_document_header(session, config, ref_key)
+        merged = {**header, **full_header}
+    except RuntimeError:
+        return header, initiator, manager
+
+    initiator, manager = _resolve_initiator_manager(
+        merged,
+        session=session,
+        config=config,
+        users_by_key=users_by_key,
+    )
+    return merged, initiator, manager
+
+
 def _attach_cached_emails(
     application: dict[str, Any],
     *,
@@ -487,6 +599,14 @@ def _build_validation_checks(
         )
 
     header = document.get("header") or document.get("memo") or {}
+    meeting_theme = _clean_text(header.get("ТемаСовещания"))
+    add(
+        "meeting_theme",
+        "Тема совещания указана",
+        "error" if not meeting_theme else "info",
+        meeting_theme or "Тема совещания не указана",
+        passed=bool(meeting_theme),
+    )
     theme = _clean_text(header.get("ТемаСлужебнойЗаписки"))
     add(
         "theme",
@@ -496,19 +616,20 @@ def _build_validation_checks(
         passed=bool(theme),
     )
     direction = _clean_text(header.get("Направление"))
+    direction_ok = is_office_management_direction(direction)
     add(
         "direction",
-        "Направление: управление делами",
-        "info",
+        f"Направление: {STO_DIRECTION_LABEL}",
+        "error" if not direction_ok else "info",
         direction or "Направление не указано",
-        passed=bool(direction),
+        passed=direction_ok,
     )
 
-    manager_key = header.get("Ответственный_Key") or header.get("РуководительСовещания_Key")
+    manager_key = header.get("РуководительСовещания_Key")
     add(
         "manager",
-        "Руководитель найден в справочнике",
-        "info" if manager_key and not is_empty_key(manager_key) else "warning",
+        "Руководитель совещания указан",
+        "error" if not manager_key or is_empty_key(manager_key) else "info",
         "Руководитель указан" if manager_key and not is_empty_key(manager_key) else "Руководитель не указан",
         passed=bool(manager_key and not is_empty_key(manager_key)),
     )
@@ -565,12 +686,56 @@ def _build_validation_checks(
     duration = _duration_minutes(start, end)
     add(
         "duration",
-        "Длительность соответствует типу",
-        "warning" if duration is None else "info",
+        "Длительность указана",
+        "error" if duration is None else "info",
         f"{duration} минут" if duration else "Длительность не указана",
         passed=duration is not None,
     )
 
+    priority = _resolve_priority(header)
+    add(
+        "priority",
+        "Приоритет указан",
+        "error" if not priority else "info",
+        priority or "Приоритет не указан",
+        passed=bool(priority),
+    )
+
+    goal = _clean_text(header.get("ЦельПланаСовещания"))
+    add(
+        "meeting_goal",
+        "Цель совещания указана",
+        "error" if not goal else "info",
+        goal or "Цель не указана",
+        passed=bool(goal),
+    )
+
+    plan_rows = header.get("ПланСовещания")
+    task_count = 0
+    if isinstance(plan_rows, list):
+        task_count = sum(
+            1 for row in plan_rows if isinstance(row, dict) and _clean_text(row.get("Задача"))
+        )
+    add(
+        "meeting_tasks",
+        "Есть задачи в плане совещания",
+        "error" if task_count == 0 else "info",
+        f"Задач: {task_count}" if task_count else "Задачи не указаны",
+        passed=task_count > 0,
+    )
+
+    for issue in validate_meeting_memo_sto(document):
+        if any(check["field"] == issue.field for check in checks):
+            continue
+        checks.append(
+            {
+                "field": issue.field,
+                "label": issue.field,
+                "severity": issue.severity,
+                "message": issue.message,
+                "passed": issue.severity != "error",
+            }
+        )
     for issue in issues:
         if any(check["field"] == issue.field for check in checks):
             continue
@@ -631,8 +796,9 @@ def build_queue_item_from_row(
     location_labels: dict[str, str] | None = None,
     session: requests.Session | None = None,
     config: ODataConfig | None = None,
+    users_by_key: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    header = row
+    header = _header_with_people_keys(row, session=session, config=config)
     start, end = resolve_meeting_schedule(header)
     doc_dt = parse_odata_datetime(header.get("Date"))
     participants = header.get("СписокУчастников") if isinstance(header.get("СписокУчастников"), list) else []
@@ -645,6 +811,12 @@ def build_queue_item_from_row(
     checks = _build_validation_checks({"memo": header, "header": header, "participants": participants}, participants_count=participants_count)
     warnings = _build_warnings(checks)
     location = _resolve_location(header, location_labels)
+    header, initiator, manager = _resolve_queue_people(
+        header,
+        session=session,
+        config=config,
+        users_by_key=users_by_key,
+    )
 
     return {
         "ref_key": header.get("Ref_Key"),
@@ -666,6 +838,8 @@ def build_queue_item_from_row(
         "location": location,
         "comment": _clean_text(header.get("Комментарий")),
         "subject": _extract_title(header),
+        "initiator": initiator,
+        "manager": manager,
     }
 
 
@@ -685,16 +859,7 @@ def build_memo_detail(
     )
     header = document.get("header") or document.get("memo") or {}
 
-    user_keys = {
-        key
-        for key in (
-            header.get("Ответственный_Key"),
-            header.get("РуководительСовещания_Key"),
-        )
-        if key and not is_empty_key(key)
-    }
-    users = _load_users_by_keys(session, config, user_keys)
-    manager_user = users.get(header.get("РуководительСовещания_Key")) or users.get(header.get("Ответственный_Key"))
+    initiator, manager = _resolve_initiator_manager(header, session=session, config=config)
 
     participant_rows = _collect_participant_rows(document)
     participants = _resolve_participants(session, config, document)
@@ -725,8 +890,8 @@ def build_memo_detail(
     queue["warnings"] = warnings
 
     application = {
-        "initiator": _person_from_user(manager_user),
-        "manager": _person_from_user(manager_user),
+        "initiator": initiator,
+        "manager": manager,
         "participants": participants,
         "participants_count": participants_count,
         "agenda": _extract_agenda(header),
@@ -736,11 +901,18 @@ def build_memo_detail(
         "meeting_end": end.isoformat() if end else None,
         "duration_minutes": duration,
         "location": location,
+        "invite_location": format_invite_location(
+            manager.get("full_name") if isinstance(manager, dict) else None,
+            location,
+        )
+        or location,
         "meeting_type": header.get("ВидСовещания") or None,
         "meeting_type_label": _meeting_type_label(_clean_text(header.get("ВидСовещания"))),
         "priority": priority,
     }
     _attach_cached_emails(application, config=config)
+
+    sto = build_sto_payload(document)
 
     return {
         "ref_key": header.get("Ref_Key"),
@@ -753,7 +925,11 @@ def build_memo_detail(
         "validation_checks": checks,
         "warnings": warnings,
         "history": _build_history(header),
-        "agent_recommendation": _agent_recommendation(checks, warnings),
+        "agent_recommendation": sto["ud_recommendation"],
+        "sto_ready": sto["sto_ready"],
+        "auto_approve_allowed": sto["auto_approve_allowed"],
+        "sto_issues": sto["sto_issues"],
+        "sto_checklist": sto["sto_checklist"],
     }
 
 
@@ -782,12 +958,3 @@ def _build_history(header: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return events
-
-
-def _agent_recommendation(checks: list[dict[str, Any]], warnings: list[str]) -> str | None:
-    failed = [check for check in checks if not check.get("passed")]
-    if not failed and not warnings:
-        return "Заявка готова к подтверждению УД."
-    if warnings:
-        return "Рекомендуется проверить предупреждения перед подтверждением: " + "; ".join(warnings[:3])
-    return "Есть ошибки проверки — требуется доработка заявки."

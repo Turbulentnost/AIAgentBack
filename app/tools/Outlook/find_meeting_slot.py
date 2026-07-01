@@ -4,7 +4,7 @@
 Правила:
   - только рабочие дни (пн–пт);
   - время 08:00–17:00 (совещание должно полностью уложиться);
-  - запрещены пересечения с 10:00–10:15, 12:00–13:00, 15:00–15:15.
+  - запрещены пересечения с обеденным перерывом 12:00–13:00.
 
 Пример:
   python -m app.tools.Outlook.find_meeting_slot \\
@@ -46,9 +46,7 @@ AvailabilitySource = Literal["freebusy", "calendar"]
 WORK_START = dt_time(8, 0)
 WORK_END = dt_time(17, 0)
 FORBIDDEN_BLOCKS = (
-    (dt_time(10, 0), dt_time(10, 15)),
     (dt_time(12, 0), dt_time(13, 0)),
-    (dt_time(15, 0), dt_time(15, 15)),
 )
 BUSY_STATUSES = frozenset({"Busy", "Tentative", "OOF", "WorkingElsewhere"})
 FREE_BUSY_MERGED_INTERVAL_MINUTES = 30
@@ -143,7 +141,9 @@ def is_workday(dt: datetime, config: OutlookConfig) -> bool:
 
 def next_workday_start(dt: datetime, config: OutlookConfig) -> datetime:
     dt = to_local(dt, config)
-    candidate = combine(dt, WORK_START, config) + timedelta(days=1)
+    candidate = combine(dt, WORK_START, config)
+    if candidate <= dt:
+        candidate += timedelta(days=1)
     while not is_workday(candidate, config):
         candidate += timedelta(days=1)
     return candidate
@@ -160,7 +160,7 @@ def align_preferred(preferred: datetime, config: OutlookConfig) -> datetime:
         return combine(current, WORK_START, config)
     latest_start = combine(current, WORK_END, config) - timedelta(minutes=1)
     if current > latest_start:
-        return next_workday_start(current - timedelta(days=1), config)
+        return next_workday_start(current, config)
     return current
 
 
@@ -556,7 +556,7 @@ def advance_candidate(
             current = combine(current, WORK_START, config)
             continue
         if current > latest_start:
-            current = next_workday_start(current - timedelta(days=1), config)
+            current = next_workday_start(current, config)
             continue
         return current
 
@@ -634,6 +634,9 @@ def first_valid_slot_in_window(
     checked = 0
     candidate = max(local_start, align_preferred(local_start, config))
     while candidate < local_end and candidate + duration <= local_end:
+        if candidate < local_start:
+            candidate = max(local_start, align_preferred(local_start, config))
+            continue
         checked += 1
         if slot_respects_rules(candidate, duration, config):
             return candidate, checked
@@ -807,9 +810,13 @@ def find_nearest_slot(
 
     checked = 0
     union_busy_search = list(union_busy)
-    max_calendar_retries = 50
+    max_calendar_verifications = max(
+        500,
+        int((search_end - earliest_allowed).total_seconds() // max(step.total_seconds(), 60)) + 10,
+    )
+    verification_attempts = 0
     with timed_step("scan.slots", max_days=max_days, step_minutes=int(step.total_seconds() // 60)):
-        for _attempt in range(max_calendar_retries):
+        while True:
             slot, step_checked = find_slot_via_busy_gaps(
                 earliest_allowed=earliest_allowed,
                 search_end=search_end,
@@ -821,6 +828,22 @@ def find_nearest_slot(
             checked += step_checked
             if slot is None:
                 break
+            if slot < earliest_allowed:
+                logger.warning(
+                    "Пропуск слота раньше earliest_allowed: %s < %s",
+                    slot.isoformat(),
+                    earliest_allowed.isoformat(),
+                )
+                union_busy_search = coalesce_intervals(
+                    union_busy_search + [(slot, slot + duration)],
+                    config,
+                    clip_start=earliest_allowed,
+                    clip_end=search_end,
+                )
+                verification_attempts += 1
+                if verification_attempts >= max_calendar_verifications:
+                    break
+                continue
             if not verify_calendar:
                 logger.info("Слот найден после %d проверок (free/busy, по промежуткам)", checked)
                 return _slot_search_result(
@@ -863,6 +886,13 @@ def find_nearest_slot(
                 clip_start=earliest_allowed,
                 clip_end=search_end,
             )
+            verification_attempts += 1
+            if verification_attempts >= max_calendar_verifications:
+                logger.warning(
+                    "Достигнут лимит проверок calendar_events=%d",
+                    max_calendar_verifications,
+                )
+                break
 
     busy_summary = ", ".join(
         f"{email}: {len(intervals)} интервалов"

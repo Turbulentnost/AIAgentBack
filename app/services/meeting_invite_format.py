@@ -51,6 +51,9 @@ def place_from_detail(detail: dict[str, Any] | None) -> str | None:
     return None
 
 
+MANAGER_LOCATION_PREFIX = "Руководитель совещания "
+
+
 def format_invite_location(
     manager_name: str | None,
     place: str | None,
@@ -58,19 +61,47 @@ def format_invite_location(
     override: str | None = None,
     fallback: str = "",
 ) -> str:
-    explicit = (override or "").strip()
-    if explicit:
-        return explicit
-
     manager = (manager_name or "").strip()
-    place_text = (place or "").strip()
+    place_text = (override or place or fallback or "").strip()
     if manager and place_text:
-        return f"Руководитель совещания {manager}, {place_text}"
+        return f"{MANAGER_LOCATION_PREFIX}{manager}, {place_text}"
     if manager:
-        return f"Руководитель совещания {manager}"
+        return f"{MANAGER_LOCATION_PREFIX}{manager}"
     if place_text:
         return place_text
-    return fallback
+    return ""
+
+
+def place_from_invite_location(location: str | None) -> str | None:
+    """Извлекает название переговорной из строки места приглашения."""
+    text = (location or "").strip()
+    if not text:
+        return None
+    if text.startswith(MANAGER_LOCATION_PREFIX):
+        rest = text[len(MANAGER_LOCATION_PREFIX) :]
+        if ", " in rest:
+            place = rest.split(", ", 1)[1].strip()
+            return place or None
+        return None
+    return text
+
+
+def manager_name_from_memo_document(document: dict[str, Any] | None) -> str | None:
+    if not document:
+        return None
+    application = document.get("application")
+    if isinstance(application, dict):
+        return manager_name_from_detail({"application": application})
+    return None
+
+
+def place_from_memo_document(document: dict[str, Any] | None) -> str | None:
+    if not document:
+        return None
+    application = document.get("application")
+    if isinstance(application, dict):
+        return place_from_detail({"application": application})
+    return None
 
 
 def format_invite_location_from_detail(

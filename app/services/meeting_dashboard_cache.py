@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.meeting_memo_cache import patch_dashboard_payload_status
+from app.services.meeting_memo_cache import _dashboard_items
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 
 logger = get_logger(__name__)
@@ -35,11 +37,21 @@ def _payload_from_cached(cached: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _cache_has_queue_people_schema(cached: dict[str, Any]) -> bool:
+    payload = _payload_from_cached(cached)
+    items = _dashboard_items(payload)
+    if not items:
+        return True
+    return all("initiator" in item and "manager" in item for item in items)
+
+
 def _is_usable_cache(cached: dict[str, Any]) -> bool:
+    if not _cache_has_queue_people_schema(cached):
+        return False
     if cached.get("fetch_ok") is True:
         return True
     counts = cached.get("counts") or {}
-    return bool(counts.get("unapproved") or counts.get("today"))
+    return bool(counts.get("unapproved") or counts.get("today") or counts.get("items"))
 
 
 def _parse_cached_payload(raw: str) -> dict[str, Any]:
@@ -124,9 +136,6 @@ class MeetingDashboardCacheService:
         payload = await asyncio.to_thread(get_meeting_dashboard, target_date=day)
         if settings.MEETING_DASHBOARD_CACHE_ENABLED:
             await self._write_cache(day, payload, fetched_at=fetched_at)
-            from app.services.meeting_memo_cache import warm_memo_details_from_dashboard
-
-            await warm_memo_details_from_dashboard(payload)
         return payload, fetched_at
 
     async def _read_cache(self, day: date) -> dict[str, Any] | None:
@@ -160,3 +169,30 @@ class MeetingDashboardCacheService:
                 date=day.isoformat(),
                 error=str(exc),
             )
+
+    async def patch_status(
+        self,
+        ref_key: str,
+        status: str,
+        *,
+        target_date: date | None = None,
+    ) -> bool:
+        """Обновляет статус СЗ в dashboard-кэше без запроса в 1С."""
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return False
+        day = target_date or date.today()
+        cached = await self._read_cache(day)
+        if cached is None:
+            return False
+        payload = _payload_from_cached(cached)
+        if not any(
+            (item.get("ref_key") or "").strip().lower() == ref_key.strip().lower()
+            for item in _dashboard_items(payload)
+        ):
+            return False
+        patched_payload = patch_dashboard_payload_status(payload, ref_key, status)
+        fetched_at = cached.get("fetched_at")
+        if not isinstance(fetched_at, datetime):
+            fetched_at = datetime.now(timezone.utc)
+        await self._write_cache(day, patched_payload, fetched_at=fetched_at)
+        return True

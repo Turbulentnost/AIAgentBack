@@ -18,7 +18,12 @@ from app.schemas.meeting import (
     MeetingLoginContext,
     MeetingMemoDetailRead,
     MeetingMemoRead,
+    MeetingMemoApproveRead,
+    MeetingMemoApproveRequest,
+    MeetingMemoRejectRead,
+    MeetingMemoRejectRequest,
     MeetingPermissionsRead,
+    MeetingRegistryRead,
     MeetingRoomRead,
     MeetingRoomsRequest,
     MeetingRunCreate,
@@ -60,8 +65,9 @@ async def _require_agent_access(db: DbSession, user: CurrentUser) -> None:
         )
 
 
-def _service_error(status_code: int, exc: MeetingServiceError) -> HTTPException:
-    return HTTPException(status_code, detail=str(exc))
+def _service_error(exc: MeetingServiceError, *, status_code: int | None = None) -> HTTPException:
+    code = status_code or getattr(exc, "status_code", 400)
+    return HTTPException(code, detail=str(exc))
 
 
 @router.get("/me/permissions", response_model=MeetingPermissionsRead)
@@ -84,6 +90,19 @@ async def refresh_meetings_dashboard(db: DbSession, current_user: CurrentUser) -
     return await _load_dashboard_context(db, current_user, force_refresh=True)
 
 
+@router.get("/registry", response_model=MeetingRegistryRead)
+async def get_meetings_registry(
+    db: DbSession,
+    current_user: CurrentUser,
+    stage: str | None = None,
+) -> MeetingRegistryRead:
+    """Реестр совещаний: СЗ с отправленными приглашениями и этапами исполнения."""
+    try:
+        return await MeetingService(db).list_registry(stage=stage, current_user=current_user)
+    except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
 @router.get("/memos/{memo_ref_key}", response_model=MeetingMemoRead)
 async def get_meeting_memo(
     memo_ref_key: uuid.UUID,
@@ -98,7 +117,7 @@ async def get_meeting_memo(
             memo_number=memo_number,
         )
     except MeetingServiceError as exc:
-        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+        raise _service_error(exc) from exc
 
 
 @router.get("/memos/{memo_ref_key}/detail", response_model=MeetingMemoDetailRead)
@@ -156,7 +175,51 @@ async def approve_meeting_agent_slot(
         return result
     except MeetingServiceError as exc:
         await db.rollback()
-        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+        raise _service_error(exc) from exc
+
+
+@router.post("/memos/{memo_ref_key}/approve", response_model=MeetingMemoApproveRead)
+async def approve_meeting_memo(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingMemoApproveRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingMemoApproveRead:
+    """Согласовать СЗ в 1С: статус «Согласована», поля исполнителя УД."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).approve_memo(
+            str(memo_ref_key),
+            payload,
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(exc) from exc
+
+
+@router.post("/memos/{memo_ref_key}/reject", response_model=MeetingMemoRejectRead)
+async def reject_meeting_memo(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingMemoRejectRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingMemoRejectRead:
+    """Отклонить СЗ в 1С: статус «Отклонена», причина в комментарии, уведомление инициатору."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).reject_memo(
+            str(memo_ref_key),
+            payload,
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(exc) from exc
 
 
 @router.post("/slots", response_model=list[MeetingSlotRead])
@@ -168,7 +231,7 @@ async def find_meeting_slots(
     try:
         return await MeetingService(db).find_slots(payload, current_user=current_user)
     except MeetingServiceError as exc:
-        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+        raise _service_error(exc) from exc
 
 
 @router.post("/rooms", response_model=list[MeetingRoomRead])
@@ -180,7 +243,7 @@ async def find_meeting_rooms(
     try:
         return await MeetingService(db).find_rooms(payload, current_user=current_user)
     except MeetingServiceError as exc:
-        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+        raise _service_error(exc) from exc
 
 
 @router.post("/invite/preview", response_model=MeetingInviteDraftRead)
@@ -192,7 +255,7 @@ async def preview_meeting_invite(
     try:
         return await MeetingService(db).preview_invite(payload, current_user=current_user)
     except MeetingServiceError as exc:
-        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+        raise _service_error(exc) from exc
 
 
 @router.post("/invite/send")
@@ -207,7 +270,7 @@ async def send_meeting_invite(
         return result
     except MeetingServiceError as exc:
         await db.rollback()
-        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+        raise _service_error(exc) from exc
 
 
 @router.post("/runs", response_model=MeetingRunRead, status_code=status.HTTP_201_CREATED)
@@ -222,7 +285,7 @@ async def create_meeting_run(
         return result
     except MeetingServiceError as exc:
         await db.rollback()
-        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+        raise _service_error(exc) from exc
 
 
 @router.get("/runs/{task_id}", response_model=MeetingRunResultRead)
@@ -234,4 +297,4 @@ async def get_meeting_run(
     try:
         return await MeetingService(db).get_run(task_id, current_user=current_user)
     except MeetingServiceError as exc:
-        raise _service_error(status.HTTP_404_NOT_FOUND, exc) from exc
+        raise _service_error(exc, status_code=status.HTTP_404_NOT_FOUND) from exc

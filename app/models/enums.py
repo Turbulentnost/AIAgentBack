@@ -477,6 +477,13 @@ class DepartmentAnalysisRunStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class MeetingRegistryStage(str, enum.Enum):
+    INVITATIONS_SENT = "invitations_sent"
+    PROTOCOL_CREATED = "protocol_created"
+    PROTOCOL_CONDUCTED = "protocol_conducted"
+    MEETING_COMPLETED = "meeting_completed"
+
+
 class DepartmentAnalysisStep(str, enum.Enum):
     INITIALIZING = "initializing"
     LOADING_KNOWLEDGE_BASES = "loading_knowledge_bases"

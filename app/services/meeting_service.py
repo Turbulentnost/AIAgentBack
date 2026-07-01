@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,7 @@ from app.agents.meeting_agent.backend import (
 from app.agents.meeting_agent.config import AGENT_NAME
 from app.models.agent import Agent
 from app.models.enums import TaskStatus
+from app.models.meeting_registry import MeetingRegistryEntry
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.meeting import (
@@ -35,6 +37,13 @@ from app.schemas.meeting import (
     MeetingInvitePreviewRequest,
     MeetingInviteSendRequest,
     MeetingMemoRead,
+    MeetingMemoApproveRead,
+    MeetingMemoApproveRequest,
+    MeetingMemoRejectRead,
+    MeetingMemoRejectRequest,
+    MeetingRegistryRead,
+    MeetingRegistryItemRead,
+    MeetingRegistryStageRead,
     MeetingRoomRead,
     MeetingRoomsRequest,
     MeetingRunCreate,
@@ -56,6 +65,7 @@ from app.services.meeting_agent_errors import (
     format_email_lookup_error,
     format_missing_emails_error,
     format_no_slot_error,
+    format_onec_load_error,
     format_participants_missing_error,
     format_slot_preview_timeout_error,
 )
@@ -65,23 +75,35 @@ from app.services.meeting_memo_cache import (
     MemoCacheMissError,
     detail_to_memo_document,
 )
+from app.services.meeting_dashboard_cache import MeetingDashboardCacheService
 from app.services.meeting_permission import MEETING_AGENT_SLUG, can_access_meeting_agent
+from app.services.meeting_registry_service import MeetingRegistryService, build_stage_counts
 from app.core.logging import get_logger
 from app.services.meeting_duration import resolve_duration_minutes
 from app.services.meeting_invite_format import (
     format_invite_location_from_detail,
     resolve_invite_subject,
 )
-from app.services.meeting_slot import format_planned_start_for_search, format_slot_label, slot_duration_minutes
+from app.services.meeting_slot import (
+    format_planned_start_for_search,
+    format_search_start_from_meeting_date,
+    format_slot_label,
+    slot_duration_minutes,
+)
 from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
+from app.tools.onec.approve_service_memo import approve_service_memo
+from app.tools.onec.reject_service_memo import reject_service_memo
+from app.tools.onec.service_memo_shared import ServiceMemoWorkflowError
 
 logger = get_logger(__name__)
 
 
 class MeetingServiceError(ValueError):
-    pass
+    def __init__(self, message: str, *, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class MeetingService:
@@ -184,6 +206,65 @@ class MeetingService:
             )
         return memo, resolved, attendees, missing_emails
 
+    async def _enrich_attendees_with_nearest_slots(
+        self,
+        attendees: list[MeetingAttendeeRead],
+        *,
+        backend: MeetingBackend,
+        memo: MeetingMemo | dict[str, Any] | None,
+        search_start: str | None,
+        duration_minutes: int,
+        current_user: User,
+        max_days: int = SLOT_PREVIEW_MAX_DAYS,
+    ) -> list[MeetingAttendeeRead]:
+        if not search_start:
+            return attendees
+
+        async def enrich_one(attendee: MeetingAttendeeRead) -> MeetingAttendeeRead:
+            if not attendee.found or not attendee.email:
+                return attendee
+            try:
+                slots = await backend.find_slots(
+                    memo=memo,
+                    participants=[
+                        ResolvedParticipant(fio=attendee.fio, email=attendee.email, found=True),
+                    ],
+                    planned_start=search_start,
+                    duration_minutes=duration_minutes,
+                    current_user=current_user,
+                    max_days=max_days,
+                    verify_calendar=True,
+                    quiet=True,
+                )
+            except MeetingBackendError as exc:
+                logger.info(
+                    "meeting.slot_preview.attendee_slot_failed",
+                    fio=attendee.fio,
+                    email=attendee.email,
+                    error=str(exc),
+                )
+                return attendee
+            except Exception as exc:
+                logger.warning(
+                    "meeting.slot_preview.attendee_slot_error",
+                    fio=attendee.fio,
+                    email=attendee.email,
+                    error=str(exc),
+                )
+                return attendee
+            if not slots:
+                return attendee
+            slot = slots[0]
+            return attendee.model_copy(
+                update={
+                    "nearest_slot_start": slot.start,
+                    "nearest_slot_end": slot.end,
+                    "nearest_slot_label": format_slot_label(slot.start, slot.end),
+                }
+            )
+
+        return list(await asyncio.gather(*[enrich_one(item) for item in attendees]))
+
     async def suggest_agent_slot(
         self,
         memo_ref_key: str,
@@ -238,6 +319,19 @@ class MeetingService:
         planned_start = format_planned_start_for_search(
             application.get("meeting_start"),
             detail.get("queue") or {},
+        )
+        attendee_search_start = format_search_start_from_meeting_date(
+            application.get("meeting_start"),
+            detail.get("queue") or {},
+        )
+
+        attendees = await self._enrich_attendees_with_nearest_slots(
+            attendees,
+            backend=backend,
+            memo=memo,
+            search_start=attendee_search_start or planned_start,
+            duration_minutes=duration,
+            current_user=current_user,
         )
 
         if missing_emails:
@@ -423,6 +517,18 @@ class MeetingService:
             },
         )
 
+        await MeetingRegistryService(self.db).upsert_from_invite(
+            memo_ref_key=normalized_ref,
+            slot_start=payload.slot_start,
+            slot_end=payload.slot_end,
+            subject=subject,
+            location=location or None,
+            attendees=emails,
+            approved_by=current_user,
+            memo_detail=memo_detail,
+            sent_payload=sent_payload if isinstance(sent_payload, dict) else None,
+        )
+
         return MeetingAgentSlotApproveRead(
             memo_ref_key=normalized_ref,
             subject=subject,
@@ -434,6 +540,144 @@ class MeetingService:
             attendee_details=attendee_details,
             sent=True,
         )
+
+    async def reject_memo(
+        self,
+        memo_ref_key: str,
+        payload: MeetingMemoRejectRequest,
+        *,
+        current_user: User,
+    ) -> MeetingMemoRejectRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        rejector_fio = _user_fio(current_user)
+
+        try:
+            raw = await asyncio.to_thread(
+                reject_service_memo,
+                ref_key=normalized_ref,
+                reason=payload.reason,
+                rejector_fio=rejector_fio,
+                notify_initiator=payload.notify_initiator,
+            )
+        except ServiceMemoWorkflowError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+        except Exception as exc:
+            lowered = str(exc).lower()
+            if any(token in lowered for token in ("401", "403", "404", "timeout", "connection", "connect", "odata")):
+                raise MeetingServiceError(format_onec_load_error(exc), status_code=503) from exc
+            raise MeetingServiceError(f"Не удалось отклонить служебную записку в 1С: {exc}") from exc
+
+        await self.audit.log(
+            action="meeting.memo_rejected",
+            actor_id=current_user.id,
+            resource_type="meeting_memo",
+            resource_id=normalized_ref,
+            payload={
+                "number": raw.get("number"),
+                "reason": raw.get("reason"),
+                "changed": raw.get("changed"),
+                "notification_sent": raw.get("notification_sent"),
+            },
+        )
+
+        if raw.get("status"):
+            await self._apply_memo_status_to_cache(normalized_ref, str(raw["status"]))
+        if raw.get("changed"):
+            self._schedule_memo_cache_refresh(normalized_ref)
+
+        return MeetingMemoRejectRead.model_validate(raw)
+
+    async def approve_memo(
+        self,
+        memo_ref_key: str,
+        payload: MeetingMemoApproveRequest,
+        *,
+        current_user: User,
+    ) -> MeetingMemoApproveRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        approver_fio = _user_fio(current_user)
+
+        try:
+            raw = await asyncio.to_thread(
+                approve_service_memo,
+                ref_key=normalized_ref,
+                approver_fio=approver_fio,
+                comment=payload.comment,
+                perform_approval=True,
+            )
+        except ServiceMemoWorkflowError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+        except Exception as exc:
+            lowered = str(exc).lower()
+            if any(token in lowered for token in ("401", "403", "404", "timeout", "connection", "connect", "odata")):
+                raise MeetingServiceError(format_onec_load_error(exc), status_code=503) from exc
+            raise MeetingServiceError(f"Не удалось согласовать служебную записку в 1С: {exc}") from exc
+
+        await self.audit.log(
+            action="meeting.memo_approved",
+            actor_id=current_user.id,
+            resource_type="meeting_memo",
+            resource_id=normalized_ref,
+            payload={
+                "number": raw.get("number"),
+                "changed": raw.get("changed"),
+                "sto_ready": raw.get("sto_ready"),
+            },
+        )
+
+        if raw.get("status"):
+            await self._apply_memo_status_to_cache(normalized_ref, str(raw["status"]))
+        if raw.get("changed"):
+            self._schedule_memo_cache_refresh(normalized_ref)
+
+        return MeetingMemoApproveRead.model_validate(raw)
+
+    async def _apply_memo_status_to_cache(self, memo_ref_key: str, status: str) -> None:
+        from app.core.config import settings
+
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return
+        normalized = memo_ref_key.strip().lower()
+        try:
+            memo_updated = await MeetingMemoCacheService().patch_status(normalized, status)
+            dashboard_updated = await MeetingDashboardCacheService().patch_status(normalized, status)
+            logger.info(
+                "meeting_memo_cache_status_patched",
+                ref_key=normalized,
+                status=status,
+                memo_cache=memo_updated,
+                dashboard_cache=dashboard_updated,
+            )
+        except Exception as exc:
+            logger.warning(
+                "meeting_memo_cache_status_patch_failed",
+                ref_key=normalized,
+                status=status,
+                error=str(exc),
+            )
+
+    def _schedule_memo_cache_refresh(self, memo_ref_key: str) -> None:
+        asyncio.create_task(self._refresh_memo_caches(memo_ref_key))
+
+    async def _refresh_memo_caches(self, memo_ref_key: str) -> None:
+        try:
+            await MeetingMemoCacheService().get_memo_detail(memo_ref_key, force_refresh=True)
+        except Exception as exc:
+            logger.warning(
+                "meeting_memo_reject_detail_refresh_failed",
+                ref_key=memo_ref_key,
+                error=str(exc),
+            )
+        try:
+            await MeetingDashboardCacheService().refresh_dashboard()
+        except Exception as exc:
+            logger.warning(
+                "meeting_memo_reject_dashboard_refresh_failed",
+                ref_key=memo_ref_key,
+                error=str(exc),
+            )
 
     async def find_rooms(
         self,
@@ -511,7 +755,50 @@ class MeetingService:
             resource_type="meeting_invite",
             payload={"subject": payload.subject, "start": payload.start, "attendees": payload.attendees},
         )
+
+        if payload.memo_ref_key is not None:
+            memo_detail: dict | None = None
+            normalized_ref = str(payload.memo_ref_key).strip().lower()
+            try:
+                memo_detail, _, _ = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
+            except MemoCacheMissError:
+                pass
+            await MeetingRegistryService(self.db).upsert_from_invite(
+                memo_ref_key=normalized_ref,
+                slot_start=payload.start,
+                slot_end=payload.end,
+                subject=payload.subject,
+                location=payload.location or None,
+                attendees=payload.attendees,
+                approved_by=current_user,
+                memo_detail=memo_detail,
+                sent_payload=result if isinstance(result, dict) else None,
+            )
+
         return result
+
+    async def list_registry(
+        self,
+        *,
+        stage: str | None,
+        current_user: User,
+    ) -> MeetingRegistryRead:
+        await self._ensure_access(current_user)
+        registry = MeetingRegistryService(self.db)
+        try:
+            all_entries = await registry.list_entries(stage_filter="all")
+            if stage and stage.strip().lower() not in {"", "all", "approved"}:
+                entries = await registry.list_entries(stage_filter=stage)
+            else:
+                entries = all_entries
+        except ValueError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+        return MeetingRegistryRead(
+            items=[_registry_item_read(entry) for entry in entries],
+            stage_counts=build_stage_counts(all_entries),
+            fetched_at=datetime.now(UTC).isoformat(),
+            error=None,
+        )
 
     async def run(
         self,
@@ -699,6 +986,14 @@ class MeetingService:
             raise MeetingServiceError(str(exc)) from exc
 
 
+def _user_fio(user: User) -> str | None:
+    if user.full_name and user.full_name.strip():
+        return user.full_name.strip()
+    parts = [user.last_name, user.first_name, user.middle_name]
+    name = " ".join(part.strip() for part in parts if part and part.strip())
+    return name or None
+
+
 def _default_run_title(payload: MeetingRunCreate) -> str:
     if payload.memo_number:
         return f"Совещание по СЗ {payload.memo_number}"
@@ -756,6 +1051,26 @@ def _slot_read(item: MeetingSlot) -> MeetingSlotRead:
 
 def _room_read(item: MeetingRoomOption) -> MeetingRoomRead:
     return MeetingRoomRead(name=item.name, email=item.email, available=item.available)
+
+
+def _registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
+    return MeetingRegistryItemRead(
+        ref_key=entry.memo_ref_key,
+        memo_number=entry.memo_number,
+        title=entry.title,
+        subject=entry.subject,
+        location=entry.location,
+        initiator_name=entry.initiator_name,
+        manager_name=entry.manager_name,
+        participants_count=entry.participants_count,
+        slot_start=entry.slot_start.isoformat() if entry.slot_start else None,
+        slot_end=entry.slot_end.isoformat() if entry.slot_end else None,
+        stage=MeetingRegistryStageRead(entry.stage.value),
+        invitations_sent_at=entry.invitations_sent_at.isoformat(),
+        approved_at=entry.approved_at.isoformat() if entry.approved_at else None,
+        protocol_number=entry.protocol_number,
+        updated_at=entry.updated_at.isoformat(),
+    )
 
 
 def _invite_read(item: InviteDraft) -> MeetingInviteDraftRead:

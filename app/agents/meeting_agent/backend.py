@@ -11,6 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.meeting_invite_format import (
     format_invite_location,
     invite_body_from_attendees,
+    manager_name_from_memo_document,
+    place_from_invite_location,
+    place_from_memo_document,
 )
 from app.agents.meeting_agent.memo_presenter import resolve_meeting_schedule
 from app.core.config import settings
@@ -258,7 +261,9 @@ class MeetingBackend:
             return None
 
         invite_subject = subject or memo_obj.subject or f"Совещание {memo_obj.number or ''}".strip()
-        location = format_invite_location(None, None, fallback=room.get("name") or "")
+        manager_name = manager_name_from_memo_document(memo_obj.raw)
+        place = room.get("name") or place_from_memo_document(memo_obj.raw) or ""
+        location = format_invite_location(manager_name, place)
         body = invite_body_from_attendees(participants)
 
         return InviteDraft(
@@ -283,10 +288,11 @@ class MeetingBackend:
         attendee, *extra = draft.attendees
         duration = _slot_duration_minutes({"start": draft.start, "end": draft.end}) or DEFAULT_DURATION_MINUTES
         resources = []
-        if draft.location:
+        room_name = place_from_invite_location(draft.location) or draft.location
+        if room_name:
             room = await self.find_rooms(
                 selected_slot={"start": draft.start, "end": draft.end},
-                room_name=draft.location,
+                room_name=room_name,
                 current_user=current_user,
             )
             if room and room[0].email:
@@ -349,6 +355,7 @@ _MEETING_TOOL_NAMES = [
     "cancel_meeting",
     "create_service_memo",
     "approve_service_memo",
+    "reject_service_memo",
     "send_desktop_notification",
 ]
 

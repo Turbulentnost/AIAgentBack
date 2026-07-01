@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from app.agents.meeting_agent.memo_presenter import build_memo_detail
+from app.tools.onec.service_memo_shared import UNAPPROVED_STATUS
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
@@ -46,10 +47,16 @@ def _parse_cached_payload(raw: str) -> dict[str, Any]:
     return data
 
 
+def _dashboard_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if payload.get("items"):
+        return payload.get("items") or []
+    return (payload.get("unapproved") or []) + (payload.get("today") or [])
+
+
 def collect_memo_ref_keys(payload: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
     ref_keys: list[str] = []
-    for item in (payload.get("unapproved") or []) + (payload.get("today") or []):
+    for item in _dashboard_items(payload):
         ref_key = (item.get("ref_key") or "").strip().lower()
         if ref_key and ref_key not in seen:
             seen.add(ref_key)
@@ -59,11 +66,84 @@ def collect_memo_ref_keys(payload: dict[str, Any]) -> list[str]:
 
 def find_dashboard_item(payload: dict[str, Any], ref_key: str) -> dict[str, Any] | None:
     normalized = ref_key.strip().lower()
-    for item in (payload.get("unapproved") or []) + (payload.get("today") or []):
+    for item in _dashboard_items(payload):
         item_ref = (item.get("ref_key") or "").strip().lower()
         if item_ref == normalized:
             return item
     return None
+
+
+def _memo_status_label(status: str) -> str:
+    from app.agents.meeting_agent.memo_presenter import _status_label
+
+    return _status_label(status) or status
+
+
+def _item_ref_key(item: dict[str, Any]) -> str:
+    return (item.get("ref_key") or "").strip().lower()
+
+
+def _apply_status_to_item(item: dict[str, Any], status: str) -> dict[str, Any]:
+    status_label = _memo_status_label(status)
+    patched = dict(item)
+    patched["status"] = status
+    patched["status_label"] = status_label
+    return patched
+
+
+def _merge_dashboard_item_groups(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for group in groups:
+        for item in group:
+            ref_key = str(item.get("ref_key") or "").strip()
+            key = ref_key or f"number:{item.get('number')}"
+            if key not in merged:
+                order.append(key)
+            merged[key] = item
+    return [merged[key] for key in order]
+
+
+def patch_detail_status(detail: dict[str, Any], status: str) -> dict[str, Any]:
+    status_label = _memo_status_label(status)
+    patched = dict(detail)
+    patched["status"] = status
+    patched["status_label"] = status_label
+    queue = dict(patched.get("queue") or {})
+    queue["status"] = status
+    queue["status_label"] = status_label
+    patched["queue"] = queue
+    return patched
+
+
+def patch_dashboard_payload_status(payload: dict[str, Any], ref_key: str, status: str) -> dict[str, Any]:
+    normalized = ref_key.strip().lower()
+
+    def patch_list(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            _apply_status_to_item(item, status) if _item_ref_key(item) == normalized else item
+            for item in items
+        ]
+
+    unapproved = list(payload.get("unapproved") or [])
+    today = patch_list(list(payload.get("today") or []))
+    if status == UNAPPROVED_STATUS:
+        unapproved = patch_list(unapproved)
+    else:
+        unapproved = [item for item in unapproved if _item_ref_key(item) != normalized]
+
+    items = _merge_dashboard_item_groups(unapproved, today)
+    return {
+        **payload,
+        "unapproved": unapproved,
+        "today": today,
+        "items": items,
+        "counts": {
+            "unapproved": len(unapproved),
+            "today": len(today),
+            "items": len(items),
+        },
+    }
 
 
 def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -87,8 +167,8 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
         "status_label": item.get("status_label"),
         "queue": queue,
         "application": {
-            "initiator": None,
-            "manager": None,
+            "initiator": item.get("initiator"),
+            "manager": item.get("manager"),
             "participants": participants,
             "participants_count": participants_count,
             "agenda": item.get("subject") or item.get("title"),
@@ -106,7 +186,17 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
         "warnings": item.get("warnings") or [],
         "history": [],
         "agent_recommendation": None,
+        "sto_ready": False,
+        "auto_approve_allowed": False,
+        "sto_issues": [],
+        "sto_checklist": [],
     }
+
+
+def detail_has_sto_evaluation(detail: dict[str, Any]) -> bool:
+    """True, если detail уже прошёл проверку СТО (первое открытие карточки)."""
+    checklist = detail.get("sto_checklist")
+    return isinstance(checklist, list) and len(checklist) > 0
 
 
 def detail_is_agent_ready(detail: dict[str, Any]) -> bool:
@@ -157,6 +247,8 @@ class MeetingMemoCacheService:
         target_date: date | None = None,
         force_refresh: bool = False,
     ) -> tuple[dict[str, Any], datetime, bool]:
+        """Детали СЗ: из Redis или первая загрузка из 1С с проверкой СТО."""
+        del target_date
         normalized = ref_key.strip().lower()
         if force_refresh:
             payload, fetched_at = await self._fetch_and_store(normalized)
@@ -168,19 +260,17 @@ class MeetingMemoCacheService:
             )
 
         cached = await self._read_cache(normalized)
-        if cached is not None:
+        if cached is not None and detail_has_sto_evaluation(cached["payload"]):
             return cached["payload"], cached["fetched_at"], True
 
-        fallback = await self._read_detail_from_dashboard_cache(normalized, target_date=target_date)
-        if fallback is not None:
-            payload, fetched_at = fallback
-            logger.info("meeting_memo_cache_dashboard_fallback", ref_key=normalized)
-            return payload, fetched_at, True
-
-        raise MemoCacheMissError(
-            "Детали служебной записки не найдены в кэше. "
-            "Обновите dashboard или дождитесь прогрева в 10:00/15:00."
-        )
+        logger.info("meeting_memo_detail_first_open", ref_key=normalized)
+        try:
+            payload, fetched_at = await self._fetch_and_store(normalized)
+        except Exception as exc:
+            raise MemoCacheMissError(
+                f"Не удалось загрузить служебную записку из 1С: {exc}"
+            ) from exc
+        return payload, fetched_at, False
 
     async def get_memo_detail_for_agent(
         self,
@@ -195,7 +285,11 @@ class MeetingMemoCacheService:
             )
 
         cached = await self._read_cache(normalized)
-        if cached is not None and detail_is_agent_ready(cached["payload"]):
+        if (
+            cached is not None
+            and detail_is_agent_ready(cached["payload"])
+            and detail_has_sto_evaluation(cached["payload"])
+        ):
             return cached["payload"], cached["fetched_at"], True
 
         logger.info(
@@ -293,22 +387,19 @@ class MeetingMemoCacheService:
                 error=str(exc),
             )
 
+    async def patch_status(self, ref_key: str, status: str) -> bool:
+        """Обновляет статус СЗ в memo-кэше без запроса в 1С."""
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return False
+        normalized = ref_key.strip().lower()
+        cached = await self._read_cache(normalized)
+        if cached is None:
+            return False
+        patched = patch_detail_status(cached["payload"], status)
+        await self._write_cache(normalized, patched, fetched_at=cached["fetched_at"])
+        return True
+
 
 async def warm_memo_details_from_dashboard(payload: dict[str, Any]) -> None:
-    """Загружает detail всех СЗ из dashboard в Redis. Вызывается только после чтения из 1С."""
-    if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
-        return
-    ref_keys = collect_memo_ref_keys(payload)
-    if not ref_keys:
-        return
-    service = MeetingMemoCacheService()
-    for ref_key in ref_keys:
-        try:
-            await service._fetch_and_store(ref_key)
-        except Exception as exc:
-            logger.warning(
-                "meeting_memo_cache_warm_failed",
-                ref_key=ref_key,
-                error=str(exc),
-            )
-    logger.info("meeting_memo_cache_warmed", count=len(ref_keys))
+    """Устарело: детали и проверка СТО загружаются при первом открытии карточки."""
+    del payload

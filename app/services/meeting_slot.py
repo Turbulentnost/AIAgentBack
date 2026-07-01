@@ -52,3 +52,23 @@ def format_planned_start_for_search(
     if start is not None:
         return start.strftime("%Y-%m-%d %H:%M")
     return None
+
+
+def format_search_start_from_meeting_date(
+    meeting_start: str | None,
+    queue: dict[str, Any] | None = None,
+) -> str | None:
+    """08:00 даты совещания из СЗ — точка отсчёта персонального поиска слота."""
+    day: datetime | None = None
+    if isinstance(meeting_start, str) and meeting_start.strip():
+        day = parse_slot_datetime(meeting_start)
+    if day is None:
+        header = dict(queue or {})
+        scheduled, _end = resolve_meeting_schedule(header)
+        day = scheduled
+    if day is None:
+        return None
+    day_start = day.replace(hour=8, minute=0, second=0, microsecond=0)
+    if day_start.tzinfo is not None:
+        day_start = day_start.replace(tzinfo=None)
+    return day_start.strftime("%Y-%m-%d %H:%M")

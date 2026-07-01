@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -28,6 +29,8 @@ class MeetingDashboardItem(BaseModel):
     location: str | None = None
     comment: str | None = None
     subject: str | None = None
+    initiator: MeetingPersonRead | None = None
+    manager: MeetingPersonRead | None = None
 
 
 class MeetingPersonRead(BaseModel):
@@ -51,6 +54,18 @@ class MeetingValidationCheckRead(BaseModel):
     passed: bool
 
 
+class MeetingStoChecklistItemRead(BaseModel):
+    field: str
+    label: str
+    passed: bool
+    message: str
+
+
+class MeetingStoIssueRead(BaseModel):
+    field: str
+    message: str
+
+
 class MeetingHistoryEventRead(BaseModel):
     timestamp: str
     message: str
@@ -68,6 +83,7 @@ class MeetingApplicationRead(BaseModel):
     meeting_end: str | None = None
     duration_minutes: int | None = None
     location: str | None = None
+    invite_location: str | None = None
     meeting_type: str | None = None
     meeting_type_label: str | None = None
     priority: str | None = None
@@ -85,12 +101,17 @@ class MeetingMemoDetailRead(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     history: list[MeetingHistoryEventRead] = Field(default_factory=list)
     agent_recommendation: str | None = None
+    sto_ready: bool = False
+    auto_approve_allowed: bool = False
+    sto_issues: list[MeetingStoIssueRead] = Field(default_factory=list)
+    sto_checklist: list[MeetingStoChecklistItemRead] = Field(default_factory=list)
 
 
 class MeetingLoginContext(BaseModel):
     date: str
     unapproved: list[MeetingDashboardItem] = Field(default_factory=list)
     today: list[MeetingDashboardItem] = Field(default_factory=list)
+    items: list[MeetingDashboardItem] = Field(default_factory=list)
     counts: dict[str, int] = Field(default_factory=dict)
     fetched_at: datetime
     error: str | None = None
@@ -199,6 +220,9 @@ class MeetingAttendeeRead(BaseModel):
     role: str
     role_label: str
     found: bool = False
+    nearest_slot_start: str | None = None
+    nearest_slot_end: str | None = None
+    nearest_slot_label: str | None = None
 
 
 class MeetingAgentSlotPreviewRead(BaseModel):
@@ -244,6 +268,48 @@ class MeetingAgentSlotApproveRead(BaseModel):
     sent: bool = True
 
 
+class MeetingMemoRejectRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=2000, description="Причина отклонения")
+    notify_initiator: bool = Field(
+        default=True,
+        description="Отправить уведомление на рабочий стол 1С инициатору СЗ",
+    )
+
+
+class MeetingMemoRejectRead(BaseModel):
+    ref_key: str
+    number: str | None = None
+    status: str | None = None
+    previous_status: str | None = None
+    reason: str
+    comment: str | None = None
+    changed: bool = False
+    already_rejected: bool = False
+    notification_sent: bool = False
+    initiator_fio: str | None = None
+    rejector_fio: str | None = None
+    message: str | None = None
+
+
+class MeetingMemoApproveRequest(BaseModel):
+    comment: str | None = Field(default=None, max_length=2000, description="Комментарий к согласованию")
+
+
+class MeetingMemoApproveRead(BaseModel):
+    ref_key: str
+    number: str | None = None
+    status: str | None = None
+    previous_status: str | None = None
+    changed: bool = False
+    already_approved: bool = False
+    sto_ready: bool = False
+    sto_issues: list[dict[str, str]] = Field(default_factory=list)
+    ud_recommendation: str | None = None
+    approver_fio: str | None = None
+    comment: str | None = None
+    message: str | None = None
+
+
 class MeetingRoomsRequest(BaseModel):
     slot_start: str
     slot_end: str | None = None
@@ -273,3 +339,36 @@ class MeetingInviteSendRequest(BaseModel):
     location: str = ""
     attendees: list[str] = Field(..., min_length=1)
     body: str = ""
+    memo_ref_key: uuid.UUID | None = None
+
+
+class MeetingRegistryStageRead(str, Enum):
+    INVITATIONS_SENT = "invitations_sent"
+    PROTOCOL_CREATED = "protocol_created"
+    PROTOCOL_CONDUCTED = "protocol_conducted"
+    MEETING_COMPLETED = "meeting_completed"
+
+
+class MeetingRegistryItemRead(BaseModel):
+    ref_key: str
+    memo_number: str | None = None
+    title: str | None = None
+    subject: str | None = None
+    location: str | None = None
+    initiator_name: str | None = None
+    manager_name: str | None = None
+    participants_count: int = 0
+    slot_start: str | None = None
+    slot_end: str | None = None
+    stage: MeetingRegistryStageRead
+    invitations_sent_at: str
+    approved_at: str | None = None
+    protocol_number: str | None = None
+    updated_at: str
+
+
+class MeetingRegistryRead(BaseModel):
+    items: list[MeetingRegistryItemRead] = Field(default_factory=list)
+    stage_counts: dict[str, int] = Field(default_factory=dict)
+    fetched_at: str
+    error: str | None = None

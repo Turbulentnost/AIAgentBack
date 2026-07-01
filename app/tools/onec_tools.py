@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.tools.base import Tool
 from app.core.config import settings
 from app.tools.onec.approve_service_memo import approve_service_memo
+from app.tools.onec.reject_service_memo import reject_service_memo
 from app.tools.onec.create_service_memo import (
     DEFAULT_TASK_DESCRIPTION,
     DEFAULT_THEME,
@@ -105,6 +106,7 @@ class GetMeetingDashboardOutput(BaseModel):
     date: str
     unapproved: list[dict[str, Any]]
     today: list[dict[str, Any]]
+    items: list[dict[str, Any]] = Field(default_factory=list)
     counts: dict[str, int]
 
 
@@ -122,11 +124,17 @@ async def get_meeting_dashboard_tool(
     raw, _fetched_at, _from_cache = await cache.get_dashboard(
         target_date=target_date,
     )
+    if not raw.get("items"):
+        from app.agents.meeting_agent.dashboard import merge_dashboard_items
+
+        raw["items"] = merge_dashboard_items(raw.get("unapproved") or [], raw.get("today") or [])
     raw["unapproved"] = (raw.get("unapproved") or [])[: payload.limit]
     raw["today"] = (raw.get("today") or [])[: payload.limit]
+    raw["items"] = (raw.get("items") or [])[: payload.limit]
     raw["counts"] = {
         "unapproved": len(raw["unapproved"]),
         "today": len(raw["today"]),
+        "items": len(raw["items"]),
     }
     return GetMeetingDashboardOutput.model_validate(raw)
 
@@ -134,12 +142,15 @@ async def get_meeting_dashboard_tool(
 class GetMeetingDashboardTool(Tool):
     name = "get_meeting_dashboard"
     description = (
-        "Возвращает несогласованные служебные записки по совещаниям и совещания на указанную дату из 1С."
+        "Возвращает служебные записки по совещаниям из 1С: несогласованные за всё время "
+        "и все СЗ за указанную дату (любой статус)."
     )
     agent_description = (
         "Инструмент get_meeting_dashboard читает Document_ТД_СлужебнаяЗаписка из 1С по теме "
-        "ONEC_MEETING_MEMO_THEME. unapproved — Статус «НеСогласована»; today — совещания на дату "
-        "(target_date, по умолчанию сегодня). Нужны ONEC_ODATA_* в .env."
+        "ONEC_MEETING_MEMO_THEME. unapproved — Статус «НеСогласована» за всё время; "
+        "today — все СЗ с датой документа (Date) за target_date, любой статус; "
+        "items — объединённый список без дублей. "
+        "target_date по умолчанию — сегодня. Нужны ONEC_ODATA_* в .env."
     )
     input_model = GetMeetingDashboardInput
     output_model = GetMeetingDashboardOutput
@@ -447,8 +458,14 @@ class ApproveServiceMemoOutput(BaseModel):
     previous_status: str | None = None
     already_approved: bool = False
     changed: bool = False
+    auto_approved: bool = False
+    sto_ready: bool = False
+    sto_issues: list[dict[str, str]] = Field(default_factory=list)
+    ud_recommendation: str | None = None
+    auto_approve_allowed: bool = False
     approver_fio: str | None = None
     comment: str | None = None
+    message: str | None = None
 
 
 async def approve_service_memo_tool(
@@ -473,10 +490,11 @@ class ApproveServiceMemoTool(Tool):
         "(Статус «НеСогласована» → «Согласована»)."
     )
     agent_description = (
-        "Инструмент approve_service_memo согласует Document_ТД_СлужебнаяЗаписка в 1С:ERP. "
-        "Передай ref_key или number (например 000010430). "
-        "approver_fio — ФИО согласующего для поля ИсполнительУД; comment — комментарий. "
-        "Если СЗ уже согласована, возвращает already_approved=true без повторного PATCH. "
+        "Инструмент approve_service_memo проверяет Document_ТД_СлужебнаяЗаписка в 1С:ERP "
+        "и условия СТО. Передай ref_key или number (например 000010430). "
+        "Возвращает sto_checklist, sto_ready, ud_recommendation для сотрудника УД. "
+        "Автосогласование в 1С сейчас отключено — документ не меняется. "
+        "approver_fio и comment зарезервированы для ручного согласования. "
         "Нужны ONEC_ODATA_* в .env."
     )
     input_model = ApproveServiceMemoInput
@@ -493,6 +511,98 @@ class ApproveServiceMemoTool(Tool):
 
 
 register_tool(ApproveServiceMemoTool())
+
+
+class RejectServiceMemoInput(BaseModel):
+    ref_key: str | None = Field(default=None, description="Ref_Key служебной записки")
+    number: str | None = Field(default=None, description="Номер служебной записки, например 000009853")
+    reason: str = Field(description="Причина отклонения")
+    rejector_fio: str | None = Field(
+        default=None,
+        description="ФИО сотрудника УД (Catalog_Пользователи) для поля ИсполнительУД",
+    )
+    notify_initiator: bool = Field(
+        default=True,
+        description="Отправить уведомление на рабочий стол 1С инициатору СЗ",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Только проверить документ, без PATCH и уведомления",
+    )
+
+
+class RejectServiceMemoOutput(BaseModel):
+    ref_key: str
+    number: str | None = None
+    date: str | None = None
+    posted: bool | None = None
+    status: str | None = None
+    previous_status: str | None = None
+    already_rejected: bool = False
+    changed: bool = False
+    notification_sent: bool = False
+    dry_run: bool = False
+    would_notify_initiator: bool | None = None
+    initiator_fio: str | None = None
+    initiator_ref: str | None = None
+    reason: str
+    comment: str | None = None
+    rejector_fio: str | None = None
+    notification_message: str | None = None
+    notification: dict[str, Any] | None = None
+
+
+async def reject_service_memo_tool(
+    payload: RejectServiceMemoInput,
+    context: ToolContext,
+) -> RejectServiceMemoOutput:
+    del context
+    raw = await asyncio.to_thread(
+        reject_service_memo,
+        ref_key=payload.ref_key,
+        number=payload.number,
+        reason=payload.reason,
+        rejector_fio=payload.rejector_fio,
+        notify_initiator=payload.notify_initiator,
+        dry_run=payload.dry_run,
+    )
+    return RejectServiceMemoOutput.model_validate(raw)
+
+
+class RejectServiceMemoTool(Tool):
+    name = "reject_service_memo"
+    description = (
+        "Отклоняет служебную записку по совещанию в 1С:ERP "
+        "(Статус «НеСогласована» → «Отклонена») и уведомляет инициатора."
+    )
+    agent_description = (
+        "Инструмент reject_service_memo отклоняет Document_ТД_СлужебнаяЗаписка в 1С:ERP. "
+        "Передай ref_key или number (например 000009853) и reason — краткую причину отклонения "
+        "(например «Не указана тема совещания» из sto_issues). "
+        "В поле Комментарий 1С записывается только reason, без номера СЗ и без текста уведомления. "
+        "Статус меняется на «Отклонена». "
+        "Инициатору (Ответственный) отправляется уведомление на рабочий стол 1С. "
+        "rejector_fio — ФИО сотрудника УД; dry_run=true — только проверка без изменений. "
+        "Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = RejectServiceMemoInput
+    output_model = RejectServiceMemoOutput
+    required_permissions = ["reject_service_memo"]
+    preview_default_params = {
+        "number": "000009853",
+        "reason": "Не заполнены обязательные поля СТО",
+        "dry_run": True,
+    }
+
+    async def execute(
+        self,
+        payload: RejectServiceMemoInput,
+        context: ToolContext,
+    ) -> RejectServiceMemoOutput:
+        return await reject_service_memo_tool(payload, context)
+
+
+register_tool(RejectServiceMemoTool())
 
 
 class ProtocolTaskInput(BaseModel):

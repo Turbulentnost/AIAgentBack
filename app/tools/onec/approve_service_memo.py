@@ -4,6 +4,10 @@
 Для СЗ по совещаниям переводит Статус из «НеСогласована» в «Согласована»
 через PATCH Document_ТД_СлужебнаяЗаписка.
 
+Автосогласование выполняется только если все условия СТО выполнены.
+При невыполненных условиях инструмент возвращает рекомендацию для сотрудника УД
+без изменения документа.
+
 CLI:
   python -m app.tools.onec.approve_service_memo --number 000010430
   python -m app.tools.onec.approve_service_memo --ref-key 8f87f484-7398-11f1-9831-6cb31113810c
@@ -14,111 +18,96 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from typing import Any
+
 import requests
 
-from app.tools.onec.connection import CONFIG, ODataConfig, create_session
-from app.tools.onec.get_meetings import (
-    DOCUMENT_ENTITY,
-    entity_url,
-    fetch_document_header,
-    fetch_meeting_memo_rows,
-    load_metadata_xml,
-    theme_matches,
+from app.agents.meeting_agent.memo_validation import (
+    AUTO_APPROVE_SERVICE_MEMO,
+    MemoValidationIssue,
+    assess_sto_readiness,
 )
-from app.tools.onec.lookup_user_ref import resolve_user_by_fio
+from app.tools.onec.connection import CONFIG, ODataConfig
+from app.tools.onec.get_meetings import fetch_document_header
+from app.tools.onec.service_memo_shared import (
+    APPROVED_STATUS,
+    UNAPPROVED_STATUS,
+    ServiceMemoWorkflowError,
+    apply_executor_fields,
+    ensure_meeting_memo,
+    load_memo_header,
+    now_ud_timestamp,
+    patch_service_memo,
+    resolve_memo_ref_key,
+)
 
-APPROVED_STATUS = "Согласована"
-UNAPPROVED_STATUS = "НеСогласована"
-
-
-class ServiceMemoApprovalError(ValueError):
-    """Ошибка бизнес-валидации при согласовании СЗ."""
-
-
-def resolve_memo_ref_key(
-    session: requests.Session,
-    config: ODataConfig,
-    *,
-    ref_key: str | None,
-    number: str | None,
-) -> str:
-    ref = (ref_key or "").strip()
-    if ref:
-        return ref
-
-    memo_number = (number or "").strip()
-    if not memo_number:
-        raise ServiceMemoApprovalError("Укажите ref_key или number служебной записки")
-
-    safe_number = memo_number.replace("'", "''")
-    rows = fetch_meeting_memo_rows(
-        session,
-        config,
-        f"Number eq '{safe_number}'",
-        limit=1,
-        fetch_pool=20,
-    )
-    if not rows:
-        raise ServiceMemoApprovalError(f"Служебная записка не найдена: {memo_number}")
-    return str(rows[0]["Ref_Key"])
-
-
-def ensure_meeting_memo(
-    session: requests.Session,
-    config: ODataConfig,
-    header: dict[str, Any],
-    *,
-    metadata: Any | None = None,
-) -> None:
-    if metadata is None:
-        metadata = load_metadata_xml(session, config)
-    from app.tools.onec.get_meetings import resolve_theme_key
-
-    theme_key = resolve_theme_key(session, config, metadata)
-    if theme_matches(header, theme_key):
-        return
-    raise ServiceMemoApprovalError(
-        "Документ не относится к теме служебных записок по совещаниям"
-    )
+ServiceMemoApprovalError = ServiceMemoWorkflowError
+patch_service_memo_status = patch_service_memo
 
 
 def build_approval_patch(
-    session: requests.Session,
+    session,
     config: ODataConfig,
     *,
     approver_fio: str | None,
     comment: str | None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {"Статус": APPROVED_STATUS}
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    payload["ДатаИсполненияУД"] = now
-
-    if approver_fio:
-        user_ref, _, _ = resolve_user_by_fio(session, approver_fio, config=config)
-        payload["ИсполнительУД_Key"] = user_ref
-        payload["ИсполнительУД_Type"] = "StandardODATA.Catalog_Пользователи"
-
+    payload: dict[str, Any] = {
+        "Статус": APPROVED_STATUS,
+        "ДатаИсполненияУД": now_ud_timestamp(),
+    }
+    apply_executor_fields(session, config, payload, executor_fio=approver_fio)
     if comment is not None and comment.strip():
         payload["Комментарий"] = comment.strip()
-
     return payload
 
 
-def patch_service_memo_status(
-    session: requests.Session,
-    config: ODataConfig,
-    ref_key: str,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    url = f"{entity_url(config.url, DOCUMENT_ENTITY)}(guid'{ref_key}')?$format=json"
-    response = session.patch(url, json=payload, timeout=config.timeout)
-    if not response.ok:
-        raise RuntimeError(
-            f"Ошибка согласования СЗ: HTTP {response.status_code}: {response.text[:800]}"
+def _sto_document(header: dict[str, Any]) -> dict[str, Any]:
+    return {"memo": header, "header": header}
+
+
+def build_approval_result_message(
+    *,
+    number: str | None,
+    changed: bool,
+    already_approved: bool,
+    sto_ready: bool,
+    perform_approval: bool,
+) -> str:
+    memo_number = (number or "").strip() or "?"
+    if already_approved:
+        return f"Служебная записка №{memo_number} уже согласована."
+    if changed:
+        return f"Служебная записка №{memo_number} согласована."
+    if perform_approval and not sto_ready:
+        return f"Служебная записка №{memo_number} не согласована: не выполнены условия СТО."
+    if not sto_ready:
+        return (
+            f"Служебная записка №{memo_number} не согласована автоматически: "
+            "не выполнены условия СТО."
         )
-    return response.json()
+    return f"Служебная записка №{memo_number} готова к согласованию сотрудником УД."
+
+
+def _base_result(
+    *,
+    resolved_ref: str,
+    header: dict[str, Any],
+    previous_status: str,
+    sto_assessment: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "ref_key": resolved_ref,
+        "number": header.get("Number"),
+        "date": header.get("Date"),
+        "posted": header.get("Posted"),
+        "status": header.get("Статус"),
+        "previous_status": previous_status,
+        "sto_ready": sto_assessment["sto_ready"],
+        "sto_issues": sto_assessment["sto_issues"],
+        "ud_recommendation": sto_assessment["ud_recommendation"],
+        "auto_approve_allowed": sto_assessment["auto_approve_allowed"],
+    }
 
 
 def approve_service_memo(
@@ -129,33 +118,68 @@ def approve_service_memo(
     comment: str | None = None,
     require_unapproved: bool = True,
     validate_meeting_theme: bool = True,
+    check_sto: bool = True,
+    perform_approval: bool = False,
     config: ODataConfig = CONFIG,
 ) -> dict[str, Any]:
-    session = create_session(config)
-    metadata = load_metadata_xml(session, config)
-    resolved_ref = resolve_memo_ref_key(session, config, ref_key=ref_key, number=number)
-    before = fetch_document_header(session, config, resolved_ref)
+    session, resolved_ref, before, metadata = load_memo_header(
+        ref_key=ref_key,
+        number=number,
+        config=config,
+    )
 
     if validate_meeting_theme:
         ensure_meeting_memo(session, config, before, metadata=metadata)
 
     previous_status = str(before.get("Статус") or "")
-    if previous_status == APPROVED_STATUS:
-        return {
-            "ref_key": resolved_ref,
-            "number": before.get("Number"),
-            "date": before.get("Date"),
-            "posted": before.get("Posted"),
-            "status": previous_status,
-            "previous_status": previous_status,
-            "already_approved": True,
-            "changed": False,
+    memo_number = str(before.get("Number") or number or "")
+    sto_assessment = (
+        assess_sto_readiness(_sto_document(before))
+        if check_sto
+        else {
+            "sto_ready": True,
+            "sto_issues": [],
+            "ud_recommendation": None,
+            "auto_approve_allowed": True,
         }
+    )
+
+    def _unchanged_result(*, auto_approved: bool = False) -> dict[str, Any]:
+        return {
+            **_base_result(
+                resolved_ref=resolved_ref,
+                header=before,
+                previous_status=previous_status,
+                sto_assessment=sto_assessment,
+            ),
+            "already_approved": previous_status == APPROVED_STATUS,
+            "changed": False,
+            "auto_approved": auto_approved,
+            "approver_fio": approver_fio,
+            "comment": comment,
+            "message": build_approval_result_message(
+                number=memo_number,
+                changed=False,
+                already_approved=previous_status == APPROVED_STATUS,
+                sto_ready=bool(sto_assessment["sto_ready"]),
+                perform_approval=perform_approval,
+            ),
+        }
+
+    if previous_status == APPROVED_STATUS:
+        return _unchanged_result()
 
     if require_unapproved and previous_status != UNAPPROVED_STATUS:
         raise ServiceMemoApprovalError(
             f"Согласование недоступно: текущий статус «{previous_status or 'не указан'}»"
         )
+
+    should_patch = perform_approval or (
+        AUTO_APPROVE_SERVICE_MEMO
+        and (not check_sto or sto_assessment["sto_ready"])
+    )
+    if not should_patch:
+        return _unchanged_result()
 
     patch_payload = build_approval_patch(
         session,
@@ -163,20 +187,34 @@ def approve_service_memo(
         approver_fio=approver_fio,
         comment=comment,
     )
-    patch_service_memo_status(session, config, resolved_ref, patch_payload)
+    patch_service_memo(
+        session,
+        config,
+        resolved_ref,
+        patch_payload,
+        action_label="согласования",
+    )
     after = fetch_document_header(session, config, resolved_ref)
 
     return {
-        "ref_key": resolved_ref,
-        "number": after.get("Number"),
-        "date": after.get("Date"),
-        "posted": after.get("Posted"),
-        "status": after.get("Статус"),
-        "previous_status": previous_status,
+        **_base_result(
+            resolved_ref=resolved_ref,
+            header=after,
+            previous_status=previous_status,
+            sto_assessment=sto_assessment,
+        ),
         "already_approved": False,
         "changed": True,
+        "auto_approved": not perform_approval,
         "approver_fio": approver_fio,
         "comment": comment,
+        "message": build_approval_result_message(
+            number=str(after.get("Number") or memo_number),
+            changed=True,
+            already_approved=False,
+            sto_ready=bool(sto_assessment["sto_ready"]),
+            perform_approval=perform_approval,
+        ),
     }
 
 
@@ -201,6 +239,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Не проверять тему «Организация совещаний»",
     )
+    parser.add_argument(
+        "--skip-sto-check",
+        action="store_true",
+        help="Не проверять условия СТО (согласовать без автопроверки)",
+    )
+    parser.add_argument(
+        "--perform-approval",
+        action="store_true",
+        help="Выполнить PATCH в 1С (ручное согласование УД, без проверки AUTO_APPROVE)",
+    )
     parser.add_argument("-o", "--output", help="Путь к JSON-файлу результата")
     return parser
 
@@ -218,6 +266,8 @@ def main(argv: list[str] | None = None) -> int:
             comment=args.comment,
             require_unapproved=not args.allow_any_status,
             validate_meeting_theme=not args.skip_theme_check,
+            check_sto=not args.skip_sto_check,
+            perform_approval=args.perform_approval,
         )
     except (ServiceMemoApprovalError, RuntimeError, requests.RequestException) as error:
         print(f"Ошибка: {error}", file=sys.stderr)
