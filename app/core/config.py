@@ -164,6 +164,7 @@ class Settings(BaseSettings):
     OUTLOOK_EMAIL: str = ""
     OUTLOOK_PASSWORD: str = ""
     OUTLOOK_SERVER: str = ""
+    OUTLOOK_WEB_APP_URL: str = ""
     OUTLOOK_MAILBOX: str = ""
     OUTLOOK_TIMEZONE: str = "Europe/Moscow"
     OUTLOOK_SMTP_HOST: str = ""

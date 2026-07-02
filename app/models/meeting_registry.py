@@ -37,6 +37,9 @@ class MeetingRegistryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
     )
+    outlook_item_id: Mapped[str | None] = mapped_column(String(512))
+    outlook_changekey: Mapped[str | None] = mapped_column(String(512))
+    outlook_meeting_url: Mapped[str | None] = mapped_column(Text)
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
     approved_by: Mapped["User | None"] = relationship()

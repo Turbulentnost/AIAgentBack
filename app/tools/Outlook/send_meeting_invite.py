@@ -21,6 +21,7 @@ from exchangelib.properties import Attendee
 from exchangelib.version import EXCHANGE_2013_SP1, Version
 
 from app.tools.Outlook.outlook_config import OutlookConfig, build_outlook_config
+from app.tools.Outlook.outlook_meeting_link import calendar_item_outlook_meta
 
 
 _EWS_VERSION = Version(build=EXCHANGE_2013_SP1)
@@ -151,7 +152,7 @@ def send_meeting_invite(
     location: str = "",
     resources: list[str] | None = None,
     attendees: list[str] | None = None,
-) -> None:
+) -> CalendarItem:
     account = connect_account(config)
     end = start + timedelta(minutes=duration_minutes)
     people = attendees or [attendee]
@@ -169,6 +170,7 @@ def send_meeting_invite(
         resources=[resolve_resource(room) for room in room_resources],
     )
     item.save(send_meeting_invitations=SEND_ONLY_TO_ALL)
+    return item
 
 
 def dispatch_meeting_invite(
@@ -193,7 +195,7 @@ def dispatch_meeting_invite(
         raise ValueError("Не указан ни один участник (attendee / attendees).")
 
     room_resources = [email.strip() for email in (resources or []) if email.strip()]
-    send_meeting_invite(
+    item = send_meeting_invite(
         config=config,
         attendee=people[0],
         subject=subject,
@@ -205,6 +207,7 @@ def dispatch_meeting_invite(
         attendees=people,
     )
     end_dt = start_dt + timedelta(minutes=duration_minutes)
+    outlook_meta = calendar_item_outlook_meta(item, config)
     return {
         "status": "sent",
         "from": primary_smtp_address(config),
@@ -217,6 +220,7 @@ def dispatch_meeting_invite(
         "location": location,
         "resources": room_resources,
         "timezone": tz_name,
+        **outlook_meta,
     }
 
 
@@ -318,6 +322,8 @@ def main(argv: list[str] | None = None) -> int:
         print("  Переговорные (ресурсы):")
         for email in result["resources"]:
             print(f"    - {email}")
+    if result.get("outlook_meeting_url"):
+        print(f"  Ссылка в Outlook: {result['outlook_meeting_url']}")
     return 0
 
 

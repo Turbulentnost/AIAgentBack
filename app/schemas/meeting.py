@@ -266,6 +266,9 @@ class MeetingAgentSlotApproveRead(BaseModel):
     attendees: list[str] = Field(default_factory=list)
     attendee_details: list[MeetingAttendeeRead] = Field(default_factory=list)
     sent: bool = True
+    outlook_item_id: str | None = None
+    outlook_changekey: str | None = None
+    outlook_meeting_url: str | None = None
 
 
 class MeetingMemoRejectRequest(BaseModel):
@@ -364,6 +367,9 @@ class MeetingRegistryItemRead(BaseModel):
     invitations_sent_at: str
     approved_at: str | None = None
     protocol_number: str | None = None
+    outlook_item_id: str | None = None
+    outlook_changekey: str | None = None
+    outlook_meeting_url: str | None = None
     updated_at: str
 
 

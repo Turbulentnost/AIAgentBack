@@ -24,6 +24,7 @@ def _config() -> OutlookConfig:
         email="svc@turbo-don.ru",
         password="secret",
         server="mail.turbo-don.ru",
+        web_app_url="",
         mailbox="postagent@turbo-don.ru",
         timezone="Europe/Moscow",
         smtp_host="mail.turbo-don.ru",

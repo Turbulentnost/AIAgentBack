@@ -61,6 +61,15 @@ def _snapshot_from_detail(
     }
 
 
+def _outlook_fields_from_sent_payload(sent_payload: dict[str, Any] | None) -> dict[str, str | None]:
+    sent = sent_payload or {}
+    return {
+        "outlook_item_id": sent.get("outlook_item_id") or sent.get("id"),
+        "outlook_changekey": sent.get("outlook_changekey") or sent.get("changekey"),
+        "outlook_meeting_url": sent.get("outlook_meeting_url") or sent.get("meeting_url"),
+    }
+
+
 def stage_index(stage: MeetingRegistryStage) -> int:
     try:
         return STAGE_ORDER.index(stage)
@@ -112,6 +121,7 @@ class MeetingRegistryService:
         normalized_ref = memo_ref_key.strip().lower()
         now = datetime.now(timezone.utc)
         snapshot = _snapshot_from_detail(memo_detail, subject=subject, location=location)
+        outlook_fields = _outlook_fields_from_sent_payload(sent_payload)
         slot_start_dt = parse_slot_datetime(slot_start)
         slot_end_dt = parse_slot_datetime(slot_end)
 
@@ -140,6 +150,9 @@ class MeetingRegistryService:
                 invitations_sent_at=now,
                 approved_at=approved_at,
                 approved_by_user_id=approved_by.id,
+                outlook_item_id=outlook_fields.get("outlook_item_id"),
+                outlook_changekey=outlook_fields.get("outlook_changekey"),
+                outlook_meeting_url=outlook_fields.get("outlook_meeting_url"),
                 payload=payload,
             )
             self.db.add(entry)
@@ -159,6 +172,12 @@ class MeetingRegistryService:
             if approved_at is not None:
                 entry.approved_at = approved_at
             entry.approved_by_user_id = approved_by.id
+            if outlook_fields.get("outlook_item_id"):
+                entry.outlook_item_id = outlook_fields["outlook_item_id"]
+            if outlook_fields.get("outlook_changekey"):
+                entry.outlook_changekey = outlook_fields["outlook_changekey"]
+            if outlook_fields.get("outlook_meeting_url"):
+                entry.outlook_meeting_url = outlook_fields["outlook_meeting_url"]
             entry.payload = payload
 
         await self.db.flush()

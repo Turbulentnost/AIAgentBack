@@ -11,6 +11,7 @@ class OutlookConfig:
     password: str
     mailbox: str
     server: str
+    web_app_url: str
     timezone: str
     smtp_host: str
     smtp_port: int
@@ -28,6 +29,7 @@ def build_outlook_config() -> OutlookConfig:
         password=settings.OUTLOOK_PASSWORD,
         mailbox=settings.OUTLOOK_MAILBOX.strip(),
         server=settings.OUTLOOK_SERVER.strip(),
+        web_app_url=settings.OUTLOOK_WEB_APP_URL.strip(),
         timezone=settings.OUTLOOK_TIMEZONE.strip() or "Europe/Moscow",
         smtp_host=settings.OUTLOOK_SMTP_HOST.strip(),
         smtp_port=settings.OUTLOOK_SMTP_PORT,

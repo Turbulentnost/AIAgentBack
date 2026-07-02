@@ -539,6 +539,9 @@ class MeetingService:
             attendees=sent_payload.get("attendees") or emails,
             attendee_details=attendee_details,
             sent=True,
+            outlook_item_id=sent_payload.get("outlook_item_id"),
+            outlook_changekey=sent_payload.get("outlook_changekey"),
+            outlook_meeting_url=sent_payload.get("outlook_meeting_url"),
         )
 
     async def reject_memo(
@@ -1069,6 +1072,9 @@ def _registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
         invitations_sent_at=entry.invitations_sent_at.isoformat(),
         approved_at=entry.approved_at.isoformat() if entry.approved_at else None,
         protocol_number=entry.protocol_number,
+        outlook_item_id=entry.outlook_item_id,
+        outlook_changekey=entry.outlook_changekey,
+        outlook_meeting_url=entry.outlook_meeting_url,
         updated_at=entry.updated_at.isoformat(),
     )
 
