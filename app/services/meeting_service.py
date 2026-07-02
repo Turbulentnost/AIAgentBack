@@ -70,10 +70,9 @@ from app.services.meeting_agent_errors import (
     format_slot_preview_timeout_error,
 )
 from app.services.meeting_attendees import collect_attendees_from_detail, emails_by_fio_from_detail
-from app.services.meeting_memo_cache import (
-    MeetingMemoCacheService,
-    MemoCacheMissError,
-    detail_to_memo_document,
+from app.services.meeting_offline_cache import (
+    build_offline_approve_result,
+    is_offline_cache_detail,
 )
 from app.services.meeting_dashboard_cache import MeetingDashboardCacheService
 from app.services.meeting_permission import MEETING_AGENT_SLUG, can_access_meeting_agent
@@ -95,7 +94,12 @@ from app.services.task_service import TaskService
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
 from app.tools.onec.approve_service_memo import approve_service_memo
 from app.tools.onec.reject_service_memo import reject_service_memo
-from app.tools.onec.service_memo_shared import ServiceMemoWorkflowError
+from app.services.meeting_memo_cache import (
+    MeetingMemoCacheService,
+    MemoCacheMissError,
+    detail_to_memo_document,
+)
+from app.tools.onec.service_memo_shared import APPROVED_STATUS, ServiceMemoWorkflowError
 
 logger = get_logger(__name__)
 
@@ -529,6 +533,12 @@ class MeetingService:
             sent_payload=sent_payload if isinstance(sent_payload, dict) else None,
         )
 
+        await self._sync_offline_cache_after_invite(
+            normalized_ref,
+            memo_detail=memo_detail,
+            approver_fio=_user_fio(current_user),
+        )
+
         return MeetingAgentSlotApproveRead(
             memo_ref_key=normalized_ref,
             subject=subject,
@@ -602,21 +612,50 @@ class MeetingService:
         normalized_ref = memo_ref_key.strip().lower()
         approver_fio = _user_fio(current_user)
 
-        try:
-            raw = await asyncio.to_thread(
-                approve_service_memo,
+        cache_service = MeetingMemoCacheService()
+        cached = await cache_service.read_cached(normalized_ref)
+        is_offline_cache = cached is not None and is_offline_cache_detail(cached["payload"])
+
+        if is_offline_cache:
+            raw = build_offline_approve_result(
+                cached["payload"],
                 ref_key=normalized_ref,
                 approver_fio=approver_fio,
                 comment=payload.comment,
-                perform_approval=True,
             )
-        except ServiceMemoWorkflowError as exc:
-            raise MeetingServiceError(str(exc)) from exc
-        except Exception as exc:
-            lowered = str(exc).lower()
-            if any(token in lowered for token in ("401", "403", "404", "timeout", "connection", "connect", "odata")):
-                raise MeetingServiceError(format_onec_load_error(exc), status_code=503) from exc
-            raise MeetingServiceError(f"Не удалось согласовать служебную записку в 1С: {exc}") from exc
+            if raw.get("changed"):
+                history_message = (
+                    f"Согласована офлайн ({approver_fio})"
+                    if approver_fio
+                    else "Согласована офлайн (offline cache)"
+                )
+                await cache_service.patch_status(
+                    normalized_ref,
+                    APPROVED_STATUS,
+                    history_message=history_message,
+                )
+                await self._apply_memo_status_to_cache(normalized_ref, APPROVED_STATUS)
+        else:
+            try:
+                raw = await asyncio.to_thread(
+                    approve_service_memo,
+                    ref_key=normalized_ref,
+                    approver_fio=approver_fio,
+                    comment=payload.comment,
+                    perform_approval=True,
+                )
+            except ServiceMemoWorkflowError as exc:
+                raise MeetingServiceError(str(exc)) from exc
+            except Exception as exc:
+                lowered = str(exc).lower()
+                if any(token in lowered for token in ("401", "403", "404", "timeout", "connection", "connect", "odata")):
+                    raise MeetingServiceError(format_onec_load_error(exc), status_code=503) from exc
+                raise MeetingServiceError(f"Не удалось согласовать служебную записку в 1С: {exc}") from exc
+
+            if raw.get("status"):
+                await self._apply_memo_status_to_cache(normalized_ref, str(raw["status"]))
+            if raw.get("changed"):
+                self._schedule_memo_cache_refresh(normalized_ref)
 
         await self.audit.log(
             action="meeting.memo_approved",
@@ -627,15 +666,38 @@ class MeetingService:
                 "number": raw.get("number"),
                 "changed": raw.get("changed"),
                 "sto_ready": raw.get("sto_ready"),
+                "offline_cache": is_offline_cache,
             },
         )
 
-        if raw.get("status"):
-            await self._apply_memo_status_to_cache(normalized_ref, str(raw["status"]))
-        if raw.get("changed"):
-            self._schedule_memo_cache_refresh(normalized_ref)
-
         return MeetingMemoApproveRead.model_validate(raw)
+
+    async def _sync_offline_cache_after_invite(
+        self,
+        memo_ref_key: str,
+        *,
+        memo_detail: dict | None,
+        approver_fio: str | None,
+    ) -> None:
+        detail = memo_detail
+        if detail is None:
+            cached = await MeetingMemoCacheService().read_cached(memo_ref_key)
+            detail = cached["payload"] if cached else None
+        if not is_offline_cache_detail(detail):
+            return
+        if str((detail or {}).get("status") or "") == APPROVED_STATUS:
+            return
+        history_message = (
+            f"Согласована офлайн при отправке приглашений ({approver_fio})"
+            if approver_fio
+            else "Согласована офлайн при отправке приглашений"
+        )
+        await MeetingMemoCacheService().patch_status(
+            memo_ref_key,
+            APPROVED_STATUS,
+            history_message=history_message,
+        )
+        await self._apply_memo_status_to_cache(memo_ref_key, APPROVED_STATUS)
 
     async def _apply_memo_status_to_cache(self, memo_ref_key: str, status: str) -> None:
         from app.core.config import settings
@@ -990,10 +1052,15 @@ class MeetingService:
 
 
 def _user_fio(user: User) -> str | None:
-    if user.full_name and user.full_name.strip():
-        return user.full_name.strip()
-    parts = [user.last_name, user.first_name, user.middle_name]
-    name = " ".join(part.strip() for part in parts if part and part.strip())
+    full_name = getattr(user, "full_name", None)
+    if isinstance(full_name, str) and full_name.strip():
+        return full_name.strip()
+    parts = [
+        getattr(user, "last_name", None),
+        getattr(user, "first_name", None),
+        getattr(user, "middle_name", None),
+    ]
+    name = " ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
     return name or None
 
 

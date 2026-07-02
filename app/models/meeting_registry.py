@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +26,11 @@ class MeetingRegistryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     slot_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     slot_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stage: Mapped[MeetingRegistryStage] = mapped_column(
+        SAEnum(
+            MeetingRegistryStage,
+            name="meetingregistrystage",
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
         default=MeetingRegistryStage.INVITATIONS_SENT,
         index=True,
     )

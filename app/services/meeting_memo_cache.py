@@ -387,7 +387,19 @@ class MeetingMemoCacheService:
                 error=str(exc),
             )
 
-    async def patch_status(self, ref_key: str, status: str) -> bool:
+    async def read_cached(self, ref_key: str) -> dict[str, Any] | None:
+        """Возвращает кэшированный detail СЗ или None."""
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return None
+        return await self._read_cache(ref_key.strip().lower())
+
+    async def patch_status(
+        self,
+        ref_key: str,
+        status: str,
+        *,
+        history_message: str | None = None,
+    ) -> bool:
         """Обновляет статус СЗ в memo-кэше без запроса в 1С."""
         if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
             return False
@@ -396,6 +408,10 @@ class MeetingMemoCacheService:
         if cached is None:
             return False
         patched = patch_detail_status(cached["payload"], status)
+        if history_message:
+            from app.services.meeting_offline_cache import append_detail_history
+
+            patched = append_detail_history(patched, history_message)
         await self._write_cache(normalized, patched, fetched_at=cached["fetched_at"])
         return True
 

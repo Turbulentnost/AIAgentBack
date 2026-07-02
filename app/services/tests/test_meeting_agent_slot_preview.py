@@ -228,13 +228,17 @@ async def test_approve_agent_slot_sends_outlook_invite_only(user) -> None:
     service.audit.log = AsyncMock()
 
     with patch(
-        "app.services.meeting_service.dispatch_meeting_invite",
-        return_value={
-            "status": "sent",
-            "attendees": ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"],
-        },
-    ) as send_invite:
-        result = await service.approve_agent_slot(
+        "app.services.meeting_service.MeetingRegistryService.upsert_from_invite",
+        AsyncMock(),
+    ):
+        with patch(
+            "app.services.meeting_service.dispatch_meeting_invite",
+            return_value={
+                "status": "sent",
+                "attendees": ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"],
+            },
+        ) as send_invite:
+            result = await service.approve_agent_slot(
             "abc",
             MeetingAgentSlotApproveRequest(
                 slot_start="2026-06-20 11:00",
@@ -264,10 +268,14 @@ async def test_approve_agent_slot_works_without_memo_cache(user) -> None:
     service.audit.log = AsyncMock()
 
     with patch(
-        "app.services.meeting_service.dispatch_meeting_invite",
-        return_value={"status": "sent", "attendees": ["a@turbo-don.ru"]},
+        "app.services.meeting_service.MeetingRegistryService.upsert_from_invite",
+        AsyncMock(),
     ):
-        result = await service.approve_agent_slot(
+        with patch(
+            "app.services.meeting_service.dispatch_meeting_invite",
+            return_value={"status": "sent", "attendees": ["a@turbo-don.ru"]},
+        ):
+            result = await service.approve_agent_slot(
             "abc",
             MeetingAgentSlotApproveRequest(
                 slot_start="2026-06-20 11:00",
@@ -289,10 +297,14 @@ async def test_approve_agent_slot_accepts_attendee_emails(user) -> None:
     service.audit.log = AsyncMock()
 
     with patch(
-        "app.services.meeting_service.dispatch_meeting_invite",
-        return_value={"status": "sent", "attendees": ["a@turbo-don.ru", "b@turbo-don.ru"]},
+        "app.services.meeting_service.MeetingRegistryService.upsert_from_invite",
+        AsyncMock(),
     ):
-        result = await service.approve_agent_slot(
+        with patch(
+            "app.services.meeting_service.dispatch_meeting_invite",
+            return_value={"status": "sent", "attendees": ["a@turbo-don.ru", "b@turbo-don.ru"]},
+        ):
+            result = await service.approve_agent_slot(
             "abc",
             MeetingAgentSlotApproveRequest(
                 slot_start="2026-06-20 11:00",
