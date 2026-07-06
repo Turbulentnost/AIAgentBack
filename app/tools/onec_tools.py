@@ -15,6 +15,8 @@ from app.tools.onec.create_service_memo import (
     create_and_send_service_memo,
 )
 from app.tools.onec.create_protocol import create_meeting_protocol, delete_meeting_protocol
+from app.tools.onec.create_meeting_topic import MEETING_TYPES, create_meeting_topic
+from app.tools.onec.meeting_topic_participants import get_meeting_topic_participants
 from app.tools.onec.get_meetings import get_last_meeting_memos
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
 from app.tools.onec.meeting_topics_registry import query_meeting_topics
@@ -725,6 +727,186 @@ class CreateProtocolTool(Tool):
 
 
 register_tool(CreateProtocolTool())
+
+
+class CreateMeetingTopicInput(BaseModel):
+    description: str = Field(description="Наименование темы совещания")
+    manager_fio: str = Field(description="ФИО руководителя")
+    meeting_type: str = Field(
+        default="Отчетное",
+        description=f"Вид совещания: {', '.join(MEETING_TYPES)}",
+    )
+    reviewer_fio: str | None = Field(
+        default=None,
+        description="ФИО проверяющего; по умолчанию совпадает с руководителем",
+    )
+    closed_date: str | None = Field(
+        default=None,
+        description="Дата окончания действия темы (ISO). Пусто = бессрочно",
+    )
+    closed_end_of_year: bool = Field(
+        default=False,
+        description="Установить дату закрытия на 31.12 текущего года",
+    )
+    department_key: str | None = Field(default=None, description="GUID подразделения")
+    room_key: str | None = Field(default=None, description="GUID переговорной")
+    project_key: str | None = Field(default=None, description="GUID проекта")
+    committee_key: str | None = Field(default=None, description="GUID комитета")
+    organization_key: str | None = Field(default=None, description="GUID организации")
+    start_time: str | None = Field(
+        default=None,
+        description="Время начала в формате 0001-01-01THH:MM:SS",
+    )
+    end_time: str | None = Field(
+        default=None,
+        description="Время окончания в формате 0001-01-01THH:MM:SS",
+    )
+    is_management_circle_topic: bool | None = Field(
+        default=None,
+        description="Тема круга управления; без значения берётся из шаблона",
+    )
+    template_ref_key: str | None = Field(
+        default=None,
+        description="Ref_Key темы-шаблона для копирования реквизитов",
+    )
+    template_code: str | None = Field(
+        default=None,
+        description="Код темы-шаблона для копирования реквизитов",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Сформировать payload без записи в 1С",
+    )
+
+
+class CreateMeetingTopicOutput(BaseModel):
+    catalog_entity: str
+    dry_run: bool
+    manager_fio: str
+    reviewer_fio: str
+    template_ref_key: str | None = None
+    template_code: str | None = None
+    topic: MeetingTopicItem | None = None
+
+
+async def create_meeting_topic_tool(
+    payload: CreateMeetingTopicInput,
+    context: ToolContext,
+) -> CreateMeetingTopicOutput:
+    del context
+    raw = await asyncio.to_thread(
+        create_meeting_topic,
+        description=payload.description,
+        manager_fio=payload.manager_fio,
+        meeting_type=payload.meeting_type,
+        reviewer_fio=payload.reviewer_fio,
+        closed_date=payload.closed_date,
+        closed_end_of_year=payload.closed_end_of_year,
+        department_key=payload.department_key,
+        room_key=payload.room_key,
+        project_key=payload.project_key,
+        committee_key=payload.committee_key,
+        organization_key=payload.organization_key,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        is_management_circle_topic=payload.is_management_circle_topic,
+        template_ref_key=payload.template_ref_key,
+        template_code=payload.template_code,
+        dry_run=payload.dry_run,
+    )
+    return CreateMeetingTopicOutput.model_validate(raw)
+
+
+class CreateMeetingTopicTool(Tool):
+    name = "create_meeting_topic"
+    description = "Создаёт тему совещания в справочнике Catalog_ТД_ТемыСовещаний 1С:ERP."
+    agent_description = (
+        "Инструмент create_meeting_topic создаёт элемент справочника тем совещаний 1С "
+        "(Catalog_ТД_ТемыСовещаний). Обязательны description, manager_fio, meeting_type. "
+        "template_code/template_ref_key — скопировать подразделение, кабинет и прочие "
+        "реквизиты с существующей темы; closed_end_of_year — активна до конца года. "
+        "dry_run=true — только сформировать payload без записи. Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = CreateMeetingTopicInput
+    output_model = CreateMeetingTopicOutput
+    required_permissions = ["create_meeting_topic"]
+    preview_default_params = {
+        "description": "Технический совет",
+        "manager_fio": "Соломичева Светлана Викторовна",
+        "meeting_type": "Отчетное",
+        "template_code": "000009459",
+        "dry_run": True,
+    }
+
+    async def execute(
+        self,
+        payload: CreateMeetingTopicInput,
+        context: ToolContext,
+    ) -> CreateMeetingTopicOutput:
+        return await create_meeting_topic_tool(payload, context)
+
+
+register_tool(CreateMeetingTopicTool())
+
+
+class MeetingTopicParticipantItem(BaseModel):
+    participant_ref_key: str | None = None
+    fio: str | None = None
+    topic_ref_key: str | None = None
+
+
+class GetMeetingTopicParticipantsInput(BaseModel):
+    topic_ref_key: str | None = Field(default=None, description="Ref_Key темы совещания")
+    topic_code: str | None = Field(default=None, description="Код темы, например 000009459")
+
+
+class GetMeetingTopicParticipantsOutput(BaseModel):
+    register_entity: str
+    topic_ref_key: str
+    topic_code: str | None = None
+    topic_description: str | None = None
+    participants_count: int
+    participants: list[MeetingTopicParticipantItem]
+
+
+async def get_meeting_topic_participants_tool(
+    payload: GetMeetingTopicParticipantsInput,
+    context: ToolContext,
+) -> GetMeetingTopicParticipantsOutput:
+    del context
+    raw = await asyncio.to_thread(
+        get_meeting_topic_participants,
+        topic_ref_key=payload.topic_ref_key,
+        topic_code=payload.topic_code,
+    )
+    return GetMeetingTopicParticipantsOutput.model_validate(raw)
+
+
+class GetMeetingTopicParticipantsTool(Tool):
+    name = "get_meeting_topic_participants"
+    description = (
+        "Возвращает участников темы совещания из регистра "
+        "InformationRegister_ТД_СоответствиеТемыСовещанияИУчастниковСовещаний."
+    )
+    agent_description = (
+        "Инструмент get_meeting_topic_participants читает участников темы совещания 1С "
+        "из регистра «Соответствие темы совещания и участников совещаний (ТД)». "
+        "Нужен topic_ref_key или topic_code. Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = GetMeetingTopicParticipantsInput
+    output_model = GetMeetingTopicParticipantsOutput
+    required_permissions = ["get_meeting_topic_participants"]
+    preview_default_params = {"topic_code": "000009459"}
+
+    async def execute(
+        self,
+        payload: GetMeetingTopicParticipantsInput,
+        context: ToolContext,
+    ) -> GetMeetingTopicParticipantsOutput:
+        return await get_meeting_topic_participants_tool(payload, context)
+
+
+register_tool(GetMeetingTopicParticipantsTool())
 
 
 class DeleteProtocolInput(BaseModel):

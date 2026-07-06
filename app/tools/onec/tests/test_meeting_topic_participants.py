@@ -1,0 +1,31 @@
+from app.tools.onec.meeting_topic_participants import (
+    PARTICIPANT_KEY_FIELD,
+    TOPIC_KEY_FIELD,
+    normalize_participant_row,
+)
+
+
+def test_normalize_participant_row_resolves_fio_from_user() -> None:
+    row = {
+        TOPIC_KEY_FIELD: "topic-1",
+        PARTICIPANT_KEY_FIELD: "user-1",
+    }
+    users = {
+        "user-1": {
+            "Ref_Key": "user-1",
+            "Description": "Соломичева Светлана Викторовна",
+            "ФизическоеЛицо_Key": "person-1",
+        }
+    }
+    persons = {
+        "person-1": {
+            "Ref_Key": "person-1",
+            "Description": "Соломичева Светлана Викторовна",
+        }
+    }
+
+    item = normalize_participant_row(row, users=users, persons=persons)
+
+    assert item["participant_ref_key"] == "user-1"
+    assert item["fio"] == "Соломичева Светлана Викторовна"
+    assert item["topic_ref_key"] == "topic-1"
