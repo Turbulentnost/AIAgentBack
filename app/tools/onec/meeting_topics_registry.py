@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -49,6 +50,27 @@ def is_empty_date(value: str | None) -> bool:
     return not normalized or normalized.startswith(EMPTY_DATE)
 
 
+def parse_closed_date(value: str | None) -> date | None:
+    if is_empty_date(value):
+        return None
+    normalized = (value or "").strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(normalized).date()
+    except ValueError:
+        return None
+
+
+def is_topic_active(raw_closed_date: str | None, *, today: date | None = None) -> bool:
+    """Тема активна, если дата закрытия пустая или ещё не наступила."""
+    closed = parse_closed_date(raw_closed_date)
+    if closed is None:
+        return True
+    current = today or date.today()
+    return closed >= current
+
+
 def related_description(value: Any) -> str | None:
     if isinstance(value, dict):
         description = (value.get("Description") or "").strip()
@@ -69,7 +91,7 @@ def normalize_topic(row: dict[str, Any], *, expand_related: bool) -> dict[str, A
         "start_date": normalize_optional_datetime(row.get("ДатаНачала")),
         "end_date": normalize_optional_datetime(row.get("ДатаКонца")),
         "closed_date": normalize_optional_datetime(row.get("ДатаЗакрытияТемы")),
-        "is_active": is_empty_date(row.get("ДатаЗакрытияТемы")),
+        "is_active": is_topic_active(row.get("ДатаЗакрытияТемы")),
         "is_project_topic": bool(row.get("ПоПроекту")),
         "is_management_circle_topic": bool(row.get("ТемаКругаУправления")),
         "repeat": {
@@ -128,7 +150,11 @@ def build_filter_parts(
         parts.append(f"substringof('{odata_escape(query.strip())}', Description)")
 
     if active_only:
-        parts.append(f"ДатаЗакрытияТемы eq datetime'{EMPTY_DATE}'")
+        today = date.today().isoformat()
+        parts.append(
+            f"(ДатаЗакрытияТемы eq datetime'{EMPTY_DATE}' "
+            f"or ДатаЗакрытияТемы ge datetime'{today}T00:00:00')"
+        )
 
     return parts
 
