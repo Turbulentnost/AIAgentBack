@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from app.agents.meeting_agent.memo_presenter import resolve_meeting_schedule
+from app.services.meeting_memo_document import resolve_meeting_schedule
 
 
 def parse_slot_datetime(value: str) -> datetime | None:

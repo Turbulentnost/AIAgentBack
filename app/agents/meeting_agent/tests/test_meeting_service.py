@@ -9,7 +9,8 @@ import pytest
 
 from app.models.enums import TaskStatus
 from app.schemas.meeting import MeetingRunCreate, MeetingSlotsRequest
-from app.services.meeting_service import MeetingService, MeetingServiceError
+from app.services.meeting_exceptions import MeetingServiceError
+from app.services.meeting_service import MeetingService
 
 
 @pytest.fixture

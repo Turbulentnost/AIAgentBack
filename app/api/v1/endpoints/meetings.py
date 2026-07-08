@@ -38,7 +38,8 @@ from app.services.meeting_permission import (
     can_access_meeting_agent,
     can_manage_meetings,
 )
-from app.services.meeting_service import MeetingService, MeetingServiceError
+from app.services.meeting_exceptions import MeetingServiceError
+from app.services.meeting_service import MeetingService
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 

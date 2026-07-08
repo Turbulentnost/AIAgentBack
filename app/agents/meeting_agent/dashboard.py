@@ -59,16 +59,7 @@ def build_today_meetings_filter(target_date: date) -> str:
     )
 
 
-def parse_odata_datetime(value: str | None) -> date | None:
-    if not value or not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    if not normalized or normalized.startswith(EMPTY_DATE):
-        return None
-    try:
-        return datetime.fromisoformat(normalized.replace("Z", "+00:00")).date()
-    except ValueError:
-        return None
+from app.services.meeting_memo_document import parse_odata_date as parse_odata_datetime
 
 
 def is_memo_document_date_on_date(row: dict[str, Any], target_date: date) -> bool:

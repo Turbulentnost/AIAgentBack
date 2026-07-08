@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -52,10 +52,11 @@ async def test_load_memo_calls_get_meeting_memos(user, sample_document: dict) ->
     backend = MeetingBackend(db=AsyncMock())
     backend._invoke = AsyncMock(return_value={"documents": [sample_document]})  # type: ignore[method-assign]
 
-    memo = await backend.load_memo(
-        memo_ref_key="11111111-1111-1111-1111-111111111111",
-        current_user=user,
-    )
+    with patch("app.services.meeting_backend.settings.MEETING_DASHBOARD_CACHE_ENABLED", False):
+        memo = await backend.load_memo(
+            memo_ref_key="11111111-1111-1111-1111-111111111111",
+            current_user=user,
+        )
 
     assert memo.number == "СЗ-001"
     backend._invoke.assert_awaited_once()

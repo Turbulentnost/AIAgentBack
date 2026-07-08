@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.meeting_agent.backend import (
+from app.services.meeting_backend import (
     InviteDraft,
     MeetingMemo,
     MeetingQuorumSlot,

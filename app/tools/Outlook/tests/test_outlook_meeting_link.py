@@ -18,6 +18,7 @@ def _config(**overrides: object) -> OutlookConfig:
         "smtp_port": 587,
         "smtp_use_tls": True,
         "smtp_from": "",
+        "company_calendar": "calendar@turbo-don.ru",
     }
     defaults.update(overrides)
     return OutlookConfig(**defaults)  # type: ignore[arg-type]

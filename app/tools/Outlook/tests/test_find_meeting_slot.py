@@ -74,7 +74,7 @@ def test_find_nearest_slot_never_returns_before_requested_time(monkeypatch) -> N
     )
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.datetime",
+        "app.tools.Outlook.slot_search.rules.datetime",
         type(
             "FixedDatetime",
             (),
@@ -89,7 +89,7 @@ def test_find_nearest_slot_never_returns_before_requested_time(monkeypatch) -> N
         return {attendee: [busy_morning]}
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        "app.tools.Outlook.slot_search.search.fetch_all_busy_intervals",
         fake_fetch,
     )
 
@@ -119,7 +119,7 @@ def test_find_nearest_slot_never_returns_before_now(monkeypatch) -> None:
     requested = datetime(2026, 6, 22, 14, 0, tzinfo=tz)
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.datetime",
+        "app.tools.Outlook.slot_search.rules.datetime",
         type(
             "FixedDatetime",
             (),
@@ -134,7 +134,7 @@ def test_find_nearest_slot_never_returns_before_now(monkeypatch) -> None:
         return {attendee: []}
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        "app.tools.Outlook.slot_search.search.fetch_all_busy_intervals",
         fake_fetch,
     )
 
@@ -350,7 +350,7 @@ def test_find_nearest_slot_retries_when_calendar_rejects_freebusy_slot(monkeypat
     accepted_slot = datetime(2026, 6, 23, 11, 0, tzinfo=tz)
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.datetime",
+        "app.tools.Outlook.slot_search.rules.datetime",
         type(
             "FixedDatetime",
             (),
@@ -362,7 +362,7 @@ def test_find_nearest_slot_retries_when_calendar_rejects_freebusy_slot(monkeypat
     )
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        "app.tools.Outlook.slot_search.search.fetch_all_busy_intervals",
         lambda *_args, **_kwargs: {attendee: []},
     )
 
@@ -372,7 +372,7 @@ def test_find_nearest_slot_retries_when_calendar_rejects_freebusy_slot(monkeypat
         return True, {attendee: []}
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.verify_slot_with_calendar",
+        "app.tools.Outlook.slot_search.search.verify_slot_with_calendar",
         fake_verify,
     )
 
@@ -415,7 +415,7 @@ def test_find_quorum_slots_prefers_majority_over_full_overlap(monkeypatch) -> No
     )
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.datetime",
+        "app.tools.Outlook.slot_search.rules.datetime",
         type(
             "FixedDatetime",
             (),
@@ -435,19 +435,19 @@ def test_find_quorum_slots_prefers_majority_over_full_overlap(monkeypatch) -> No
         }
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        "app.tools.Outlook.slot_search.search.fetch_all_busy_intervals",
         fake_fetch,
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.verify_slot_with_calendar",
+        "app.tools.Outlook.slot_search.search.verify_slot_with_calendar",
         lambda **_kwargs: (True, fake_fetch()),
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_freebusy_calendar_events",
+        "app.tools.Outlook.slot_search.scoring.fetch_freebusy_calendar_events",
         lambda *_args, **_kwargs: {},
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.read_calendar_items_in_range",
+        "app.tools.Outlook.slot_search.conflicts.read_calendar_items_in_range",
         lambda *_args, **_kwargs: [],
     )
 
@@ -482,7 +482,7 @@ def test_quorum_search_start_uses_workday_beginning_not_preferred_time(monkeypat
     preferred = datetime(2026, 7, 14, 10, 0, tzinfo=tz)
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.datetime",
+        "app.tools.Outlook.slot_search.rules.datetime",
         type(
             "FixedDatetime",
             (),
@@ -518,7 +518,7 @@ def test_find_quorum_slots_scans_before_preferred_time(monkeypatch) -> None:
     )
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.datetime",
+        "app.tools.Outlook.slot_search.rules.datetime",
         type(
             "FixedDatetime",
             (),
@@ -538,11 +538,11 @@ def test_find_quorum_slots_scans_before_preferred_time(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        "app.tools.Outlook.slot_search.search.fetch_all_busy_intervals",
         fake_fetch,
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.verify_slot_with_calendar",
+        "app.tools.Outlook.slot_search.search.verify_slot_with_calendar",
         lambda **_kwargs: (False, fake_fetch()),
     )
 
@@ -558,7 +558,7 @@ def test_find_quorum_slots_scans_before_preferred_time(monkeypatch) -> None:
         return {"b@turbo-don.ru": [event]}
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_freebusy_calendar_events",
+        "app.tools.Outlook.slot_search.scoring.fetch_freebusy_calendar_events",
         fake_events,
     )
 
@@ -762,15 +762,15 @@ def test_find_company_calendar_reschedule_candidates_filters_by_attendee(monkeyp
         return [matching, unrelated]
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.read_calendar_items_in_range",
+        "app.tools.Outlook.slot_search.search.read_calendar_items_in_range",
         fake_read,
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        "app.tools.Outlook.slot_search.search.fetch_busy_intervals_freebusy",
         lambda *_args, **_kwargs: {"a@turbo-don.ru": []},
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.suggest_reschedule_window",
+        "app.tools.Outlook.slot_search.search.suggest_reschedule_window",
         lambda **_kwargs: (
             datetime(2026, 7, 14, 13, 0, tzinfo=tz),
             datetime(2026, 7, 14, 14, 0, tzinfo=tz),
@@ -814,15 +814,15 @@ def test_find_company_calendar_reschedule_candidates_ranks_tentative_first(monke
     )
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.read_calendar_items_in_range",
+        "app.tools.Outlook.slot_search.search.read_calendar_items_in_range",
         lambda *_args, **_kwargs: [busy_item, tentative_item],
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        "app.tools.Outlook.slot_search.search.fetch_busy_intervals_freebusy",
         lambda *_args, **_kwargs: {"a@turbo-don.ru": []},
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.suggest_reschedule_window",
+        "app.tools.Outlook.slot_search.search.suggest_reschedule_window",
         lambda **_kwargs: (
             datetime(2026, 7, 14, 13, 0, tzinfo=tz),
             datetime(2026, 7, 14, 14, 0, tzinfo=tz),
@@ -864,7 +864,7 @@ def test_suggest_reschedule_window_checks_all_meeting_attendees(monkeypatch) -> 
         }
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        "app.tools.Outlook.slot_search.conflicts.fetch_busy_intervals_freebusy",
         fake_fetch,
     )
 
@@ -920,7 +920,7 @@ def test_suggest_reschedule_window_ignores_resource_calendar_for_group_check(
         raise AssertionError("group fetch should not run for resource-only attendees")
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        "app.tools.Outlook.slot_search.conflicts.fetch_busy_intervals_freebusy",
         fail_fetch,
     )
 
@@ -965,7 +965,7 @@ def test_suggest_reschedule_window_falls_back_when_group_has_no_slot(monkeypatch
         }
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        "app.tools.Outlook.slot_search.conflicts.fetch_busy_intervals_freebusy",
         fake_fetch,
     )
 
@@ -1057,18 +1057,18 @@ def test_build_slot_participant_details_marks_free_and_busy(monkeypatch) -> None
     )
 
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        "app.tools.Outlook.slot_search.api.fetch_all_busy_intervals",
         lambda *_args, **_kwargs: {
             "a@turbo-don.ru": [busy_block],
             "b@turbo-don.ru": [],
         },
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.fetch_freebusy_calendar_events",
+        "app.tools.Outlook.slot_search.api.fetch_freebusy_calendar_events",
         lambda *_args, **_kwargs: {},
     )
     monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.read_calendar_items_in_range",
+        "app.tools.Outlook.slot_search.api.read_calendar_items_in_range",
         lambda *_args, **_kwargs: [calendar_event],
     )
 

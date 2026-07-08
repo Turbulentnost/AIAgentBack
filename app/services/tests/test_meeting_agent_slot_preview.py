@@ -19,7 +19,8 @@ from app.schemas.meeting import (
     MeetingAgentSlotPreviewRequest,
     MeetingAttendeeRead,
 )
-from app.services.meeting_service import MeetingService, MeetingServiceError
+from app.services.meeting_exceptions import MeetingServiceError
+from app.services.meeting_service import MeetingService
 
 
 @pytest.fixture
@@ -603,7 +604,7 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
         AsyncMock(return_value=(detail, None, True)),
     ):
         with patch(
-            "app.services.meeting_service.build_slot_participant_details",
+            "app.services.meeting_agent_slot.build_slot_participant_details",
             return_value=raw_details,
         ):
             result = await service.get_agent_slot_detail(
