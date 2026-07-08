@@ -6,7 +6,7 @@ from typing import Any
 from app.tools.Outlook.cancel_meeting import to_local
 from app.tools.Outlook.outlook_config import OutlookConfig
 
-from .busy import coalesce_intervals, fetch_all_busy_intervals
+from .busy import coalesce_intervals, fetch_all_busy_intervals, fetch_busy_intervals_freebusy_events
 from .constants import AvailabilitySource
 from .rules import intervals_overlap, slot_respects_rules
 from .timing import timed_step

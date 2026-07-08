@@ -44,6 +44,10 @@ def reset_timing_report() -> None:
     _timing_report.clear()
     _run_started_at = time_module.perf_counter()
 
+
+def get_timing_report() -> list[dict[str, Any]]:
+    return list(_timing_report)
+
 def record_timing(step: str, elapsed_ms: float, **details: Any) -> None:
     entry: dict[str, Any] = {"step": step, "elapsed_ms": round(elapsed_ms, 1)}
     entry.update(details)

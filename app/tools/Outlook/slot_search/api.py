@@ -28,7 +28,7 @@ from .conflicts import (
     dedupe_conflict_records,
 )
 from .search import find_nearest_slot, find_quorum_slots
-from .timing import logger, log_timing_summary, reset_timing_report, setup_logging, timed_step
+from .timing import get_timing_report, logger, log_timing_summary, reset_timing_report, setup_logging, timed_step
 
 
 def build_slot_participant_details(
@@ -283,7 +283,7 @@ def dispatch_find_quorum_meeting_slots(
     )
     if include_timing:
         log_timing_summary()
-        result["timing_ms"] = list(_timing_report)
+        result["timing_ms"] = get_timing_report()
     return result
 
 def dispatch_find_meeting_slot(
@@ -335,7 +335,7 @@ def dispatch_find_meeting_slot(
     )
     if include_timing:
         log_timing_summary()
-        result["timing_ms"] = list(_timing_report)
+        result["timing_ms"] = get_timing_report()
     return result
 
 def build_parser() -> argparse.ArgumentParser:
