@@ -4,11 +4,13 @@ from app.agents.meeting_agent.backend import ResolvedParticipant
 from app.schemas.meeting import MeetingAgentSlotApproveRequest, MeetingAttendeeRead
 from app.services.meeting_invite_format import invite_body_from_attendees
 
-ATTENDEE_ROLE_LABELS = {
-    "initiator": "Инициатор",
-    "manager": "Руководитель",
-    "participant": "Участник",
-}
+from app.services.meeting_attendee_priority import (
+    ATTENDEE_ROLE_LABELS,
+    REQUIRED_PRIORITY_ROLES,
+    is_required_priority_role,
+    priority_role_label,
+    weight_for_priority_role,
+)
 
 
 class MeetingApproveError(ValueError):

@@ -10,6 +10,8 @@ from app.api.deps import CurrentUser, DbSession
 from app.schemas.meeting import (
     MeetingAgentSlotApproveRead,
     MeetingAgentSlotApproveRequest,
+    MeetingAgentSlotDetailRead,
+    MeetingAgentSlotDetailRequest,
     MeetingAgentSlotPreviewRead,
     MeetingAgentSlotPreviewRequest,
     MeetingInviteDraftRead,
@@ -152,6 +154,25 @@ async def preview_meeting_agent_slot(
     return await MeetingService(db).suggest_agent_slot_safe(
         str(memo_ref_key),
         payload or MeetingAgentSlotPreviewRequest(),
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/memos/{memo_ref_key}/agent/slot-preview/details",
+    response_model=MeetingAgentSlotDetailRead,
+)
+async def get_meeting_agent_slot_details(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingAgentSlotDetailRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingAgentSlotDetailRead:
+    """Детали выбранного слота: кто свободен/занят и какие встречи мешают."""
+    await _require_agent_access(db, current_user)
+    return await MeetingService(db).get_agent_slot_detail_safe(
+        str(memo_ref_key),
+        payload,
         current_user=current_user,
     )
 

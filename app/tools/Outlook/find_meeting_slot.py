@@ -38,7 +38,7 @@ from app.tools.Outlook.meeting_rooms import (
 )
 from app.tools.Outlook.outlook_config import OutlookConfig
 from app.tools.Outlook.ews_logging import configure_exchangelib_logging
-from app.tools.Outlook.read_calendars import connect_as_owner
+from app.tools.Outlook.read_calendars import connect_as_owner, read_calendar_items_in_range
 from app.tools.Outlook.send_meeting_invite import connect_account, load_config, parse_start
 
 AvailabilitySource = Literal["freebusy", "calendar"]
@@ -518,24 +518,1477 @@ def fetch_all_busy_intervals(
     return busy_by_attendee
 
 
+def is_free_for_attendee(
+    start: datetime,
+    duration: timedelta,
+    busy_intervals: list[tuple[datetime, datetime]],
+    config: OutlookConfig,
+) -> bool:
+    local_start = to_local(start, config)
+    local_end = local_start + duration
+    for busy_start, busy_end in busy_intervals:
+        if intervals_overlap(
+            local_start,
+            local_end,
+            to_local(busy_start, config),
+            to_local(busy_end, config),
+        ):
+            return False
+    return True
+
+
 def is_free_for_all(
     start: datetime,
     duration: timedelta,
     busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
     config: OutlookConfig,
 ) -> bool:
-    local_start = to_local(start, config)
-    local_end = local_start + duration
     for intervals in busy_by_attendee.values():
-        for busy_start, busy_end in intervals:
-            if intervals_overlap(
-                local_start,
-                local_end,
-                to_local(busy_start, config),
-                to_local(busy_end, config),
-            ):
-                return False
+        if not is_free_for_attendee(start, duration, intervals, config):
+            return False
     return True
+
+
+def partition_attendees_at_slot(
+    slot_start: datetime,
+    duration: timedelta,
+    *,
+    attendees: list[str],
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    config: OutlookConfig,
+) -> tuple[list[str], list[str]]:
+    free: list[str] = []
+    busy: list[str] = []
+    for email in attendees:
+        intervals = busy_by_attendee.get(email, [])
+        if is_free_for_attendee(slot_start, duration, intervals, config):
+            free.append(email)
+        else:
+            busy.append(email)
+    return free, busy
+
+
+LOW_MOVABILITY_SUBJECT_KEYWORDS = (
+    "совет",
+    "комитет",
+    "правление",
+    "1с",
+    "board",
+    "committee",
+)
+
+
+def movability_score(*, busy_type: str, subject: str) -> str:
+    subject_lower = subject.lower()
+    if any(keyword in subject_lower for keyword in LOW_MOVABILITY_SUBJECT_KEYWORDS):
+        return "low"
+    status = busy_type.strip()
+    if status == "OOF":
+        return "low"
+    if status == "Tentative":
+        return "high"
+    if status in {"Busy", "WorkingElsewhere"}:
+        return "medium"
+    return "medium"
+
+
+def conflicting_events_at_slot(
+    events: list[Any],
+    slot_start: datetime,
+    duration: timedelta,
+    config: OutlookConfig,
+) -> list[dict[str, Any]]:
+    local_start = to_local(slot_start, config)
+    local_end = local_start + duration
+    records: list[dict[str, Any]] = []
+    for event in events:
+        interval = freebusy_event_interval(event, config)
+        if interval is None:
+            continue
+        event_start, event_end = interval
+        if not intervals_overlap(local_start, local_end, event_start, event_end):
+            continue
+        subject = str(getattr(event, "subject", "") or "").strip()
+        busy_type = str(getattr(event, "busy_type", "") or "").strip()
+        records.append(
+            {
+                "event_start": event_start.isoformat(),
+                "event_end": event_end.isoformat(),
+                "event_subject": subject or None,
+                "busy_type": busy_type or None,
+                "movability": movability_score(busy_type=busy_type, subject=subject),
+            }
+        )
+    return records
+
+
+def conflicting_intervals_at_slot(
+    busy_intervals: list[tuple[datetime, datetime]],
+    slot_start: datetime,
+    duration: timedelta,
+    config: OutlookConfig,
+) -> list[dict[str, Any]]:
+    local_start = to_local(slot_start, config)
+    local_end = local_start + duration
+    records: list[dict[str, Any]] = []
+    for busy_start, busy_end in busy_intervals:
+        busy_start_local = to_local(busy_start, config)
+        busy_end_local = to_local(busy_end, config)
+        if not intervals_overlap(local_start, local_end, busy_start_local, busy_end_local):
+            continue
+        overlap_start = max(local_start, busy_start_local)
+        overlap_end = min(local_end, busy_end_local)
+        records.append(
+            {
+                "event_start": overlap_start.isoformat(),
+                "event_end": overlap_end.isoformat(),
+                "event_subject": None,
+                "busy_type": "Busy",
+                "movability": "medium",
+            }
+        )
+    return records
+
+
+def fetch_freebusy_calendar_events(
+    config: OutlookConfig,
+    attendees: list[str],
+    range_start: datetime,
+    range_end: datetime,
+) -> dict[str, list[Any]]:
+    views_by_email = fetch_free_busy_views(config, attendees, range_start, range_end)
+    return {
+        email: list(getattr(view, "calendar_events", None) or [])
+        for email, view in views_by_email.items()
+    }
+
+
+def normalize_calendar_email(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        return text if "@" in text else None
+    mailbox = getattr(value, "mailbox", None)
+    if mailbox is not None:
+        address = getattr(mailbox, "email_address", None)
+        if isinstance(address, str) and "@" in address:
+            return address.strip().lower()
+    address = getattr(value, "email_address", None)
+    if isinstance(address, str) and "@" in address:
+        return address.strip().lower()
+    return None
+
+
+def calendar_item_attendee_emails(item: Any) -> list[str]:
+    """E-mail участников встречи из EWS CalendarItem."""
+    emails: list[str] = []
+    for attr in ("required_attendees", "optional_attendees"):
+        for entry in getattr(item, attr, None) or []:
+            normalized = normalize_calendar_email(entry)
+            if normalized:
+                emails.append(normalized)
+    organizer = normalize_calendar_email(getattr(item, "organizer", None))
+    if organizer:
+        emails.append(organizer)
+    return list(dict.fromkeys(emails))
+
+
+RESOURCE_CALENDAR_PREFIXES = ("calendar@",)
+
+
+def _is_resource_calendar_email(email: str) -> bool:
+    normalized = email.strip().lower()
+    return any(normalized.startswith(prefix) for prefix in RESOURCE_CALENDAR_PREFIXES)
+
+
+def _human_attendees_for_reschedule_hint(attendee_emails: list[str]) -> list[str]:
+    """Участники для групповой проверки альтернативы; без комнат/ресурсных календарей."""
+    return [
+        email
+        for email in attendee_emails
+        if email and not _is_resource_calendar_email(email)
+    ]
+
+
+def _apply_blocked_slots_to_busy(
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    *,
+    owner_email: str | None,
+    blocked_slots: list[tuple[datetime, datetime]],
+    config: OutlookConfig,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    if not blocked_slots or not owner_email:
+        return busy_by_attendee
+    updated = dict(busy_by_attendee)
+    owner_key = owner_email.strip().lower()
+    existing = list(updated.get(owner_key, []))
+    updated[owner_key] = coalesce_intervals(existing + blocked_slots, config)
+    return updated
+
+
+def _apply_reserved_slot_to_busy(
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    *,
+    owner_email: str | None,
+    reserved_slot: tuple[datetime, datetime] | None,
+    config: OutlookConfig,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    if reserved_slot is None:
+        return busy_by_attendee
+    return _apply_blocked_slots_to_busy(
+        busy_by_attendee,
+        owner_email=owner_email,
+        blocked_slots=[reserved_slot],
+        config=config,
+    )
+
+
+def suggest_reschedule_window(
+    *,
+    event_start: datetime,
+    event_end: datetime,
+    busy_intervals: list[tuple[datetime, datetime]],
+    config: OutlookConfig,
+    step: timedelta,
+    search_end: datetime,
+    reserved_slot: tuple[datetime, datetime] | None = None,
+    blocked_hint_slots: list[tuple[datetime, datetime]] | None = None,
+    owner_email: str | None = None,
+    meeting_attendees: list[str] | None = None,
+) -> tuple[datetime, datetime] | None:
+    event_start = to_local(event_start, config)
+    event_end = to_local(event_end, config)
+    search_end = to_local(search_end, config)
+    blocked_slots: list[tuple[datetime, datetime]] = []
+    if reserved_slot is not None:
+        blocked_slots.append(
+            (
+                to_local(reserved_slot[0], config),
+                to_local(reserved_slot[1], config),
+            )
+        )
+    for slot_start, slot_end in blocked_hint_slots or []:
+        blocked_slots.append(
+            (
+                to_local(slot_start, config),
+                to_local(slot_end, config),
+            )
+        )
+    blocked_slots = coalesce_intervals(blocked_slots, config)
+
+    duration = event_end - event_start
+    if duration <= timedelta(0):
+        duration = timedelta(minutes=30)
+
+    attendee_emails = [
+        item.strip().lower()
+        for item in (meeting_attendees or [])
+        if isinstance(item, str) and item.strip()
+    ]
+    attendee_emails = list(dict.fromkeys(attendee_emails))
+    owner = (owner_email or "").strip().lower() or None
+    if owner and owner not in attendee_emails:
+        attendee_emails.insert(0, owner)
+
+    group_attendees = _human_attendees_for_reschedule_hint(attendee_emails)
+    use_group_check = len(group_attendees) >= 2
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] | None = None
+    if use_group_check:
+        fetch_start = event_end
+        fetch_end = search_end
+        try:
+            busy_by_attendee = fetch_busy_intervals_freebusy(
+                config,
+                group_attendees,
+                fetch_start,
+                fetch_end,
+            )
+        except Exception as exc:
+            logger.warning(
+                "reschedule_hint_group_busy_fetch_failed attendees=%s error=%s",
+                len(group_attendees),
+                exc,
+            )
+            busy_by_attendee = None
+            use_group_check = False
+
+    if use_group_check and busy_by_attendee is not None:
+        busy_by_attendee = _apply_blocked_slots_to_busy(
+            busy_by_attendee,
+            owner_email=owner,
+            blocked_slots=blocked_slots,
+            config=config,
+        )
+        candidate = advance_candidate(event_end, step, duration, config)
+        while candidate < search_end:
+            if slot_respects_rules(candidate, duration, config) and is_free_for_all(
+                candidate,
+                duration,
+                busy_by_attendee,
+                config,
+            ):
+                return candidate, candidate + duration
+            candidate = advance_candidate(candidate, step, duration, config)
+
+    effective_busy = coalesce_intervals(
+        list(busy_intervals) + blocked_slots,
+        config,
+    )
+    candidate = advance_candidate(event_end, step, duration, config)
+    while candidate < search_end:
+        if slot_respects_rules(candidate, duration, config) and is_free_for_attendee(
+            candidate,
+            duration,
+            effective_busy,
+            config,
+        ):
+            return candidate, candidate + duration
+        candidate = advance_candidate(candidate, step, duration, config)
+    del event_start
+    return None
+
+
+def build_conflict_records(
+    *,
+    email: str,
+    slot_start: datetime,
+    duration: timedelta,
+    busy_intervals: list[tuple[datetime, datetime]],
+    calendar_events: list[Any],
+    config: OutlookConfig,
+    step: timedelta,
+    search_end: datetime,
+    max_calendar_items: int = 50,
+) -> list[dict[str, Any]]:
+    calendar_records: list[dict[str, Any]] = []
+    try:
+        calendar_items = read_calendar_items_in_range(
+            config,
+            email,
+            range_start=slot_start - timedelta(hours=1),
+            range_end=slot_start + duration + timedelta(hours=1),
+            max_items=max_calendar_items,
+        )
+        calendar_records = conflicting_calendar_items_at_slot(
+            calendar_items,
+            slot_start,
+            duration,
+            config,
+        )
+    except Exception:
+        calendar_records = []
+
+    freebusy_records = conflicting_events_at_slot(calendar_events, slot_start, duration, config)
+    for record in freebusy_records:
+        record["source"] = "freebusy"
+
+    interval_records: list[dict[str, Any]] = []
+    if not calendar_records and not freebusy_records:
+        interval_records = conflicting_intervals_at_slot(
+            busy_intervals,
+            slot_start,
+            duration,
+            config,
+        )
+        for record in interval_records:
+            record["source"] = "interval"
+
+    merged_records = dedupe_conflict_records(
+        calendar_records + freebusy_records + interval_records
+    )
+    reserved_slot = (slot_start, slot_start + duration)
+    conflicts: list[dict[str, Any]] = []
+    assigned_hints: list[tuple[datetime, datetime]] = []
+    for record in merged_records:
+        event_start = datetime.fromisoformat(record["event_start"])
+        event_end = datetime.fromisoformat(record["event_end"])
+        hint = suggest_reschedule_window(
+            event_start=event_start,
+            event_end=event_end,
+            busy_intervals=busy_intervals,
+            config=config,
+            step=step,
+            search_end=search_end,
+            reserved_slot=reserved_slot,
+            blocked_hint_slots=assigned_hints,
+            owner_email=email,
+            meeting_attendees=record.get("event_attendees"),
+        )
+        if hint is not None:
+            assigned_hints.append(hint)
+        meeting_attendees = list(record.get("event_attendees") or [])
+        if email.strip().lower() not in {item.lower() for item in meeting_attendees}:
+            meeting_attendees.insert(0, email.strip().lower())
+        subject = str(record.get("event_subject") or "")
+        busy_type = str(record.get("busy_type") or "")
+        source = record.get("source") or "interval"
+        if source not in {"calendar", "freebusy", "interval", "company_calendar"}:
+            source = "interval"
+        conflicts.append(
+            {
+                "email": email,
+                "event_start": record["event_start"],
+                "event_end": record["event_end"],
+                "event_subject": record.get("event_subject"),
+                "busy_type": record.get("busy_type"),
+                "movability": record.get("movability") or "medium",
+                "movability_reason": movability_reason(
+                    busy_type=busy_type,
+                    subject=subject,
+                    source=source,
+                ),
+                "source": source,
+                "event_attendees": meeting_attendees,
+                "can_auto_reschedule": False,
+                "reschedule_hint_start": hint[0].isoformat() if hint else None,
+                "reschedule_hint_end": hint[1].isoformat() if hint else None,
+            }
+        )
+    return conflicts
+
+
+def movability_reason(
+    *,
+    busy_type: str,
+    subject: str,
+    source: Literal["calendar", "freebusy", "interval", "company_calendar"],
+) -> str:
+    subject_lower = subject.lower()
+    if any(keyword in subject_lower for keyword in LOW_MOVABILITY_SUBJECT_KEYWORDS):
+        return "protected_subject"
+    status = busy_type.strip()
+    if status == "OOF":
+        return "oof"
+    if status == "Tentative":
+        return "tentative"
+    if source == "interval":
+        return "unknown_interval"
+    if status in {"Busy", "WorkingElsewhere"}:
+        return "busy"
+    return "busy"
+
+
+def conflicting_calendar_items_at_slot(
+    items: list[Any],
+    slot_start: datetime,
+    duration: timedelta,
+    config: OutlookConfig,
+) -> list[dict[str, Any]]:
+    local_start = to_local(slot_start, config)
+    local_end = local_start + duration
+    records: list[dict[str, Any]] = []
+    for item in items:
+        interval = event_interval(item, config)
+        if interval is None:
+            continue
+        event_start, event_end = interval
+        if not intervals_overlap(local_start, local_end, event_start, event_end):
+            continue
+        subject = str(getattr(item, "subject", "") or "").strip()
+        busy_type = str(getattr(item, "legacy_free_busy_status", "") or "").strip()
+        organizer = None
+        organizer_obj = getattr(item, "organizer", None)
+        if organizer_obj is not None:
+            organizer = getattr(organizer_obj, "email_address", None) or str(organizer_obj)
+        records.append(
+            {
+                "event_start": event_start.isoformat(),
+                "event_end": event_end.isoformat(),
+                "event_subject": subject or None,
+                "busy_type": busy_type or None,
+                "organizer": organizer,
+                "event_attendees": calendar_item_attendee_emails(item),
+                "movability": movability_score(busy_type=busy_type, subject=subject),
+                "source": "calendar",
+            }
+        )
+    return records
+
+
+def dedupe_conflict_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Один интервал — одна запись; при дубле оставляем запись с темой (calendar > freebusy > interval)."""
+    source_rank = {"calendar": 0, "freebusy": 1, "interval": 2}
+    by_interval: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str]] = []
+
+    def should_replace(existing: dict[str, Any], candidate: dict[str, Any]) -> bool:
+        new_subject = str(candidate.get("event_subject") or "").strip()
+        old_subject = str(existing.get("event_subject") or "").strip()
+        if new_subject and not old_subject:
+            return True
+        if old_subject and not new_subject:
+            return False
+        new_rank = source_rank.get(str(candidate.get("source") or "interval"), 2)
+        old_rank = source_rank.get(str(existing.get("source") or "interval"), 2)
+        return new_rank < old_rank
+
+    for record in records:
+        key = (
+            str(record.get("event_start") or ""),
+            str(record.get("event_end") or ""),
+        )
+        if not key[0] or not key[1]:
+            continue
+        if key not in by_interval:
+            order.append(key)
+            by_interval[key] = record
+            continue
+        if should_replace(by_interval[key], record):
+            by_interval[key] = record
+        elif record.get("event_attendees") and not by_interval[key].get("event_attendees"):
+            by_interval[key]["event_attendees"] = record["event_attendees"]
+
+    return [by_interval[key] for key in order]
+
+
+def attach_reschedule_hints(
+    records: list[dict[str, Any]],
+    *,
+    owner_email: str,
+    busy_intervals: list[tuple[datetime, datetime]],
+    config: OutlookConfig,
+    step: timedelta,
+    search_end: datetime,
+    reserved_slot: tuple[datetime, datetime] | None = None,
+) -> list[dict[str, Any]]:
+    conflicts: list[dict[str, Any]] = []
+    assigned_hints: list[tuple[datetime, datetime]] = []
+    for record in records:
+        event_start = datetime.fromisoformat(record["event_start"])
+        event_end = datetime.fromisoformat(record["event_end"])
+        hint = suggest_reschedule_window(
+            event_start=event_start,
+            event_end=event_end,
+            busy_intervals=busy_intervals,
+            config=config,
+            step=step,
+            search_end=search_end,
+            reserved_slot=reserved_slot,
+            blocked_hint_slots=assigned_hints,
+            owner_email=owner_email,
+            meeting_attendees=record.get("event_attendees"),
+        )
+        if hint is not None:
+            assigned_hints.append(hint)
+        subject = str(record.get("event_subject") or "")
+        busy_type = str(record.get("busy_type") or "")
+        source = record.get("source") or "interval"
+        if source not in {"calendar", "freebusy", "interval", "company_calendar"}:
+            source = "interval"
+        conflicts.append(
+            {
+                **record,
+                "movability": record.get("movability") or "medium",
+                "movability_reason": movability_reason(
+                    busy_type=busy_type,
+                    subject=subject,
+                    source=source,
+                ),
+                "can_auto_reschedule": False,
+                "reschedule_hint_start": hint[0].isoformat() if hint else None,
+                "reschedule_hint_end": hint[1].isoformat() if hint else None,
+            }
+        )
+    return conflicts
+
+
+def build_slot_participant_details(
+    *,
+    config: OutlookConfig,
+    attendees: list[dict[str, Any]],
+    slot_start: datetime,
+    slot_end: datetime,
+    step_minutes: int = 15,
+    max_calendar_items: int = 50,
+    source: AvailabilitySource = "freebusy",
+    max_items: int = 500,
+    workers: int = 4,
+) -> dict[str, Any]:
+    """Статус каждого участника в выбранном слоте: свободен/занят и мешающие встречи."""
+    duration = slot_end - slot_start
+    if duration <= timedelta(0):
+        raise ValueError("slot_end должно быть позже slot_start")
+
+    attendee_emails = [
+        str(item.get("email") or "").strip()
+        for item in attendees
+        if str(item.get("email") or "").strip()
+    ]
+    step = timedelta(minutes=max(step_minutes, 1))
+    window_start = slot_start - timedelta(hours=1)
+    window_end = slot_end + timedelta(hours=1)
+    hint_search_end = min(
+        slot_end + timedelta(days=3),
+        slot_start + timedelta(days=30),
+    )
+
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] = {}
+    if attendee_emails:
+        busy_by_attendee = fetch_all_busy_intervals(
+            config,
+            attendee_emails,
+            window_start,
+            window_end,
+            source=source,
+            max_items=max_items,
+            workers=workers,
+        )
+
+    conflict_events = fetch_freebusy_calendar_events(
+        config,
+        attendee_emails,
+        window_start,
+        window_end,
+    ) if attendee_emails else {}
+
+    participants: list[dict[str, Any]] = []
+    for attendee in attendees:
+        email = str(attendee.get("email") or "").strip()
+        fio = str(attendee.get("fio") or "").strip() or email or "—"
+        role = str(attendee.get("role") or "participant").strip()
+        if not email:
+            participants.append(
+                {
+                    "fio": fio,
+                    "email": None,
+                    "role": role,
+                    "status": "unknown",
+                    "blocking_events": [],
+                    "calendar_access_error": "E-mail участника не найден",
+                }
+            )
+            continue
+
+        busy_intervals = busy_by_attendee.get(email, [])
+        if is_free_for_attendee(slot_start, duration, busy_intervals, config):
+            participants.append(
+                {
+                    "fio": fio,
+                    "email": email,
+                    "role": role,
+                    "status": "free",
+                    "blocking_events": [],
+                    "calendar_access_error": None,
+                }
+            )
+            continue
+
+        calendar_error: str | None = None
+        calendar_records: list[dict[str, Any]] = []
+        try:
+            calendar_items = read_calendar_items_in_range(
+                config,
+                email,
+                range_start=window_start,
+                range_end=window_end,
+                max_items=max_calendar_items,
+            )
+            calendar_records = conflicting_calendar_items_at_slot(
+                calendar_items,
+                slot_start,
+                duration,
+                config,
+            )
+        except Exception as exc:
+            calendar_error = str(exc).strip() or "Не удалось прочитать календарь участника"
+
+        freebusy_records = conflicting_events_at_slot(
+            conflict_events.get(email, []),
+            slot_start,
+            duration,
+            config,
+        )
+        for record in freebusy_records:
+            record["source"] = "freebusy"
+
+        interval_records: list[dict[str, Any]] = []
+        if not calendar_records and not freebusy_records:
+            interval_records = conflicting_intervals_at_slot(
+                busy_intervals,
+                slot_start,
+                duration,
+                config,
+            )
+            for record in interval_records:
+                record["source"] = "interval"
+
+        merged_records = dedupe_conflict_records(calendar_records + freebusy_records + interval_records)
+
+        blocking_events = attach_reschedule_hints(
+            merged_records,
+            owner_email=email,
+            busy_intervals=busy_intervals,
+            config=config,
+            step=step,
+            search_end=hint_search_end,
+            reserved_slot=(slot_start, slot_end),
+        )
+        for event in blocking_events:
+            event["email"] = email
+
+        participants.append(
+            {
+                "fio": fio,
+                "email": email,
+                "role": role,
+                "status": "busy",
+                "blocking_events": blocking_events,
+                "calendar_access_error": calendar_error,
+            }
+        )
+
+    return {
+        "slot_start": slot_start.isoformat(),
+        "slot_end": slot_end.isoformat(),
+        "duration_minutes": int(duration.total_seconds() // 60),
+        "participants": participants,
+    }
+
+
+def iterate_slot_candidates(
+    earliest_allowed: datetime,
+    search_end: datetime,
+    *,
+    duration: timedelta,
+    step: timedelta,
+    config: OutlookConfig,
+) -> Iterator[datetime]:
+    candidate = max(earliest_allowed, align_preferred(earliest_allowed, config))
+    safety_limit = max(
+        1000,
+        int((search_end - earliest_allowed).total_seconds() // max(step.total_seconds(), 60)) + 50,
+    )
+    emitted = 0
+    while candidate < search_end and emitted < safety_limit:
+        if slot_respects_rules(candidate, duration, config):
+            yield candidate
+            emitted += 1
+        candidate = advance_candidate(candidate, step, duration, config)
+
+
+def quorum_confidence(*, coverage_ratio: float, required_ok: bool, verified: bool, conflicts: int) -> float:
+    if not required_ok:
+        return 0.5
+    confidence = 0.55 + coverage_ratio * 0.35
+    if verified:
+        confidence += 0.05
+    if conflicts == 0:
+        confidence += 0.05
+    return min(confidence, 0.99)
+
+
+def coverage_ratios(
+    free_attendees: list[str],
+    attendees: list[str],
+    attendee_weights: dict[str, float] | None,
+) -> tuple[float, float]:
+    """Возвращает (weighted_ratio, flat_ratio)."""
+    attendee_set = set(attendees)
+    flat_ratio = len(free_attendees) / len(attendees) if attendees else 0.0
+    if not attendee_weights:
+        return flat_ratio, flat_ratio
+    total_weight = sum(attendee_weights.get(email, 1.0) for email in attendees)
+    if total_weight <= 0:
+        return flat_ratio, flat_ratio
+    free_weight = sum(
+        attendee_weights.get(email, 1.0)
+        for email in free_attendees
+        if email in attendee_set
+    )
+    return free_weight / total_weight, flat_ratio
+
+
+MOVABILITY_RESCHEDULE_PENALTY: dict[str, float] = {
+    "high": 0.5,
+    "medium": 1.0,
+    "low": 2.5,
+}
+IMPACT_COVERAGE_WEIGHT = 1.0
+IMPACT_BUSY_ATTENDEE_WEIGHT = 0.2
+IMPACT_LEADERSHIP_BUSY = 5.0
+IMPACT_REQUIRED_FAIL = 15.0
+IMPACT_CONFLICT_WEIGHT = 0.25
+QUORUM_RANK_SHORTLIST_MULTIPLIER = 5
+
+
+def busy_attendee_weight_cost(
+    busy_attendees: list[str],
+    attendee_weights: dict[str, float] | None,
+) -> float:
+    if not busy_attendees:
+        return 0.0
+    if not attendee_weights:
+        return float(len(busy_attendees))
+    return sum(attendee_weights.get(email, 1.0) for email in busy_attendees)
+
+
+def conflict_reschedule_cost(
+    conflicts: list[dict[str, Any]],
+    attendee_weights: dict[str, float] | None,
+) -> float:
+    total = 0.0
+    for conflict in conflicts:
+        email = str(conflict.get("email") or "")
+        weight = attendee_weights.get(email, 1.0) if attendee_weights else 1.0
+        movability = str(conflict.get("movability") or "medium")
+        penalty = MOVABILITY_RESCHEDULE_PENALTY.get(movability, 1.0)
+        total += weight * penalty
+    return total
+
+
+def preliminary_slot_impact(
+    *,
+    score_ratio: float,
+    busy_attendees: list[str],
+    required: list[str],
+    required_ok: bool,
+    attendee_weights: dict[str, float] | None,
+) -> float:
+    """Меньше — лучше. Быстрая оценка до построения conflicts."""
+    impact = (1.0 - score_ratio) * IMPACT_COVERAGE_WEIGHT
+    impact += busy_attendee_weight_cost(busy_attendees, attendee_weights) * IMPACT_BUSY_ATTENDEE_WEIGHT
+    required_set = set(required)
+    impact += sum(1 for email in busy_attendees if email in required_set) * IMPACT_LEADERSHIP_BUSY
+    if not required_ok:
+        impact += IMPACT_REQUIRED_FAIL
+    return round(impact, 4)
+
+
+def slot_impact_score(
+    *,
+    weighted_coverage_ratio: float,
+    required_ok: bool,
+    busy_attendees: list[str],
+    required: list[str],
+    conflicts: list[dict[str, Any]],
+    attendee_weights: dict[str, float] | None,
+) -> float:
+    """Меньше — лучше. Учитывает покрытие, должности занятых и переносимость конфликтов."""
+    impact = (1.0 - weighted_coverage_ratio) * IMPACT_COVERAGE_WEIGHT
+    impact += conflict_reschedule_cost(conflicts, attendee_weights) * IMPACT_CONFLICT_WEIGHT
+    required_set = set(required)
+    impact += sum(1 for email in busy_attendees if email in required_set) * IMPACT_LEADERSHIP_BUSY
+    if not required_ok:
+        impact += IMPACT_REQUIRED_FAIL
+    return round(impact, 4)
+
+
+def count_low_movability_conflicts(conflicts: list[dict[str, Any]]) -> int:
+    return sum(1 for conflict in conflicts if str(conflict.get("movability") or "") == "low")
+
+
+def count_easy_reschedule_conflicts(conflicts: list[dict[str, Any]]) -> int:
+    return sum(1 for conflict in conflicts if str(conflict.get("movability") or "") == "high")
+
+
+def quorum_search_start(preferred: datetime, config: OutlookConfig) -> datetime:
+    """Начало перебора: с 08:00 дня желаемой даты, а не с preferred (10:00 пропускает 09:00–12:00)."""
+    requested = to_local(preferred, config).replace(second=0, microsecond=0)
+    if not is_workday(requested, config):
+        return max(align_preferred(requested, config), not_before_now(config))
+    return max(combine(requested, WORK_START, config), not_before_now(config))
+
+
+def _slot_preference_distance(
+    slot_start: datetime,
+    preferred: datetime,
+    config: OutlookConfig,
+) -> float:
+    return abs((to_local(slot_start, config) - to_local(preferred, config)).total_seconds())
+
+
+def _quorum_pool_sort_key(
+    item: dict[str, Any],
+    *,
+    preferred: datetime,
+    config: OutlookConfig,
+) -> tuple[float, float, float, datetime]:
+    slot_start: datetime = item["slot_start"]
+    return (
+        item["preliminary_impact"],
+        -item["score_ratio"],
+        _slot_preference_distance(slot_start, preferred, config),
+        slot_start,
+    )
+
+
+def _quorum_candidate_sort_key(
+    item: dict[str, Any],
+    *,
+    preferred: datetime,
+    config: OutlookConfig,
+) -> tuple[int, int, float, float, str]:
+    slot_start = datetime.fromisoformat(item["slot_start"])
+    reschedule_count = int(item.get("reschedule_count") or 0)
+    easy_count = int(item.get("easy_reschedule_count") or 0)
+    hard_reschedules = max(reschedule_count - easy_count, 0)
+    return (
+        int(item.get("low_movability_count") or 0),
+        hard_reschedules,
+        _slot_preference_distance(slot_start, preferred, config),
+        float(item.get("impact_score") or 999.0),
+        item["slot_start"],
+    )
+
+
+def _build_quorum_candidate_payload(
+    *,
+    item: dict[str, Any],
+    attendees: list[str],
+    required: list[str],
+    required_set: set[str],
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    attendee_weights: dict[str, float] | None,
+    config: OutlookConfig,
+    duration: timedelta,
+    step: timedelta,
+    search_end: datetime,
+    verified: bool,
+    free_attendees: list[str],
+    busy_attendees: list[str],
+) -> dict[str, Any]:
+    slot_start: datetime = item["slot_start"]
+    slot_end: datetime = item["slot_end"]
+    conflict_window_end = min(search_end, slot_end + timedelta(days=3))
+    conflict_events = fetch_freebusy_calendar_events(
+        config,
+        busy_attendees,
+        slot_start - timedelta(hours=1),
+        slot_end + timedelta(hours=1),
+    ) if busy_attendees else {}
+
+    conflicts: list[dict[str, Any]] = []
+    for email in busy_attendees:
+        conflicts.extend(
+            build_conflict_records(
+                email=email,
+                slot_start=slot_start,
+                duration=duration,
+                busy_intervals=busy_by_attendee.get(email, []),
+                calendar_events=conflict_events.get(email, []),
+                config=config,
+                step=step,
+                search_end=conflict_window_end,
+            )
+        )
+
+    weighted_ratio, _flat_ratio = coverage_ratios(
+        free_attendees,
+        attendees,
+        attendee_weights,
+    )
+    required_ok = all(email in free_attendees for email in required_set)
+    impact_score = slot_impact_score(
+        weighted_coverage_ratio=weighted_ratio,
+        required_ok=required_ok,
+        busy_attendees=busy_attendees,
+        required=required,
+        conflicts=conflicts,
+        attendee_weights=attendee_weights,
+    )
+    return {
+        "slot_start": slot_start.isoformat(),
+        "slot_end": slot_end.isoformat(),
+        "duration_minutes": int(duration.total_seconds() // 60),
+        "coverage": {
+            "free": len(free_attendees),
+            "total": len(attendees),
+            "ratio": round(len(free_attendees) / len(attendees), 4),
+            "weighted_ratio": round(weighted_ratio, 4),
+            "required_ok": required_ok,
+        },
+        "free_attendees": free_attendees,
+        "busy_attendees": busy_attendees,
+        "conflicts": conflicts,
+        "verified": verified,
+        "impact_score": impact_score,
+        "busy_weight_cost": round(
+            busy_attendee_weight_cost(busy_attendees, attendee_weights),
+            4,
+        ),
+        "reschedule_count": len(conflicts),
+        "easy_reschedule_count": count_easy_reschedule_conflicts(conflicts),
+        "low_movability_count": count_low_movability_conflicts(conflicts),
+        "confidence": quorum_confidence(
+            coverage_ratio=weighted_ratio if attendee_weights else len(free_attendees) / len(attendees),
+            required_ok=required_ok,
+            verified=verified,
+            conflicts=len(conflicts),
+        ),
+    }
+
+
+COMPANY_CALENDAR_CHUNK_HOURS = 4
+COMPANY_CALENDAR_MAX_CANDIDATES = 10
+COMPANY_CALENDAR_MAX_ITEMS_PER_CHUNK = 100
+COMPANY_CALENDAR_STEP_MINUTES = 15
+MOVABILITY_SORT_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def _human_calendar_attendee_emails(item: Any) -> list[str]:
+    return [
+        email
+        for email in calendar_item_attendee_emails(item)
+        if email and not _is_resource_calendar_email(email)
+    ]
+
+
+def _iter_company_calendar_windows(
+    search_start: datetime,
+    search_end: datetime,
+    *,
+    config: OutlookConfig,
+    chunk_hours: int = COMPANY_CALENDAR_CHUNK_HOURS,
+) -> Iterator[tuple[datetime, datetime]]:
+    cursor = to_local(search_start, config)
+    end = to_local(search_end, config)
+    step = timedelta(hours=max(chunk_hours, 1))
+    while cursor < end:
+        window_end = min(cursor + step, end)
+        yield cursor, window_end
+        cursor = window_end
+
+
+def _meeting_attendees_in_event(
+    item: Any,
+    attendee_set: set[str],
+) -> list[str]:
+    return [
+        email
+        for email in _human_calendar_attendee_emails(item)
+        if email in attendee_set
+    ]
+
+
+def _event_blocks_target_or_busy(
+    event_start: datetime,
+    event_end: datetime,
+    *,
+    target_start: datetime,
+    target_end: datetime,
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    matched_attendees: list[str],
+    config: OutlookConfig,
+) -> bool:
+    if intervals_overlap(event_start, event_end, target_start, target_end):
+        return True
+    for email in matched_attendees:
+        for busy_start, busy_end in busy_by_attendee.get(email, []):
+            busy_start_local = to_local(busy_start, config)
+            busy_end_local = to_local(busy_end, config)
+            if intervals_overlap(event_start, event_end, busy_start_local, busy_end_local):
+                return True
+    return False
+
+
+def _pick_primary_blocked_attendee(
+    matched_attendees: list[str],
+    *,
+    attendee_weights: dict[str, float] | None,
+) -> str:
+    if not matched_attendees:
+        return ""
+    weights = attendee_weights or {}
+    return max(matched_attendees, key=lambda email: weights.get(email, 1.0))
+
+
+def _company_calendar_candidate_sort_key(
+    record: dict[str, Any],
+    *,
+    target_start: datetime,
+    config: OutlookConfig,
+) -> tuple[int, int, float]:
+    movability = str(record.get("movability") or "medium")
+    movability_rank = MOVABILITY_SORT_RANK.get(movability, 1)
+    required_hits = int(record.get("required_attendee_hits") or 0)
+    event_start_raw = record.get("event_start")
+    distance = 0.0
+    if event_start_raw:
+        event_start = datetime.fromisoformat(str(event_start_raw))
+        distance = abs((to_local(event_start, config) - target_start).total_seconds())
+    return (movability_rank, required_hits, distance)
+
+
+def find_company_calendar_reschedule_candidates(
+    *,
+    attendee_emails: list[str],
+    required_attendee_emails: list[str] | None = None,
+    planned_start: datetime,
+    duration: timedelta,
+    max_days: int,
+    attendee_weights: dict[str, float] | None = None,
+    max_results: int = COMPANY_CALENDAR_MAX_CANDIDATES,
+    config: OutlookConfig | None = None,
+) -> dict[str, Any]:
+    """Кандидаты на перенос из общего календаря компании при полном отсутствии слота."""
+    config = config or load_config()
+    company_calendar = (config.company_calendar or "").strip().lower()
+    if not company_calendar:
+        return {
+            "company_calendar": None,
+            "candidates": [],
+            "events_scanned": 0,
+            "search_window": None,
+        }
+
+    normalized_attendees = [
+        email.strip().lower()
+        for email in attendee_emails
+        if isinstance(email, str) and email.strip()
+    ]
+    attendee_set = set(dict.fromkeys(normalized_attendees))
+    if not attendee_set:
+        return {
+            "company_calendar": company_calendar,
+            "candidates": [],
+            "events_scanned": 0,
+            "search_window": None,
+        }
+
+    required_set = {
+        email.strip().lower()
+        for email in (required_attendee_emails or normalized_attendees)
+        if email.strip()
+    }
+    target_start = to_local(planned_start, config).replace(second=0, microsecond=0)
+    if duration <= timedelta(0):
+        duration = timedelta(minutes=30)
+    target_end = target_start + duration
+    search_start = quorum_search_start(target_start, config)
+    search_end = search_start + timedelta(days=max(max_days, 1))
+    step = timedelta(minutes=COMPANY_CALENDAR_STEP_MINUTES)
+
+    busy_by_attendee = fetch_busy_intervals_freebusy(
+        config,
+        list(attendee_set),
+        search_start,
+        search_end,
+    )
+
+    records_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    events_scanned = 0
+
+    for window_start, window_end in _iter_company_calendar_windows(
+        search_start,
+        search_end,
+        config=config,
+    ):
+        try:
+            items = read_calendar_items_in_range(
+                config,
+                company_calendar,
+                range_start=window_start,
+                range_end=window_end,
+                max_items=COMPANY_CALENDAR_MAX_ITEMS_PER_CHUNK,
+            )
+        except Exception as exc:
+            logger.warning(
+                "company_calendar_chunk_failed window=%s..%s error=%s",
+                window_start.isoformat(),
+                window_end.isoformat(),
+                exc,
+            )
+            continue
+
+        for item in items:
+            events_scanned += 1
+            interval = event_interval(item, config)
+            if interval is None:
+                continue
+            event_start, event_end = interval
+            matched_attendees = _meeting_attendees_in_event(item, attendee_set)
+            if not matched_attendees:
+                continue
+            if not _event_blocks_target_or_busy(
+                event_start,
+                event_end,
+                target_start=target_start,
+                target_end=target_end,
+                busy_by_attendee=busy_by_attendee,
+                matched_attendees=matched_attendees,
+                config=config,
+            ):
+                continue
+
+            subject = str(getattr(item, "subject", "") or "").strip()
+            busy_type = str(getattr(item, "legacy_free_busy_status", "") or "").strip()
+            organizer = None
+            organizer_obj = getattr(item, "organizer", None)
+            if organizer_obj is not None:
+                organizer = getattr(organizer_obj, "email_address", None) or str(organizer_obj)
+            primary_email = _pick_primary_blocked_attendee(
+                matched_attendees,
+                attendee_weights=attendee_weights,
+            )
+            primary_busy = busy_by_attendee.get(primary_email, [])
+            hint = suggest_reschedule_window(
+                event_start=event_start,
+                event_end=event_end,
+                busy_intervals=primary_busy,
+                config=config,
+                step=step,
+                search_end=search_end,
+                reserved_slot=(target_start, target_end),
+                owner_email=primary_email,
+                meeting_attendees=matched_attendees,
+            )
+            record = {
+                "email": primary_email,
+                "event_start": event_start.isoformat(),
+                "event_end": event_end.isoformat(),
+                "event_subject": subject or None,
+                "busy_type": busy_type or None,
+                "organizer": organizer,
+                "event_attendees": matched_attendees,
+                "required_attendee_hits": sum(
+                    1 for email in matched_attendees if email in required_set
+                ),
+                "movability": movability_score(busy_type=busy_type, subject=subject),
+                "movability_reason": movability_reason(
+                    busy_type=busy_type,
+                    subject=subject,
+                    source="company_calendar",
+                ),
+                "source": "company_calendar",
+                "can_auto_reschedule": False,
+                "reschedule_hint_start": hint[0].isoformat() if hint else None,
+                "reschedule_hint_end": hint[1].isoformat() if hint else None,
+            }
+            dedupe_key = (
+                record["event_start"],
+                record["event_end"],
+                str(record.get("event_subject") or ""),
+            )
+            existing = records_by_key.get(dedupe_key)
+            if existing is None or record["required_attendee_hits"] > int(
+                existing.get("required_attendee_hits") or 0
+            ):
+                records_by_key[dedupe_key] = record
+
+    candidates = sorted(
+        records_by_key.values(),
+        key=lambda item: _company_calendar_candidate_sort_key(
+            item,
+            target_start=target_start,
+            config=config,
+        ),
+    )[: max(max_results, 1)]
+
+    return {
+        "company_calendar": company_calendar,
+        "candidates": candidates,
+        "events_scanned": events_scanned,
+        "search_window": {
+            "start": search_start.isoformat(),
+            "end": search_end.isoformat(),
+            "target_start": target_start.isoformat(),
+            "target_end": target_end.isoformat(),
+        },
+    }
+
+
+def find_quorum_slots(
+    *,
+    config: OutlookConfig,
+    attendees: list[str],
+    preferred: datetime,
+    duration: timedelta,
+    max_days: int,
+    step: timedelta,
+    max_items: int,
+    source: AvailabilitySource = "freebusy",
+    workers: int = 4,
+    required_attendees: list[str] | None = None,
+    attendee_weights: dict[str, float] | None = None,
+    min_coverage_ratio: float = 0.7,
+    max_results: int = 3,
+    verify_top_n: int = 3,
+    verify_calendar: bool = True,
+) -> dict[str, Any]:
+    if not attendees:
+        raise ValueError("Укажите хотя бы одного участника (--attendee).")
+    if duration <= timedelta(0):
+        raise ValueError("Длительность должна быть больше 0.")
+    if max_days < 1:
+        raise ValueError("--max-days должно быть >= 1.")
+    if not 0 < min_coverage_ratio <= 1:
+        raise ValueError("min_coverage_ratio должно быть в диапазоне (0, 1].")
+
+    required = [email for email in (required_attendees or attendees) if email in attendees]
+    if not required:
+        required = list(attendees)
+
+    requested = to_local(preferred, config).replace(second=0, microsecond=0)
+    earliest_allowed = quorum_search_start(preferred, config)
+    search_end = earliest_allowed + timedelta(days=max_days)
+
+    busy_by_attendee = fetch_all_busy_intervals(
+        config,
+        attendees,
+        earliest_allowed,
+        search_end,
+        source=source,
+        max_items=max_items,
+        workers=workers,
+    )
+
+    checked = 0
+    scored: list[dict[str, Any]] = []
+    scored_fallback: list[dict[str, Any]] = []
+    required_set = set(required)
+    with timed_step("scan.quorum_slots", max_days=max_days, step_minutes=int(step.total_seconds() // 60)):
+        for candidate in iterate_slot_candidates(
+            earliest_allowed,
+            search_end,
+            duration=duration,
+            step=step,
+            config=config,
+        ):
+            checked += 1
+            free_attendees, busy_attendees = partition_attendees_at_slot(
+                candidate,
+                duration,
+                attendees=attendees,
+                busy_by_attendee=busy_by_attendee,
+                config=config,
+            )
+            if not free_attendees:
+                continue
+            required_ok = all(email in free_attendees for email in required_set)
+            weighted_ratio, flat_ratio = coverage_ratios(
+                free_attendees,
+                attendees,
+                attendee_weights,
+            )
+            score_ratio = weighted_ratio if attendee_weights else flat_ratio
+            payload = {
+                "slot_start": candidate,
+                "slot_end": candidate + duration,
+                "free_attendees": free_attendees,
+                "busy_attendees": busy_attendees,
+                "coverage_ratio": flat_ratio,
+                "weighted_coverage_ratio": weighted_ratio,
+                "score_ratio": score_ratio,
+                "required_ok": required_ok,
+                "preliminary_impact": preliminary_slot_impact(
+                    score_ratio=score_ratio,
+                    busy_attendees=busy_attendees,
+                    required=required,
+                    required_ok=required_ok,
+                    attendee_weights=attendee_weights,
+                ),
+            }
+            scored_fallback.append(payload)
+            if not required_ok or score_ratio < min_coverage_ratio:
+                continue
+            scored.append(payload)
+
+    use_fallback = not scored
+    pool = scored_fallback if use_fallback else scored
+    pool.sort(key=lambda item: _quorum_pool_sort_key(item, preferred=requested, config=config))
+    shortlist_size = min(
+        len(pool),
+        max(max_results * QUORUM_RANK_SHORTLIST_MULTIPLIER, max_results + 10),
+    )
+    shortlisted = pool[: max(shortlist_size, 1)]
+
+    verify_count = max(verify_top_n, 0) if verify_calendar else 0
+    candidates: list[dict[str, Any]] = []
+    reschedule_assisted = False
+
+    def append_candidate(
+        item: dict[str, Any],
+        *,
+        index: int,
+        allow_required_failures: bool,
+    ) -> None:
+        slot_start: datetime = item["slot_start"]
+        verified = False
+        free_attendees = list(item["free_attendees"])
+        busy_attendees = list(item["busy_attendees"])
+        if index < verify_count:
+            calendar_ok, calendar_busy = verify_slot_with_calendar(
+                config=config,
+                attendees=attendees,
+                slot_start=slot_start,
+                duration=duration,
+                max_items=max_items,
+                workers=workers,
+            )
+            verified = calendar_ok
+            free_attendees, busy_attendees = partition_attendees_at_slot(
+                slot_start,
+                duration,
+                attendees=attendees,
+                busy_by_attendee=calendar_busy,
+                config=config,
+            )
+            if not allow_required_failures and not all(email in free_attendees for email in required_set):
+                return
+            if not free_attendees:
+                return
+        candidates.append(
+            _build_quorum_candidate_payload(
+                item=item,
+                attendees=attendees,
+                required=required,
+                required_set=required_set,
+                busy_by_attendee=busy_by_attendee,
+                attendee_weights=attendee_weights,
+                config=config,
+                duration=duration,
+                step=step,
+                search_end=search_end,
+                verified=verified,
+                free_attendees=free_attendees,
+                busy_attendees=busy_attendees,
+            )
+        )
+
+    for index, item in enumerate(shortlisted):
+        append_candidate(item, index=index, allow_required_failures=use_fallback)
+
+    if not candidates and scored_fallback:
+        reschedule_pool = sorted(
+            scored_fallback,
+            key=lambda item: (
+                item["preliminary_impact"],
+                -item["score_ratio"],
+                _slot_preference_distance(item["slot_start"], requested, config),
+            ),
+        )
+        for index, item in enumerate(reschedule_pool[: max(shortlist_size, 1)]):
+            append_candidate(item, index=index, allow_required_failures=True)
+        reschedule_assisted = bool(candidates)
+        use_fallback = use_fallback or reschedule_assisted
+
+    candidates.sort(key=lambda item: _quorum_candidate_sort_key(item, preferred=requested, config=config))
+    candidates = candidates[: max(max_results, 1)]
+
+    if not candidates:
+        raise RuntimeError(
+            f"Quorum-слот не найден: min_coverage={min_coverage_ratio:.0%}, "
+            f"required={len(required)}, search_days={max_days}."
+        )
+
+    return {
+        "preferred": requested.isoformat(),
+        "earliest_allowed": earliest_allowed.isoformat(),
+        "search_until": search_end.isoformat(),
+        "min_coverage_ratio": min_coverage_ratio,
+        "required_attendees": required,
+        "attendees": attendees,
+        "checked_candidates": checked,
+        "availability_source": source,
+        "search_mode": (
+            "reschedule_assisted"
+            if reschedule_assisted
+            else ("quorum_fallback" if use_fallback else "quorum")
+        ),
+        "partial_fallback": use_fallback,
+        "candidates": candidates,
+    }
 
 
 def advance_candidate(
@@ -956,6 +2409,62 @@ def attach_room_status(
         )
     free = sum(1 for row in result["rooms_status"] if row["status"] == "free")
     logger.info("Переговорные: свободно %d из %d", free, len(result["rooms_status"]))
+    return result
+
+
+def dispatch_find_quorum_meeting_slots(
+    *,
+    attendees: list[str],
+    preferred: str,
+    duration_minutes: int,
+    required_attendees: list[str] | None = None,
+    attendee_weights: dict[str, float] | None = None,
+    min_coverage_ratio: float = 0.7,
+    max_results: int = 3,
+    verify_top_n: int = 3,
+    max_days: int = 30,
+    step_minutes: int = 15,
+    max_items: int = 500,
+    source: AvailabilitySource = "freebusy",
+    workers: int = 4,
+    timezone: str | None = None,
+    verify_calendar: bool = True,
+    quiet: bool = True,
+    include_timing: bool = False,
+    config: OutlookConfig | None = None,
+) -> dict[str, Any]:
+    """Ищет слоты для большинства участников и возвращает конфликты для перепланирования."""
+    config = config or load_config()
+    attendee_list = [email.strip() for email in attendees if email.strip()]
+    if not attendee_list:
+        raise ValueError("Укажите хотя бы одного участника (attendees).")
+
+    required_list = [email.strip() for email in (required_attendees or []) if email.strip()]
+    reset_timing_report()
+    setup_logging(quiet=quiet)
+
+    tz_name = timezone or config.timezone
+    preferred_dt = parse_start(preferred, tz_name)
+    result = find_quorum_slots(
+        config=config,
+        attendees=attendee_list,
+        required_attendees=required_list or None,
+        attendee_weights=attendee_weights,
+        preferred=preferred_dt,
+        duration=timedelta(minutes=duration_minutes),
+        max_days=max_days,
+        step=timedelta(minutes=max(step_minutes, 1)),
+        max_items=max_items,
+        source=source,
+        workers=max(workers, 1),
+        min_coverage_ratio=min_coverage_ratio,
+        max_results=max(max_results, 1),
+        verify_top_n=max(verify_top_n, 0),
+        verify_calendar=verify_calendar,
+    )
+    if include_timing:
+        log_timing_summary()
+        result["timing_ms"] = list(_timing_report)
     return result
 
 

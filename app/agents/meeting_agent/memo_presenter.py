@@ -27,8 +27,15 @@ from app.tools.onec.get_meetings import (
 from app.tools.onec.lookup_user_ref import USER_CATALOG, is_empty_key, load_persons_for_keys, user_fio
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
 from app.services.meeting_invite_format import format_invite_location
+from app.services.meeting_psd_level import (
+    append_psd_level_participants,
+    is_psd_level_header,
+)
 
 EMPTY_DATE_PREFIX = "0001-01-01"
+_EXCEL_DATETIME_RE = re.compile(
+    r"^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$"
+)
 ROOM_CATALOG = "Catalog_CRM_Помещения"
 PRIORITY_CATALOG = "Catalog_Приоритеты"
 GUID_PATTERN = re.compile(
@@ -45,9 +52,40 @@ MEETING_TYPE_LABELS = {
 }
 
 
+def _parse_flexible_datetime(value: str) -> datetime | None:
+    normalized = value.strip()
+    try:
+        return datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    match = _EXCEL_DATETIME_RE.match(normalized)
+    if not match:
+        return None
+    day, month, year, hour, minute, second = match.groups()
+    return datetime(
+        int(year),
+        int(month),
+        int(day),
+        int(hour or 0),
+        int(minute or 0),
+        int(second or 0),
+    )
+
+
+def _is_time_only_sentinel(dt: datetime) -> bool:
+    return dt.year == 1 and dt.month == 1 and dt.day == 1
+
+
 def is_empty_odata_date(value: str | None) -> bool:
     normalized = (value or "").strip()
-    return not normalized or normalized.startswith(EMPTY_DATE_PREFIX)
+    if not normalized:
+        return True
+    parsed = _parse_flexible_datetime(normalized)
+    if parsed is not None and _is_time_only_sentinel(parsed):
+        return parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0
+    if normalized.startswith(EMPTY_DATE_PREFIX):
+        return True
+    return False
 
 
 def _looks_like_guid(value: str) -> bool:
@@ -57,27 +95,22 @@ def _looks_like_guid(value: str) -> bool:
 def parse_odata_datetime(value: str | None) -> datetime | None:
     if is_empty_odata_date(value):
         return None
-    normalized = value.strip()
-    try:
-        return datetime.fromisoformat(normalized.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    return _parse_flexible_datetime(value.strip())
 
 
 def parse_odata_time_component(value: str | None) -> tuple[int, int] | None:
     if not value or not isinstance(value, str):
         return None
     normalized = value.strip()
-    if not normalized or normalized.startswith(f"{EMPTY_DATE_PREFIX}T00:00:00"):
+    if not normalized or is_empty_odata_date(normalized):
         return None
-    try:
-        dt = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
-    except ValueError:
+    dt = _parse_flexible_datetime(normalized)
+    if dt is None:
         return None
-    if not normalized.startswith(EMPTY_DATE_PREFIX):
+    if _is_time_only_sentinel(dt):
+        if dt.hour == 0 and dt.minute == 0:
+            return None
         return dt.hour, dt.minute
-    if dt.hour == 0 and dt.minute == 0:
-        return None
     return dt.hour, dt.minute
 
 
@@ -92,7 +125,8 @@ def resolve_meeting_schedule(header: dict[str, Any]) -> tuple[datetime | None, d
     if start_raw and not is_empty_odata_date(start_raw):
         start = parse_odata_datetime(start_raw)
         end = parse_odata_datetime(end_raw) if end_raw and not is_empty_odata_date(end_raw) else None
-        return start, end
+        if start is not None and not _is_time_only_sentinel(start):
+            return start, end
 
     start_time = parse_odata_time_component(start_raw)
     end_time = parse_odata_time_component(end_raw)
@@ -862,7 +896,11 @@ def build_memo_detail(
     initiator, manager = _resolve_initiator_manager(header, session=session, config=config)
 
     participant_rows = _collect_participant_rows(document)
-    participants = _resolve_participants(session, config, document)
+    psd_level = is_psd_level_header(header)
+    participants = append_psd_level_participants(
+        _resolve_participants(session, config, document),
+        psd_level=psd_level,
+    )
     participants_count = max(len(participants), _participants_count_from_header(header), len(participant_rows))
 
     start, end = resolve_meeting_schedule(header)
@@ -909,6 +947,7 @@ def build_memo_detail(
         "meeting_type": header.get("ВидСовещания") or None,
         "meeting_type_label": _meeting_type_label(_clean_text(header.get("ВидСовещания"))),
         "priority": priority,
+        "psd_level": psd_level,
     }
     _attach_cached_emails(application, config=config)
 

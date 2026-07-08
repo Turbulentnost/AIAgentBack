@@ -24,6 +24,21 @@ def test_resolve_meeting_schedule_combines_desired_date_with_time_only_fields() 
     assert end.strftime("%Y-%m-%d %H:%M") == "2026-06-19 11:20"
 
 
+def test_resolve_meeting_schedule_combines_desired_date_with_excel_time_fields() -> None:
+    header = {
+        "ЖелаемаяДатаПроведенияСовещания": "2026-01-23 00:00:00",
+        "ВремяНачалаСовещания": "01.01.0001 11:00:00",
+        "ВремяОкончанияСовещания": "01.01.0001 11:30:00",
+    }
+
+    start, end = resolve_meeting_schedule(header)
+
+    assert start is not None
+    assert end is not None
+    assert start.strftime("%Y-%m-%d %H:%M") == "2026-01-23 11:00"
+    assert end.strftime("%Y-%m-%d %H:%M") == "2026-01-23 11:30"
+
+
 def test_build_queue_item_from_row_resolves_location_label() -> None:
     location_key = "df88b4e5-47aa-11f1-97f7-6cb31113810e"
     row = {

@@ -11,6 +11,11 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 from app.services.meeting_attendees import attendee_fio_from_detail
+from app.services.meeting_psd_level import (
+    append_psd_level_participant_names,
+    append_psd_level_participants,
+    is_psd_level_header,
+)
 from app.services.meeting_agent_errors import format_onec_load_error, format_participants_missing_error
 from app.tools.onec.connection import CONFIG, create_session
 
@@ -149,15 +154,25 @@ def patch_dashboard_payload_status(payload: dict[str, Any], ref_key: str, status
 def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
     """Сводный detail из карточки dashboard (без полной шапки 1С)."""
     queue = dict(item)
-    participant_names = [
-        name.strip()
-        for name in (item.get("participant_names") or [])
-        if isinstance(name, str) and name.strip()
-    ]
-    participants = [
-        {"full_name": name, "ref_key": None, "department": None}
-        for name in participant_names
-    ]
+    psd_level = bool(item.get("psd_level")) or is_psd_level_header(item)
+    initiator_name = str((item.get("initiator") or {}).get("full_name") or "").strip()
+    manager_name = str((item.get("manager") or {}).get("full_name") or "").strip()
+    participant_names = append_psd_level_participant_names(
+        [
+            name.strip()
+            for name in (item.get("participant_names") or [])
+            if isinstance(name, str) and name.strip()
+        ],
+        psd_level=psd_level,
+    )
+    participants = append_psd_level_participants(
+        [
+            {"full_name": name, "ref_key": None, "department": None}
+            for name in participant_names
+            if name not in {initiator_name, manager_name}
+        ],
+        psd_level=psd_level,
+    )
     participants_count = max(item.get("participants_count") or 0, len(participants))
     return {
         "ref_key": item.get("ref_key"),
@@ -181,6 +196,7 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
             "meeting_type": item.get("meeting_type"),
             "meeting_type_label": item.get("meeting_type_label"),
             "priority": None,
+            "psd_level": psd_level,
         },
         "validation_checks": [],
         "warnings": item.get("warnings") or [],

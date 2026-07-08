@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -87,6 +88,7 @@ class MeetingApplicationRead(BaseModel):
     meeting_type: str | None = None
     meeting_type_label: str | None = None
     priority: str | None = None
+    psd_level: bool = False
 
 
 class MeetingMemoDetailRead(BaseModel):
@@ -141,6 +143,128 @@ class MeetingSlotRead(BaseModel):
     start: str
     end: str
     confidence: float
+
+
+class MeetingSlotCoverageRead(BaseModel):
+    free: int
+    total: int
+    ratio: float = Field(ge=0, le=1)
+    weighted_ratio: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Доля свободных с учётом весов (инициатор/руководитель/директор = 3, участник = 1)",
+    )
+    required_ok: bool
+
+
+class MeetingSlotConflictRead(BaseModel):
+    fio: str | None = None
+    email: str
+    role: str | None = None
+    role_label: str | None = None
+    event_start: str | None = None
+    event_end: str | None = None
+    event_subject: str | None = None
+    event_label: str | None = Field(
+        default=None,
+        description="Тема встречи или «Занят», если subject недоступен",
+    )
+    event_time_label: str | None = Field(
+        default=None,
+        description="Интервал конфликта в формате «14.07.2026, 09:00–09:30»",
+    )
+    organizer: str | None = None
+    busy_type: str | None = None
+    movability: Literal["high", "medium", "low"] = "medium"
+    movability_reason: Literal[
+        "tentative",
+        "busy",
+        "oof",
+        "protected_subject",
+        "unknown_interval",
+    ] | None = None
+    source: Literal["calendar", "freebusy", "interval", "company_calendar"] | None = None
+    can_auto_reschedule: bool = False
+    reschedule_hint_start: str | None = None
+    reschedule_hint_end: str | None = None
+    reschedule_hint_label: str | None = None
+
+
+class MeetingSlotBlockingEventRead(BaseModel):
+    event_start: str | None = None
+    event_end: str | None = None
+    event_subject: str | None = None
+    event_label: str | None = None
+    event_time_label: str | None = Field(
+        default=None,
+        description="Интервал конфликта в формате «14.07.2026, 09:00–09:30»",
+    )
+    organizer: str | None = None
+    busy_type: str | None = None
+    movability: Literal["high", "medium", "low"] = "medium"
+    movability_reason: Literal[
+        "tentative",
+        "busy",
+        "oof",
+        "protected_subject",
+        "unknown_interval",
+    ] | None = None
+    source: Literal["calendar", "freebusy", "interval", "company_calendar"] | None = None
+    reschedule_hint_start: str | None = None
+    reschedule_hint_end: str | None = None
+    reschedule_hint_label: str | None = None
+
+
+class MeetingSlotParticipantStatusRead(BaseModel):
+    fio: str
+    email: str | None = None
+    role: str
+    role_label: str
+    status: Literal["free", "busy", "unknown"]
+    blocking_events: list[MeetingSlotBlockingEventRead] = Field(default_factory=list)
+    calendar_access_error: str | None = Field(
+        default=None,
+        description="Ошибка чтения календаря (Free/Busy при этом может быть доступен)",
+    )
+
+
+class MeetingQuorumSlotRead(BaseModel):
+    slot: MeetingSlotRead
+    slot_label: str | None = None
+    coverage: MeetingSlotCoverageRead
+    conflicts: list[MeetingSlotConflictRead] = Field(default_factory=list)
+    free_attendees: list[str] = Field(default_factory=list)
+    busy_attendees: list[str] = Field(default_factory=list)
+    free_attendee_names: list[str] = Field(
+        default_factory=list,
+        description="ФИО свободных участников (порядок соответствует free_attendees)",
+    )
+    busy_attendee_names: list[str] = Field(
+        default_factory=list,
+        description="ФИО занятых участников (порядок соответствует busy_attendees)",
+    )
+    verified: bool = False
+    impact_score: float | None = Field(
+        default=None,
+        description="Стоимость слота: меньше — лучше (покрытие + должности + переносы)",
+    )
+    busy_weight_cost: float | None = Field(
+        default=None,
+        description="Суммарный вес занятых участников",
+    )
+    reschedule_count: int = Field(
+        default=0,
+        description="Число конфликтующих встреч, которые потенциально нужно переносить",
+    )
+    easy_reschedule_count: int = Field(
+        default=0,
+        description="Конфликты с высокой переносимостью (Tentative и т.п.)",
+    )
+    low_movability_count: int = Field(
+        default=0,
+        description="Конфликты с низкой переносимостью",
+    )
 
 
 class MeetingRoomRead(BaseModel):
@@ -214,12 +338,49 @@ class MeetingAgentSlotPreviewRequest(BaseModel):
         return normalize_request_duration_minutes(value)
 
 
+class MeetingAgentSlotDetailRequest(BaseModel):
+    slot_start: str = Field(description="Начало выбранного слота (ISO или YYYY-MM-DD HH:MM)")
+    slot_end: str = Field(description="Конец выбранного слота")
+    duration_minutes: int | None = Field(
+        default=None,
+        description="Длительность совещания; если не указана — из slot_end − slot_start",
+    )
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def normalize_duration(cls, value: object) -> int | None:
+        return normalize_request_duration_minutes(value)
+
+
+class MeetingAgentSlotDetailRead(BaseModel):
+    memo_ref_key: str
+    slot_start: str
+    slot_end: str
+    slot_label: str
+    duration_minutes: int
+    participants: list[MeetingSlotParticipantStatusRead] = Field(default_factory=list)
+    error: str | None = None
+    error_stage: str | None = Field(
+        default=None,
+        description="participants | email | calendar | slot — этап сбоя",
+    )
+
+
 class MeetingAttendeeRead(BaseModel):
     fio: str
     email: str | None = None
     role: str
     role_label: str
     found: bool = False
+    weight: float = Field(
+        default=1.0,
+        ge=0,
+        description="Вес участника при quorum-поиске (инициатор/руководитель/директор выше)",
+    )
+    required_for_slot: bool = Field(
+        default=True,
+        description="Все участники обязательны для назначения слота",
+    )
     nearest_slot_start: str | None = None
     nearest_slot_end: str | None = None
     nearest_slot_label: str | None = None
@@ -232,6 +393,14 @@ class MeetingAgentSlotPreviewRead(BaseModel):
     duration_minutes: int | None = None
     attendees: list[MeetingAttendeeRead] = Field(default_factory=list)
     missing_emails: list[str] = Field(default_factory=list)
+    coverage: MeetingSlotCoverageRead | None = None
+    conflicts: list[MeetingSlotConflictRead] = Field(default_factory=list)
+    slot_candidates: list[MeetingQuorumSlotRead] = Field(default_factory=list)
+    search_mode: Literal["all", "partial"] = "all"
+    preview_note: str | None = Field(
+        default=None,
+        description="Пояснение для UI (например, когда нужен разбор УД с переносами)",
+    )
     error: str | None = None
     error_stage: str | None = Field(
         default=None,

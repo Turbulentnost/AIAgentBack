@@ -74,6 +74,24 @@ def format_no_slot_error(*, max_days: int = 7) -> str:
     )
 
 
+def format_partial_slot_preview_note() -> str:
+    return (
+        "Общего времени для всех участников нет. Ниже — варианты с конфликтами; "
+        "«лёгкие» переносы (Под вопросом) отмечены отдельно. "
+        "Назначение или переносы возможны только после решения сотрудника УД."
+    )
+
+
+def format_reschedule_suggestions_note(count: int) -> str:
+    if count <= 0:
+        return ""
+    return (
+        f"Общего слота нет. Ниже — до {count} встреч из общего календаря компании, "
+        "которые можно рассмотреть для переноса. "
+        "Фактический перенос возможен только после решения сотрудника УД."
+    )
+
+
 def format_slot_preview_timeout_error(*, timeout_seconds: int) -> str:
     return (
         f"Проверка календарей Exchange не завершилась за {timeout_seconds} с. "

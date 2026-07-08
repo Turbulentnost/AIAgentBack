@@ -25,6 +25,7 @@ from exchangelib.errors import ErrorFolderNotFound, ErrorNonExistentMailbox
 from exchangelib.folders import Calendar, Folder
 from exchangelib.version import EXCHANGE_2013_SP1, Version
 
+from app.tools.Outlook.cancel_meeting import to_ews
 from app.tools.Outlook.outlook_config import OutlookConfig
 from app.tools.Outlook.send_meeting_invite import connect_account, load_config, primary_smtp_address
 
@@ -111,6 +112,55 @@ def event_to_dict(item: Any) -> dict[str, Any]:
         "is_cancelled": bool(item.is_cancelled),
         "legacy_free_busy_status": str(item.legacy_free_busy_status or ""),
     }
+
+
+def read_calendar_items_in_range(
+    config: OutlookConfig,
+    owner_smtp: str,
+    *,
+    range_start: datetime,
+    range_end: datetime,
+    max_items: int = 50,
+) -> list[Any]:
+    """События календаря владельца в интервале (EWS Delegate через Postagent)."""
+    if range_end <= range_start:
+        return []
+    account = connect_as_owner(config, owner_smtp)
+    try:
+        calendar = account.calendar
+    except ErrorFolderNotFound as error:
+        raise RuntimeError(
+            "Папка календаря не найдена. Проверьте права Reviewer/Delegate "
+            "или укажите другой --owner."
+        ) from error
+
+    start = to_ews(range_start, config)
+    end = to_ews(range_end, config)
+    return list(calendar.view(start=start, end=end, max_items=max_items))
+
+
+def read_events_in_range(
+    account: Account,
+    *,
+    range_start: datetime,
+    range_end: datetime,
+    max_items: int,
+    config: OutlookConfig,
+) -> list[dict[str, Any]]:
+    if range_end <= range_start:
+        return []
+    start = to_ews(range_start, config)
+    end = to_ews(range_end, config)
+    try:
+        calendar = account.calendar
+    except ErrorFolderNotFound as error:
+        raise RuntimeError(
+            "Папка календаря не найдена. Проверьте права Reviewer/Delegate "
+            "или укажите другой --owner."
+        ) from error
+
+    items = calendar.view(start=start, end=end, max_items=max_items)
+    return [event_to_dict(item) for item in items]
 
 
 def read_events(

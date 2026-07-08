@@ -7,7 +7,10 @@ from pydantic import BaseModel, Field
 
 from app.tools.base import Tool
 from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
-from app.tools.Outlook.find_meeting_slot import dispatch_find_meeting_slot
+from app.tools.Outlook.find_meeting_slot import (
+    dispatch_find_meeting_slot,
+    dispatch_find_quorum_meeting_slots,
+)
 from app.tools.Outlook.meeting_rooms import dispatch_meeting_rooms
 from app.tools.Outlook.read_calendars import fetch_outlook_calendars
 from app.tools.Outlook.reschedule_meeting import dispatch_reschedule_meeting
@@ -482,6 +485,155 @@ class FindMeetingSlotTool(Tool):
 
 
 register_tool(FindMeetingSlotTool())
+
+
+class MeetingSlotCoverageOutput(BaseModel):
+    free: int
+    total: int
+    ratio: float
+    weighted_ratio: float | None = None
+    required_ok: bool
+
+
+class MeetingSlotConflictOutput(BaseModel):
+    email: str
+    event_start: str | None = None
+    event_end: str | None = None
+    event_subject: str | None = None
+    busy_type: str | None = None
+    movability: str = "medium"
+    can_auto_reschedule: bool = False
+    reschedule_hint_start: str | None = None
+    reschedule_hint_end: str | None = None
+
+
+class MeetingQuorumCandidateOutput(BaseModel):
+    slot_start: str
+    slot_end: str
+    duration_minutes: int
+    coverage: MeetingSlotCoverageOutput
+    free_attendees: list[str]
+    busy_attendees: list[str]
+    conflicts: list[MeetingSlotConflictOutput] = Field(default_factory=list)
+    verified: bool = False
+    confidence: float
+    impact_score: float | None = None
+    busy_weight_cost: float | None = None
+    reschedule_count: int = 0
+    easy_reschedule_count: int = 0
+    low_movability_count: int = 0
+
+
+class FindQuorumMeetingSlotsInput(BaseModel):
+    attendees: list[str] = Field(description="E-mail всех участников совещания")
+    required_attendees: list[str] = Field(
+        default_factory=list,
+        description="E-mail обязательных участников (инициатор, руководитель, директор). Пусто — по ролям",
+    )
+    attendee_weights: dict[str, float] = Field(
+        default_factory=dict,
+        description="Вес e-mail для weighted quorum (инициатор/руководитель/директор = 3, участник = 1)",
+    )
+    preferred: str = Field(description="Желаемая дата/время начала поиска")
+    duration_minutes: int = Field(ge=1, le=24 * 60, description="Длительность в минутах")
+    min_coverage_ratio: float = Field(
+        default=0.7,
+        gt=0,
+        le=1,
+        description="Минимальная доля свободных участников (0.7 = 70%)",
+    )
+    max_results: int = Field(default=3, ge=1, le=10, description="Сколько лучших слотов вернуть")
+    verify_top_n: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description="Сколько топ-слотов дополнительно сверить через calendar_events",
+    )
+    max_days: int = Field(default=30, ge=1, le=365)
+    step_minutes: int = Field(default=15, ge=1, le=120)
+    max_items: int = Field(default=500, ge=1, le=2000)
+    source: Literal["freebusy", "calendar"] = Field(default="freebusy")
+    workers: int = Field(default=4, ge=1, le=16)
+    timezone: str | None = None
+    verify_calendar: bool = Field(
+        default=True,
+        description="Сверять топ-слоты с calendar_events (verify_top_n штук)",
+    )
+    quiet: bool = Field(default=True)
+    include_timing: bool = Field(default=False)
+
+
+class FindQuorumMeetingSlotsOutput(BaseModel):
+    preferred: str
+    earliest_allowed: str
+    search_until: str
+    min_coverage_ratio: float
+    required_attendees: list[str]
+    attendees: list[str]
+    checked_candidates: int
+    availability_source: str
+    search_mode: str
+    candidates: list[MeetingQuorumCandidateOutput]
+
+
+async def find_quorum_meeting_slots_tool(
+    payload: FindQuorumMeetingSlotsInput,
+    context: ToolContext,
+) -> FindQuorumMeetingSlotsOutput:
+    del context
+    raw = await asyncio.to_thread(
+        dispatch_find_quorum_meeting_slots,
+        attendees=payload.attendees,
+        required_attendees=payload.required_attendees or None,
+        attendee_weights=payload.attendee_weights or None,
+        preferred=payload.preferred,
+        duration_minutes=payload.duration_minutes,
+        min_coverage_ratio=payload.min_coverage_ratio,
+        max_results=payload.max_results,
+        verify_top_n=payload.verify_top_n,
+        max_days=payload.max_days,
+        step_minutes=payload.step_minutes,
+        max_items=payload.max_items,
+        source=payload.source,
+        workers=payload.workers,
+        timezone=payload.timezone,
+        verify_calendar=payload.verify_calendar,
+        quiet=payload.quiet,
+        include_timing=payload.include_timing,
+    )
+    return FindQuorumMeetingSlotsOutput.model_validate(raw)
+
+
+class FindQuorumMeetingSlotsTool(Tool):
+    name = "find_quorum_meeting_slots"
+    description = (
+        "Ищет слоты совещания для большинства участников с анализом конфликтов "
+        "и подсказками по переносу мешающих встреч."
+    )
+    agent_description = (
+        "Инструмент find_quorum_meeting_slots подбирает время, когда свободны "
+        "обязательные участники и не менее min_coverage_ratio остальных. "
+        "Возвращает топ-слоты, список конфликтов и movability для перепланирования."
+    )
+    input_model = FindQuorumMeetingSlotsInput
+    output_model = FindQuorumMeetingSlotsOutput
+    required_permissions = ["find_meeting_slot"]
+    preview_default_params = {
+        "attendees": ["user@example.com"],
+        "required_attendees": ["user@example.com"],
+        "preferred": "2026-06-10 14:00",
+        "duration_minutes": 60,
+    }
+
+    async def execute(
+        self,
+        payload: FindQuorumMeetingSlotsInput,
+        context: ToolContext,
+    ) -> FindQuorumMeetingSlotsOutput:
+        return await find_quorum_meeting_slots_tool(payload, context)
+
+
+register_tool(FindQuorumMeetingSlotsTool())
 
 
 class MeetingRoomsInput(BaseModel):

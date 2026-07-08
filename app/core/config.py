@@ -171,6 +171,7 @@ class Settings(BaseSettings):
     OUTLOOK_SMTP_PORT: int = 587
     OUTLOOK_SMTP_TLS: str = "true"
     OUTLOOK_SMTP_FROM: str = ""
+    OUTLOOK_COMPANY_CALENDAR: str = "calendar@turbo-don.ru"
 
     @property
     def cors_origins(self) -> list[str]:

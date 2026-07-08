@@ -13,8 +13,13 @@ from app.agents.meeting_agent.backend import (
     MeetingBackend,
     MeetingBackendError,
     MeetingMemo,
+    MeetingQuorumSlot,
     MeetingRoomOption,
     MeetingSlot,
+    MeetingSlotConflict,
+    QUORUM_MAX_CANDIDATES,
+    QUORUM_MIN_COVERAGE_RATIO,
+    QUORUM_VERIFY_TOP_N,
     ResolvedParticipant,
     SLOT_PREVIEW_MAX_DAYS,
     SLOT_PREVIEW_TIMEOUT_SECONDS,
@@ -30,6 +35,8 @@ from app.models.user import User
 from app.schemas.meeting import (
     MeetingAgentSlotApproveRead,
     MeetingAgentSlotApproveRequest,
+    MeetingAgentSlotDetailRead,
+    MeetingAgentSlotDetailRequest,
     MeetingAgentSlotPreviewRead,
     MeetingAgentSlotPreviewRequest,
     MeetingAttendeeRead,
@@ -49,27 +56,44 @@ from app.schemas.meeting import (
     MeetingRunCreate,
     MeetingRunRead,
     MeetingRunResultRead,
+    MeetingQuorumSlotRead,
+    MeetingSlotBlockingEventRead,
+    MeetingSlotConflictRead,
+    MeetingSlotCoverageRead,
+    MeetingSlotParticipantStatusRead,
     MeetingSlotRead,
     MeetingSlotsRequest,
 )
 from app.schemas.task import TaskResultCreate
 from app.services.audit_service import AuditService
 from app.services.meeting_agent_approve import (
-    ATTENDEE_ROLE_LABELS,
     MeetingApproveError,
     build_approve_invite_body,
     resolve_approve_recipients,
+)
+from app.services.meeting_attendee_priority import (
+    PRIORITY_DIRECTOR,
+    PRIORITY_INITIATOR,
+    PRIORITY_MANAGER,
+    priority_role_label,
+    weight_for_priority_role,
 )
 from app.services.meeting_agent_errors import (
     format_calendar_error,
     format_email_lookup_error,
     format_missing_emails_error,
+    format_partial_slot_preview_note,
     format_no_slot_error,
+    format_reschedule_suggestions_note,
     format_onec_load_error,
     format_participants_missing_error,
     format_slot_preview_timeout_error,
 )
-from app.services.meeting_attendees import collect_attendees_from_detail, emails_by_fio_from_detail
+from app.services.meeting_attendees import (
+    collect_attendees_from_detail,
+    emails_by_fio_from_detail,
+    person_from_detail_by_fio,
+)
 from app.services.meeting_offline_cache import (
     build_offline_approve_result,
     is_offline_cache_detail,
@@ -84,14 +108,17 @@ from app.services.meeting_invite_format import (
     resolve_invite_subject,
 )
 from app.services.meeting_slot import (
+    format_event_time_display,
     format_planned_start_for_search,
     format_search_start_from_meeting_date,
     format_slot_label,
+    parse_slot_datetime,
     slot_duration_minutes,
 )
 from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
-from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
+from app.tools.Outlook.find_meeting_slot import build_slot_participant_details
+from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite, load_config
 from app.tools.onec.approve_service_memo import approve_service_memo
 from app.tools.onec.reject_service_memo import reject_service_memo
 from app.services.meeting_memo_cache import (
@@ -190,7 +217,7 @@ class MeetingService:
         attendees: list[MeetingAttendeeRead] = []
         missing_emails: list[str] = []
         resolved: list[ResolvedParticipant] = []
-        for fio, role in attendee_specs:
+        for fio, priority_role in attendee_specs:
             cached_email = cached_emails.get(fio)
             match = resolved_by_fio.get(fio)
             email = cached_email or (match.email if match else None)
@@ -203,8 +230,13 @@ class MeetingService:
                 MeetingAttendeeRead(
                     fio=fio,
                     email=email,
-                    role=role,
-                    role_label=ATTENDEE_ROLE_LABELS.get(role, role),
+                    role=priority_role,
+                    role_label=priority_role_label(priority_role),
+                    weight=weight_for_priority_role(
+                        priority_role,
+                        person_from_detail_by_fio(detail, fio),
+                    ),
+                    required_for_slot=found,
                     found=found,
                 )
             )
@@ -348,6 +380,10 @@ class MeetingService:
                 error_stage="email",
             )
 
+        attendee_roles = _email_roles_from_attendees(attendees)
+        attendee_weights = _attendee_weights_from_attendees(attendees)
+        leadership_emails = _leadership_required_emails(attendees)
+
         logger.info(
             "meeting.slot_preview.search",
             memo_ref_key=normalized_ref,
@@ -355,11 +391,11 @@ class MeetingService:
             planned_start=planned_start,
             duration_minutes=duration,
             max_days=SLOT_PREVIEW_MAX_DAYS,
-            verify_calendar=True,
+            search_mode="all",
             timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS,
         )
         try:
-            slots = await asyncio.wait_for(
+            all_free_slots = await asyncio.wait_for(
                 backend.find_slots(
                     memo=memo,
                     participants=resolved,
@@ -385,15 +421,98 @@ class MeetingService:
                 error_stage="calendar",
             )
         except MeetingBackendError as exc:
-            message = str(exc)
-            if "Свободный слот не найден" in message:
-                return _agent_slot_preview_error(
-                    normalized_ref,
-                    message=format_no_slot_error(max_days=SLOT_PREVIEW_MAX_DAYS),
+            all_free_slots = None
+            all_slots_error = exc
+        except Exception as exc:
+            return _agent_slot_preview_error(
+                normalized_ref,
+                message=format_calendar_error(exc),
+                duration_minutes=duration,
+                attendees=attendees,
+                missing_emails=missing_emails,
+                error_stage="calendar",
+            )
+        else:
+            all_slots_error = None
+
+        if all_free_slots:
+            slot = _slot_read(all_free_slots[0])
+            total = len(resolved)
+            logger.info(
+                "meeting.slot_preview.found_all_free",
+                memo_ref_key=normalized_ref,
+                slot_start=slot.start,
+                slot_end=slot.end,
+            )
+            return MeetingAgentSlotPreviewRead(
+                memo_ref_key=normalized_ref,
+                slot=slot,
+                slot_label=format_slot_label(slot.start, slot.end),
+                duration_minutes=duration,
+                attendees=attendees,
+                missing_emails=missing_emails,
+                coverage=MeetingSlotCoverageRead(
+                    free=total,
+                    total=total,
+                    ratio=1.0,
+                    weighted_ratio=1.0,
+                    required_ok=True,
+                ),
+                search_mode="all",
+            )
+
+        logger.info(
+            "meeting.slot_preview.search_partial",
+            memo_ref_key=normalized_ref,
+            all_slots_error=str(all_slots_error) if all_slots_error else None,
+        )
+        try:
+            quorum_slots = await asyncio.wait_for(
+                backend.find_quorum_slots(
+                    memo=memo,
+                    participants=resolved,
+                    attendee_roles=attendee_roles,
+                    attendee_weights=attendee_weights,
+                    required_attendee_emails=leadership_emails or None,
+                    planned_start=planned_start,
                     duration_minutes=duration,
+                    current_user=current_user,
+                    max_days=SLOT_PREVIEW_MAX_DAYS,
+                    min_coverage_ratio=QUORUM_MIN_COVERAGE_RATIO,
+                    max_results=QUORUM_MAX_CANDIDATES,
+                    verify_top_n=QUORUM_VERIFY_TOP_N,
+                    verify_calendar=True,
+                    quiet=False,
+                    include_timing=True,
+                ),
+                timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return _agent_slot_preview_error(
+                normalized_ref,
+                message=format_slot_preview_timeout_error(
+                    timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS
+                ),
+                duration_minutes=duration,
+                attendees=attendees,
+                missing_emails=missing_emails,
+                error_stage="calendar",
+            )
+        except MeetingBackendError as exc:
+            message = str(exc)
+            if "Quorum-слот не найден" in message or "Свободный слот не найден" in message:
+                return await self._agent_slot_preview_no_slot(
+                    normalized_ref,
+                    duration=duration,
                     attendees=attendees,
                     missing_emails=missing_emails,
-                    error_stage="no_slot",
+                    backend=backend,
+                    resolved=resolved,
+                    attendee_roles=attendee_roles,
+                    attendee_weights=attendee_weights,
+                    leadership_emails=leadership_emails,
+                    planned_start=planned_start,
+                    current_user=current_user,
                 )
             return _agent_slot_preview_error(
                 normalized_ref,
@@ -413,30 +532,101 @@ class MeetingService:
                 error_stage="calendar",
             )
 
-        if not slots:
-            return _agent_slot_preview_error(
+        if not quorum_slots:
+            return await self._agent_slot_preview_no_slot(
                 normalized_ref,
-                message=format_no_slot_error(max_days=SLOT_PREVIEW_MAX_DAYS),
-                duration_minutes=duration,
+                duration=duration,
                 attendees=attendees,
                 missing_emails=missing_emails,
-                error_stage="no_slot",
+                backend=backend,
+                resolved=resolved,
+                attendee_roles=attendee_roles,
+                attendee_weights=attendee_weights,
+                leadership_emails=leadership_emails,
+                planned_start=planned_start,
+                current_user=current_user,
             )
 
-        slot = _slot_read(slots[0])
+        slot_candidates = [
+            _quorum_slot_read(item, attendees=attendees) for item in quorum_slots
+        ]
+        recommended = quorum_slots[0]
         logger.info(
-            "meeting.slot_preview.found",
+            "meeting.slot_preview.partial",
             memo_ref_key=normalized_ref,
-            slot_start=slot.start,
-            slot_end=slot.end,
+            slot_start=recommended.start,
+            slot_end=recommended.end,
+            coverage_ratio=recommended.coverage_ratio,
+            conflicts=len(recommended.conflicts),
         )
         return MeetingAgentSlotPreviewRead(
             memo_ref_key=normalized_ref,
-            slot=slot,
-            slot_label=format_slot_label(slot.start, slot.end),
+            slot=None,
+            slot_label=None,
             duration_minutes=duration,
             attendees=attendees,
             missing_emails=missing_emails,
+            coverage=_coverage_read(recommended),
+            conflicts=[
+                _conflict_read(conflict, attendees=attendees) for conflict in recommended.conflicts
+            ],
+            slot_candidates=slot_candidates,
+            search_mode="partial",
+            preview_note=format_partial_slot_preview_note(),
+        )
+
+    async def _agent_slot_preview_no_slot(
+        self,
+        memo_ref_key: str,
+        *,
+        duration: int,
+        attendees: list[MeetingAttendeeRead],
+        missing_emails: list[str],
+        backend: MeetingBackend,
+        resolved: list[ResolvedParticipant],
+        attendee_roles: dict[str, str],
+        attendee_weights: dict[str, float],
+        leadership_emails: list[str],
+        planned_start: str,
+        current_user: User,
+    ) -> MeetingAgentSlotPreviewRead:
+        conflicts: list[MeetingSlotConflict] = []
+        try:
+            conflicts = await backend.find_company_calendar_reschedule_candidates(
+                participants=resolved,
+                attendee_roles=attendee_roles,
+                required_attendee_emails=leadership_emails or None,
+                attendee_weights=attendee_weights,
+                planned_start=planned_start,
+                duration_minutes=duration,
+                max_days=SLOT_PREVIEW_MAX_DAYS,
+                current_user=current_user,
+            )
+        except MeetingBackendError as exc:
+            logger.warning(
+                "meeting.slot_preview.company_calendar_failed",
+                memo_ref_key=memo_ref_key,
+                error=str(exc),
+            )
+        except Exception as exc:
+            logger.warning(
+                "meeting.slot_preview.company_calendar_failed",
+                memo_ref_key=memo_ref_key,
+                error=str(exc),
+            )
+
+        conflict_reads = [
+            _conflict_read(conflict, attendees=attendees) for conflict in conflicts
+        ]
+        return _agent_slot_preview_error(
+            memo_ref_key,
+            message=format_no_slot_error(max_days=SLOT_PREVIEW_MAX_DAYS),
+            duration_minutes=duration,
+            attendees=attendees,
+            missing_emails=missing_emails,
+            error_stage="no_slot",
+            conflicts=conflict_reads,
+            preview_note=format_reschedule_suggestions_note(len(conflict_reads)) or None,
         )
 
     async def suggest_agent_slot_safe(
@@ -458,6 +648,185 @@ class MeetingService:
             return _agent_slot_preview_error(
                 memo_ref_key.strip().lower(),
                 message=f"Не удалось подобрать слот: {exc}",
+                error_stage="unknown",
+            )
+
+    async def get_agent_slot_detail(
+        self,
+        memo_ref_key: str,
+        payload: MeetingAgentSlotDetailRequest,
+        *,
+        current_user: User,
+    ) -> MeetingAgentSlotDetailRead:
+        """Детали выбранного слота: статус каждого участника и мешающие встречи."""
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        slot_start_dt = parse_slot_datetime(payload.slot_start)
+        slot_end_dt = parse_slot_datetime(payload.slot_end)
+        if slot_start_dt is None or slot_end_dt is None:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message="Некорректный формат slot_start или slot_end",
+                error_stage="slot",
+            )
+        if slot_end_dt <= slot_start_dt:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message="slot_end должно быть позже slot_start",
+                error_stage="slot",
+            )
+
+        duration = payload.duration_minutes or slot_duration_minutes(
+            payload.slot_start,
+            payload.slot_end,
+        )
+
+        try:
+            detail, _fetched_at, _from_cache = await MeetingMemoCacheService().get_memo_detail_for_agent(
+                normalized_ref
+            )
+        except MemoCacheMissError as exc:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=str(exc),
+                error_stage="onec",
+            )
+
+        backend = self._backend()
+        try:
+            _memo, _resolved, attendees, missing_emails = await self._resolve_memo_attendees(
+                detail,
+                backend=backend,
+                current_user=current_user,
+            )
+        except MeetingServiceError:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_participants_missing_error(),
+                error_stage="participants",
+            )
+        except MeetingBackendError as exc:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_email_lookup_error(exc),
+                error_stage="email",
+            )
+
+        if missing_emails:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_missing_emails_error(missing_emails),
+                error_stage="email",
+            )
+
+        attendee_payload = [
+            {
+                "fio": attendee.fio,
+                "email": attendee.email,
+                "role": attendee.role,
+            }
+            for attendee in attendees
+        ]
+
+        logger.info(
+            "meeting.slot_detail.fetch",
+            memo_ref_key=normalized_ref,
+            slot_start=payload.slot_start,
+            slot_end=payload.slot_end,
+            attendees=len(attendee_payload),
+            timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS,
+        )
+        try:
+            raw = await asyncio.wait_for(
+                asyncio.to_thread(
+                    build_slot_participant_details,
+                    config=load_config(),
+                    attendees=attendee_payload,
+                    slot_start=slot_start_dt,
+                    slot_end=slot_end_dt,
+                    step_minutes=15,
+                ),
+                timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_slot_preview_timeout_error(
+                    timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS
+                ),
+                error_stage="calendar",
+            )
+        except ValueError as exc:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=str(exc),
+                error_stage="slot",
+            )
+        except Exception as exc:
+            return _agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_calendar_error(exc),
+                error_stage="calendar",
+            )
+
+        participants = [
+            _participant_status_read(item, attendees=attendees)
+            for item in raw.get("participants") or []
+        ]
+        return MeetingAgentSlotDetailRead(
+            memo_ref_key=normalized_ref,
+            slot_start=payload.slot_start,
+            slot_end=payload.slot_end,
+            slot_label=format_slot_label(payload.slot_start, payload.slot_end),
+            duration_minutes=duration,
+            participants=participants,
+        )
+
+    async def get_agent_slot_detail_safe(
+        self,
+        memo_ref_key: str,
+        payload: MeetingAgentSlotDetailRequest,
+        *,
+        current_user: User,
+    ) -> MeetingAgentSlotDetailRead:
+        try:
+            return await self.get_agent_slot_detail(
+                memo_ref_key,
+                payload,
+                current_user=current_user,
+            )
+        except MeetingServiceError as exc:
+            return _agent_slot_detail_error(
+                memo_ref_key.strip().lower(),
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=str(exc),
+                error_stage="unknown",
+            )
+        except Exception as exc:
+            return _agent_slot_detail_error(
+                memo_ref_key.strip().lower(),
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=f"Не удалось загрузить детали слота: {exc}",
                 error_stage="unknown",
             )
 
@@ -1079,6 +1448,33 @@ def _result_summary(final_result: dict | None) -> str | None:
     return str(summary) if summary else None
 
 
+def _agent_slot_detail_error(
+    memo_ref_key: str,
+    *,
+    slot_start: str,
+    slot_end: str,
+    message: str,
+    error_stage: str = "unknown",
+) -> MeetingAgentSlotDetailRead:
+    logger.warning(
+        "meeting.slot_detail.error",
+        memo_ref_key=memo_ref_key,
+        error_stage=error_stage,
+        message=message,
+    )
+    duration = slot_duration_minutes(slot_start, slot_end)
+    return MeetingAgentSlotDetailRead(
+        memo_ref_key=memo_ref_key,
+        slot_start=slot_start,
+        slot_end=slot_end,
+        slot_label=format_slot_label(slot_start, slot_end),
+        duration_minutes=duration,
+        participants=[],
+        error=message,
+        error_stage=error_stage,
+    )
+
+
 def _agent_slot_preview_error(
     memo_ref_key: str,
     *,
@@ -1087,6 +1483,8 @@ def _agent_slot_preview_error(
     attendees: list[MeetingAttendeeRead] | None = None,
     missing_emails: list[str] | None = None,
     error_stage: str = "unknown",
+    conflicts: list[MeetingSlotConflictRead] | None = None,
+    preview_note: str | None = None,
 ) -> MeetingAgentSlotPreviewRead:
     logger.warning(
         "meeting.slot_preview.error",
@@ -1101,6 +1499,8 @@ def _agent_slot_preview_error(
         missing_emails=missing_emails or [],
         error=message,
         error_stage=error_stage,
+        conflicts=conflicts or [],
+        preview_note=preview_note,
     )
 
 
@@ -1117,6 +1517,232 @@ def _memo_read(memo: MeetingMemo) -> MeetingMemoRead:
 
 def _slot_read(item: MeetingSlot) -> MeetingSlotRead:
     return MeetingSlotRead(start=item.start, end=item.end, confidence=item.confidence)
+
+
+def _email_roles_from_attendees(attendees: list[MeetingAttendeeRead]) -> dict[str, str]:
+    roles: dict[str, str] = {}
+    for attendee in attendees:
+        if attendee.email and attendee.role:
+            roles[attendee.email] = attendee.role
+    return roles
+
+
+def _attendee_weights_from_attendees(attendees: list[MeetingAttendeeRead]) -> dict[str, float]:
+    return {
+        attendee.email: attendee.weight
+        for attendee in attendees
+        if attendee.email
+    }
+
+
+def _leadership_required_emails(attendees: list[MeetingAttendeeRead]) -> list[str]:
+    leadership_roles = {PRIORITY_INITIATOR, PRIORITY_MANAGER, PRIORITY_DIRECTOR}
+    return [
+        attendee.email
+        for attendee in attendees
+        if attendee.email and attendee.role in leadership_roles
+    ]
+
+
+def _attendee_meta_by_email(
+    attendees: list[MeetingAttendeeRead],
+) -> dict[str, MeetingAttendeeRead]:
+    return {item.email: item for item in attendees if item.email}
+
+
+def _attendee_names_for_emails(
+    emails: list[str],
+    attendees: list[MeetingAttendeeRead],
+) -> list[str]:
+    meta = _attendee_meta_by_email(attendees)
+    names: list[str] = []
+    for email in emails:
+        attendee = meta.get(email)
+        names.append(attendee.fio if attendee else email)
+    return names
+
+
+def _coverage_read(item: MeetingQuorumSlot) -> MeetingSlotCoverageRead:
+    return MeetingSlotCoverageRead(
+        free=item.free_count,
+        total=item.total_count,
+        ratio=item.coverage_ratio,
+        weighted_ratio=item.weighted_coverage_ratio,
+        required_ok=item.required_ok,
+    )
+
+
+def _conflict_read(
+    conflict: MeetingSlotConflict,
+    *,
+    attendees: list[MeetingAttendeeRead],
+) -> MeetingSlotConflictRead:
+    meta = _attendee_meta_by_email(attendees).get(conflict.email)
+    hint_label = None
+    if conflict.reschedule_hint_start and conflict.reschedule_hint_end:
+        hint_label = format_slot_label(conflict.reschedule_hint_start, conflict.reschedule_hint_end)
+    movability = conflict.movability if conflict.movability in {"high", "medium", "low"} else "medium"
+    source = conflict.source if conflict.source in {
+        "calendar",
+        "freebusy",
+        "interval",
+        "company_calendar",
+    } else None
+    event_start_label, event_end_label = format_event_time_display(
+        conflict.event_start,
+        conflict.event_end,
+    )
+    event_time_label = (
+        format_slot_label(conflict.event_start, conflict.event_end)
+        if conflict.event_start and conflict.event_end
+        else None
+    )
+    return MeetingSlotConflictRead(
+        fio=conflict.fio or (meta.fio if meta else None),
+        email=conflict.email,
+        role=conflict.role or (meta.role if meta else None),
+        role_label=priority_role_label(conflict.role or (meta.role if meta else "")),
+        event_start=event_start_label,
+        event_end=event_end_label,
+        event_subject=conflict.event_subject,
+        event_label=_event_label_for_record(
+            event_subject=conflict.event_subject,
+            event_start=conflict.event_start,
+            event_end=conflict.event_end,
+        ),
+        event_time_label=event_time_label,
+        busy_type=conflict.busy_type,
+        movability=movability,
+        movability_reason=conflict.movability_reason if conflict.movability_reason in {
+            "tentative",
+            "busy",
+            "oof",
+            "protected_subject",
+            "unknown_interval",
+        } else None,
+        source=source,
+        can_auto_reschedule=conflict.can_auto_reschedule,
+        reschedule_hint_start=conflict.reschedule_hint_start,
+        reschedule_hint_end=conflict.reschedule_hint_end,
+        reschedule_hint_label=hint_label,
+    )
+
+
+def _event_label_for_record(
+    *,
+    event_subject: str | None,
+    event_start: str | None,
+    event_end: str | None,
+) -> str | None:
+    subject = str(event_subject or "").strip()
+    if subject:
+        return subject
+    if event_start and event_end:
+        return "Занят"
+    return None
+
+
+def _blocking_event_read(record: dict[str, Any]) -> MeetingSlotBlockingEventRead:
+    hint_label = None
+    hint_start = record.get("reschedule_hint_start")
+    hint_end = record.get("reschedule_hint_end")
+    if hint_start and hint_end:
+        hint_label = format_slot_label(str(hint_start), str(hint_end))
+    movability = record.get("movability") or "medium"
+    if movability not in {"high", "medium", "low"}:
+        movability = "medium"
+    movability_reason = record.get("movability_reason")
+    if movability_reason not in {
+        "tentative",
+        "busy",
+        "oof",
+        "protected_subject",
+        "unknown_interval",
+    }:
+        movability_reason = None
+    source = record.get("source")
+    if source not in {"calendar", "freebusy", "interval", "company_calendar"}:
+        source = None
+    raw_start = record.get("event_start")
+    raw_end = record.get("event_end")
+    event_start_label, event_end_label = format_event_time_display(
+        str(raw_start) if raw_start else None,
+        str(raw_end) if raw_end else None,
+    )
+    event_time_label = (
+        format_slot_label(str(raw_start), str(raw_end))
+        if raw_start and raw_end
+        else None
+    )
+    return MeetingSlotBlockingEventRead(
+        event_start=event_start_label,
+        event_end=event_end_label,
+        event_subject=record.get("event_subject"),
+        event_label=_event_label_for_record(
+            event_subject=record.get("event_subject"),
+            event_start=str(raw_start) if raw_start else None,
+            event_end=str(raw_end) if raw_end else None,
+        ),
+        event_time_label=event_time_label,
+        organizer=record.get("organizer"),
+        busy_type=record.get("busy_type"),
+        movability=movability,
+        movability_reason=movability_reason,
+        source=source,
+        reschedule_hint_start=hint_start,
+        reschedule_hint_end=hint_end,
+        reschedule_hint_label=hint_label,
+    )
+
+
+def _participant_status_read(
+    item: dict[str, Any],
+    *,
+    attendees: list[MeetingAttendeeRead],
+) -> MeetingSlotParticipantStatusRead:
+    email = item.get("email")
+    meta = _attendee_meta_by_email(attendees).get(email) if email else None
+    role = str(item.get("role") or (meta.role if meta else "participant"))
+    status = item.get("status") or "unknown"
+    if status not in {"free", "busy", "unknown"}:
+        status = "unknown"
+    return MeetingSlotParticipantStatusRead(
+        fio=str(item.get("fio") or (meta.fio if meta else email or "—")),
+        email=email,
+        role=role,
+        role_label=priority_role_label(role),
+        status=status,
+        blocking_events=[
+            _blocking_event_read(record)
+            for record in item.get("blocking_events") or []
+        ],
+        calendar_access_error=item.get("calendar_access_error"),
+    )
+
+
+def _quorum_slot_read(
+    item: MeetingQuorumSlot,
+    *,
+    attendees: list[MeetingAttendeeRead],
+) -> MeetingQuorumSlotRead:
+    return MeetingQuorumSlotRead(
+        slot=_slot_read(
+            MeetingSlot(start=item.start, end=item.end, confidence=item.confidence)
+        ),
+        slot_label=format_slot_label(item.start, item.end),
+        coverage=_coverage_read(item),
+        conflicts=[_conflict_read(conflict, attendees=attendees) for conflict in item.conflicts],
+        free_attendees=item.free_attendees,
+        busy_attendees=item.busy_attendees,
+        free_attendee_names=_attendee_names_for_emails(item.free_attendees, attendees),
+        busy_attendee_names=_attendee_names_for_emails(item.busy_attendees, attendees),
+        verified=item.verified,
+        impact_score=item.impact_score,
+        busy_weight_cost=item.busy_weight_cost,
+        reschedule_count=item.reschedule_count,
+        easy_reschedule_count=item.easy_reschedule_count,
+        low_movability_count=item.low_movability_count,
+    )
 
 
 def _room_read(item: MeetingRoomOption) -> MeetingRoomRead:

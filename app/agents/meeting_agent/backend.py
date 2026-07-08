@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -16,14 +17,30 @@ from app.services.meeting_invite_format import (
     place_from_memo_document,
 )
 from app.agents.meeting_agent.memo_presenter import resolve_meeting_schedule
+from app.services.meeting_psd_level import (
+    append_psd_level_participant_names,
+    is_psd_level_header,
+)
 from app.core.config import settings
 from app.models.user import User
+from app.services.meeting_attendee_priority import (
+    REQUIRED_PRIORITY_ROLES,
+    weight_for_priority_role,
+)
 from app.tools.executor import ToolExecutor, ToolExecutionError
 from app.tools.schemas import ToolContext
+from app.tools.Outlook.find_meeting_slot import (
+    find_company_calendar_reschedule_candidates as lookup_company_calendar_reschedule_candidates,
+)
+from app.tools.Outlook.send_meeting_invite import load_config, parse_start
 
 DEFAULT_DURATION_MINUTES = 60
 SLOT_PREVIEW_MAX_DAYS = 30
 SLOT_PREVIEW_TIMEOUT_SECONDS = 180
+QUORUM_MIN_COVERAGE_RATIO = 0.7
+QUORUM_MAX_CANDIDATES = 3
+QUORUM_VERIFY_TOP_N = 3
+REQUIRED_ATTENDEE_ROLES = REQUIRED_PRIORITY_ROLES
 MEMO_FETCH_LIMIT = 50
 MEMO_FETCH_POOL = 200
 
@@ -55,6 +72,44 @@ class MeetingSlot:
     start: str
     end: str
     confidence: float
+
+
+@dataclass(slots=True)
+class MeetingSlotConflict:
+    email: str
+    fio: str | None = None
+    role: str | None = None
+    event_start: str | None = None
+    event_end: str | None = None
+    event_subject: str | None = None
+    busy_type: str | None = None
+    movability: str = "medium"
+    movability_reason: str | None = None
+    source: str | None = None
+    can_auto_reschedule: bool = False
+    reschedule_hint_start: str | None = None
+    reschedule_hint_end: str | None = None
+
+
+@dataclass(slots=True)
+class MeetingQuorumSlot:
+    start: str
+    end: str
+    confidence: float
+    free_count: int
+    total_count: int
+    coverage_ratio: float
+    weighted_coverage_ratio: float
+    required_ok: bool
+    conflicts: list[MeetingSlotConflict] = field(default_factory=list)
+    free_attendees: list[str] = field(default_factory=list)
+    busy_attendees: list[str] = field(default_factory=list)
+    verified: bool = False
+    impact_score: float | None = None
+    busy_weight_cost: float | None = None
+    reschedule_count: int = 0
+    easy_reschedule_count: int = 0
+    low_movability_count: int = 0
 
 
 @dataclass(slots=True)
@@ -207,6 +262,189 @@ class MeetingBackend:
         confidence = 0.95 if len(attendee_emails) == len([p for p in participants if _participant_found(p)]) else 0.7
         return [MeetingSlot(start=slot_start, end=slot_end, confidence=confidence)]
 
+    async def find_quorum_slots(
+        self,
+        *,
+        memo: MeetingMemo | dict[str, Any] | None,
+        participants: list[ResolvedParticipant | dict[str, Any]],
+        attendee_roles: dict[str, str] | None = None,
+        attendee_weights: dict[str, float] | None = None,
+        required_attendee_emails: list[str] | None = None,
+        planned_start: str | None,
+        duration_minutes: int | None,
+        current_user: User,
+        max_days: int = 30,
+        min_coverage_ratio: float = QUORUM_MIN_COVERAGE_RATIO,
+        max_results: int = QUORUM_MAX_CANDIDATES,
+        verify_top_n: int = QUORUM_VERIFY_TOP_N,
+        verify_calendar: bool = True,
+        quiet: bool = True,
+        include_timing: bool = False,
+    ) -> list[MeetingQuorumSlot]:
+        attendee_emails = _participant_emails(participants)
+        if not attendee_emails:
+            return []
+
+        roles_by_email = attendee_roles or {}
+        weights_by_email = attendee_weights or {
+            email: weight_for_priority_role(roles_by_email.get(email, "participant"))
+            for email in attendee_emails
+        }
+        required_emails = [
+            email
+            for email in (required_attendee_emails or [])
+            if email in attendee_emails
+        ]
+        if not required_emails:
+            required_emails = [
+                email
+                for email in attendee_emails
+                if roles_by_email.get(email) in REQUIRED_ATTENDEE_ROLES
+            ]
+        if not required_emails:
+            required_emails = list(attendee_emails)
+
+        duration = duration_minutes or _duration_from_memo(memo) or DEFAULT_DURATION_MINUTES
+        preferred = planned_start or _preferred_from_memo(memo) or _default_preferred()
+
+        try:
+            payload = await self._invoke(
+                "find_quorum_meeting_slots",
+                {
+                    "attendees": attendee_emails,
+                    "required_attendees": required_emails,
+                    "attendee_weights": weights_by_email,
+                    "preferred": preferred,
+                    "duration_minutes": duration,
+                    "max_days": max_days,
+                    "min_coverage_ratio": min_coverage_ratio,
+                    "max_results": max_results,
+                    "verify_top_n": verify_top_n,
+                    "verify_calendar": verify_calendar,
+                    "quiet": quiet,
+                    "include_timing": include_timing,
+                },
+                current_user=current_user,
+            )
+        except ToolExecutionError as exc:
+            raise MeetingBackendError(f"Не удалось подобрать quorum-слот: {exc}") from exc
+        except Exception as exc:
+            raise MeetingBackendError(str(exc)) from exc
+
+        email_to_fio = _participant_email_to_fio(participants)
+        candidates = payload.get("candidates") or []
+        result: list[MeetingQuorumSlot] = []
+        for item in candidates:
+            coverage = item.get("coverage") or {}
+            conflicts = [
+                MeetingSlotConflict(
+                    email=conflict["email"],
+                    fio=email_to_fio.get(conflict["email"]),
+                    role=roles_by_email.get(conflict["email"]),
+                    event_start=conflict.get("event_start"),
+                    event_end=conflict.get("event_end"),
+                    event_subject=conflict.get("event_subject"),
+                    busy_type=conflict.get("busy_type"),
+                    movability=str(conflict.get("movability") or "medium"),
+                    movability_reason=conflict.get("movability_reason"),
+                    source=conflict.get("source"),
+                    can_auto_reschedule=bool(conflict.get("can_auto_reschedule")),
+                    reschedule_hint_start=conflict.get("reschedule_hint_start"),
+                    reschedule_hint_end=conflict.get("reschedule_hint_end"),
+                )
+                for conflict in item.get("conflicts") or []
+            ]
+            result.append(
+                MeetingQuorumSlot(
+                    start=item["slot_start"],
+                    end=item["slot_end"],
+                    confidence=float(item.get("confidence") or 0.7),
+                    free_count=int(coverage.get("free") or 0),
+                    total_count=int(coverage.get("total") or len(attendee_emails)),
+                    coverage_ratio=float(coverage.get("ratio") or 0.0),
+                    weighted_coverage_ratio=float(
+                        coverage.get("weighted_ratio") or coverage.get("ratio") or 0.0
+                    ),
+                    required_ok=bool(coverage.get("required_ok")),
+                    conflicts=conflicts,
+                    free_attendees=list(item.get("free_attendees") or []),
+                    busy_attendees=list(item.get("busy_attendees") or []),
+                    verified=bool(item.get("verified")),
+                    impact_score=(
+                        float(item["impact_score"])
+                        if item.get("impact_score") is not None
+                        else None
+                    ),
+                    busy_weight_cost=(
+                        float(item["busy_weight_cost"])
+                        if item.get("busy_weight_cost") is not None
+                        else None
+                    ),
+                    reschedule_count=int(item.get("reschedule_count") or 0),
+                    easy_reschedule_count=int(item.get("easy_reschedule_count") or 0),
+                    low_movability_count=int(item.get("low_movability_count") or 0),
+                )
+            )
+        return result
+
+    async def find_company_calendar_reschedule_candidates(
+        self,
+        *,
+        participants: list[ResolvedParticipant | dict[str, Any]],
+        attendee_roles: dict[str, str] | None = None,
+        required_attendee_emails: list[str] | None = None,
+        attendee_weights: dict[str, float] | None = None,
+        planned_start: str | None,
+        duration_minutes: int | None,
+        max_days: int = SLOT_PREVIEW_MAX_DAYS,
+        current_user: User,
+    ) -> list[MeetingSlotConflict]:
+        del current_user
+        attendee_emails = _participant_emails(participants)
+        if not attendee_emails:
+            return []
+
+        roles_by_email = attendee_roles or {}
+        duration = duration_minutes or DEFAULT_DURATION_MINUTES
+        preferred = planned_start or _default_preferred()
+        config = load_config()
+        preferred_dt = parse_start(preferred, config.timezone)
+
+        try:
+            payload = await asyncio.to_thread(
+                lookup_company_calendar_reschedule_candidates,
+                attendee_emails=attendee_emails,
+                required_attendee_emails=required_attendee_emails,
+                planned_start=preferred_dt,
+                duration=timedelta(minutes=duration),
+                max_days=max_days,
+                attendee_weights=attendee_weights,
+                config=config,
+            )
+        except Exception as exc:
+            raise MeetingBackendError(str(exc)) from exc
+
+        email_to_fio = _participant_email_to_fio(participants)
+        return [
+            MeetingSlotConflict(
+                email=conflict["email"],
+                fio=email_to_fio.get(conflict["email"]),
+                role=roles_by_email.get(conflict["email"]),
+                event_start=conflict.get("event_start"),
+                event_end=conflict.get("event_end"),
+                event_subject=conflict.get("event_subject"),
+                busy_type=conflict.get("busy_type"),
+                movability=str(conflict.get("movability") or "medium"),
+                movability_reason=conflict.get("movability_reason"),
+                source=conflict.get("source"),
+                can_auto_reschedule=bool(conflict.get("can_auto_reschedule")),
+                reschedule_hint_start=conflict.get("reschedule_hint_start"),
+                reschedule_hint_end=conflict.get("reschedule_hint_end"),
+            )
+            for conflict in payload.get("candidates") or []
+            if conflict.get("email")
+        ]
+
     async def find_rooms(
         self,
         *,
@@ -349,6 +587,7 @@ _MEETING_TOOL_NAMES = [
     "get_meeting_topics_registry",
     "lookup_email_by_fio",
     "find_meeting_slot",
+    "find_quorum_meeting_slots",
     "meeting_rooms",
     "send_meeting_invite",
     "reschedule_meeting",
@@ -432,7 +671,11 @@ def _extract_participant_fio(document: dict[str, Any]) -> list[str]:
                 names.append(value.strip())
                 break
     if names:
-        return list(dict.fromkeys(names))
+        header = document.get("header") or document.get("memo") or {}
+        return append_psd_level_participant_names(
+            list(dict.fromkeys(names)),
+            psd_level=is_psd_level_header(header),
+        )
 
     sections = document.get("tabular_sections") or {}
     for rows in sections.values():
@@ -444,7 +687,11 @@ def _extract_participant_fio(document: dict[str, Any]) -> list[str]:
             for key, value in row.items():
                 if ("Участник" in key or "ФИО" in key) and isinstance(value, str) and value.strip():
                     names.append(value.strip())
-    return list(dict.fromkeys(names))
+    header = document.get("header") or document.get("memo") or {}
+    return append_psd_level_participant_names(
+        list(dict.fromkeys(names)),
+        psd_level=is_psd_level_header(header),
+    )
 
 
 def _pick_corporate_email(emails: list[dict[str, Any]] | None) -> str | None:
@@ -466,6 +713,22 @@ def _participant_emails(participants: list[ResolvedParticipant | dict[str, Any]]
         if email:
             emails.append(str(email))
     return list(dict.fromkeys(emails))
+
+
+def _participant_email_to_fio(
+    participants: list[ResolvedParticipant | dict[str, Any]],
+) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for participant in participants:
+        if isinstance(participant, ResolvedParticipant):
+            email = participant.email
+            fio = participant.fio
+        else:
+            email = participant.get("email")
+            fio = participant.get("fio")
+        if email and fio:
+            mapping[str(email)] = str(fio)
+    return mapping
 
 
 def _participant_found(participant: ResolvedParticipant | dict[str, Any]) -> bool:

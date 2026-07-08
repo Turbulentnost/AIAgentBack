@@ -37,6 +37,28 @@ def format_slot_label(start: str, end: str) -> str:
     return start_dt.strftime("%d.%m.%Y, %H:%M")
 
 
+def format_event_time_display(
+    event_start: str | None,
+    event_end: str | None,
+) -> tuple[str | None, str | None]:
+    """Форматирует интервал конфликта для UI: дата + время, без ISO."""
+    if not event_start or not event_end:
+        return event_start, event_end
+    start_dt = parse_slot_datetime(str(event_start))
+    end_dt = parse_slot_datetime(str(event_end))
+    if start_dt is None or end_dt is None:
+        return event_start, event_end
+    if start_dt.date() == end_dt.date():
+        return (
+            start_dt.strftime("%d.%m.%Y, %H:%M"),
+            end_dt.strftime("%H:%M"),
+        )
+    return (
+        start_dt.strftime("%d.%m.%Y, %H:%M"),
+        end_dt.strftime("%d.%m.%Y, %H:%M"),
+    )
+
+
 def format_planned_start_for_search(
     meeting_start: str | None,
     queue: dict[str, Any] | None = None,

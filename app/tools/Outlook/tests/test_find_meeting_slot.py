@@ -1,20 +1,37 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from app.tools.Outlook.find_meeting_slot import (
     align_preferred,
+    attach_reschedule_hints,
     coalesce_intervals,
+    coverage_ratios,
     find_nearest_slot,
+    find_quorum_slots,
     find_slot_via_busy_gaps,
+    build_slot_participant_details,
+    conflicting_calendar_items_at_slot,
+    dedupe_conflict_records,
+    movability_reason,
+    preliminary_slot_impact,
+    quorum_search_start,
+    slot_impact_score,
+    suggest_reschedule_window,
+    calendar_item_attendee_emails,
     freebusy_busy_intervals,
     freebusy_events_busy_intervals,
     freebusy_event_interval,
     is_free_for_all,
+    intervals_overlap,
     merge_busy_intervals,
+    movability_score,
     not_before_now,
+    partition_attendees_at_slot,
     union_busy_for_all,
+    find_company_calendar_reschedule_candidates,
 )
 from app.tools.Outlook.outlook_config import OutlookConfig
 
@@ -31,6 +48,7 @@ def _config() -> OutlookConfig:
         smtp_port=587,
         smtp_use_tls=True,
         smtp_from="postagent@turbo-don.ru",
+        company_calendar="calendar@turbo-don.ru",
     )
 
 
@@ -373,3 +391,745 @@ def test_find_nearest_slot_retries_when_calendar_rejects_freebusy_slot(monkeypat
 
     slot_start = datetime.fromisoformat(result["slot_start"])
     assert slot_start >= accepted_slot
+
+
+def test_movability_score_marks_committee_as_low() -> None:
+    assert movability_score(busy_type="Busy", subject="Заседание комитета") == "low"
+    assert movability_score(busy_type="Tentative", subject="Sync") == "high"
+
+
+def test_find_quorum_slots_prefers_majority_over_full_overlap(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    attendees = [
+        "a@turbo-don.ru",
+        "b@turbo-don.ru",
+        "c@turbo-don.ru",
+        "d@turbo-don.ru",
+    ]
+    requested = datetime(2026, 6, 19, 10, 0, tzinfo=tz)
+    fixed_now = datetime(2026, 6, 19, 8, 0, tzinfo=tz)
+    c_block = (
+        datetime(2026, 6, 19, 8, 0, tzinfo=tz),
+        datetime(2026, 6, 19, 17, 0, tzinfo=tz),
+    )
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+
+    def fake_fetch(*_args, **_kwargs):
+        return {
+            "a@turbo-don.ru": [],
+            "b@turbo-don.ru": [],
+            "c@turbo-don.ru": [c_block],
+            "d@turbo-don.ru": [],
+        }
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        fake_fetch,
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.verify_slot_with_calendar",
+        lambda **_kwargs: (True, fake_fetch()),
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_freebusy_calendar_events",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.read_calendar_items_in_range",
+        lambda *_args, **_kwargs: [],
+    )
+
+    result = find_quorum_slots(
+        config=config,
+        attendees=attendees,
+        required_attendees=["a@turbo-don.ru", "b@turbo-don.ru"],
+        preferred=requested,
+        duration=timedelta(minutes=60),
+        max_days=1,
+        step=timedelta(minutes=60),
+        max_items=50,
+        source="freebusy",
+        workers=1,
+        min_coverage_ratio=0.7,
+        max_results=1,
+        verify_top_n=0,
+        verify_calendar=False,
+    )
+
+    candidate = result["candidates"][0]
+    assert candidate["coverage"]["free"] == 3
+    assert candidate["coverage"]["total"] == 4
+    assert "c@turbo-don.ru" in candidate["busy_attendees"]
+    assert len(candidate["conflicts"]) >= 1
+
+
+def test_quorum_search_start_uses_workday_beginning_not_preferred_time(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    fixed_now = datetime(2026, 7, 7, 9, 0, tzinfo=tz)
+    preferred = datetime(2026, 7, 14, 10, 0, tzinfo=tz)
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+
+    start = quorum_search_start(preferred, config)
+    assert start == datetime(2026, 7, 14, 8, 0, tzinfo=tz)
+
+
+def test_find_quorum_slots_scans_before_preferred_time(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    attendees = [
+        "a@turbo-don.ru",
+        "b@turbo-don.ru",
+        "c@turbo-don.ru",
+        "d@turbo-don.ru",
+    ]
+    requested = datetime(2026, 7, 14, 10, 0, tzinfo=tz)
+    fixed_now = datetime(2026, 7, 7, 9, 0, tzinfo=tz)
+    manager_block = (
+        datetime(2026, 7, 14, 10, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+    )
+    manager_afternoon = (
+        datetime(2026, 7, 14, 13, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 16, 0, tzinfo=tz),
+    )
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+
+    def fake_fetch(*_args, **_kwargs):
+        return {
+            "a@turbo-don.ru": [],
+            "b@turbo-don.ru": [manager_block, manager_afternoon],
+            "c@turbo-don.ru": [],
+            "d@turbo-don.ru": [],
+        }
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        fake_fetch,
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.verify_slot_with_calendar",
+        lambda **_kwargs: (False, fake_fetch()),
+    )
+
+    def fake_events(_config, busy_attendees, *_args, **_kwargs):
+        if "b@turbo-don.ru" not in busy_attendees:
+            return {}
+        event = SimpleNamespace(
+            start=manager_block[0],
+            end=manager_block[1],
+            subject="РГ с руководителем",
+            busy_type="Tentative",
+        )
+        return {"b@turbo-don.ru": [event]}
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_freebusy_calendar_events",
+        fake_events,
+    )
+
+    result = find_quorum_slots(
+        config=config,
+        attendees=attendees,
+        required_attendees=["a@turbo-don.ru", "b@turbo-don.ru"],
+        preferred=requested,
+        duration=timedelta(hours=3),
+        max_days=1,
+        step=timedelta(minutes=60),
+        max_items=50,
+        source="freebusy",
+        workers=1,
+        min_coverage_ratio=0.7,
+        max_results=1,
+        verify_top_n=1,
+        verify_calendar=True,
+    )
+
+    candidate = result["candidates"][0]
+    assert "2026-07-14T09:00:00" in candidate["slot_start"]
+    assert candidate["coverage"]["free"] == 3
+    assert "b@turbo-don.ru" in candidate["busy_attendees"]
+    assert candidate["easy_reschedule_count"] >= 1
+    assert candidate["conflicts"][0]["movability"] == "high"
+
+
+def test_coverage_ratios_uses_weights() -> None:
+    attendees = ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru", "d@turbo-don.ru"]
+    weights = {
+        "a@turbo-don.ru": 3.0,
+        "b@turbo-don.ru": 3.0,
+        "c@turbo-don.ru": 1.0,
+        "d@turbo-don.ru": 1.0,
+    }
+    weighted, flat = coverage_ratios(["a@turbo-don.ru", "b@turbo-don.ru"], attendees, weights)
+    assert flat == 0.5
+    assert weighted == 0.75
+
+
+def test_partition_attendees_at_slot() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    slot_start = datetime(2026, 6, 19, 10, 0, tzinfo=tz)
+    busy = {
+        "a@turbo-don.ru": [
+            (
+                datetime(2026, 6, 19, 10, 0, tzinfo=tz),
+                datetime(2026, 6, 19, 11, 0, tzinfo=tz),
+            )
+        ],
+        "b@turbo-don.ru": [],
+    }
+    free, busy_list = partition_attendees_at_slot(
+        slot_start,
+        timedelta(minutes=30),
+        attendees=["a@turbo-don.ru", "b@turbo-don.ru"],
+        busy_by_attendee=busy,
+        config=config,
+    )
+    assert free == ["b@turbo-don.ru"]
+    assert busy_list == ["a@turbo-don.ru"]
+
+
+def test_conflicting_calendar_items_at_slot_returns_subject() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    slot_start = datetime(2026, 7, 9, 8, 45, tzinfo=tz)
+    event = SimpleNamespace(
+        subject="Sync отдела",
+        start=datetime(2026, 7, 9, 8, 30, tzinfo=tz),
+        end=datetime(2026, 7, 9, 9, 30, tzinfo=tz),
+        legacy_free_busy_status="Busy",
+        is_cancelled=False,
+        organizer=SimpleNamespace(email_address="boss@turbo-don.ru"),
+    )
+    records = conflicting_calendar_items_at_slot(
+        [event],
+        slot_start,
+        timedelta(hours=2),
+        config,
+    )
+    assert len(records) == 1
+    assert records[0]["event_subject"] == "Sync отдела"
+    assert records[0]["organizer"] == "boss@turbo-don.ru"
+    assert records[0]["source"] == "calendar"
+
+
+def test_movability_reason_for_interval_without_subject() -> None:
+    assert movability_reason(busy_type="Busy", subject="", source="interval") == "unknown_interval"
+    assert movability_reason(busy_type="Tentative", subject="", source="freebusy") == "tentative"
+
+
+def test_dedupe_conflict_records() -> None:
+    records = [
+        {"event_start": "a", "event_end": "b", "event_subject": "X", "source": "calendar"},
+        {"event_start": "a", "event_end": "b", "event_subject": None, "source": "interval"},
+        {"event_start": "c", "event_end": "d", "event_subject": None, "source": "interval"},
+    ]
+    deduped = dedupe_conflict_records(records)
+    assert len(deduped) == 2
+    assert deduped[0]["event_subject"] == "X"
+    assert deduped[1]["event_subject"] is None
+
+
+def test_suggest_reschedule_window_avoids_reserved_slot() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    reserved = (
+        datetime(2026, 7, 14, 9, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 12, 0, tzinfo=tz),
+    )
+    event = (
+        datetime(2026, 7, 14, 9, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 9, 30, tzinfo=tz),
+    )
+    busy = [
+        (
+            datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+            datetime(2026, 7, 14, 11, 30, tzinfo=tz),
+        ),
+    ]
+    hint = suggest_reschedule_window(
+        event_start=event[0],
+        event_end=event[1],
+        busy_intervals=busy,
+        config=config,
+        step=timedelta(minutes=15),
+        search_end=datetime(2026, 7, 15, 18, 0, tzinfo=tz),
+        reserved_slot=reserved,
+    )
+    assert hint is not None
+    assert hint[0] >= datetime(2026, 7, 14, 12, 0, tzinfo=tz)
+
+
+def test_calendar_item_attendee_emails_collects_required_and_organizer() -> None:
+    def attendee(email: str) -> SimpleNamespace:
+        return SimpleNamespace(mailbox=SimpleNamespace(email_address=email))
+
+    item = SimpleNamespace(
+        required_attendees=[
+            attendee("a@turbo-don.ru"),
+            attendee("B@turbo-don.ru"),
+        ],
+        optional_attendees=[attendee("c@turbo-don.ru")],
+        organizer=SimpleNamespace(email_address="boss@turbo-don.ru"),
+    )
+    emails = calendar_item_attendee_emails(item)
+    assert emails == [
+        "a@turbo-don.ru",
+        "b@turbo-don.ru",
+        "c@turbo-don.ru",
+        "boss@turbo-don.ru",
+    ]
+
+
+def _calendar_item(
+    *,
+    subject: str,
+    start: datetime,
+    end: datetime,
+    attendees: list[str],
+    busy_type: str = "Busy",
+    organizer: str = "boss@turbo-don.ru",
+) -> SimpleNamespace:
+    def attendee(email: str) -> SimpleNamespace:
+        return SimpleNamespace(mailbox=SimpleNamespace(email_address=email))
+
+    return SimpleNamespace(
+        subject=subject,
+        start=start,
+        end=end,
+        is_cancelled=False,
+        legacy_free_busy_status=busy_type,
+        required_attendees=[attendee(email) for email in attendees],
+        optional_attendees=[],
+        organizer=SimpleNamespace(email_address=organizer),
+    )
+
+
+def test_find_company_calendar_reschedule_candidates_filters_by_attendee(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    target_start = datetime(2026, 7, 14, 10, 0, tzinfo=tz)
+    matching = _calendar_item(
+        subject="Совещание A",
+        start=datetime(2026, 7, 14, 10, 0, tzinfo=tz),
+        end=datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+        attendees=["a@turbo-don.ru", "calendar@turbo-don.ru"],
+    )
+    unrelated = _calendar_item(
+        subject="Совещание B",
+        start=datetime(2026, 7, 14, 10, 0, tzinfo=tz),
+        end=datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+        attendees=["x@turbo-don.ru"],
+    )
+
+    def fake_read(_config, _owner, *, range_start, range_end, max_items):
+        del range_start, range_end, max_items
+        return [matching, unrelated]
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.read_calendar_items_in_range",
+        fake_read,
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        lambda *_args, **_kwargs: {"a@turbo-don.ru": []},
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.suggest_reschedule_window",
+        lambda **_kwargs: (
+            datetime(2026, 7, 14, 13, 0, tzinfo=tz),
+            datetime(2026, 7, 14, 14, 0, tzinfo=tz),
+        ),
+    )
+
+    result = find_company_calendar_reschedule_candidates(
+        attendee_emails=["a@turbo-don.ru"],
+        planned_start=target_start,
+        duration=timedelta(minutes=60),
+        max_days=1,
+        config=config,
+    )
+
+    assert result["company_calendar"] == "calendar@turbo-don.ru"
+    assert len(result["candidates"]) == 1
+    candidate = result["candidates"][0]
+    assert candidate["event_subject"] == "Совещание A"
+    assert candidate["source"] == "company_calendar"
+    assert candidate["email"] == "a@turbo-don.ru"
+    assert "a@turbo-don.ru" in candidate["event_attendees"]
+
+
+def test_find_company_calendar_reschedule_candidates_ranks_tentative_first(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    target_start = datetime(2026, 7, 14, 10, 0, tzinfo=tz)
+    busy_item = _calendar_item(
+        subject="Busy meeting",
+        start=datetime(2026, 7, 14, 10, 0, tzinfo=tz),
+        end=datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+        attendees=["a@turbo-don.ru"],
+        busy_type="Busy",
+    )
+    tentative_item = _calendar_item(
+        subject="Tentative meeting",
+        start=datetime(2026, 7, 14, 10, 30, tzinfo=tz),
+        end=datetime(2026, 7, 14, 11, 30, tzinfo=tz),
+        attendees=["a@turbo-don.ru"],
+        busy_type="Tentative",
+    )
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.read_calendar_items_in_range",
+        lambda *_args, **_kwargs: [busy_item, tentative_item],
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        lambda *_args, **_kwargs: {"a@turbo-don.ru": []},
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.suggest_reschedule_window",
+        lambda **_kwargs: (
+            datetime(2026, 7, 14, 13, 0, tzinfo=tz),
+            datetime(2026, 7, 14, 14, 0, tzinfo=tz),
+        ),
+    )
+
+    result = find_company_calendar_reschedule_candidates(
+        attendee_emails=["a@turbo-don.ru"],
+        planned_start=target_start,
+        duration=timedelta(minutes=60),
+        max_days=1,
+        config=config,
+    )
+
+    subjects = [item["event_subject"] for item in result["candidates"]]
+    assert subjects[0] == "Tentative meeting"
+    assert result["candidates"][0]["movability"] == "high"
+
+
+def test_suggest_reschedule_window_checks_all_meeting_attendees(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    event = (
+        datetime(2026, 7, 14, 10, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+    )
+    owner = "a@turbo-don.ru"
+    other = "b@turbo-don.ru"
+    other_busy = (
+        datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 11, 30, tzinfo=tz),
+    )
+
+    def fake_fetch(_config, attendees, _start, _end):
+        assert set(attendees) == {owner, other}
+        return {
+            owner: [],
+            other: [other_busy],
+        }
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        fake_fetch,
+    )
+
+    hint = suggest_reschedule_window(
+        event_start=event[0],
+        event_end=event[1],
+        busy_intervals=[],
+        config=config,
+        step=timedelta(minutes=30),
+        search_end=datetime(2026, 7, 14, 18, 0, tzinfo=tz),
+        owner_email=owner,
+        meeting_attendees=[owner, other],
+    )
+
+    assert hint is not None
+    assert hint[0] >= datetime(2026, 7, 14, 13, 0, tzinfo=tz)
+
+
+def test_suggest_reschedule_window_normalizes_naive_search_end() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    event = (
+        datetime(2026, 7, 14, 10, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+    )
+    hint = suggest_reschedule_window(
+        event_start=event[0],
+        event_end=event[1],
+        busy_intervals=[],
+        config=config,
+        step=timedelta(minutes=15),
+        search_end=datetime(2026, 7, 15, 18, 0),
+    )
+    assert hint is not None
+
+
+def test_suggest_reschedule_window_ignores_resource_calendar_for_group_check(
+    monkeypatch,
+) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    owner = "a@turbo-don.ru"
+    event = (
+        datetime(2026, 7, 14, 9, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 9, 30, tzinfo=tz),
+    )
+    reserved = (
+        datetime(2026, 7, 14, 9, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 12, 0, tzinfo=tz),
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise AssertionError("group fetch should not run for resource-only attendees")
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        fail_fetch,
+    )
+
+    hint = suggest_reschedule_window(
+        event_start=event[0],
+        event_end=event[1],
+        busy_intervals=[],
+        config=config,
+        step=timedelta(minutes=15),
+        search_end=datetime(2026, 7, 15, 18, 0, tzinfo=tz),
+        reserved_slot=reserved,
+        owner_email=owner,
+        meeting_attendees=["calendar@turbo-don.ru"],
+    )
+    assert hint is not None
+    assert hint[0] >= datetime(2026, 7, 14, 12, 0, tzinfo=tz)
+
+
+def test_suggest_reschedule_window_falls_back_when_group_has_no_slot(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    owner = "a@turbo-don.ru"
+    other = "b@turbo-don.ru"
+    event = (
+        datetime(2026, 7, 14, 10, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+    )
+    owner_busy = (
+        datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 11, 30, tzinfo=tz),
+    )
+
+    def fake_fetch(_config, attendees, _start, _end):
+        return {
+            owner: [owner_busy],
+            other: [
+                (
+                    datetime(2026, 7, 14, 11, 0, tzinfo=tz),
+                    datetime(2026, 7, 14, 18, 0, tzinfo=tz),
+                ),
+            ],
+        }
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_busy_intervals_freebusy",
+        fake_fetch,
+    )
+
+    hint = suggest_reschedule_window(
+        event_start=event[0],
+        event_end=event[1],
+        busy_intervals=[owner_busy],
+        config=config,
+        step=timedelta(minutes=30),
+        search_end=datetime(2026, 7, 14, 18, 0, tzinfo=tz),
+        owner_email=owner,
+        meeting_attendees=[owner, other],
+    )
+
+    assert hint is not None
+    assert hint[0] >= datetime(2026, 7, 14, 13, 0, tzinfo=tz)
+
+
+def test_attach_reschedule_hints_avoids_overlapping_alternatives() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    slot_start = datetime(2026, 7, 14, 9, 0, tzinfo=tz)
+    slot_end = datetime(2026, 7, 14, 12, 0, tzinfo=tz)
+    records = [
+        {
+            "event_start": datetime(2026, 7, 14, 9, 0, tzinfo=tz).isoformat(),
+            "event_end": datetime(2026, 7, 14, 9, 30, tzinfo=tz).isoformat(),
+            "event_subject": "Meeting A",
+            "busy_type": "Busy",
+            "source": "calendar",
+            "event_attendees": ["calendar@turbo-don.ru"],
+        },
+        {
+            "event_start": datetime(2026, 7, 14, 10, 0, tzinfo=tz).isoformat(),
+            "event_end": datetime(2026, 7, 14, 11, 0, tzinfo=tz).isoformat(),
+            "event_subject": "Meeting B",
+            "busy_type": "Busy",
+            "source": "calendar",
+            "event_attendees": ["calendar@turbo-don.ru"],
+        },
+    ]
+
+    conflicts = attach_reschedule_hints(
+        records,
+        owner_email="a@turbo-don.ru",
+        busy_intervals=[],
+        config=config,
+        step=timedelta(minutes=15),
+        search_end=datetime(2026, 7, 15, 18, 0, tzinfo=tz),
+        reserved_slot=(slot_start, slot_end),
+    )
+
+    hints = [
+        (
+            datetime.fromisoformat(item["reschedule_hint_start"]),
+            datetime.fromisoformat(item["reschedule_hint_end"]),
+        )
+        for item in conflicts
+        if item.get("reschedule_hint_start") and item.get("reschedule_hint_end")
+    ]
+    assert len(hints) == 2
+    assert hints[0] == (
+        datetime(2026, 7, 14, 13, 0, tzinfo=tz),
+        datetime(2026, 7, 14, 13, 30, tzinfo=tz),
+    )
+    assert hints[1] == (
+        datetime(2026, 7, 14, 13, 30, tzinfo=tz),
+        datetime(2026, 7, 14, 14, 30, tzinfo=tz),
+    )
+    assert not intervals_overlap(hints[0][0], hints[0][1], hints[1][0], hints[1][1])
+
+
+def test_build_slot_participant_details_marks_free_and_busy(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    slot_start = datetime(2026, 7, 9, 8, 45, tzinfo=tz)
+    slot_end = datetime(2026, 7, 9, 10, 45, tzinfo=tz)
+    busy_block = (
+        datetime(2026, 7, 9, 8, 30, tzinfo=tz),
+        datetime(2026, 7, 9, 9, 30, tzinfo=tz),
+    )
+    calendar_event = SimpleNamespace(
+        subject="Согласование бюджета",
+        start=busy_block[0],
+        end=busy_block[1],
+        legacy_free_busy_status="Busy",
+        is_cancelled=False,
+        organizer=None,
+    )
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        lambda *_args, **_kwargs: {
+            "a@turbo-don.ru": [busy_block],
+            "b@turbo-don.ru": [],
+        },
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_freebusy_calendar_events",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.read_calendar_items_in_range",
+        lambda *_args, **_kwargs: [calendar_event],
+    )
+
+    result = build_slot_participant_details(
+        config=config,
+        attendees=[
+            {"fio": "A", "email": "a@turbo-don.ru", "role": "manager"},
+            {"fio": "B", "email": "b@turbo-don.ru", "role": "participant"},
+        ],
+        slot_start=slot_start,
+        slot_end=slot_end,
+    )
+
+    assert result["duration_minutes"] == 120
+    by_email = {item["email"]: item for item in result["participants"]}
+    assert by_email["b@turbo-don.ru"]["status"] == "free"
+    assert by_email["a@turbo-don.ru"]["status"] == "busy"
+    assert by_email["a@turbo-don.ru"]["blocking_events"][0]["event_subject"] == "Согласование бюджета"
+
+
+def test_preliminary_slot_impact_prefers_lighter_busy_set() -> None:
+    weights = {
+        "director@turbo-don.ru": 3.0,
+        "staff@turbo-don.ru": 1.0,
+    }
+    heavy = preliminary_slot_impact(
+        score_ratio=0.5,
+        busy_attendees=["director@turbo-don.ru"],
+        required=["director@turbo-don.ru"],
+        required_ok=False,
+        attendee_weights=weights,
+    )
+    light = preliminary_slot_impact(
+        score_ratio=0.875,
+        busy_attendees=["staff@turbo-don.ru"],
+        required=["director@turbo-don.ru"],
+        required_ok=True,
+        attendee_weights=weights,
+    )
+    assert light < heavy
+
+
+def test_slot_impact_score_accounts_for_movability_and_role() -> None:
+    weights = {
+        "director@turbo-don.ru": 3.0,
+        "staff@turbo-don.ru": 1.0,
+    }
+    director_conflict = slot_impact_score(
+        weighted_coverage_ratio=0.5,
+        required_ok=False,
+        busy_attendees=["director@turbo-don.ru"],
+        required=["director@turbo-don.ru"],
+        conflicts=[{"email": "director@turbo-don.ru", "movability": "low"}],
+        attendee_weights=weights,
+    )
+    staff_conflict = slot_impact_score(
+        weighted_coverage_ratio=0.875,
+        required_ok=True,
+        busy_attendees=["staff@turbo-don.ru"],
+        required=["director@turbo-don.ru"],
+        conflicts=[{"email": "staff@turbo-don.ru", "movability": "high"}],
+        attendee_weights=weights,
+    )
+    assert staff_conflict < director_conflict
