@@ -316,6 +316,58 @@ async def test_suggest_agent_slot_partial_when_all_free_missing(user) -> None:
 
 
 @pytest.mark.asyncio
+async def test_suggest_agent_slot_all_free_via_quorum_when_find_slots_empty(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    detail = {
+        "ref_key": "abc",
+        "queue": {},
+        "application": {
+            "initiator": {"full_name": "A", "email": "a@turbo-don.ru"},
+            "manager": {"full_name": "B", "email": "b@turbo-don.ru"},
+            "participants": [{"full_name": "C", "email": "c@turbo-don.ru"}],
+            "duration_minutes": 60,
+        },
+    }
+    backend = AsyncMock()
+    backend.resolve_participants = AsyncMock()
+    backend.find_slots = AsyncMock(return_value=[])
+    backend.find_quorum_slots = AsyncMock(
+        return_value=[
+            _quorum_slot(
+                start="2026-07-09 11:00",
+                end="2026-07-09 12:00",
+                free_count=3,
+                total_count=3,
+                coverage_ratio=1.0,
+                weighted_coverage_ratio=1.0,
+                conflicts=[],
+                free_attendees=["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"],
+                busy_attendees=[],
+            )
+        ]
+    )
+    service._backend = lambda: backend
+
+    with patch(
+        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
+        AsyncMock(return_value=(detail, None, True)),
+    ):
+        result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
+
+    assert result.search_mode == "all"
+    assert result.slot is not None
+    assert result.slot.start == "2026-07-09 11:00"
+    assert result.preview_note is None
+    assert result.error is None
+    assert not result.conflicts
+    backend.find_slots.assert_awaited_once()
+    backend.find_quorum_slots.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_suggest_agent_slot_no_slot_returns_company_calendar_conflicts(user) -> None:
     db = AsyncMock()
     service = MeetingService(db)

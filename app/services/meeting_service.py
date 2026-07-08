@@ -551,6 +551,31 @@ class MeetingService:
             _quorum_slot_read(item, attendees=attendees) for item in quorum_slots
         ]
         recommended = quorum_slots[0]
+        if _quorum_slot_is_fully_free(recommended):
+            slot = _slot_read(
+                MeetingSlot(
+                    start=recommended.start,
+                    end=recommended.end,
+                    confidence=recommended.confidence,
+                )
+            )
+            logger.info(
+                "meeting.slot_preview.found_all_free_via_quorum",
+                memo_ref_key=normalized_ref,
+                slot_start=slot.start,
+                slot_end=slot.end,
+            )
+            return MeetingAgentSlotPreviewRead(
+                memo_ref_key=normalized_ref,
+                slot=slot,
+                slot_label=format_slot_label(slot.start, slot.end),
+                duration_minutes=duration,
+                attendees=attendees,
+                missing_emails=missing_emails,
+                coverage=_coverage_read(recommended),
+                search_mode="all",
+            )
+
         logger.info(
             "meeting.slot_preview.partial",
             memo_ref_key=normalized_ref,
@@ -1570,6 +1595,21 @@ def _coverage_read(item: MeetingQuorumSlot) -> MeetingSlotCoverageRead:
         weighted_ratio=item.weighted_coverage_ratio,
         required_ok=item.required_ok,
     )
+
+
+def _quorum_slot_is_fully_free(item: MeetingQuorumSlot) -> bool:
+    """Quorum нашёл слот, где свободны все участники — это не partial."""
+    if not item.required_ok:
+        return False
+    if item.total_count <= 0:
+        return False
+    if item.free_count != item.total_count:
+        return False
+    if item.busy_attendees:
+        return False
+    if item.conflicts:
+        return False
+    return item.coverage_ratio >= 1.0 or item.free_count == item.total_count
 
 
 def _conflict_read(
