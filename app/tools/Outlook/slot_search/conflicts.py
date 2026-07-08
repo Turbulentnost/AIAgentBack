@@ -9,6 +9,7 @@ from app.tools.Outlook.read_calendars import read_calendar_items_in_range
 
 from .attendees import (
     _human_attendees_for_reschedule_hint,
+    calendar_item_attendee_display_names,
     calendar_item_attendee_emails,
     normalize_calendar_email,
 )
@@ -378,6 +379,7 @@ def conflicting_calendar_items_at_slot(
                 "busy_type": busy_type or None,
                 "organizer": organizer,
                 "event_attendees": calendar_item_attendee_emails(item),
+                "event_attendee_names": calendar_item_attendee_display_names(item),
                 "movability": movability_score(busy_type=busy_type, subject=subject),
                 "source": "calendar",
             }
@@ -416,6 +418,9 @@ def dedupe_conflict_records(records: list[dict[str, Any]]) -> list[dict[str, Any
             by_interval[key] = record
         elif record.get("event_attendees") and not by_interval[key].get("event_attendees"):
             by_interval[key]["event_attendees"] = record["event_attendees"]
+        record_names = record.get("event_attendee_names")
+        if record_names and not by_interval[key].get("event_attendee_names"):
+            by_interval[key]["event_attendee_names"] = record_names
 
     return [by_interval[key] for key in order]
 

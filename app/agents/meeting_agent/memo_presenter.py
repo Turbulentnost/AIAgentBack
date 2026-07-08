@@ -776,6 +776,7 @@ def build_queue_item_from_row(
         "subject": _extract_title(header),
         "initiator": initiator,
         "manager": manager,
+        "psd_level": is_psd_level_header(header),
     }
 
 

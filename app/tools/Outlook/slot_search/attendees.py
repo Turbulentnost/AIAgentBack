@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .constants import RESOURCE_CALENDAR_PREFIXES
+
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
+_DEPARTMENT_MAILBOX_RE = re.compile(r"[_\d]")
 
 
 def normalize_calendar_email(value: Any) -> str | None:
@@ -21,6 +25,29 @@ def normalize_calendar_email(value: Any) -> str | None:
         return address.strip().lower()
     return None
 
+def calendar_attendee_display_name(entry: Any) -> str | None:
+    mailbox = getattr(entry, "mailbox", None)
+    if mailbox is not None:
+        name = (getattr(mailbox, "name", "") or "").strip()
+        if name and "@" not in name and _CYRILLIC_RE.search(name):
+            return name
+    return None
+
+def calendar_item_attendee_display_names(item: Any) -> list[str]:
+    """Отображаемые имена участников встречи из EWS CalendarItem."""
+    names: list[str] = []
+    for attr in ("required_attendees", "optional_attendees"):
+        for entry in getattr(item, attr, None) or []:
+            name = calendar_attendee_display_name(entry)
+            if name:
+                names.append(name)
+    organizer = getattr(item, "organizer", None)
+    if organizer is not None:
+        organizer_name = calendar_attendee_display_name(organizer)
+        if organizer_name:
+            names.append(organizer_name)
+    return list(dict.fromkeys(names))
+
 def calendar_item_attendee_emails(item: Any) -> list[str]:
     """E-mail участников встречи из EWS CalendarItem."""
     emails: list[str] = []
@@ -37,6 +64,20 @@ def calendar_item_attendee_emails(item: Any) -> list[str]:
 def _is_resource_calendar_email(email: str) -> bool:
     normalized = email.strip().lower()
     return any(normalized.startswith(prefix) for prefix in RESOURCE_CALENDAR_PREFIXES)
+
+def is_department_mailbox_email(email: str) -> bool:
+    """Служебные/цеховые ящики без персонального ФИО."""
+    normalized = email.strip().lower()
+    if not normalized or "@" not in normalized:
+        return True
+    if _is_resource_calendar_email(normalized):
+        return True
+    local = normalized.split("@", 1)[0]
+    if local in {"zavgar", "gk_secretar"}:
+        return True
+    if "." in local and not _DEPARTMENT_MAILBOX_RE.search(local):
+        return False
+    return bool(_DEPARTMENT_MAILBOX_RE.search(local))
 
 def _human_attendees_for_reschedule_hint(attendee_emails: list[str]) -> list[str]:
     """Участники для групповой проверки альтернативы; без комнат/ресурсных календарей."""

@@ -32,6 +32,7 @@ class MeetingDashboardItem(BaseModel):
     subject: str | None = None
     initiator: MeetingPersonRead | None = None
     manager: MeetingPersonRead | None = None
+    psd_level: bool = False
 
 
 class MeetingPersonRead(BaseModel):
@@ -189,6 +190,14 @@ class MeetingSlotConflictRead(BaseModel):
     reschedule_hint_start: str | None = None
     reschedule_hint_end: str | None = None
     reschedule_hint_label: str | None = None
+    event_attendees: list[str] = Field(
+        default_factory=list,
+        description="E-mail участников конфликтующей встречи",
+    )
+    event_attendee_names: list[str] = Field(
+        default_factory=list,
+        description="ФИО участников встречи (или e-mail, если ФИО неизвестно)",
+    )
 
 
 class MeetingSlotBlockingEventRead(BaseModel):
@@ -214,6 +223,14 @@ class MeetingSlotBlockingEventRead(BaseModel):
     reschedule_hint_start: str | None = None
     reschedule_hint_end: str | None = None
     reschedule_hint_label: str | None = None
+    event_attendees: list[str] = Field(
+        default_factory=list,
+        description="E-mail участников конфликтующей встречи",
+    )
+    event_attendee_names: list[str] = Field(
+        default_factory=list,
+        description="ФИО участников встречи (или e-mail, если ФИО неизвестно)",
+    )
 
 
 class MeetingSlotParticipantStatusRead(BaseModel):

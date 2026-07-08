@@ -95,6 +95,8 @@ class MeetingSlotConflict:
     can_auto_reschedule: bool = False
     reschedule_hint_start: str | None = None
     reschedule_hint_end: str | None = None
+    event_attendees: list[str] = field(default_factory=list)
+    event_attendee_names: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -738,6 +740,8 @@ def _slot_conflict_from_payload(
         can_auto_reschedule=bool(conflict.get("can_auto_reschedule")),
         reschedule_hint_start=conflict.get("reschedule_hint_start"),
         reschedule_hint_end=conflict.get("reschedule_hint_end"),
+        event_attendees=list(conflict.get("event_attendees") or []),
+        event_attendee_names=list(conflict.get("event_attendee_names") or []),
     )
 
 

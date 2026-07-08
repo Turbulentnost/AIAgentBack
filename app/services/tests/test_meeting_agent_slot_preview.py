@@ -590,6 +590,15 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
                         "movability": "medium",
                         "movability_reason": "busy",
                         "source": "calendar",
+                        "event_attendees": [
+                            "c@turbo-don.ru",
+                            "d@turbo-don.ru",
+                            "calendar@turbo-don.ru",
+                        ],
+                        "event_attendee_names": [
+                            "Соломичева Светлана Викторовна",
+                            "Кондратюк Михаела Борисовна",
+                        ],
                         "reschedule_hint_start": None,
                         "reschedule_hint_end": None,
                     }
@@ -621,6 +630,17 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
     busy = next(item for item in result.participants if item.status == "busy")
     assert busy.blocking_events[0].event_subject == "Sync"
     assert busy.blocking_events[0].event_label == "Sync"
+    assert busy.blocking_events[0].event_attendee_names == [
+        "Соломичева С.В.",
+        "Кондратюк М.Б.",
+    ]
+
+
+def test_format_fio_short_uses_surname_and_initials() -> None:
+    from app.services.meeting_mappers import format_fio_short
+
+    assert format_fio_short("Соломичева Светлана Викторовна") == "Соломичева С.В."
+    assert format_fio_short("Петров Петр") == "Петров П."
 
 
 def test_event_label_without_subject_is_zanyat() -> None:

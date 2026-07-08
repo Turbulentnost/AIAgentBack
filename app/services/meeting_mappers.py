@@ -34,6 +34,10 @@ from app.services.meeting_attendee_priority import (
     priority_role_label,
 )
 from app.services.meeting_slot import format_event_time_display, format_slot_label
+from app.tools.Outlook.slot_search.attendees import (
+    _is_resource_calendar_email,
+    is_department_mailbox_email,
+)
 
 _VALID_MOVABILITY = frozenset({"high", "medium", "low"})
 _VALID_MOVABILITY_REASON = frozenset({
@@ -102,6 +106,92 @@ def attendee_names_for_emails(
         attendee = meta.get(email)
         names.append(attendee.fio if attendee else email)
     return names
+
+
+def format_fio_short(fio: str) -> str:
+    parts = [part for part in fio.split() if part]
+    if len(parts) >= 3:
+        return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
+    if len(parts) == 2:
+        return f"{parts[0]} {parts[1][0]}."
+    return fio.strip()
+
+
+def _looks_like_person_name(value: str) -> bool:
+    text = value.strip()
+    if not text or "@" in text:
+        return False
+    parts = text.split()
+    if len(parts) < 2:
+        return False
+    return any("\u0400" <= char <= "\u04FF" for char in parts[0])
+
+
+def _format_event_attendee_labels(raw_names: list[Any]) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_names:
+        if not isinstance(raw, str):
+            continue
+        text = raw.strip()
+        if not _looks_like_person_name(text):
+            continue
+        short = format_fio_short(text)
+        key = short.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        labels.append(short)
+    return labels
+
+
+def _normalize_event_attendee_emails(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    emails: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        email = item.strip()
+        if not email or _is_resource_calendar_email(email) or is_department_mailbox_email(email):
+            continue
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        emails.append(email)
+    return emails
+
+
+def event_attendee_display(
+    event_attendees: list[str] | None,
+    *,
+    attendees: list[MeetingAttendeeRead] | None,
+    event_attendee_names: list[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    labels = _format_event_attendee_labels(list(event_attendee_names or []))
+
+    if attendees:
+        meta = {item.email.lower(): item for item in attendees if item.email}
+        for email in _normalize_event_attendee_emails(event_attendees):
+            person = meta.get(email.lower())
+            if person and person.fio:
+                labels.extend(
+                    _format_event_attendee_labels([person.fio]),
+                )
+
+    deduped_labels: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_labels.append(label)
+
+    emails = _normalize_event_attendee_emails(event_attendees)
+    return emails, deduped_labels
 
 
 def coverage_read(item: MeetingQuorumSlot) -> MeetingSlotCoverageRead:
@@ -203,6 +293,11 @@ def conflict_read(
             "reschedule_hint_end": conflict.reschedule_hint_end,
         }
     )
+    event_attendees, event_attendee_names = event_attendee_display(
+        conflict.event_attendees,
+        attendees=attendees,
+        event_attendee_names=conflict.event_attendee_names,
+    )
     return MeetingSlotConflictRead(
         fio=conflict.fio or (meta.fio if meta else None),
         email=conflict.email,
@@ -225,13 +320,24 @@ def conflict_read(
         reschedule_hint_start=conflict.reschedule_hint_start,
         reschedule_hint_end=conflict.reschedule_hint_end,
         reschedule_hint_label=normalized["hint_label"],
+        event_attendees=event_attendees,
+        event_attendee_names=event_attendee_names,
     )
 
 
-def blocking_event_read(record: dict[str, Any]) -> MeetingSlotBlockingEventRead:
+def blocking_event_read(
+    record: dict[str, Any],
+    *,
+    attendees: list[MeetingAttendeeRead] | None = None,
+) -> MeetingSlotBlockingEventRead:
     normalized = _normalize_event_fields(record)
     raw_start = normalized["raw_start"]
     raw_end = normalized["raw_end"]
+    event_attendees, event_attendee_names = event_attendee_display(
+        record.get("event_attendees"),
+        attendees=attendees,
+        event_attendee_names=record.get("event_attendee_names"),
+    )
     return MeetingSlotBlockingEventRead(
         event_start=normalized["event_start_label"],
         event_end=normalized["event_end_label"],
@@ -250,6 +356,8 @@ def blocking_event_read(record: dict[str, Any]) -> MeetingSlotBlockingEventRead:
         reschedule_hint_start=normalized["hint_start"],
         reschedule_hint_end=normalized["hint_end"],
         reschedule_hint_label=normalized["hint_label"],
+        event_attendees=event_attendees,
+        event_attendee_names=event_attendee_names,
     )
 
 
@@ -271,7 +379,7 @@ def participant_status_read(
         role_label=priority_role_label(role),
         status=status,
         blocking_events=[
-            blocking_event_read(record)
+            blocking_event_read(record, attendees=attendees)
             for record in item.get("blocking_events") or []
         ],
         calendar_access_error=item.get("calendar_access_error"),
