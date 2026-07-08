@@ -623,21 +623,21 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
 
 
 def test_event_label_without_subject_is_zanyat() -> None:
-    from app.services.meeting_service import _conflict_read, _event_label_for_record
+    from app.services.meeting_mappers import conflict_read, event_label_for_record
     from app.agents.meeting_agent.backend import MeetingSlotConflict
 
-    assert _event_label_for_record(
+    assert event_label_for_record(
         event_subject=None,
         event_start="2026-07-07T13:30:00+03:00",
         event_end="2026-07-07T14:00:00+03:00",
     ) == "Занят"
-    assert _event_label_for_record(
+    assert event_label_for_record(
         event_subject="Еженедельное совещание",
         event_start="2026-07-07T13:30:00+03:00",
         event_end="2026-07-07T14:00:00+03:00",
     ) == "Еженедельное совещание"
 
-    conflict = _conflict_read(
+    conflict = conflict_read(
         MeetingSlotConflict(
             email="a@turbo-don.ru",
             event_start="2026-07-14T09:00:00+03:00",
@@ -652,7 +652,7 @@ def test_event_label_without_subject_is_zanyat() -> None:
 
 
 def test_quorum_slot_read_includes_attendee_names() -> None:
-    from app.services.meeting_service import _quorum_slot_read
+    from app.services.meeting_mappers import quorum_slot_read
 
     item = _quorum_slot(
         free_attendees=["a@turbo-don.ru"],
@@ -676,6 +676,6 @@ def test_quorum_slot_read_includes_attendee_names() -> None:
             role_label="Участник",
         ),
     ]
-    read = _quorum_slot_read(item, attendees=attendees)
+    read = quorum_slot_read(item, attendees=attendees)
     assert read.free_attendee_names == ["Комарькова"]
     assert read.busy_attendee_names == ["Целищев"]

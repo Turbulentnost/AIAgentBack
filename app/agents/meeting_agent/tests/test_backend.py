@@ -87,6 +87,24 @@ async def test_resolve_participants(user) -> None:
 
 
 @pytest.mark.asyncio
+async def test_validate_memo_returns_issues(user) -> None:
+    backend = MeetingBackend(db=AsyncMock())
+    memo = MeetingMemo(
+        ref_key="abc",
+        number=None,
+        date=None,
+        subject=None,
+        meeting_type=None,
+        participant_fio=[],
+        raw={"header": {}, "participants": []},
+    )
+
+    issues = await backend.validate_memo(memo, current_user=user)
+
+    assert isinstance(issues, list)
+
+
+@pytest.mark.asyncio
 async def test_prepare_invite(user, sample_document: dict) -> None:
     backend = MeetingBackend(db=AsyncMock())
     memo = _normalize_memo(sample_document)

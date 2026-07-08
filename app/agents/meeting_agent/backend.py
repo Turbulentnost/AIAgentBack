@@ -17,6 +17,10 @@ from app.services.meeting_invite_format import (
     place_from_memo_document,
 )
 from app.agents.meeting_agent.memo_presenter import resolve_meeting_schedule
+from app.agents.meeting_agent.memo_validation import (
+    MemoValidationIssue,
+    validate_meeting_memo_document,
+)
 from app.services.meeting_psd_level import (
     append_psd_level_participant_names,
     is_psd_level_header,
@@ -33,16 +37,18 @@ from app.tools.Outlook.find_meeting_slot import (
     find_company_calendar_reschedule_candidates as lookup_company_calendar_reschedule_candidates,
 )
 from app.tools.Outlook.send_meeting_invite import load_config, parse_start
+from app.services.meeting_constants import (
+    DEFAULT_DURATION_MINUTES,
+    MEMO_FETCH_LIMIT,
+    MEMO_FETCH_POOL,
+    QUORUM_MAX_CANDIDATES,
+    QUORUM_MIN_COVERAGE_RATIO,
+    QUORUM_VERIFY_TOP_N,
+    SLOT_PREVIEW_MAX_DAYS,
+    SLOT_PREVIEW_TIMEOUT_SECONDS,
+)
 
-DEFAULT_DURATION_MINUTES = 60
-SLOT_PREVIEW_MAX_DAYS = 30
-SLOT_PREVIEW_TIMEOUT_SECONDS = 180
-QUORUM_MIN_COVERAGE_RATIO = 0.7
-QUORUM_MAX_CANDIDATES = 3
-QUORUM_VERIFY_TOP_N = 3
 REQUIRED_ATTENDEE_ROLES = REQUIRED_PRIORITY_ROLES
-MEMO_FETCH_LIMIT = 50
-MEMO_FETCH_POOL = 200
 
 
 class MeetingBackendError(ValueError):
@@ -337,20 +343,10 @@ class MeetingBackend:
         for item in candidates:
             coverage = item.get("coverage") or {}
             conflicts = [
-                MeetingSlotConflict(
-                    email=conflict["email"],
-                    fio=email_to_fio.get(conflict["email"]),
-                    role=roles_by_email.get(conflict["email"]),
-                    event_start=conflict.get("event_start"),
-                    event_end=conflict.get("event_end"),
-                    event_subject=conflict.get("event_subject"),
-                    busy_type=conflict.get("busy_type"),
-                    movability=str(conflict.get("movability") or "medium"),
-                    movability_reason=conflict.get("movability_reason"),
-                    source=conflict.get("source"),
-                    can_auto_reschedule=bool(conflict.get("can_auto_reschedule")),
-                    reschedule_hint_start=conflict.get("reschedule_hint_start"),
-                    reschedule_hint_end=conflict.get("reschedule_hint_end"),
+                _slot_conflict_from_payload(
+                    conflict,
+                    email_to_fio=email_to_fio,
+                    roles_by_email=roles_by_email,
                 )
                 for conflict in item.get("conflicts") or []
             ]
@@ -426,20 +422,10 @@ class MeetingBackend:
 
         email_to_fio = _participant_email_to_fio(participants)
         return [
-            MeetingSlotConflict(
-                email=conflict["email"],
-                fio=email_to_fio.get(conflict["email"]),
-                role=roles_by_email.get(conflict["email"]),
-                event_start=conflict.get("event_start"),
-                event_end=conflict.get("event_end"),
-                event_subject=conflict.get("event_subject"),
-                busy_type=conflict.get("busy_type"),
-                movability=str(conflict.get("movability") or "medium"),
-                movability_reason=conflict.get("movability_reason"),
-                source=conflict.get("source"),
-                can_auto_reschedule=bool(conflict.get("can_auto_reschedule")),
-                reschedule_hint_start=conflict.get("reschedule_hint_start"),
-                reschedule_hint_end=conflict.get("reschedule_hint_end"),
+            _slot_conflict_from_payload(
+                conflict,
+                email_to_fio=email_to_fio,
+                roles_by_email=roles_by_email,
             )
             for conflict in payload.get("candidates") or []
             if conflict.get("email")
@@ -729,6 +715,30 @@ def _participant_email_to_fio(
         if email and fio:
             mapping[str(email)] = str(fio)
     return mapping
+
+
+def _slot_conflict_from_payload(
+    conflict: dict[str, Any],
+    *,
+    email_to_fio: dict[str, str],
+    roles_by_email: dict[str, str],
+) -> MeetingSlotConflict:
+    email = str(conflict["email"])
+    return MeetingSlotConflict(
+        email=email,
+        fio=email_to_fio.get(email),
+        role=roles_by_email.get(email),
+        event_start=conflict.get("event_start"),
+        event_end=conflict.get("event_end"),
+        event_subject=conflict.get("event_subject"),
+        busy_type=conflict.get("busy_type"),
+        movability=str(conflict.get("movability") or "medium"),
+        movability_reason=conflict.get("movability_reason"),
+        source=conflict.get("source"),
+        can_auto_reschedule=bool(conflict.get("can_auto_reschedule")),
+        reschedule_hint_start=conflict.get("reschedule_hint_start"),
+        reschedule_hint_end=conflict.get("reschedule_hint_end"),
+    )
 
 
 def _participant_found(participant: ResolvedParticipant | dict[str, Any]) -> bool:
