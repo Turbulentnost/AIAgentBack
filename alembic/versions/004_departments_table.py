@@ -11,6 +11,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
+from sqlalchemy import inspect
 
 revision: str = "004"
 down_revision: Union[str, None] = "003"
@@ -19,6 +20,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if inspect(bind).has_table("departments"):
+        return
     op.create_table(
         "departments",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
@@ -36,5 +40,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_departments_is_active", table_name="departments")
-    op.drop_table("departments")
+    # In the platform backend, departments is an existing core table. Do not
+    # drop it when this imported Pochta branch is downgraded.
+    pass
