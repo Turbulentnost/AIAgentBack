@@ -121,6 +121,7 @@ from app.services.meeting_duration import resolve_duration_minutes
 from app.services.meeting_invite_format import (
     format_invite_location_from_detail,
     resolve_invite_subject,
+    resolve_room_for_location,
 )
 from app.services.meeting_slot import (
     format_planned_start_for_search,
@@ -279,7 +280,9 @@ class MeetingService:
         subject = resolve_invite_subject(memo_detail, override=payload.subject)
         location = format_invite_location_from_detail(memo_detail, override=payload.location)
         duration = slot_duration_minutes(payload.slot_start, payload.slot_end)
-        body = build_approve_invite_body(attendee_details)
+        room = resolve_room_for_location(location)
+        body = build_approve_invite_body(attendee_details, room=room)
+        resources = [room["email"]] if room and room.get("email") else []
 
         try:
             sent_payload = await asyncio.to_thread(
@@ -291,7 +294,7 @@ class MeetingService:
                 duration_minutes=duration,
                 body=body,
                 location=location,
-                resources=[],
+                resources=resources,
             )
         except Exception as exc:
             raise MeetingServiceError(

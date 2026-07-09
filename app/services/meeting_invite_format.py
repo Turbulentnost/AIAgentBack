@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.tools.Outlook.meeting_rooms import resolve_room_by_name
+
 INVITE_AGENT_FOOTER = "Совещание запланировано ИИ-агентом по планированию совещаний"
 
 
@@ -118,17 +120,29 @@ def format_invite_location_from_detail(
     )
 
 
+def resolve_room_for_location(location: str | None) -> dict[str, str] | None:
+    """Возвращает переговорную из meeting_rooms.json по строке места в приглашении."""
+    place = place_from_invite_location(location) or (location or "").strip()
+    if not place:
+        return None
+    return resolve_room_by_name(place)
+
+
 def format_invite_body(
     attendees: list[tuple[str, str]],
     *,
+    room: dict[str, str] | None = None,
     footer: str = INVITE_AGENT_FOOTER,
 ) -> str:
     """Тело приглашения: «ФИО <email>» построчно и подпись агента."""
+    pairs = list(attendees)
+    if room and room.get("email"):
+        pairs.append((str(room.get("name") or room["email"]).strip(), str(room["email"]).strip()))
     lines: list[str] = []
-    for index, (fio, email) in enumerate(attendees):
+    for index, (fio, email) in enumerate(pairs):
         name = fio.strip()
         address = email.strip()
-        suffix = ";" if index < len(attendees) - 1 else ""
+        suffix = ";" if index < len(pairs) - 1 else ""
         lines.append(f"{name} <{address}>{suffix}")
     if footer.strip():
         lines.extend(["", footer.strip()])
@@ -138,6 +152,7 @@ def format_invite_body(
 def invite_body_from_attendees(
     attendees: list[Any],
     *,
+    room: dict[str, str] | None = None,
     footer: str = INVITE_AGENT_FOOTER,
 ) -> str:
     pairs: list[tuple[str, str]] = []
@@ -151,4 +166,4 @@ def invite_body_from_attendees(
         email_text = str(email or "").strip()
         if fio_text and email_text:
             pairs.append((fio_text, email_text))
-    return format_invite_body(pairs, footer=footer)
+    return format_invite_body(pairs, room=room, footer=footer)

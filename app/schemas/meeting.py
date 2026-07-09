@@ -19,6 +19,7 @@ class MeetingDashboardItem(BaseModel):
     meeting_type: str | None = None
     meeting_type_label: str | None = None
     document_date: str | None = None
+    document_date_label: str | None = None
     scheduled_label: str | None = None
     meeting_date: str | None = None
     desired_meeting_date: str | None = None
@@ -81,6 +82,7 @@ class MeetingApplicationRead(BaseModel):
     agenda: str | None = None
     scheduled_label: str | None = None
     document_date: str | None = None
+    document_date_label: str | None = None
     meeting_start: str | None = None
     meeting_end: str | None = None
     duration_minutes: int | None = None
@@ -98,6 +100,8 @@ class MeetingMemoDetailRead(BaseModel):
     title: str | None = None
     status: str | None = None
     status_label: str | None = None
+    document_date: str | None = None
+    document_date_label: str | None = None
     queue: MeetingDashboardItem
     application: MeetingApplicationRead
     validation_checks: list[MeetingValidationCheckRead] = Field(default_factory=list)
@@ -369,6 +373,18 @@ class MeetingAgentSlotDetailRequest(BaseModel):
         return normalize_request_duration_minutes(value)
 
 
+class MeetingSlotRoomStatusRead(BaseModel):
+    name: str
+    email: str | None = None
+    status: Literal["free", "busy", "unknown"]
+    status_label: str
+    available: bool | None = None
+    calendar_access_error: str | None = Field(
+        default=None,
+        description="Ошибка проверки календаря переговорной",
+    )
+
+
 class MeetingAgentSlotDetailRead(BaseModel):
     memo_ref_key: str
     slot_start: str
@@ -376,6 +392,7 @@ class MeetingAgentSlotDetailRead(BaseModel):
     slot_label: str
     duration_minutes: int
     participants: list[MeetingSlotParticipantStatusRead] = Field(default_factory=list)
+    room: MeetingSlotRoomStatusRead | None = None
     error: str | None = None
     error_stage: str | None = Field(
         default=None,

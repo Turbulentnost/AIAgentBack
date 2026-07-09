@@ -69,8 +69,10 @@ from app.services.meeting_mappers import (
     participant_status_read,
     quorum_slot_is_fully_free,
     quorum_slot_read,
+    room_status_read,
     slot_read,
 )
+from app.services.meeting_invite_format import place_from_detail, resolve_room_for_location
 from app.services.meeting_memo_cache import (
     MeetingMemoCacheService,
     MemoCacheMissError,
@@ -84,9 +86,82 @@ from app.services.meeting_slot import (
     slot_duration_minutes,
 )
 from app.tools.Outlook.find_meeting_slot import build_slot_participant_details
+from app.tools.Outlook.meeting_rooms import check_rooms_status
 from app.tools.Outlook.send_meeting_invite import load_config
 
 logger = get_logger(__name__)
+
+
+def _build_room_slot_status(
+    *,
+    detail: dict[str, Any],
+    config: Any,
+    slot_start: Any,
+    slot_end: Any,
+) -> dict[str, Any]:
+    """Проверяет занятость переговорной из СЗ на выбранный слот."""
+    location = place_from_detail(detail)
+    if not location:
+        return {
+            "name": "Не указана",
+            "email": None,
+            "status": "unknown",
+            "status_label": "не указана",
+            "available": None,
+        }
+
+    room = resolve_room_for_location(location)
+    if room is None:
+        return {
+            "name": location,
+            "email": None,
+            "status": "unknown",
+            "status_label": "не найдена в справочнике",
+            "available": None,
+        }
+
+    try:
+        rows = check_rooms_status(
+            config=config,
+            rooms=[room],
+            slot_start=slot_start,
+            slot_end=slot_end,
+        )
+    except Exception as exc:
+        logger.warning(
+            "meeting.slot_detail.room_check_failed",
+            room=room.get("name"),
+            error=str(exc),
+        )
+        return {
+            "name": room["name"],
+            "email": room.get("email"),
+            "status": "unknown",
+            "status_label": "не удалось проверить",
+            "available": None,
+            "calendar_access_error": str(exc),
+        }
+
+    row = rows[0]
+    is_free = row.get("status") == "free"
+    return {
+        "name": row.get("name") or room["name"],
+        "email": row.get("email") or room.get("email"),
+        "status": "free" if is_free else "busy",
+        "status_label": row.get("status_label") or ("свободна" if is_free else "занята"),
+        "available": is_free,
+    }
+
+
+def _room_participant_payload(room_status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "fio": room_status["name"],
+        "email": room_status.get("email"),
+        "role": "room",
+        "status": room_status.get("status") or "unknown",
+        "blocking_events": [],
+        "calendar_access_error": room_status.get("calendar_access_error"),
+    }
 
 
 class MeetingAgentSlotService:
@@ -727,6 +802,17 @@ class MeetingAgentSlotService:
             participant_status_read(item, attendees=attendees)
             for item in raw.get("participants") or []
         ]
+        outlook_config = load_config()
+        room_raw = _build_room_slot_status(
+            detail=detail,
+            config=outlook_config,
+            slot_start=slot_start_dt,
+            slot_end=slot_end_dt,
+        )
+        room = room_status_read(room_raw)
+        participants.append(
+            participant_status_read(_room_participant_payload(room_raw), attendees=[])
+        )
         return MeetingAgentSlotDetailRead(
             memo_ref_key=normalized_ref,
             slot_start=payload.slot_start,
@@ -734,6 +820,7 @@ class MeetingAgentSlotService:
             slot_label=format_slot_label(payload.slot_start, payload.slot_end),
             duration_minutes=duration,
             participants=participants,
+            room=room,
         )
 
     async def get_agent_slot_detail_safe(

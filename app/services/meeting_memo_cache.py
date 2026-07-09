@@ -11,6 +11,13 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 from app.services.meeting_attendees import attendee_fio_from_detail
+from app.services.meeting_memo_document import (
+    clean_text,
+    format_document_date_label,
+    parse_odata_datetime,
+    resolve_meeting_schedule,
+    schedule_duration_minutes,
+)
 from app.services.meeting_psd_level import (
     append_psd_level_participant_names,
     append_psd_level_participants,
@@ -18,6 +25,7 @@ from app.services.meeting_psd_level import (
 )
 from app.services.meeting_agent_errors import format_onec_load_error, format_participants_missing_error
 from app.tools.onec.connection import CONFIG, create_session
+from app.tools.onec.get_meetings import meeting_theme
 
 logger = get_logger(__name__)
 
@@ -151,6 +159,119 @@ def patch_dashboard_payload_status(payload: dict[str, Any], ref_key: str, status
     }
 
 
+def _pick_text(*values: Any) -> str | None:
+    for value in values:
+        text = clean_text(value)
+        if text:
+            return text
+    return None
+
+
+def _location_text(raw: Any) -> str | None:
+    if isinstance(raw, dict):
+        return clean_text(raw.get("Description"))
+    return clean_text(raw)
+
+
+def _format_document_date_label(value: str | None) -> str | None:
+    return format_document_date_label(value)
+
+
+def _enrich_cached_header(queue: dict[str, Any], app: dict[str, Any]) -> dict[str, Any]:
+    """Собирает шапку 1С из полей dashboard-кэша для валидации СТО."""
+    header = dict(queue)
+
+    date_value = _pick_text(header.get("document_date"), header.get("Date"), app.get("document_date"))
+    if date_value:
+        header["Date"] = date_value
+        header["document_date"] = date_value
+        header["document_date_label"] = _format_document_date_label(date_value)
+
+    location = _pick_text(
+        _location_text(header.get("МестоПроведенияСовещания")),
+        header.get("location"),
+        app.get("location"),
+    )
+    if location:
+        header["МестоПроведенияСовещания"] = location
+        header["location"] = location
+
+    theme = _pick_text(
+        header.get("ТемаСовещания"),
+        header.get("subject"),
+        header.get("title"),
+        app.get("agenda"),
+    )
+    if theme:
+        header["ТемаСовещания"] = theme
+
+    if app.get("meeting_start"):
+        header["ВремяНачалаСовещания"] = app["meeting_start"]
+    if app.get("meeting_end"):
+        header["ВремяОкончанияСовещания"] = app["meeting_end"]
+
+    desired = _pick_text(
+        header.get("desired_meeting_date"),
+        header.get("ЖелаемаяДатаПроведенияСовещания"),
+    )
+    if desired:
+        header["ЖелаемаяДатаПроведенияСовещания"] = desired
+        header["desired_meeting_date"] = desired
+
+    meeting_date = _pick_text(header.get("meeting_date"), header.get("ДатаПроведенияСовещания"))
+    if meeting_date:
+        header["ДатаПроведенияСовещания"] = meeting_date
+
+    if not header.get("ТемаСлужебнойЗаписки"):
+        header["ТемаСлужебнойЗаписки"] = meeting_theme()
+
+    priority = app.get("priority")
+    if priority and not _pick_text(header.get("Приоритет")):
+        header["Приоритет"] = priority
+
+    if not header.get("СписокУчастников") and header.get("participant_names"):
+        header["СписокУчастников"] = [
+            {"Участник": name}
+            for name in header["participant_names"]
+            if isinstance(name, str) and name.strip()
+        ]
+
+    return header
+
+
+def _sync_detail_display_fields(detail: dict[str, Any], header: dict[str, Any]) -> dict[str, Any]:
+    """Синхронизирует queue/application после пересчёта СТО."""
+    updated = dict(detail)
+    queue = dict(updated.get("queue") or {})
+    queue.update({key: value for key, value in header.items() if value is not None})
+
+    app = dict(updated.get("application") or {})
+    if header.get("document_date"):
+        app["document_date"] = header["document_date"]
+    if header.get("document_date_label"):
+        app["document_date_label"] = header["document_date_label"]
+    if header.get("location"):
+        app["location"] = header["location"]
+    if header.get("ТемаСовещания"):
+        app["agenda"] = header["ТемаСовещания"]
+    start, end = resolve_meeting_schedule(header)
+    if start is not None:
+        app["meeting_start"] = start.isoformat()
+    if end is not None:
+        app["meeting_end"] = end.isoformat()
+    duration = schedule_duration_minutes(start, end)
+    if duration is not None:
+        app["duration_minutes"] = duration
+
+    updated["queue"] = queue
+    updated["application"] = app
+    if header.get("document_date"):
+        updated["document_date"] = header["document_date"]
+    if header.get("document_date_label"):
+        updated["document_date_label"] = header["document_date_label"]
+    return updated
+
+
 def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
     """Сводный detail из карточки dashboard (без полной шапки 1С)."""
     queue = dict(item)
@@ -174,28 +295,39 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
         psd_level=psd_level,
     )
     participants_count = max(item.get("participants_count") or 0, len(participants))
+    document_date = _pick_text(item.get("document_date"), item.get("Date"))
+    document_date_label = _format_document_date_label(document_date)
+    location = _pick_text(
+        _location_text(item.get("МестоПроведенияСовещания")),
+        item.get("location"),
+    )
+    start, end = resolve_meeting_schedule(item)
+    duration = schedule_duration_minutes(start, end)
     return {
         "ref_key": item.get("ref_key"),
         "number": item.get("number"),
         "title": item.get("title") or item.get("subject"),
         "status": item.get("status"),
         "status_label": item.get("status_label"),
+        "document_date": document_date,
+        "document_date_label": document_date_label,
         "queue": queue,
         "application": {
             "initiator": item.get("initiator"),
             "manager": item.get("manager"),
             "participants": participants,
             "participants_count": participants_count,
-            "agenda": item.get("subject") or item.get("title"),
+            "agenda": item.get("subject") or item.get("title") or item.get("ТемаСовещания"),
             "scheduled_label": item.get("scheduled_label"),
-            "document_date": item.get("document_date"),
-            "meeting_start": item.get("meeting_start"),
-            "meeting_end": item.get("meeting_end"),
-            "duration_minutes": None,
-            "location": item.get("location"),
+            "document_date": document_date,
+            "document_date_label": document_date_label,
+            "meeting_start": item.get("meeting_start") or (start.isoformat() if start else None),
+            "meeting_end": item.get("meeting_end") or (end.isoformat() if end else None),
+            "duration_minutes": duration,
+            "location": location,
             "meeting_type": item.get("meeting_type"),
             "meeting_type_label": item.get("meeting_type_label"),
-            "priority": None,
+            "priority": item.get("priority") or _pick_text(item.get("Приоритет")),
             "psd_level": psd_level,
         },
         "validation_checks": [],
@@ -226,6 +358,45 @@ def detail_is_agent_ready(detail: dict[str, Any]) -> bool:
         if person.get("ref_key") or person.get("email"):
             return True
     return False
+
+
+def document_from_cached_detail(detail: dict[str, Any]) -> dict[str, Any]:
+    """Собирает документ 1С из кэшированного detail для пересчёта СТО."""
+    app = detail.get("application") or {}
+    header = _enrich_cached_header(dict(detail.get("queue") or {}), app)
+
+    participants = [{"ФИО": name} for name in attendee_fio_from_detail(detail)]
+    return {
+        "memo": header,
+        "header": header,
+        "application": app,
+        "participants": participants,
+    }
+
+
+def refresh_cached_detail_assessment(detail: dict[str, Any]) -> dict[str, Any]:
+    """Пересчитывает чек-лист СТО и связанные поля по актуальным правилам."""
+    from app.agents.meeting_agent.memo_presenter import _build_validation_checks, _build_warnings
+    from app.agents.meeting_agent.memo_validation import build_sto_payload
+
+    document = document_from_cached_detail(detail)
+    participants_count = int((detail.get("application") or {}).get("participants_count") or 0)
+    sto = build_sto_payload(document)
+    header = document.get("header") or {}
+    updated = _sync_detail_display_fields(detail, header)
+    updated["sto_checklist"] = sto["sto_checklist"]
+    updated["sto_issues"] = sto["sto_issues"]
+    updated["sto_ready"] = sto["sto_ready"]
+    updated["auto_approve_allowed"] = sto["auto_approve_allowed"]
+    updated["agent_recommendation"] = sto["ud_recommendation"]
+    updated["validation_checks"] = _build_validation_checks(
+        document,
+        participants_count=participants_count,
+    )
+    updated["warnings"] = _build_warnings(updated["validation_checks"])
+    if isinstance(updated.get("queue"), dict):
+        updated["queue"] = {**updated["queue"], "warnings": updated["warnings"]}
+    return updated
 
 
 def detail_to_memo_document(detail: dict[str, Any]) -> dict[str, Any]:
@@ -263,8 +434,7 @@ class MeetingMemoCacheService:
         target_date: date | None = None,
         force_refresh: bool = False,
     ) -> tuple[dict[str, Any], datetime, bool]:
-        """Детали СЗ: из Redis или первая загрузка из 1С с проверкой СТО."""
-        del target_date
+        """Детали СЗ: memo-кэш, fallback из dashboard или загрузка из 1С (force_refresh)."""
         normalized = ref_key.strip().lower()
         if force_refresh:
             payload, fetched_at = await self._fetch_and_store(normalized)
@@ -276,17 +446,22 @@ class MeetingMemoCacheService:
             )
 
         cached = await self._read_cache(normalized)
-        if cached is not None and detail_has_sto_evaluation(cached["payload"]):
-            return cached["payload"], cached["fetched_at"], True
+        if cached is not None:
+            payload = refresh_cached_detail_assessment(cached["payload"])
+            return payload, cached["fetched_at"], True
 
-        logger.info("meeting_memo_detail_first_open", ref_key=normalized)
-        try:
-            payload, fetched_at = await self._fetch_and_store(normalized)
-        except Exception as exc:
-            raise MemoCacheMissError(
-                f"Не удалось загрузить служебную записку из 1С: {exc}"
-            ) from exc
-        return payload, fetched_at, False
+        fallback = await self._read_detail_from_dashboard_cache(
+            normalized,
+            target_date=target_date,
+        )
+        if fallback is not None:
+            payload, fetched_at = fallback
+            payload = refresh_cached_detail_assessment(payload)
+            return payload, fetched_at, True
+
+        raise MemoCacheMissError(
+            "Детали СЗ отсутствуют в кэше. Обновите dashboard."
+        )
 
     async def get_memo_detail_for_agent(
         self,
@@ -301,12 +476,9 @@ class MeetingMemoCacheService:
             )
 
         cached = await self._read_cache(normalized)
-        if (
-            cached is not None
-            and detail_is_agent_ready(cached["payload"])
-            and detail_has_sto_evaluation(cached["payload"])
-        ):
-            return cached["payload"], cached["fetched_at"], True
+        if cached is not None and detail_is_agent_ready(cached["payload"]):
+            payload = refresh_cached_detail_assessment(cached["payload"])
+            return payload, cached["fetched_at"], True
 
         logger.info(
             "meeting_memo_agent_fetch",

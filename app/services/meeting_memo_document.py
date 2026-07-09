@@ -73,6 +73,16 @@ def parse_odata_date(value: str | None) -> date | None:
     return parsed.date() if parsed is not None else None
 
 
+def format_document_date_label(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = parse_odata_datetime(value)
+    if parsed is None:
+        text = clean_text(value)
+        return text
+    return parsed.strftime("%d.%m.%Y")
+
+
 def parse_odata_time_component(value: str | None) -> tuple[int, int] | None:
     if not value or not isinstance(value, str):
         return None
@@ -87,6 +97,44 @@ def parse_odata_time_component(value: str | None) -> tuple[int, int] | None:
             return None
         return dt.hour, dt.minute
     return dt.hour, dt.minute
+
+
+from app.tools.onec.lookup_user_ref import is_empty_key
+
+
+def resolve_meeting_manager_key(
+    header: dict[str, Any],
+    *,
+    application: dict[str, Any] | None = None,
+) -> str | None:
+    """Ключ руководителя совещания; если не задан — fallback на инициатора (Ответственный)."""
+    manager_key = header.get("РуководительСовещания_Key")
+    if isinstance(manager_key, str) and not is_empty_key(manager_key):
+        return manager_key
+    responsible_key = header.get("Ответственный_Key")
+    if isinstance(responsible_key, str) and not is_empty_key(responsible_key):
+        return responsible_key
+    for role in ("manager", "initiator"):
+        person = (application or {}).get(role)
+        if isinstance(person, dict):
+            ref_key = person.get("ref_key")
+            if isinstance(ref_key, str) and not is_empty_key(ref_key):
+                return ref_key
+    return None
+
+
+def is_meeting_manager_specified(
+    header: dict[str, Any],
+    *,
+    application: dict[str, Any] | None = None,
+) -> bool:
+    if resolve_meeting_manager_key(header, application=application) is not None:
+        return True
+    for role in ("manager", "initiator"):
+        person = (application or {}).get(role)
+        if isinstance(person, dict) and clean_text(person.get("full_name")):
+            return True
+    return False
 
 
 def resolve_meeting_schedule(header: dict[str, Any]) -> tuple[datetime | None, datetime | None]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import quote
@@ -26,6 +27,7 @@ from app.tools.onec.get_meetings import (
     DOCUMENT_ENTITY,
     build_meeting_theme_text_filter,
     entity_url,
+    fetch_document_header,
     fetch_meeting_memo_rows,
     load_metadata_xml,
     meeting_theme,
@@ -60,6 +62,71 @@ def build_today_meetings_filter(target_date: date) -> str:
 
 
 from app.services.meeting_memo_document import parse_odata_date as parse_odata_datetime
+from app.services.meeting_memo_document import clean_text, format_document_date_label
+
+
+def normalize_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Дополняет карточку очереди датой СЗ в формате для UI."""
+    normalized = dict(item)
+    raw_date = clean_text(normalized.get("Date")) or clean_text(normalized.get("document_date"))
+    if not raw_date:
+        return normalized
+    label = format_document_date_label(raw_date)
+    if label:
+        normalized["document_date"] = label
+        normalized["document_date_label"] = label
+    return normalized
+
+
+def normalize_dashboard_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **payload,
+        "unapproved": [normalize_dashboard_item(item) for item in payload.get("unapproved") or []],
+        "today": [normalize_dashboard_item(item) for item in payload.get("today") or []],
+        "items": [normalize_dashboard_item(item) for item in payload.get("items") or []],
+    }
+
+
+def _dashboard_item_has_document_date(item: dict[str, Any]) -> bool:
+    return bool(clean_text(item.get("Date")) or clean_text(item.get("document_date")))
+
+
+def enrich_dashboard_payload_missing_dates(payload: dict[str, Any]) -> dict[str, Any]:
+    """Для старого Redis-кэша: догружает Date из 1С по ref_key, если в карточке даты нет."""
+    session = create_session(CONFIG)
+    seen_refs: set[str] = set()
+
+    def patch_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        patched: list[dict[str, Any]] = []
+        for item in items:
+            row = dict(item)
+            ref_key = str(row.get("ref_key") or "").strip()
+            if (
+                ref_key
+                and ref_key not in seen_refs
+                and not _dashboard_item_has_document_date(row)
+            ):
+                seen_refs.add(ref_key)
+                try:
+                    header = fetch_document_header(session, CONFIG, ref_key)
+                    date_raw = clean_text(header.get("Date"))
+                    if date_raw:
+                        row["Date"] = date_raw
+                except RuntimeError as exc:
+                    logger.warning(
+                        "meeting_dashboard_date_enrich_failed",
+                        ref_key=ref_key,
+                        error=str(exc),
+                    )
+            patched.append(row)
+        return patched
+
+    return {
+        **payload,
+        "unapproved": patch_items(list(payload.get("unapproved") or [])),
+        "today": patch_items(list(payload.get("today") or [])),
+        "items": patch_items(list(payload.get("items") or [])),
+    }
 
 
 def is_memo_document_date_on_date(row: dict[str, Any], target_date: date) -> bool:
@@ -224,6 +291,7 @@ def _build_login_context(
     fetched_at: datetime,
     error: str | None = None,
 ) -> MeetingLoginContext:
+    payload = normalize_dashboard_payload(payload)
     items_raw = payload.get("items")
     if not items_raw:
         items_raw = merge_dashboard_items(
@@ -258,7 +326,9 @@ async def load_login_context(
         if force_refresh:
             payload, fetched_at, _from_cache, fetch_error = await cache.refresh_dashboard(target_date=day)
         else:
-            payload, fetched_at, _from_cache = await cache.get_dashboard(target_date=day)
+            payload, fetched_at, from_cache = await cache.get_dashboard(target_date=day)
+            if from_cache:
+                payload = await asyncio.to_thread(enrich_dashboard_payload_missing_dates, payload)
     except Exception as exc:
         logger.warning("meeting_login_context_failed", user_id=str(user.id), error=str(exc))
         return MeetingLoginContext(

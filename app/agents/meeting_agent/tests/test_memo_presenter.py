@@ -60,6 +60,47 @@ def test_build_queue_item_from_row_resolves_location_label() -> None:
 
     assert item["scheduled_label"] == "19.06.2026, 11:00–11:20"
     assert item["location"] == "Кабинет 201"
+    assert item["document_date"] == "18.06.2026"
+    assert item["document_date_label"] == "18.06.2026"
+
+
+def test_header_with_people_keys_fetches_full_header_when_date_missing() -> None:
+    row = {
+        "Ref_Key": "37da8ed8-6b19-11f1-9825-6cb31113810e",
+        "Ответственный_Key": "11111111-1111-1111-1111-111111111111",
+        "РуководительСовещания_Key": "22222222-2222-2222-2222-222222222222",
+    }
+    full_header = {
+        "Ref_Key": row["Ref_Key"],
+        "Date": "2026-07-08T09:49:00",
+        "Number": "000011087",
+    }
+
+    with patch(
+        "app.agents.meeting_agent.memo_presenter.fetch_document_header",
+        return_value=full_header,
+    ) as fetch_header:
+        from app.agents.meeting_agent.memo_presenter import _header_with_people_keys
+
+        merged = _header_with_people_keys(row, session=object(), config=object())
+
+    fetch_header.assert_called_once()
+    assert merged["Date"] == "2026-07-08T09:49:00"
+
+
+def test_normalize_dashboard_item_formats_document_date() -> None:
+    from app.agents.meeting_agent.dashboard import normalize_dashboard_item
+
+    item = normalize_dashboard_item(
+        {
+            "ref_key": "111",
+            "number": "000011087",
+            "Date": "2026-07-08T09:49:00",
+        }
+    )
+
+    assert item["document_date"] == "08.07.2026"
+    assert item["document_date_label"] == "08.07.2026"
 
 
 def test_build_queue_item_counts_inline_participants_without_names() -> None:

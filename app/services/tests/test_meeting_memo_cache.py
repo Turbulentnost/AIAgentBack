@@ -12,6 +12,7 @@ from app.services.meeting_memo_cache import (
     build_detail_from_dashboard_item,
     collect_memo_ref_keys,
     detail_is_agent_ready,
+    refresh_cached_detail_assessment,
 )
 
 
@@ -22,7 +23,10 @@ def sample_detail() -> dict:
         "number": "000008622",
         "title": "Прошу назначить совещание",
         "queue": {"ref_key": "11111111-1111-1111-1111-111111111111"},
-        "application": {"participants": []},
+        "application": {
+            "participants": [],
+            "manager": {"full_name": "Иванов И.И."},
+        },
     }
 
 
@@ -39,6 +43,54 @@ def agent_ready_detail(sample_detail) -> dict:
     return detail
 
 
+def test_refresh_cached_detail_assessment_accepts_manager_from_application() -> None:
+    detail = {
+        "ref_key": "11111111-1111-1111-1111-111111111111",
+        "queue": {"ТемаСлужебнойЗаписки": "Организация совещаний (регл.)"},
+        "application": {
+            "manager": {"full_name": "Самарская Е.В."},
+            "participants": [{"full_name": "Иванов И.И."}],
+        },
+    }
+    refreshed = refresh_cached_detail_assessment(detail)
+    manager_item = next(
+        item for item in refreshed["sto_checklist"] if item["field"] == "meeting_manager"
+    )
+    assert manager_item["passed"] is True
+
+
+def test_refresh_cached_detail_assessment_maps_location_and_theme() -> None:
+    detail = {
+        "ref_key": "11111111-1111-1111-1111-111111111111",
+        "queue": {
+            "ТемаСлужебнойЗаписки": "Организация совещаний (регл.)",
+            "location": "Зал совещаний КБ",
+            "subject": "Тестовая тема совещания",
+            "desired_meeting_date": "2026-07-10T00:00:00",
+            "document_date": "2026-07-08T09:49:00",
+        },
+        "application": {
+            "manager": {"full_name": "Самарская Е.В."},
+            "meeting_start": "2026-07-10T13:00:00",
+            "meeting_end": "2026-07-10T14:00:00",
+            "participants": [{"full_name": "Иванов И.И."}],
+            "participants_count": 1,
+        },
+    }
+    refreshed = refresh_cached_detail_assessment(detail)
+    location_item = next(item for item in refreshed["sto_checklist"] if item["field"] == "location")
+    theme_item = next(item for item in refreshed["sto_checklist"] if item["field"] == "meeting_theme")
+    desired_item = next(
+        item for item in refreshed["sto_checklist"] if item["field"] == "desired_meeting_date"
+    )
+    assert location_item["passed"] is True
+    assert theme_item["passed"] is True
+    assert desired_item["message"] == "10.07.2026"
+    assert refreshed["document_date_label"] == "08.07.2026"
+    assert refreshed["application"]["document_date_label"] == "08.07.2026"
+    assert refreshed["queue"]["document_date_label"] == "08.07.2026"
+
+
 @pytest.mark.asyncio
 async def test_get_memo_detail_returns_cache_hit(sample_detail) -> None:
     fetched_at = datetime(2026, 6, 18, 10, 0, tzinfo=timezone.utc)
@@ -53,7 +105,9 @@ async def test_get_memo_detail_returns_cache_hit(sample_detail) -> None:
     fetch.assert_not_called()
     read_cache.assert_awaited_once_with(ref_key)
     assert from_cache is True
-    assert payload == sample_detail
+    assert payload["ref_key"] == sample_detail["ref_key"]
+    assert isinstance(payload.get("sto_checklist"), list)
+    assert len(payload["sto_checklist"]) > 0
     assert result_fetched_at == fetched_at
 
 
@@ -63,9 +117,10 @@ async def test_get_memo_detail_raises_on_cache_miss(sample_detail) -> None:
     ref_key = "11111111-1111-1111-1111-111111111111"
 
     with patch.object(service, "_read_cache", AsyncMock(return_value=None)):
-        with patch.object(service, "_fetch_and_store", AsyncMock()) as fetch:
-            with pytest.raises(MemoCacheMissError):
-                await service.get_memo_detail(ref_key)
+        with patch.object(service, "_read_detail_from_dashboard_cache", AsyncMock(return_value=None)):
+            with patch.object(service, "_fetch_and_store", AsyncMock()) as fetch:
+                with pytest.raises(MemoCacheMissError):
+                    await service.get_memo_detail(ref_key)
 
     fetch.assert_not_called()
 
@@ -155,7 +210,9 @@ async def test_get_memo_detail_for_agent_returns_full_cache(agent_ready_detail) 
 
     dashboard.assert_not_called()
     assert from_cache is True
-    assert payload == agent_ready_detail
+    assert payload["ref_key"] == agent_ready_detail["ref_key"]
+    assert isinstance(payload.get("sto_checklist"), list)
+    assert len(payload["sto_checklist"]) > 0
     assert result_fetched_at == fetched_at
 
 
@@ -237,4 +294,5 @@ async def test_get_memo_detail_falls_back_to_dashboard_cache() -> None:
 
     assert from_cache is True
     assert payload["number"] == "0001"
+    assert isinstance(payload.get("sto_checklist"), list)
     assert result_fetched_at == fetched_at

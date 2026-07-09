@@ -11,6 +11,7 @@ from app.agents.meeting_agent.memo_validation import (
     STO_DIRECTION_LABEL,
     build_sto_payload,
     is_office_management_direction,
+    is_sto_direction_valid,
     validate_meeting_memo_document,
     validate_meeting_memo_sto,
 )
@@ -34,12 +35,15 @@ from app.services.meeting_psd_level import (
 
 from app.services.meeting_memo_document import (
     clean_text as _clean_text,
+    format_document_date_label,
     is_empty_odata_date,
     looks_like_guid as _looks_like_guid,
     parse_odata_datetime,
     parse_odata_time_component,
+    resolve_meeting_manager_key,
     resolve_meeting_schedule,
     schedule_duration_minutes as _duration_minutes,
+    is_meeting_manager_specified,
 )
 
 ROOM_CATALOG = "Catalog_CRM_Помещения"
@@ -376,13 +380,21 @@ def _header_has_people_keys(header: dict[str, Any]) -> bool:
     )
 
 
+def _header_has_document_date(header: dict[str, Any]) -> bool:
+    return bool(_clean_text(header.get("Date")))
+
+
 def _header_with_people_keys(
     row: dict[str, Any],
     *,
     session: requests.Session | None = None,
     config: ODataConfig | None = None,
 ) -> dict[str, Any]:
-    if not session or not config or _header_has_people_keys(row):
+    if not session or not config:
+        return row
+    needs_people = not _header_has_people_keys(row)
+    needs_date = not _header_has_document_date(row)
+    if not needs_people and not needs_date:
         return row
     ref_key = row.get("Ref_Key")
     if not ref_key:
@@ -552,7 +564,7 @@ def _build_validation_checks(
         passed=bool(theme),
     )
     direction = _clean_text(header.get("Направление"))
-    direction_ok = is_office_management_direction(direction)
+    direction_ok = is_sto_direction_valid(header)
     add(
         "direction",
         f"Направление: {STO_DIRECTION_LABEL}",
@@ -561,13 +573,15 @@ def _build_validation_checks(
         passed=direction_ok,
     )
 
-    manager_key = header.get("РуководительСовещания_Key")
+    application = document.get("application")
+    app_dict = application if isinstance(application, dict) else None
+    manager_specified = is_meeting_manager_specified(header, application=app_dict)
     add(
         "manager",
         "Руководитель совещания указан",
-        "error" if not manager_key or is_empty_key(manager_key) else "info",
-        "Руководитель указан" if manager_key and not is_empty_key(manager_key) else "Руководитель не указан",
-        passed=bool(manager_key and not is_empty_key(manager_key)),
+        "error" if not manager_specified else "info",
+        "Руководитель указан" if manager_specified else "Руководитель не указан",
+        passed=manager_specified,
     )
 
     add(
@@ -737,6 +751,8 @@ def build_queue_item_from_row(
     header = _header_with_people_keys(row, session=session, config=config)
     start, end = resolve_meeting_schedule(header)
     doc_dt = parse_odata_datetime(header.get("Date"))
+    raw_document_date = _clean_text(header.get("Date"))
+    document_date_label = format_document_date_label(raw_document_date)
     participants = header.get("СписокУчастников") if isinstance(header.get("СписокУчастников"), list) else []
     participant_names = _participant_names_from_header(header, session=session, config=config)
     participants_count = max(
@@ -762,7 +778,8 @@ def build_queue_item_from_row(
         "status_label": _status_label(header.get("Статус")),
         "meeting_type": header.get("ВидСовещания") or None,
         "meeting_type_label": _meeting_type_label(_clean_text(header.get("ВидСовещания"))),
-        "document_date": _clean_text(header.get("Date")),
+        "document_date": document_date_label or raw_document_date,
+        "document_date_label": document_date_label or raw_document_date,
         "scheduled_label": _slot_label(start, end, fallback=doc_dt),
         "meeting_date": _clean_text(header.get("ДатаПроведенияСовещания")),
         "desired_meeting_date": _clean_text(header.get("ЖелаемаяДатаПроведенияСовещания")),
@@ -777,6 +794,16 @@ def build_queue_item_from_row(
         "initiator": initiator,
         "manager": manager,
         "psd_level": is_psd_level_header(header),
+        "ТемаСлужебнойЗаписки": _clean_text(header.get("ТемаСлужебнойЗаписки")),
+        "Направление": header.get("Направление"),
+        "Ответственный_Key": header.get("Ответственный_Key"),
+        "РуководительСовещания_Key": header.get("РуководительСовещания_Key"),
+        "ТемаСовещания": _clean_text(header.get("ТемаСовещания")),
+        "ЦельПланаСовещания": _clean_text(header.get("ЦельПланаСовещания")),
+        "ПланСовещания": header.get("ПланСовещания"),
+        "Приоритет_Key": header.get("Приоритет_Key"),
+        "Приоритет": header.get("Приоритет"),
+        "СписокУчастников": header.get("СписокУчастников"),
     }
 
 
@@ -838,6 +865,7 @@ def build_memo_detail(
         "agenda": _extract_agenda(header),
         "scheduled_label": _slot_label(start, end, fallback=doc_dt),
         "document_date": _clean_text(header.get("Date")),
+        "document_date_label": format_document_date_label(_clean_text(header.get("Date"))),
         "meeting_start": start.isoformat() if start else None,
         "meeting_end": end.isoformat() if end else None,
         "duration_minutes": duration,
@@ -862,6 +890,8 @@ def build_memo_detail(
         "title": _extract_title(header),
         "status": header.get("Статус"),
         "status_label": _status_label(header.get("Статус")),
+        "document_date": _clean_text(header.get("Date")),
+        "document_date_label": format_document_date_label(_clean_text(header.get("Date"))),
         "queue": queue,
         "application": application,
         "validation_checks": checks,

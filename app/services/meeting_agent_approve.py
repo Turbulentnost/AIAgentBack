@@ -63,5 +63,9 @@ def resolve_approve_recipients(
     return attendee_details, resolved
 
 
-def build_approve_invite_body(attendees: list[MeetingAttendeeRead]) -> str:
-    return invite_body_from_attendees(attendees)
+def build_approve_invite_body(
+    attendees: list[MeetingAttendeeRead],
+    *,
+    room: dict[str, str] | None = None,
+) -> str:
+    return invite_body_from_attendees(attendees, room=room)

@@ -15,7 +15,9 @@ from app.services.meeting_invite_format import (
     manager_name_from_memo_document,
     place_from_invite_location,
     place_from_memo_document,
+    resolve_room_for_location,
 )
+from app.tools.Outlook.meeting_rooms import resolve_room_by_name
 from app.agents.meeting_agent.memo_validation import (
     MemoValidationIssue,
     validate_meeting_memo_document,
@@ -490,7 +492,8 @@ class MeetingBackend:
         manager_name = manager_name_from_memo_document(memo_obj.raw)
         place = room.get("name") or place_from_memo_document(memo_obj.raw) or ""
         location = format_invite_location(manager_name, place)
-        body = invite_body_from_attendees(participants)
+        resolved_room = _resolve_room_for_invite(room=room, location=location)
+        body = invite_body_from_attendees(participants, room=resolved_room)
 
         return InviteDraft(
             subject=invite_subject,
@@ -513,16 +516,17 @@ class MeetingBackend:
 
         attendee, *extra = draft.attendees
         duration = _slot_duration_minutes({"start": draft.start, "end": draft.end}) or DEFAULT_DURATION_MINUTES
-        resources = []
-        room_name = place_from_invite_location(draft.location) or draft.location
-        if room_name:
-            room = await self.find_rooms(
-                selected_slot={"start": draft.start, "end": draft.end},
-                room_name=room_name,
-                current_user=current_user,
-            )
-            if room and room[0].email:
-                resources = [room[0].email]
+        resources = _room_resources_for_invite(location=draft.location)
+        if not resources:
+            room_name = place_from_invite_location(draft.location) or draft.location
+            if room_name:
+                room = await self.find_rooms(
+                    selected_slot={"start": draft.start, "end": draft.end},
+                    room_name=room_name,
+                    current_user=current_user,
+                )
+                if room and room[0].email:
+                    resources = [room[0].email]
 
         return await self._invoke(
             "send_meeting_invite",
@@ -830,6 +834,27 @@ def _room_dict(room: dict[str, Any] | MeetingRoomOption | None) -> dict[str, Any
     if isinstance(room, MeetingRoomOption):
         return {"name": room.name, "email": room.email, "available": room.available}
     return dict(room)
+
+
+def _resolve_room_for_invite(
+    *,
+    room: dict[str, Any],
+    location: str,
+) -> dict[str, str] | None:
+    email = str(room.get("email") or "").strip()
+    name = str(room.get("name") or "").strip()
+    if email:
+        return {"name": name or email, "email": email}
+    if name:
+        return resolve_room_by_name(name)
+    return resolve_room_for_location(location)
+
+
+def _room_resources_for_invite(*, location: str | None) -> list[str]:
+    room = resolve_room_for_location(location)
+    if room and room.get("email"):
+        return [str(room["email"])]
+    return []
 
 
 def _slot_duration_minutes(slot: dict[str, Any]) -> int | None:

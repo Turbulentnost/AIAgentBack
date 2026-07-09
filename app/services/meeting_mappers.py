@@ -26,6 +26,7 @@ from app.schemas.meeting import (
     MeetingSlotCoverageRead,
     MeetingSlotParticipantStatusRead,
     MeetingSlotRead,
+    MeetingSlotRoomStatusRead,
 )
 from app.services.meeting_attendee_priority import (
     PRIORITY_DIRECTOR,
@@ -382,6 +383,20 @@ def participant_status_read(
             blocking_event_read(record, attendees=attendees)
             for record in item.get("blocking_events") or []
         ],
+        calendar_access_error=item.get("calendar_access_error"),
+    )
+
+
+def room_status_read(item: dict[str, Any]) -> MeetingSlotRoomStatusRead:
+    status = item.get("status") or "unknown"
+    if status not in {"free", "busy", "unknown"}:
+        status = "unknown"
+    return MeetingSlotRoomStatusRead(
+        name=str(item.get("name") or "—"),
+        email=item.get("email"),
+        status=status,
+        status_label=str(item.get("status_label") or status),
+        available=item.get("available"),
         calendar_access_error=item.get("calendar_access_error"),
     )
 

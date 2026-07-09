@@ -462,6 +462,39 @@ async def test_approve_agent_slot_sends_outlook_invite_only(user) -> None:
 
 
 @pytest.mark.asyncio
+async def test_approve_agent_slot_adds_room_as_participant_and_resource(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+    service.audit.log = AsyncMock()
+
+    with patch(
+        "app.services.meeting_service.MeetingRegistryService.upsert_from_invite",
+        AsyncMock(),
+    ):
+        with patch(
+            "app.services.meeting_service.dispatch_meeting_invite",
+            return_value={"status": "sent", "attendees": ["a@turbo-don.ru"]},
+        ) as send_invite:
+            result = await service.approve_agent_slot(
+                "abc",
+                MeetingAgentSlotApproveRequest(
+                    slot_start="2026-06-20 11:00",
+                    slot_end="2026-06-20 11:20",
+                    subject="Тестовое совещание",
+                    location="Зал совещаний КБ",
+                    attendees=[_preview_attendees()[0]],
+                ),
+                current_user=user,
+            )
+
+    assert result.sent is True
+    kwargs = send_invite.call_args.kwargs
+    assert kwargs["resources"] == ["konfzalkb@turbo-don.ru"]
+    assert "Зал совещаний КБ <konfzalkb@turbo-don.ru>" in kwargs["body"]
+
+
+@pytest.mark.asyncio
 async def test_approve_agent_slot_works_without_memo_cache(user) -> None:
     db = AsyncMock()
     service = MeetingService(db)
@@ -557,6 +590,7 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
             "manager": {"full_name": "B", "email": "b@turbo-don.ru"},
             "participants": [{"full_name": "C", "email": "c@turbo-don.ru"}],
             "duration_minutes": 120,
+            "location": "Зал совещаний КБ",
         },
     }
     backend = AsyncMock()
@@ -616,17 +650,36 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
             "app.services.meeting_agent_slot.build_slot_participant_details",
             return_value=raw_details,
         ):
-            result = await service.get_agent_slot_detail(
-                "abc",
-                MeetingAgentSlotDetailRequest(
-                    slot_start="2026-07-09 08:45",
-                    slot_end="2026-07-09 10:45",
-                ),
-                current_user=user,
-            )
+            with patch(
+                "app.services.meeting_agent_slot.check_rooms_status",
+                return_value=[
+                    {
+                        "name": "Зал совещаний КБ",
+                        "email": "konfzalkb@turbo-don.ru",
+                        "status": "free",
+                        "status_label": "свободна",
+                        "busy_events": 0,
+                    }
+                ],
+            ):
+                result = await service.get_agent_slot_detail(
+                    "abc",
+                    MeetingAgentSlotDetailRequest(
+                        slot_start="2026-07-09 08:45",
+                        slot_end="2026-07-09 10:45",
+                    ),
+                    current_user=user,
+                )
 
     assert result.error is None
-    assert len(result.participants) == 2
+    assert len(result.participants) == 3
+    room_participant = next(item for item in result.participants if item.role == "room")
+    assert room_participant.role_label == "Переговорная"
+    assert room_participant.status == "free"
+    assert result.room is not None
+    assert result.room.name == "Зал совещаний КБ"
+    assert result.room.available is True
+    assert result.room.status_label == "свободна"
     busy = next(item for item in result.participants if item.status == "busy")
     assert busy.blocking_events[0].event_subject == "Sync"
     assert busy.blocking_events[0].event_label == "Sync"

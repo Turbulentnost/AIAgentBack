@@ -10,9 +10,12 @@ from app.services.meeting_memo_document import (
     looks_like_guid as _looks_like_guid,
     parse_odata_datetime,
     parse_odata_time_component,
+    resolve_meeting_manager_key,
     resolve_meeting_schedule,
     schedule_duration_minutes as duration_minutes,
+    is_meeting_manager_specified,
 )
+from app.tools.onec.get_meetings import meeting_theme, theme_matches
 from app.tools.onec.lookup_user_ref import is_empty_key
 
 STO_DIRECTION_LABEL = "Управление делами"
@@ -50,6 +53,14 @@ def is_office_management_direction(value: str | None) -> bool:
         return False
     compact = normalized.replace(" ", "")
     return compact == "управлениеделами"
+
+
+def is_sto_direction_valid(header: dict[str, Any]) -> bool:
+    """СТО: «Управление делами» или СЗ с темой «Организация совещаний» (в 1С часто enum ПрочиеВнутренние)."""
+    direction = _clean_text(header.get("Направление"))
+    if is_office_management_direction(direction):
+        return True
+    return theme_matches(header, None)
 
 
 def _document_header(document: dict[str, Any] | None) -> dict[str, Any]:
@@ -174,7 +185,7 @@ def validate_meeting_memo_sto(document: dict[str, Any] | None) -> list[MemoValid
     issues: list[MemoValidationIssue] = []
 
     direction = _clean_text(header.get("Направление"))
-    if not is_office_management_direction(direction):
+    if not is_sto_direction_valid(header):
         issues.append(
             MemoValidationIssue(
                 field="direction",
@@ -205,8 +216,7 @@ def validate_meeting_memo_sto(document: dict[str, Any] | None) -> list[MemoValid
             )
         )
 
-    manager_key = header.get("РуководительСовещания_Key")
-    if not isinstance(manager_key, str) or is_empty_key(manager_key):
+    if not is_meeting_manager_specified(header, application=document.get("application")):
         issues.append(
             MemoValidationIssue(
                 field="meeting_manager",
@@ -312,6 +322,61 @@ def sto_ud_recommendation(issues: list[MemoValidationIssue]) -> str:
     return f"Сотруднику УД: перед согласованием проверьте заявку — {joined}."
 
 
+def _location_description(header: dict[str, Any]) -> str | None:
+    raw = header.get("МестоПроведенияСовещания")
+    if isinstance(raw, dict):
+        return _clean_text(raw.get("Description"))
+    return _clean_text(raw)
+
+
+def _format_checklist_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = parse_odata_datetime(value)
+    if parsed is None:
+        return _clean_text(value)
+    return parsed.strftime("%d.%m.%Y")
+
+
+def _sto_checklist_pass_message(field: str, document: dict[str, Any], label: str) -> str:
+    header = _document_header(document)
+    if field == "direction":
+        direction = _clean_text(header.get("Направление")) or STO_DIRECTION_LABEL
+        return f"{label}: {direction}"
+    if field == "meeting_theme":
+        return _clean_text(header.get("ТемаСовещания")) or label
+    if field == "desired_meeting_date":
+        raw = _clean_text(header.get("ЖелаемаяДатаПроведенияСовещания")) or _clean_text(
+            header.get("ДатаПроведенияСовещания")
+        )
+        return _format_checklist_date(raw) or label
+    if field == "meeting_time":
+        start, _ = resolve_meeting_schedule(header)
+        return start.strftime("%d.%m.%Y, %H:%M") if start else label
+    if field == "duration":
+        start, end = resolve_meeting_schedule(header)
+        minutes = duration_minutes(start, end)
+        return f"{minutes} мин." if minutes else label
+    if field == "location":
+        return _location_description(header) or label
+    if field == "meeting_goal":
+        return _clean_text(header.get("ЦельПланаСовещания")) or label
+    if field == "priority":
+        raw = header.get("Приоритет")
+        if isinstance(raw, dict):
+            return _clean_text(raw.get("Description")) or label
+        return _clean_text(raw) or label
+    if field == "participants":
+        count = _count_participants(document)
+        return f"Участников: {count}" if count else label
+    if field == "meeting_manager":
+        return "Руководитель указан"
+    if field == "meeting_tasks":
+        tasks = _meeting_tasks(_meeting_plan_rows(header, document))
+        return f"Задач в плане: {len(tasks)}" if tasks else label
+    return label
+
+
 def build_sto_checklist(document: dict[str, Any] | None) -> list[dict[str, Any]]:
     issues = validate_meeting_memo_sto(document)
     issue_by_field = {issue.field: issue for issue in issues}
@@ -324,7 +389,7 @@ def build_sto_checklist(document: dict[str, Any] | None) -> list[dict[str, Any]]
                 "field": field,
                 "label": label,
                 "passed": passed,
-                "message": issue.message if issue else label,
+                "message": issue.message if issue else _sto_checklist_pass_message(field, document or {}, label),
             }
         )
     return checklist
