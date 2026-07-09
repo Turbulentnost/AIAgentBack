@@ -45,12 +45,13 @@ from app.services.meeting_mappers import (
     quorum_slot_is_fully_free,
     quorum_slot_read,
     registry_item_read,
+    registry_cancel_read,
     room_read,
     slot_read,
 )
 from app.agents.meeting_agent.config import AGENT_NAME
 from app.models.agent import Agent
-from app.models.enums import TaskStatus
+from app.models.enums import MeetingRegistryStage, TaskStatus
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.meeting import (
@@ -71,6 +72,8 @@ from app.schemas.meeting import (
     MeetingMemoRejectRequest,
     MeetingRegistryRead,
     MeetingRegistryItemRead,
+    MeetingRegistryCancelRead,
+    MeetingRegistryCancelRequest,
     MeetingRoomRead,
     MeetingRoomsRequest,
     MeetingRunCreate,
@@ -134,6 +137,7 @@ from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
 from app.tools.Outlook.find_meeting_slot import build_slot_participant_details
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite, load_config
+from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
 from app.tools.onec.approve_service_memo import approve_service_memo
 from app.tools.onec.reject_service_memo import reject_service_memo
 from app.services.meeting_memo_cache import (
@@ -656,6 +660,153 @@ class MeetingService:
             stage_counts=build_stage_counts(all_entries),
             fetched_at=datetime.now(UTC).isoformat(),
             error=None,
+        )
+
+    @staticmethod
+    def _outlook_cancel_not_found(exc: BaseException) -> bool:
+        message = str(exc).lower()
+        return "не найдено" in message or "not found" in message
+
+    @staticmethod
+    def _format_registry_slot_start(slot_start: Any) -> str:
+        if slot_start is None:
+            return ""
+        if hasattr(slot_start, "strftime"):
+            return slot_start.strftime("%Y-%m-%d %H:%M")
+        return str(slot_start)
+
+    async def _cancel_outlook_for_registry_entry(
+        self,
+        entry: Any,
+        message: str,
+    ) -> tuple[dict[str, Any] | None, bool, str | None]:
+        attempts: list[dict[str, Any]] = []
+        if entry.outlook_item_id:
+            attempts.append(
+                {
+                    "item_id": entry.outlook_item_id,
+                    "changekey": entry.outlook_changekey or "",
+                    "message": message,
+                }
+            )
+        if entry.subject and entry.slot_start:
+            start_label = self._format_registry_slot_start(entry.slot_start)
+            attempts.extend(
+                [
+                    {
+                        "subject": entry.subject,
+                        "start": start_label or entry.slot_start.isoformat(),
+                        "message": message,
+                        "tolerance_minutes": 5,
+                        "match_mode": "exact",
+                    },
+                    {
+                        "subject": entry.subject,
+                        "start": start_label or entry.slot_start.isoformat(),
+                        "message": message,
+                        "tolerance_minutes": 180,
+                        "match_mode": "exact",
+                    },
+                    {
+                        "subject": entry.subject,
+                        "start": start_label or entry.slot_start.isoformat(),
+                        "message": message,
+                        "match_mode": "day",
+                    },
+                ]
+            )
+
+        last_error: Exception | None = None
+        for kwargs in attempts:
+            try:
+                cancel_payload = await asyncio.to_thread(dispatch_cancel_meeting, **kwargs)
+                outlook_cancelled = cancel_payload.get("status") == "cancelled"
+                return cancel_payload, outlook_cancelled, None
+            except RuntimeError as exc:
+                if "уже отменено" in str(exc).lower():
+                    return None, True, None
+                last_error = exc
+                if not self._outlook_cancel_not_found(exc):
+                    raise MeetingServiceError(
+                        f"Не удалось отменить совещание в Outlook/Exchange: {exc}"
+                    ) from exc
+            except Exception as exc:
+                last_error = exc
+                if not self._outlook_cancel_not_found(exc):
+                    raise MeetingServiceError(
+                        f"Не удалось отменить совещание в Outlook/Exchange: {exc}"
+                    ) from exc
+
+        if last_error is not None and self._outlook_cancel_not_found(last_error):
+            warning = (
+                "Совещание не найдено в Outlook/Exchange. "
+                "Статус в реестре будет обновлён на «Отменено»."
+            )
+            return {"status": "not_found", "error": str(last_error)}, False, warning
+
+        if last_error is not None:
+            raise MeetingServiceError(
+                f"Не удалось отменить совещание в Outlook/Exchange: {last_error}"
+            ) from last_error
+        return None, False, None
+
+    async def cancel_registry_meeting(
+        self,
+        memo_ref_key: str,
+        payload: MeetingRegistryCancelRequest,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryCancelRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+
+        if entry.stage == MeetingRegistryStage.CANCELLED:
+            return registry_cancel_read(
+                entry,
+                outlook_cancelled=bool((entry.payload or {}).get("outlook_cancelled")),
+                outlook_warning=None,
+                message=payload.message or None,
+            )
+
+        cancel_payload: dict[str, Any] | None = None
+        outlook_cancelled = False
+        outlook_warning: str | None = None
+        cancel_message = (payload.message or "").strip()
+
+        if entry.outlook_item_id or (entry.subject and entry.slot_start):
+            cancel_payload, outlook_cancelled, outlook_warning = (
+                await self._cancel_outlook_for_registry_entry(entry, cancel_message)
+            )
+
+        entry = await registry.mark_cancelled(
+            memo_ref_key=normalized_ref,
+            cancelled_by=current_user,
+            message=cancel_message or None,
+            cancel_payload=cancel_payload,
+            outlook_cancelled=outlook_cancelled,
+        )
+
+        await self.audit.log(
+            action="meeting.registry_cancelled",
+            actor_id=current_user.id,
+            resource_type="meeting_registry",
+            resource_id=normalized_ref,
+            payload={
+                "subject": entry.subject,
+                "outlook_cancelled": outlook_cancelled,
+                "message": cancel_message or None,
+            },
+        )
+
+        return registry_cancel_read(
+            entry,
+            outlook_cancelled=outlook_cancelled,
+            outlook_warning=outlook_warning,
+            message=cancel_message or None,
         )
 
     async def run(

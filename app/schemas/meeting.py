@@ -553,6 +553,7 @@ class MeetingRegistryStageRead(str, Enum):
     PROTOCOL_CREATED = "protocol_created"
     PROTOCOL_CONDUCTED = "protocol_conducted"
     MEETING_COMPLETED = "meeting_completed"
+    CANCELLED = "cancelled"
 
 
 class MeetingRegistryItemRead(BaseModel):
@@ -573,7 +574,22 @@ class MeetingRegistryItemRead(BaseModel):
     outlook_item_id: str | None = None
     outlook_changekey: str | None = None
     outlook_meeting_url: str | None = None
+    cancelled_at: str | None = None
     updated_at: str
+
+
+class MeetingRegistryCancelRequest(BaseModel):
+    message: str = Field(default="", max_length=2000)
+
+
+class MeetingRegistryCancelRead(BaseModel):
+    ref_key: str
+    stage: MeetingRegistryStageRead
+    cancelled: bool = True
+    outlook_cancelled: bool = False
+    outlook_warning: str | None = None
+    message: str | None = None
+    cancelled_at: str | None = None
 
 
 class MeetingRegistryRead(BaseModel):

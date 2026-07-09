@@ -26,6 +26,8 @@ from app.schemas.meeting import (
     MeetingMemoRejectRequest,
     MeetingPermissionsRead,
     MeetingRegistryRead,
+    MeetingRegistryCancelRead,
+    MeetingRegistryCancelRequest,
     MeetingRoomRead,
     MeetingRoomsRequest,
     MeetingRunCreate,
@@ -103,6 +105,28 @@ async def get_meetings_registry(
     try:
         return await MeetingService(db).list_registry(stage=stage, current_user=current_user)
     except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.post("/registry/{memo_ref_key}/cancel", response_model=MeetingRegistryCancelRead)
+async def cancel_registry_meeting(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingRegistryCancelRequest | None = None,
+) -> MeetingRegistryCancelRead:
+    """Отменить совещание в календаре и перевести запись реестра в статус «Отменено»."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).cancel_registry_meeting(
+            str(memo_ref_key),
+            payload or MeetingRegistryCancelRequest(),
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
         raise _service_error(exc) from exc
 
 

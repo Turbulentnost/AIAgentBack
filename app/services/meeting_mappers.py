@@ -19,6 +19,7 @@ from app.schemas.meeting import (
     MeetingMemoRead,
     MeetingQuorumSlotRead,
     MeetingRegistryItemRead,
+    MeetingRegistryCancelRead,
     MeetingRegistryStageRead,
     MeetingRoomRead,
     MeetingSlotBlockingEventRead,
@@ -431,6 +432,12 @@ def room_read(item: MeetingRoomOption) -> MeetingRoomRead:
 
 
 def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    cancelled_at = payload.get("cancelled_at")
+    if isinstance(cancelled_at, str) and cancelled_at.strip():
+        cancelled_at_value: str | None = cancelled_at.strip()
+    else:
+        cancelled_at_value = None
     return MeetingRegistryItemRead(
         ref_key=entry.memo_ref_key,
         memo_number=entry.memo_number,
@@ -449,7 +456,36 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
         outlook_item_id=entry.outlook_item_id,
         outlook_changekey=entry.outlook_changekey,
         outlook_meeting_url=entry.outlook_meeting_url,
-        updated_at=entry.updated_at.isoformat(),
+        cancelled_at=cancelled_at_value,
+        updated_at=(
+            entry.updated_at.isoformat()
+            if entry.updated_at
+            else entry.invitations_sent_at.isoformat()
+        ),
+    )
+
+
+def registry_cancel_read(
+    entry: MeetingRegistryEntry,
+    *,
+    outlook_cancelled: bool,
+    outlook_warning: str | None = None,
+    message: str | None = None,
+) -> MeetingRegistryCancelRead:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    cancelled_at = payload.get("cancelled_at")
+    if isinstance(cancelled_at, str) and cancelled_at.strip():
+        cancelled_at_value: str | None = cancelled_at.strip()
+    else:
+        cancelled_at_value = None
+    return MeetingRegistryCancelRead(
+        ref_key=entry.memo_ref_key,
+        stage=MeetingRegistryStageRead.CANCELLED,
+        cancelled=True,
+        outlook_cancelled=outlook_cancelled,
+        outlook_warning=outlook_warning,
+        message=message,
+        cancelled_at=cancelled_at_value,
     )
 
 

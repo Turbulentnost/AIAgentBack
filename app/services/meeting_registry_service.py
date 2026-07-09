@@ -71,6 +71,8 @@ def _outlook_fields_from_sent_payload(sent_payload: dict[str, Any] | None) -> di
 
 
 def stage_index(stage: MeetingRegistryStage) -> int:
+    if stage == MeetingRegistryStage.CANCELLED:
+        return -1
     try:
         return STAGE_ORDER.index(stage)
     except ValueError:
@@ -79,15 +81,19 @@ def stage_index(stage: MeetingRegistryStage) -> int:
 
 def build_stage_counts(entries: list[MeetingRegistryEntry]) -> dict[str, int]:
     total = len(entries)
+    active_entries = [
+        entry for entry in entries if entry.stage != MeetingRegistryStage.CANCELLED
+    ]
     counts = {
         "all": total,
-        "approved": total,
+        "approved": len(active_entries),
+        "cancelled": total - len(active_entries),
         "invitations_sent": 0,
         "protocol_created": 0,
         "protocol_conducted": 0,
         "meeting_completed": 0,
     }
-    for entry in entries:
+    for entry in active_entries:
         index = stage_index(entry.stage)
         if index >= 0:
             counts["invitations_sent"] += 1
@@ -157,6 +163,9 @@ class MeetingRegistryService:
             )
             self.db.add(entry)
         else:
+            if entry.stage == MeetingRegistryStage.CANCELLED:
+                await self.db.flush()
+                return entry
             if entry.stage == MeetingRegistryStage.INVITATIONS_SENT:
                 entry.stage = MeetingRegistryStage.INVITATIONS_SENT
             entry.memo_number = snapshot.get("memo_number") or entry.memo_number
@@ -208,6 +217,36 @@ class MeetingRegistryService:
             select(MeetingRegistryEntry).where(MeetingRegistryEntry.memo_ref_key == normalized_ref)
         )
         return result.scalar_one_or_none()
+
+    async def mark_cancelled(
+        self,
+        *,
+        memo_ref_key: str,
+        cancelled_by: User,
+        message: str | None = None,
+        cancel_payload: dict[str, Any] | None = None,
+        outlook_cancelled: bool = False,
+    ) -> MeetingRegistryEntry:
+        entry = await self.get_entry(memo_ref_key)
+        if entry is None:
+            raise ValueError("Совещание не найдено в реестре")
+        if entry.stage == MeetingRegistryStage.CANCELLED:
+            return entry
+
+        now = datetime.now(timezone.utc)
+        entry.stage = MeetingRegistryStage.CANCELLED
+        payload = dict(entry.payload or {})
+        payload["cancelled_at"] = now.isoformat()
+        payload["cancelled_by_user_id"] = str(cancelled_by.id)
+        if message:
+            payload["cancel_message"] = message
+        if cancel_payload:
+            payload["cancel_payload"] = cancel_payload
+        payload["outlook_cancelled"] = outlook_cancelled
+        entry.payload = payload
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
 
     async def sync_protocol_stages(self) -> None:
         """Заготовка для синхронизации этапов протокола из 1С."""

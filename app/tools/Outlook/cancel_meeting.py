@@ -21,6 +21,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from exchangelib import EWSDateTime, EWSTimeZone, CalendarItem
+from exchangelib.errors import ErrorItemNotFound
 from exchangelib.properties import HTMLBody
 
 from app.tools.Outlook.outlook_config import OutlookConfig
@@ -65,10 +66,20 @@ def format_attendees(item: Any) -> str:
     return ", ".join(emails) if emails else "—"
 
 
+def _ensure_calendar_item(item: Any, *, context: str) -> Any:
+    if isinstance(item, ErrorItemNotFound):
+        raise RuntimeError(f"Совещание не найдено: {context}")
+    if not getattr(item, "id", None):
+        raise RuntimeError(f"Совещание не найдено: {context}")
+    return item
+
+
 def meeting_to_dict(item: Any, *, config: OutlookConfig) -> dict[str, Any]:
+    item = _ensure_calendar_item(item, context="некорректный ответ Exchange")
     organizer = None
-    if item.organizer:
-        organizer = getattr(item.organizer, "email_address", None) or str(item.organizer)
+    organizer_obj = getattr(item, "organizer", None)
+    if organizer_obj is not None:
+        organizer = getattr(organizer_obj, "email_address", None) or str(organizer_obj)
     return {
         "id": item.id,
         "changekey": item.changekey,
@@ -78,7 +89,7 @@ def meeting_to_dict(item: Any, *, config: OutlookConfig) -> dict[str, Any]:
         "location": item.location or "",
         "organizer": organizer,
         "attendees": format_attendees(item),
-        "is_cancelled": bool(item.is_cancelled),
+        "is_cancelled": bool(getattr(item, "is_cancelled", False)),
         "is_meeting": bool(
             getattr(item, "required_attendees", None) or getattr(item, "resources", None)
         ),
@@ -139,7 +150,7 @@ def get_meeting_by_id(
     items = list(account.fetch([CalendarItem(**kwargs)]))
     if not items:
         raise RuntimeError(f"Совещание не найдено по id: {item_id}")
-    return items[0]
+    return _ensure_calendar_item(items[0], context=f"id {item_id}")
 
 
 def find_meetings(
@@ -172,9 +183,50 @@ def find_meetings(
     return matches
 
 
+def find_meetings_by_subject_on_day(
+    *,
+    config: OutlookConfig,
+    subject: str,
+    day: datetime,
+    attendee: str = "",
+    prefer_start: datetime | None = None,
+) -> list[Any]:
+    account = connect_account(config)
+    local_day = to_local(day, config)
+    day_start = local_day.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    window_start = to_ews(day_start, config)
+    window_end = to_ews(day_end, config)
+
+    items = list(account.calendar.view(start=window_start, end=window_end, max_items=500))
+    subject_norm = subject.strip().lower()
+    matches: list[Any] = []
+    for item in items:
+        if getattr(item, "is_cancelled", False):
+            continue
+        if subject_norm and subject_norm not in (item.subject or "").lower():
+            continue
+        if not item_has_attendee(item, attendee):
+            continue
+        matches.append(item)
+
+    if prefer_start is not None and len(matches) > 1:
+        target = to_local(prefer_start, config)
+        matches.sort(
+            key=lambda row: abs(
+                (to_local(row.start, config) - target).total_seconds()
+            )
+            if row.start
+            else float("inf")
+        )
+        return [matches[0]]
+    return matches
+
+
 def cancel_meeting_item(item: Any, *, message: str = "") -> None:
-    if item.is_cancelled:
-        raise RuntimeError(f"Совещание уже отменено: {item.subject}")
+    item = _ensure_calendar_item(item, context="некорректный ответ Exchange")
+    if getattr(item, "is_cancelled", False):
+        raise RuntimeError(f"Совещание уже отменено: {getattr(item, 'subject', '')}")
     kwargs: dict[str, Any] = {}
     if message.strip():
         kwargs["body"] = HTMLBody(message.strip())
@@ -190,6 +242,7 @@ def resolve_meeting(
     start: datetime | None = None,
     tolerance_minutes: int = 5,
     attendee: str = "",
+    match_mode: str = "exact",
 ) -> Any:
     if item_id.strip():
         return get_meeting_by_id(config=config, item_id=item_id, changekey=changekey)
@@ -197,16 +250,25 @@ def resolve_meeting(
     if not subject.strip() or start is None:
         raise ValueError("Укажите item_id либо subject и start.")
 
-    matches = find_meetings(
-        config=config,
-        subject=subject,
-        start=start,
-        tolerance_minutes=tolerance_minutes,
-        attendee=attendee,
-    )
+    if match_mode == "day":
+        matches = find_meetings_by_subject_on_day(
+            config=config,
+            subject=subject,
+            day=start,
+            attendee=attendee,
+            prefer_start=start,
+        )
+    else:
+        matches = find_meetings(
+            config=config,
+            subject=subject,
+            start=start,
+            tolerance_minutes=tolerance_minutes,
+            attendee=attendee,
+        )
     if not matches:
         raise RuntimeError(
-            f"Совещение не найдено: «{subject}», начало {start.isoformat()}"
+            f"Совещание не найдено: «{subject}», начало {start.isoformat()}"
         )
     if len(matches) > 1:
         details = [meeting_to_dict(item, config=config) for item in matches]
@@ -227,6 +289,7 @@ def dispatch_cancel_meeting(
     start: str = "",
     attendee: str = "",
     tolerance_minutes: int = 5,
+    match_mode: str = "exact",
     message: str = "",
     dry_run: bool = False,
     timezone: str | None = None,
@@ -263,6 +326,7 @@ def dispatch_cancel_meeting(
         start=start_dt,
         tolerance_minutes=max(tolerance_minutes, 0),
         attendee=attendee,
+        match_mode=match_mode,
     )
     meeting = meeting_to_dict(item, config=config)
 

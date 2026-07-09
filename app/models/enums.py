@@ -482,6 +482,7 @@ class MeetingRegistryStage(str, enum.Enum):
     PROTOCOL_CREATED = "protocol_created"
     PROTOCOL_CONDUCTED = "protocol_conducted"
     MEETING_COMPLETED = "meeting_completed"
+    CANCELLED = "cancelled"
 
 
 class DepartmentAnalysisStep(str, enum.Enum):
