@@ -55,11 +55,24 @@ def looks_like_guid(value: str) -> bool:
     return bool(GUID_PATTERN.match(value.strip()))
 
 
+_EMPTY_PLACEHOLDER_MARKERS = (
+    "<пустая строка>",
+    "<пустая дата>",
+    "<пустая ссылка>",
+    "<0>",
+)
+
+
 def clean_text(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.strip()
-    return normalized or None
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    if any(marker in lowered for marker in _EMPTY_PLACEHOLDER_MARKERS):
+        return None
+    return normalized
 
 
 def parse_odata_datetime(value: str | None) -> datetime | None:

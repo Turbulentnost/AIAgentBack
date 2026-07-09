@@ -12,10 +12,11 @@ OFFLINE_CACHE_HISTORY_MARKERS = (
 
 
 def is_offline_cache_detail(detail: dict[str, Any] | None) -> bool:
-    """True для СЗ, загруженных в Redis из Excel (без реального Ref_Key 1С)."""
+    """True для СЗ, загруженных в Redis без согласования в 1С."""
     if not detail:
         return False
-    if str(detail.get("cache_source") or "").strip().lower() in {"excel", "offline"}:
+    cache_source = str(detail.get("cache_source") or "").strip().lower()
+    if cache_source in {"excel", "offline", "redis", "seed"}:
         return True
     for item in detail.get("history") or []:
         if not isinstance(item, dict):

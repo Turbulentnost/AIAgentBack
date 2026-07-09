@@ -37,6 +37,26 @@ def _payload_from_cached(cached: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _repair_cached_payload(payload: dict[str, Any], day: date) -> dict[str, Any]:
+    repaired = dict(payload)
+    repaired.setdefault("date", day.isoformat())
+    repaired.setdefault("unapproved", [])
+    repaired.setdefault("today", [])
+    repaired.setdefault("counts", {})
+    if not repaired.get("items"):
+        merged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for group in (repaired.get("unapproved") or [], repaired.get("today") or []):
+            for item in group:
+                ref_key = str(item.get("ref_key") or "").strip()
+                key = ref_key or f"number:{item.get('number')}"
+                if key not in merged:
+                    order.append(key)
+                merged[key] = item
+        repaired["items"] = [merged[key] for key in order]
+    return repaired
+
+
 def _cache_has_queue_people_schema(cached: dict[str, Any]) -> bool:
     payload = _payload_from_cached(cached)
     items = _dashboard_items(payload)
@@ -89,7 +109,8 @@ class MeetingDashboardCacheService:
             cached = await self._read_cache(day)
             if cached is not None and _is_usable_cache(cached):
                 fetched_at = cached["fetched_at"]
-                return _payload_from_cached(cached), fetched_at, True
+                payload = _repair_cached_payload(_payload_from_cached(cached), day)
+                return payload, fetched_at, True
 
         payload, fetched_at = await self._fetch_and_store(day)
         return payload, fetched_at, False
@@ -108,7 +129,8 @@ class MeetingDashboardCacheService:
             cached = await self._read_cache(day)
             if cached is not None and _is_usable_cache(cached):
                 fetched_at = cached["fetched_at"]
-                return _payload_from_cached(cached), fetched_at, True, str(exc)
+                payload = _repair_cached_payload(_payload_from_cached(cached), day)
+                return payload, fetched_at, True, str(exc)
             raise
 
     async def warmup(self, *, target_date: date | None = None) -> dict[str, Any]:

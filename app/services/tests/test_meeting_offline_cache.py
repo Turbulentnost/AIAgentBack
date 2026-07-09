@@ -27,6 +27,7 @@ def test_is_offline_cache_detail_by_history() -> None:
 
 def test_is_offline_cache_detail_by_source() -> None:
     assert is_offline_cache_detail({"cache_source": "excel"}) is True
+    assert is_offline_cache_detail({"cache_source": "redis"}) is True
     assert is_offline_cache_detail({"status": UNAPPROVED_STATUS}) is False
 
 
@@ -121,7 +122,7 @@ async def test_approve_agent_slot_syncs_offline_cache_status(user) -> None:
     service._ensure_access = AsyncMock()
     service.audit.log = AsyncMock()
     service._apply_memo_status_to_cache = AsyncMock()
-    service._sync_offline_cache_after_invite = AsyncMock()
+    service._sync_approved_status_after_invite = AsyncMock()
 
     offline_detail = {
         "number": "000010703",
@@ -165,4 +166,4 @@ async def test_approve_agent_slot_syncs_offline_cache_status(user) -> None:
 
     assert result.sent is True
     upsert_registry.assert_awaited_once()
-    service._sync_offline_cache_after_invite.assert_awaited_once()
+    service._sync_approved_status_after_invite.assert_awaited_once()

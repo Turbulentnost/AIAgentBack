@@ -92,41 +92,8 @@ def _dashboard_item_has_document_date(item: dict[str, Any]) -> bool:
 
 
 def enrich_dashboard_payload_missing_dates(payload: dict[str, Any]) -> dict[str, Any]:
-    """Для старого Redis-кэша: догружает Date из 1С по ref_key, если в карточке даты нет."""
-    session = create_session(CONFIG)
-    seen_refs: set[str] = set()
-
-    def patch_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        patched: list[dict[str, Any]] = []
-        for item in items:
-            row = dict(item)
-            ref_key = str(row.get("ref_key") or "").strip()
-            if (
-                ref_key
-                and ref_key not in seen_refs
-                and not _dashboard_item_has_document_date(row)
-            ):
-                seen_refs.add(ref_key)
-                try:
-                    header = fetch_document_header(session, CONFIG, ref_key)
-                    date_raw = clean_text(header.get("Date"))
-                    if date_raw:
-                        row["Date"] = date_raw
-                except RuntimeError as exc:
-                    logger.warning(
-                        "meeting_dashboard_date_enrich_failed",
-                        ref_key=ref_key,
-                        error=str(exc),
-                    )
-            patched.append(row)
-        return patched
-
-    return {
-        **payload,
-        "unapproved": patch_items(list(payload.get("unapproved") or [])),
-        "today": patch_items(list(payload.get("today") or [])),
-        "items": patch_items(list(payload.get("items") or [])),
-    }
+    """Нормализует карточки очереди без запросов в 1С (данные только из Redis)."""
+    return normalize_dashboard_payload(payload)
 
 
 def is_memo_document_date_on_date(row: dict[str, Any], target_date: date) -> bool:
@@ -290,6 +257,7 @@ def _build_login_context(
     *,
     fetched_at: datetime,
     error: str | None = None,
+    fallback_date: str | None = None,
 ) -> MeetingLoginContext:
     payload = normalize_dashboard_payload(payload)
     items_raw = payload.get("items")
@@ -298,8 +266,9 @@ def _build_login_context(
             payload.get("unapproved") or [],
             payload.get("today") or [],
         )
+    day_label = str(payload.get("date") or fallback_date or date.today().isoformat())
     return MeetingLoginContext(
-        date=payload["date"],
+        date=day_label,
         unapproved=[MeetingDashboardItem.model_validate(item) for item in payload["unapproved"]],
         today=[MeetingDashboardItem.model_validate(item) for item in payload["today"]],
         items=[MeetingDashboardItem.model_validate(item) for item in items_raw],
@@ -337,4 +306,22 @@ async def load_login_context(
             error=str(exc),
         )
 
-    return _build_login_context(payload, fetched_at=fetched_at, error=fetch_error)
+    try:
+        return _build_login_context(
+            payload,
+            fetched_at=fetched_at,
+            error=fetch_error,
+            fallback_date=day.isoformat(),
+        )
+    except Exception as exc:
+        logger.warning(
+            "meeting_login_context_build_failed",
+            user_id=str(user.id),
+            date=day.isoformat(),
+            error=str(exc),
+        )
+        return MeetingLoginContext(
+            date=day.isoformat(),
+            fetched_at=fetched_at,
+            error=str(exc) or fetch_error,
+        )

@@ -330,7 +330,7 @@ class MeetingService:
             sent_payload=sent_payload if isinstance(sent_payload, dict) else None,
         )
 
-        await self._sync_offline_cache_after_invite(
+        await self._sync_approved_status_after_invite(
             normalized_ref,
             memo_detail=memo_detail,
             approver_fio=_user_fio(current_user),
@@ -411,9 +411,9 @@ class MeetingService:
 
         cache_service = MeetingMemoCacheService()
         cached = await cache_service.read_cached(normalized_ref)
-        is_offline_cache = cached is not None and is_offline_cache_detail(cached["payload"])
+        use_offline_approve = cached is not None and is_offline_cache_detail(cached["payload"])
 
-        if is_offline_cache:
+        if use_offline_approve:
             raw = build_offline_approve_result(
                 cached["payload"],
                 ref_key=normalized_ref,
@@ -445,9 +445,35 @@ class MeetingService:
                 raise MeetingServiceError(str(exc)) from exc
             except Exception as exc:
                 lowered = str(exc).lower()
-                if any(token in lowered for token in ("401", "403", "404", "timeout", "connection", "connect", "odata")):
+                if cached is not None and any(
+                    token in lowered
+                    for token in ("401", "403", "404", "timeout", "connection", "connect", "odata", "500")
+                ):
+                    raw = build_offline_approve_result(
+                        cached["payload"],
+                        ref_key=normalized_ref,
+                        approver_fio=approver_fio,
+                        comment=payload.comment,
+                    )
+                    if raw.get("changed"):
+                        history_message = (
+                            f"Согласована офлайн ({approver_fio})"
+                            if approver_fio
+                            else "Согласована офлайн (кэш Redis)"
+                        )
+                        await cache_service.patch_status(
+                            normalized_ref,
+                            APPROVED_STATUS,
+                            history_message=history_message,
+                        )
+                        await self._apply_memo_status_to_cache(normalized_ref, APPROVED_STATUS)
+                elif any(
+                    token in lowered
+                    for token in ("401", "403", "404", "timeout", "connection", "connect", "odata")
+                ):
                     raise MeetingServiceError(format_onec_load_error(exc), status_code=503) from exc
-                raise MeetingServiceError(f"Не удалось согласовать служебную записку в 1С: {exc}") from exc
+                else:
+                    raise MeetingServiceError(f"Не удалось согласовать служебную записку в 1С: {exc}") from exc
 
             if raw.get("status"):
                 await self._apply_memo_status_to_cache(normalized_ref, str(raw["status"]))
@@ -463,11 +489,42 @@ class MeetingService:
                 "number": raw.get("number"),
                 "changed": raw.get("changed"),
                 "sto_ready": raw.get("sto_ready"),
-                "offline_cache": is_offline_cache,
+                "offline_cache": use_offline_approve,
             },
         )
 
         return MeetingMemoApproveRead.model_validate(raw)
+
+    async def _sync_approved_status_after_invite(
+        self,
+        memo_ref_key: str,
+        *,
+        memo_detail: dict | None,
+        approver_fio: str | None,
+    ) -> None:
+        """После отправки приглашения переводит СЗ в «Согласована» в Redis-кэше."""
+        normalized = memo_ref_key.strip().lower()
+        detail = memo_detail
+        if detail is None:
+            cached = await MeetingMemoCacheService().read_cached(normalized)
+            detail = cached["payload"] if cached else None
+        if detail is None:
+            return
+        if str(detail.get("status") or "") == APPROVED_STATUS:
+            await self._apply_memo_status_to_cache(normalized, APPROVED_STATUS)
+            return
+
+        history_message = (
+            f"Согласована при отправке приглашения ({approver_fio})"
+            if approver_fio
+            else "Согласована при отправке приглашения"
+        )
+        await MeetingMemoCacheService().patch_status(
+            normalized,
+            APPROVED_STATUS,
+            history_message=history_message,
+        )
+        await self._apply_memo_status_to_cache(normalized, APPROVED_STATUS)
 
     async def _sync_offline_cache_after_invite(
         self,
@@ -476,25 +533,11 @@ class MeetingService:
         memo_detail: dict | None,
         approver_fio: str | None,
     ) -> None:
-        detail = memo_detail
-        if detail is None:
-            cached = await MeetingMemoCacheService().read_cached(memo_ref_key)
-            detail = cached["payload"] if cached else None
-        if not is_offline_cache_detail(detail):
-            return
-        if str((detail or {}).get("status") or "") == APPROVED_STATUS:
-            return
-        history_message = (
-            f"Согласована офлайн при отправке приглашений ({approver_fio})"
-            if approver_fio
-            else "Согласована офлайн при отправке приглашений"
-        )
-        await MeetingMemoCacheService().patch_status(
+        await self._sync_approved_status_after_invite(
             memo_ref_key,
-            APPROVED_STATUS,
-            history_message=history_message,
+            memo_detail=memo_detail,
+            approver_fio=approver_fio,
         )
-        await self._apply_memo_status_to_cache(memo_ref_key, APPROVED_STATUS)
 
     async def _apply_memo_status_to_cache(self, memo_ref_key: str, status: str) -> None:
         from app.core.config import settings
