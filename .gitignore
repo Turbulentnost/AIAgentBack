@@ -41,27 +41,32 @@ tz_tables.txt
 list_enterprise_positions.py
 scripts/_*.py
 
-# Данные: по умолчанию не пушим, только конфиги агента
+# Данные: по умолчанию не пушим, только RAG/маршрутизация агента
 data/*
 !data/routing_rules.json
 !data/rag_department_keywords.json
 !data/tz_department_topics.json
-!data/rag_catalog.example.json
-!data/spam_patterns.json
+!data/spam_learning_patterns.json
 !data/templates/
 !data/templates/**
 
-# Импорты, выгрузки, обучение и отчёты в data/
+# Устаревшие/лишние RAG-артефакты (не используются коллекциями departments/spam_learning)
+data/rag_catalog.example.json
+data/spam_patterns.json
+
+# Импорты, выгрузки, runtime-обучение и отчёты в data/
 data/imports/
 data/stats/
 data/*.xlsx
 data/*.xls
 data/*.docx
 data/*.xml
-data/spam_learning_patterns.json
 data/routing_corrections.json
 data/enterprise_positions.json
 data/*_report*.json
 data/*_comparison*.json
 data/*_mapping*.xlsx
 data/deterministic_routing_rules.draft.json
+
+# Демо-заглушка правил в пакете (реальный файл — data/routing_rules.json)
+src/agent_pochta/routing/data/routing_rules.json
