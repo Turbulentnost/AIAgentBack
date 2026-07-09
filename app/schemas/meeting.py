@@ -192,6 +192,10 @@ class MeetingAgentSlotPreviewRead(BaseModel):
     attendees: list[MeetingAttendeeRead] = Field(default_factory=list)
     missing_emails: list[str] = Field(default_factory=list)
     error: str | None = None
+    error_stage: str | None = Field(
+        default=None,
+        description="onec | participants | email | calendar | no_slot — этап сбоя для UI",
+    )
 
 
 class MeetingAgentSlotApproveRequest(BaseModel):

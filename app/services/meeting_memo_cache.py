@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 from app.services.meeting_attendees import attendee_fio_from_detail
+from app.services.meeting_agent_errors import format_onec_load_error, format_participants_missing_error
 from app.tools.onec.connection import CONFIG, create_session
 
 logger = get_logger(__name__)
@@ -108,6 +109,19 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def detail_is_agent_ready(detail: dict[str, Any]) -> bool:
+    """True для полного detail из build_memo_detail, False для dashboard-fallback."""
+    application = detail.get("application") or {}
+    if application.get("initiator") or application.get("manager"):
+        return True
+    for person in application.get("participants") or []:
+        if not isinstance(person, dict):
+            continue
+        if person.get("ref_key") or person.get("email"):
+            return True
+    return False
+
+
 def detail_to_memo_document(detail: dict[str, Any]) -> dict[str, Any]:
     """Преобразует кэшированный detail в структуру документа для MeetingBackend."""
     app = detail.get("application") or {}
@@ -167,6 +181,37 @@ class MeetingMemoCacheService:
             "Детали служебной записки не найдены в кэше. "
             "Обновите dashboard или дождитесь прогрева в 10:00/15:00."
         )
+
+    async def get_memo_detail_for_agent(
+        self,
+        ref_key: str,
+    ) -> tuple[dict[str, Any], datetime, bool]:
+        """Полный detail для slot-preview: memo-кэш или загрузка из 1С (без dashboard-fallback)."""
+        normalized = ref_key.strip().lower()
+
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            raise MemoCacheMissError(
+                "Кэш СЗ отключён. Включите MEETING_DASHBOARD_CACHE_ENABLED или обновите dashboard."
+            )
+
+        cached = await self._read_cache(normalized)
+        if cached is not None and detail_is_agent_ready(cached["payload"]):
+            return cached["payload"], cached["fetched_at"], True
+
+        logger.info(
+            "meeting_memo_agent_fetch",
+            ref_key=normalized,
+            reason="cache_miss_or_incomplete",
+        )
+        try:
+            payload, fetched_at = await self._fetch_and_store(normalized)
+        except Exception as exc:
+            raise MemoCacheMissError(format_onec_load_error(exc)) from exc
+
+        if not detail_is_agent_ready(payload):
+            raise MemoCacheMissError(format_participants_missing_error())
+
+        return payload, fetched_at, False
 
     async def _read_detail_from_dashboard_cache(
         self,

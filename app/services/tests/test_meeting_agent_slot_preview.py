@@ -77,7 +77,7 @@ async def test_suggest_agent_slot_returns_nearest_slot(user) -> None:
     service._backend = lambda: backend
 
     with patch(
-        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
+        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
         result = await service.suggest_agent_slot(
@@ -118,7 +118,7 @@ async def test_suggest_agent_slot_uses_cached_emails_without_onec_lookup(user) -
     service._backend = lambda: backend
 
     with patch(
-        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
+        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
         result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
@@ -149,7 +149,7 @@ async def test_suggest_agent_slot_reports_resolve_errors(user) -> None:
     service._backend = lambda: backend
 
     with patch(
-        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
+        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
         result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
@@ -179,7 +179,7 @@ async def test_suggest_agent_slot_reports_missing_emails(user) -> None:
     service._backend = lambda: backend
 
     with patch(
-        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
+        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
         result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)

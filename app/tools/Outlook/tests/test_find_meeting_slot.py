@@ -5,11 +5,16 @@ from zoneinfo import ZoneInfo
 
 from app.tools.Outlook.find_meeting_slot import (
     align_preferred,
-    busy_intervals_from_freebusy_view,
     busy_intervals_from_merged_string,
+    coalesce_intervals,
     find_nearest_slot,
+    find_slot_via_busy_gaps,
+    freebusy_busy_intervals,
+    freebusy_event_interval,
     is_free_for_all,
     merge_busy_intervals,
+    not_before_now,
+    union_busy_for_all,
 )
 from app.tools.Outlook.outlook_config import OutlookConfig
 
@@ -43,24 +48,30 @@ def test_find_nearest_slot_never_returns_before_requested_time(monkeypatch) -> N
     tz = ZoneInfo("Europe/Moscow")
     attendee = "user@turbo-don.ru"
     requested = datetime(2026, 6, 19, 14, 0, tzinfo=tz)
+    fixed_now = datetime(2026, 6, 19, 8, 0, tzinfo=tz)
     busy_morning = (
         datetime(2026, 6, 19, 10, 0, tzinfo=tz),
         datetime(2026, 6, 19, 11, 0, tzinfo=tz),
     )
 
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+
     def fake_fetch(*_args, **_kwargs):
         return {attendee: [busy_morning]}
-
-    def fake_verify(*, slot_start, **_kwargs):
-        return True, {attendee: []}
 
     monkeypatch.setattr(
         "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
         fake_fetch,
-    )
-    monkeypatch.setattr(
-        "app.tools.Outlook.find_meeting_slot.verify_slot_with_calendar",
-        fake_verify,
     )
 
     result = find_nearest_slot(
@@ -73,11 +84,57 @@ def test_find_nearest_slot_never_returns_before_requested_time(monkeypatch) -> N
         max_items=50,
         source="freebusy",
         workers=1,
+        verify_calendar=False,
     )
 
     slot_start = datetime.fromisoformat(result["slot_start"])
     assert slot_start >= requested
     assert slot_start.hour == 14
+
+
+def test_find_nearest_slot_never_returns_before_now(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    attendee = "user@turbo-don.ru"
+    fixed_now = datetime(2026, 6, 23, 10, 0, tzinfo=tz)
+    requested = datetime(2026, 6, 22, 14, 0, tzinfo=tz)
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+
+    def fake_fetch(*_args, **_kwargs):
+        return {attendee: []}
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.find_meeting_slot.fetch_all_busy_intervals",
+        fake_fetch,
+    )
+
+    result = find_nearest_slot(
+        config=config,
+        attendees=[attendee],
+        preferred=requested,
+        duration=timedelta(minutes=30),
+        max_days=7,
+        step=timedelta(minutes=15),
+        max_items=50,
+        source="freebusy",
+        workers=1,
+        verify_calendar=False,
+    )
+
+    slot_start = datetime.fromisoformat(result["slot_start"])
+    assert slot_start >= not_before_now(config)
+    assert slot_start.date() == fixed_now.date()
 
 
 def test_is_free_for_all_detects_overlap() -> None:
@@ -93,7 +150,7 @@ def test_is_free_for_all_detects_overlap() -> None:
         ]
     }
 
-    assert is_free_for_all(start, duration, busy) is False
+    assert is_free_for_all(start, duration, busy, _config()) is False
 
 
 def test_merge_busy_intervals_combines_sources() -> None:
@@ -121,6 +178,83 @@ def test_busy_intervals_from_merged_string_all_free() -> None:
     assert intervals == []
 
 
+def test_freebusy_event_interval_ignores_empty_status() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    event = type(
+        "Event",
+        (),
+        {
+            "busy_type": "",
+            "start": datetime(2026, 6, 20, 10, 0, tzinfo=tz),
+            "end": datetime(2026, 6, 20, 11, 0, tzinfo=tz),
+        },
+    )()
+
+    assert freebusy_event_interval(event, config) is None
+
+
+def test_freebusy_event_interval_ignores_nodata_status() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    event = type(
+        "Event",
+        (),
+        {
+            "busy_type": "NoData",
+            "start": datetime(2026, 6, 20, 10, 0, tzinfo=tz),
+            "end": datetime(2026, 6, 20, 11, 0, tzinfo=tz),
+        },
+    )()
+
+    assert freebusy_event_interval(event, config) is None
+
+
+def test_freebusy_busy_intervals_prefers_merged_when_events_empty() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 6, 20, 8, 0, tzinfo=tz)
+    end = datetime(2026, 6, 20, 9, 0, tzinfo=tz)
+    view = type("View", (), {"calendar_events": [], "merged": "2"})()
+
+    intervals = freebusy_busy_intervals(
+        view,
+        attendee="user@turbo-don.ru",
+        range_start=start,
+        range_end=end,
+        config=config,
+    )
+
+    assert intervals == [(start, end)]
+
+
+def test_freebusy_busy_intervals_prefers_merged_over_calendar_events() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 6, 20, 8, 0, tzinfo=tz)
+    end = datetime(2026, 6, 20, 10, 0, tzinfo=tz)
+    busy_event = type(
+        "Event",
+        (),
+        {
+            "busy_type": "Busy",
+            "start": datetime(2026, 6, 20, 8, 0, tzinfo=tz),
+            "end": datetime(2026, 6, 20, 10, 0, tzinfo=tz),
+        },
+    )()
+    view = type("View", (), {"calendar_events": [busy_event], "merged": "0000"})()
+
+    intervals = freebusy_busy_intervals(
+        view,
+        attendee="user@turbo-don.ru",
+        range_start=start,
+        range_end=end,
+        config=config,
+    )
+
+    assert intervals == []
+
+
 def test_busy_intervals_from_merged_string_detects_busy_block() -> None:
     config = _config()
     tz = ZoneInfo("Europe/Moscow")
@@ -136,13 +270,13 @@ def test_busy_intervals_from_merged_string_detects_busy_block() -> None:
 
     assert intervals == [
         (
-            datetime(2026, 6, 19, 9, 0, tzinfo=tz),
-            datetime(2026, 6, 19, 10, 0, tzinfo=tz),
+            datetime(2026, 6, 19, 11, 0, tzinfo=tz),
+            datetime(2026, 6, 19, 14, 0, tzinfo=tz),
         )
     ]
 
 
-def test_busy_intervals_from_freebusy_view_uses_merged_when_no_events() -> None:
+def test_freebusy_busy_intervals_uses_merged_when_no_events() -> None:
     config = _config()
     tz = ZoneInfo("Europe/Moscow")
     range_start = datetime(2026, 6, 19, 8, 0, tzinfo=tz)
@@ -152,12 +286,50 @@ def test_busy_intervals_from_freebusy_view_uses_merged_when_no_events() -> None:
         calendar_events = None
         merged = "0" * 24
 
-    intervals = busy_intervals_from_freebusy_view(
+    intervals = freebusy_busy_intervals(
         FakeView(),
-        "postagant@turbo-don.ru",
-        range_start,
-        range_end,
-        config,
+        attendee="postagant@turbo-don.ru",
+        range_start=range_start,
+        range_end=range_end,
+        config=config,
     )
 
     assert intervals == []
+
+
+def test_union_busy_finds_gap_between_participants() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    day = datetime(2026, 6, 23, 0, 0, tzinfo=tz)
+    busy = {
+        "a@turbo-don.ru": [(datetime(2026, 6, 23, 10, 0, tzinfo=tz), datetime(2026, 6, 23, 11, 0, tzinfo=tz))],
+        "b@turbo-don.ru": [(datetime(2026, 6, 23, 14, 0, tzinfo=tz), datetime(2026, 6, 23, 15, 0, tzinfo=tz))],
+    }
+    earliest = datetime(2026, 6, 23, 8, 0, tzinfo=tz)
+    search_end = datetime(2026, 6, 23, 17, 0, tzinfo=tz)
+    union = union_busy_for_all(busy, config, earliest, search_end)
+    slot, checked = find_slot_via_busy_gaps(
+        earliest_allowed=earliest,
+        search_end=search_end,
+        duration=timedelta(minutes=30),
+        step=timedelta(minutes=15),
+        union_busy=union,
+        config=config,
+    )
+    assert slot is not None
+    assert slot.hour == 8
+    assert checked < 20
+
+
+def test_coalesce_intervals_merges_overlap() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    merged = coalesce_intervals(
+        [
+            (datetime(2026, 6, 23, 10, 0, tzinfo=tz), datetime(2026, 6, 23, 11, 0, tzinfo=tz)),
+            (datetime(2026, 6, 23, 10, 30, tzinfo=tz), datetime(2026, 6, 23, 12, 0, tzinfo=tz)),
+        ],
+        config,
+    )
+    assert len(merged) == 1
+    assert merged[0][1].hour == 12

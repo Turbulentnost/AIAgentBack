@@ -130,14 +130,11 @@ async def preview_meeting_agent_slot(
 ) -> MeetingAgentSlotPreviewRead:
     """Ближайший свободный слот для модалки «Запустить агента» (участники + инициатор + руководитель)."""
     await _require_agent_access(db, current_user)
-    try:
-        return await MeetingService(db).suggest_agent_slot(
-            str(memo_ref_key),
-            payload or MeetingAgentSlotPreviewRequest(),
-            current_user=current_user,
-        )
-    except MeetingServiceError as exc:
-        raise _service_error(status.HTTP_400_BAD_REQUEST, exc) from exc
+    return await MeetingService(db).suggest_agent_slot_safe(
+        str(memo_ref_key),
+        payload or MeetingAgentSlotPreviewRequest(),
+        current_user=current_user,
+    )
 
 
 @router.post("/memos/{memo_ref_key}/agent/approve", response_model=MeetingAgentSlotApproveRead)

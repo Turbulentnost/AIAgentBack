@@ -17,6 +17,8 @@ from app.tools.executor import ToolExecutor, ToolExecutionError
 from app.tools.schemas import ToolContext
 
 DEFAULT_DURATION_MINUTES = 60
+SLOT_PREVIEW_MAX_DAYS = 30
+SLOT_PREVIEW_TIMEOUT_SECONDS = 180
 MEMO_FETCH_LIMIT = 50
 MEMO_FETCH_POOL = 200
 
@@ -160,6 +162,10 @@ class MeetingBackend:
         planned_start: str | None,
         duration_minutes: int | None,
         current_user: User,
+        max_days: int = 30,
+        verify_calendar: bool = False,
+        quiet: bool = True,
+        include_timing: bool = False,
     ) -> list[MeetingSlot]:
         attendee_emails = _participant_emails(participants)
         if not attendee_emails:
@@ -167,7 +173,6 @@ class MeetingBackend:
 
         duration = duration_minutes or _duration_from_memo(memo) or DEFAULT_DURATION_MINUTES
         preferred = planned_start or _preferred_from_memo(memo) or _default_preferred()
-        attendee_emails = _participant_emails_with_organizer(attendee_emails)
 
         try:
             payload = await self._invoke(
@@ -176,9 +181,11 @@ class MeetingBackend:
                     "attendees": attendee_emails,
                     "preferred": preferred,
                     "duration_minutes": duration,
+                    "max_days": max_days,
+                    "verify_calendar": verify_calendar,
                     "skip_rooms": True,
-                    "skip_calendar_verify": True,
-                    "max_days": 14,
+                    "quiet": quiet,
+                    "include_timing": include_timing,
                 },
                 current_user=current_user,
             )

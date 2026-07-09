@@ -38,7 +38,7 @@ def test_build_porucheniya_tasks_table_matches_template_columns() -> None:
 
     table = build_porucheniya_tasks_table(porucheniya, now=now)
     assert table["row_count"] == 1
-    assert len(table["columns"]) == 15
+    assert len(table["columns"]) == 14
     row = table["rows"][0]
     assert row["document_number"] == "АСТ00-00039"
     assert row["document_date"] == "29.05.2026"

@@ -16,6 +16,9 @@ from app.core.logging import configure_logging, get_logger
 from app.monitoring.metrics import setup_monitoring
 
 configure_logging()
+from app.tools.Outlook.ews_logging import configure_exchangelib_logging
+
+configure_exchangelib_logging(verbose=False)
 logger = get_logger(__name__)
 
 
