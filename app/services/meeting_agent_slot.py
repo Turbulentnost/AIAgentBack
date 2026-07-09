@@ -339,13 +339,19 @@ class MeetingAgentSlotService:
             application.get("duration_minutes"),
             _duration_from_memo(memo),
         )
-        planned_start = format_planned_start_for_search(
-            application.get("meeting_start"),
-            detail.get("queue") or {},
+        planned_start = (
+            (payload.planned_start or "").strip()
+            or format_planned_start_for_search(
+                application.get("meeting_start"),
+                detail.get("queue") or {},
+            )
         )
-        attendee_search_start = format_search_start_from_meeting_date(
-            application.get("meeting_start"),
-            detail.get("queue") or {},
+        attendee_search_start = (
+            (payload.search_start or "").strip()
+            or format_search_start_from_meeting_date(
+                application.get("meeting_start"),
+                detail.get("queue") or {},
+            )
         )
 
         attendees = await self._enrich_attendees_with_nearest_slots(

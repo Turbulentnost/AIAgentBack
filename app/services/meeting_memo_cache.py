@@ -18,6 +18,7 @@ from app.services.meeting_memo_document import (
     resolve_meeting_schedule,
     schedule_duration_minutes,
 )
+from app.services.meeting_slot import format_slot_label, slot_duration_minutes
 from app.services.meeting_psd_level import (
     append_psd_level_participant_names,
     append_psd_level_participants,
@@ -115,6 +116,74 @@ def _merge_dashboard_item_groups(*groups: list[dict[str, Any]]) -> list[dict[str
                 order.append(key)
             merged[key] = item
     return [merged[key] for key in order]
+
+
+def patch_detail_schedule(
+    detail: dict[str, Any],
+    *,
+    slot_start: str,
+    slot_end: str,
+    location: str | None = None,
+) -> dict[str, Any]:
+    patched = dict(detail)
+    app = dict(patched.get("application") or {})
+    queue = dict(patched.get("queue") or {})
+    app["meeting_start"] = slot_start
+    app["meeting_end"] = slot_end
+    app["duration_minutes"] = slot_duration_minutes(slot_start, slot_end)
+    if location:
+        app["location"] = location
+    queue["meeting_start"] = slot_start
+    queue["meeting_end"] = slot_end
+    queue["ВремяНачалаСовещания"] = slot_start
+    queue["ВремяОкончанияСовещания"] = slot_end
+    if location:
+        queue["location"] = location
+        queue["МестоПроведенияСовещания"] = location
+    patched["application"] = app
+    patched["queue"] = queue
+    patched["scheduled_label"] = format_slot_label(slot_start, slot_end)
+    return patched
+
+
+def patch_dashboard_payload_slot(
+    payload: dict[str, Any],
+    ref_key: str,
+    *,
+    slot_start: str,
+    slot_end: str,
+    location: str | None = None,
+) -> dict[str, Any]:
+    normalized = ref_key.strip().lower()
+    scheduled_label = format_slot_label(slot_start, slot_end)
+
+    def patch_list(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        patched_items: list[dict[str, Any]] = []
+        for item in items:
+            if _item_ref_key(item) != normalized:
+                patched_items.append(item)
+                continue
+            updated = dict(item)
+            updated["meeting_start"] = slot_start
+            updated["meeting_end"] = slot_end
+            updated["scheduled_label"] = scheduled_label
+            updated["ВремяНачалаСовещания"] = slot_start
+            updated["ВремяОкончанияСовещания"] = slot_end
+            if location:
+                updated["location"] = location
+                updated["МестоПроведенияСовещания"] = location
+            patched_items.append(updated)
+        return patched_items
+
+    unapproved = patch_list(list(payload.get("unapproved") or []))
+    today = patch_list(list(payload.get("today") or []))
+    items = _merge_dashboard_item_groups(unapproved, today)
+    return {
+        **payload,
+        "unapproved": unapproved,
+        "today": today,
+        "items": items,
+    }
 
 
 def patch_detail_status(detail: dict[str, Any], status: str) -> dict[str, Any]:
@@ -596,6 +665,34 @@ class MeetingMemoCacheService:
         if cached is None:
             return False
         patched = patch_detail_status(cached["payload"], status)
+        if history_message:
+            from app.services.meeting_offline_cache import append_detail_history
+
+            patched = append_detail_history(patched, history_message)
+        await self._write_cache(normalized, patched, fetched_at=cached["fetched_at"])
+        return True
+
+    async def patch_meeting_slot(
+        self,
+        ref_key: str,
+        *,
+        slot_start: str,
+        slot_end: str,
+        location: str | None = None,
+        history_message: str | None = None,
+    ) -> bool:
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return False
+        normalized = ref_key.strip().lower()
+        cached = await self._read_cache(normalized)
+        if cached is None:
+            return False
+        patched = patch_detail_schedule(
+            cached["payload"],
+            slot_start=slot_start,
+            slot_end=slot_end,
+            location=location,
+        )
         if history_message:
             from app.services.meeting_offline_cache import append_detail_history
 

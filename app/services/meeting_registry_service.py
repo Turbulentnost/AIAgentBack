@@ -248,6 +248,65 @@ class MeetingRegistryService:
         await self.db.refresh(entry)
         return entry
 
+    async def apply_reschedule(
+        self,
+        *,
+        memo_ref_key: str,
+        slot_start: str,
+        slot_end: str,
+        subject: str | None,
+        location: str | None,
+        attendees: list[str],
+        rescheduled_by: User,
+        sent_payload: dict[str, Any] | None = None,
+        reschedule_message: str | None = None,
+    ) -> MeetingRegistryEntry:
+        entry = await self.get_entry(memo_ref_key)
+        if entry is None:
+            raise ValueError("Совещание не найдено в реестре")
+
+        now = datetime.now(timezone.utc)
+        slot_start_dt = parse_slot_datetime(slot_start)
+        slot_end_dt = parse_slot_datetime(slot_end)
+        outlook_fields = _outlook_fields_from_sent_payload(sent_payload)
+        payload = dict(entry.payload or {})
+        payload["attendees"] = attendees
+        payload["sent_payload"] = sent_payload or {}
+        payload["rescheduled_at"] = now.isoformat()
+        payload["rescheduled_by_user_id"] = str(rescheduled_by.id)
+        if reschedule_message:
+            payload["reschedule_message"] = reschedule_message
+        for key in (
+            "cancelled_at",
+            "cancelled_by_user_id",
+            "cancel_message",
+            "cancel_payload",
+            "outlook_cancelled",
+        ):
+            payload.pop(key, None)
+
+        entry.stage = MeetingRegistryStage.INVITATIONS_SENT
+        if slot_start_dt is not None:
+            entry.slot_start = slot_start_dt
+        if slot_end_dt is not None:
+            entry.slot_end = slot_end_dt
+        if subject:
+            entry.subject = subject
+        if location:
+            entry.location = location
+        entry.invitations_sent_at = now
+        entry.approved_by_user_id = rescheduled_by.id
+        if outlook_fields.get("outlook_item_id"):
+            entry.outlook_item_id = outlook_fields["outlook_item_id"]
+        if outlook_fields.get("outlook_changekey"):
+            entry.outlook_changekey = outlook_fields["outlook_changekey"]
+        if outlook_fields.get("outlook_meeting_url"):
+            entry.outlook_meeting_url = outlook_fields["outlook_meeting_url"]
+        entry.payload = payload
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
+
     async def sync_protocol_stages(self) -> None:
         """Заготовка для синхронизации этапов протокола из 1С."""
         return None

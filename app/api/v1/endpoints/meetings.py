@@ -28,6 +28,10 @@ from app.schemas.meeting import (
     MeetingRegistryRead,
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
+    MeetingRegistryRescheduleApproveRead,
+    MeetingRegistryRescheduleApproveRequest,
+    MeetingRegistryRescheduleSlotPreviewRead,
+    MeetingRegistryRescheduleSlotPreviewRequest,
     MeetingRoomRead,
     MeetingRoomsRequest,
     MeetingRunCreate,
@@ -121,6 +125,53 @@ async def cancel_registry_meeting(
         result = await MeetingService(db).cancel_registry_meeting(
             str(memo_ref_key),
             payload or MeetingRegistryCancelRequest(),
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/{memo_ref_key}/reschedule/slot-preview",
+    response_model=MeetingRegistryRescheduleSlotPreviewRead,
+)
+async def preview_registry_reschedule_slot(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingRegistryRescheduleSlotPreviewRequest | None = None,
+) -> MeetingRegistryRescheduleSlotPreviewRead:
+    """Ближайший свободный слот после текущего времени совещания в реестре."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await MeetingService(db).suggest_registry_reschedule_slot(
+            str(memo_ref_key),
+            payload or MeetingRegistryRescheduleSlotPreviewRequest(),
+            current_user=current_user,
+        )
+    except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/{memo_ref_key}/reschedule/approve",
+    response_model=MeetingRegistryRescheduleApproveRead,
+)
+async def approve_registry_reschedule(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingRegistryRescheduleApproveRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingRegistryRescheduleApproveRead:
+    """Подтвердить перенос: обновить встречу в Outlook и запись реестра."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).approve_registry_reschedule(
+            str(memo_ref_key),
+            payload,
             current_user=current_user,
         )
         await db.commit()

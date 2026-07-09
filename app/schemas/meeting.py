@@ -352,6 +352,14 @@ class MeetingSlotsRequest(BaseModel):
 
 class MeetingAgentSlotPreviewRequest(BaseModel):
     duration_minutes: int | None = None
+    planned_start: str | None = Field(
+        default=None,
+        description="Переопределение начала поиска слота (YYYY-MM-DD HH:MM)",
+    )
+    search_start: str | None = Field(
+        default=None,
+        description="Переопределение точки персонального поиска участников",
+    )
 
     @field_validator("duration_minutes", mode="before")
     @classmethod
@@ -597,3 +605,59 @@ class MeetingRegistryRead(BaseModel):
     stage_counts: dict[str, int] = Field(default_factory=dict)
     fetched_at: str
     error: str | None = None
+
+
+class MeetingRegistryRescheduleSlotPreviewRequest(BaseModel):
+    duration_minutes: int | None = None
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def normalize_duration(cls, value: object) -> int | None:
+        return normalize_request_duration_minutes(value)
+
+
+class MeetingRegistryRescheduleSlotPreviewRead(BaseModel):
+    ref_key: str
+    stage: MeetingRegistryStageRead
+    previous_slot_start: str | None = None
+    previous_slot_end: str | None = None
+    previous_slot_label: str | None = None
+    search_after: str | None = None
+    slot_preview: MeetingAgentSlotPreviewRead
+
+
+class MeetingRegistryRescheduleApproveRequest(BaseModel):
+    slot_start: str
+    slot_end: str
+    attendees: list[MeetingAttendeeRead] | None = None
+    attendee_emails: list[str] | None = None
+    subject: str | None = None
+    location: str | None = None
+    message: str = Field(default="Совещание перенесено", max_length=2000)
+
+    @model_validator(mode="after")
+    def require_recipients(self) -> MeetingRegistryRescheduleApproveRequest:
+        if not self.attendees and not self.attendee_emails:
+            raise ValueError(
+                "Укажите attendees из ответа slot-preview или список attendee_emails"
+            )
+        return self
+
+
+class MeetingRegistryRescheduleApproveRead(BaseModel):
+    ref_key: str
+    stage: MeetingRegistryStageRead
+    previous_slot_label: str | None = None
+    slot_label: str | None = None
+    subject: str
+    start: str
+    end: str
+    location: str | None = None
+    attendees: list[str] = Field(default_factory=list)
+    rescheduled: bool = True
+    outlook_updated: bool = False
+    new_invite_sent: bool = False
+    message: str | None = None
+    outlook_item_id: str | None = None
+    outlook_changekey: str | None = None
+    outlook_meeting_url: str | None = None

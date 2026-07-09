@@ -248,3 +248,41 @@ async def test_mark_cancelled_sets_payload(user) -> None:
     assert updated.payload["cancel_message"] == "Отмена"
     assert updated.payload["outlook_cancelled"] is True
     assert updated.payload["cancelled_by_user_id"] == str(user.id)
+    assert "cancelled_at" in updated.payload
+
+
+@pytest.mark.asyncio
+async def test_apply_reschedule_restores_invitations_sent_stage(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    db.refresh = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    entry = _entry(MeetingRegistryStage.CANCELLED)
+    entry.payload = {
+        "attendees": ["a@turbo-don.ru"],
+        "cancelled_at": "2026-07-09T10:00:00+00:00",
+        "outlook_cancelled": True,
+    }
+
+    result_mock = MagicMock()
+    result_mock.scalar_one_or_none.return_value = entry
+    db.execute = AsyncMock(return_value=result_mock)
+
+    updated = await service.apply_reschedule(
+        memo_ref_key=entry.memo_ref_key,
+        slot_start="2026-07-15T13:00:00+03:00",
+        slot_end="2026-07-15T14:00:00+03:00",
+        subject="Совещание",
+        location="Зал совещаний КБ",
+        attendees=["a@turbo-don.ru", "b@turbo-don.ru"],
+        rescheduled_by=user,
+        sent_payload={"status": "rescheduled", "outlook_item_id": "new-id"},
+        reschedule_message="Перенос",
+    )
+
+    assert updated.stage == MeetingRegistryStage.INVITATIONS_SENT
+    assert updated.payload["attendees"] == ["a@turbo-don.ru", "b@turbo-don.ru"]
+    assert updated.payload["reschedule_message"] == "Перенос"
+    assert "cancelled_at" not in updated.payload
+    assert updated.outlook_item_id == "new-id"

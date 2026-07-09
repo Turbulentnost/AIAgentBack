@@ -74,6 +74,11 @@ from app.schemas.meeting import (
     MeetingRegistryItemRead,
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
+    MeetingRegistryRescheduleApproveRead,
+    MeetingRegistryRescheduleApproveRequest,
+    MeetingRegistryRescheduleSlotPreviewRead,
+    MeetingRegistryRescheduleSlotPreviewRequest,
+    MeetingRegistryStageRead,
     MeetingRoomRead,
     MeetingRoomsRequest,
     MeetingRunCreate,
@@ -128,6 +133,7 @@ from app.services.meeting_invite_format import (
 )
 from app.services.meeting_slot import (
     format_planned_start_for_search,
+    format_search_start_after_registry_slot,
     format_search_start_from_meeting_date,
     format_slot_label,
     parse_slot_datetime,
@@ -137,6 +143,7 @@ from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
 from app.tools.Outlook.find_meeting_slot import build_slot_participant_details
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite, load_config
+from app.tools.Outlook.reschedule_meeting import dispatch_reschedule_meeting
 from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
 from app.tools.onec.approve_service_memo import approve_service_memo
 from app.tools.onec.reject_service_memo import reject_service_memo
@@ -148,6 +155,13 @@ from app.services.meeting_memo_cache import (
 from app.tools.onec.service_memo_shared import APPROVED_STATUS, ServiceMemoWorkflowError
 
 logger = get_logger(__name__)
+
+RESCHEDULABLE_REGISTRY_STAGES = frozenset(
+    {
+        MeetingRegistryStage.INVITATIONS_SENT,
+        MeetingRegistryStage.CANCELLED,
+    }
+)
 
 
 from app.services.meeting_exceptions import MeetingServiceError
@@ -851,6 +865,275 @@ class MeetingService:
             outlook_warning=outlook_warning,
             message=cancel_message or None,
         )
+
+    async def suggest_registry_reschedule_slot(
+        self,
+        memo_ref_key: str,
+        payload: MeetingRegistryRescheduleSlotPreviewRequest,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryRescheduleSlotPreviewRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+        if entry.stage not in RESCHEDULABLE_REGISTRY_STAGES:
+            raise MeetingServiceError(
+                "Перенос доступен только для совещаний с отправленными приглашениями "
+                "или отменённых записей",
+                status_code=400,
+            )
+
+        search_after = format_search_start_after_registry_slot(entry.slot_start, entry.slot_end)
+        if not search_after:
+            raise MeetingServiceError(
+                "У совещения не указана дата/время для поиска нового слота",
+                status_code=400,
+            )
+
+        duration = payload.duration_minutes
+        if duration is None and entry.slot_start and entry.slot_end:
+            duration = max(
+                int((entry.slot_end - entry.slot_start).total_seconds() // 60),
+                1,
+            )
+
+        previous_start = entry.slot_start.isoformat() if entry.slot_start else None
+        previous_end = entry.slot_end.isoformat() if entry.slot_end else None
+        previous_label = (
+            format_slot_label(previous_start, previous_end)
+            if previous_start and previous_end
+            else None
+        )
+
+        slot_preview = await self._slot_service().suggest_agent_slot_safe(
+            normalized_ref,
+            MeetingAgentSlotPreviewRequest(
+                duration_minutes=duration,
+                planned_start=search_after,
+                search_start=search_after,
+            ),
+            current_user=current_user,
+        )
+
+        return MeetingRegistryRescheduleSlotPreviewRead(
+            ref_key=normalized_ref,
+            stage=MeetingRegistryStageRead(entry.stage.value),
+            previous_slot_start=previous_start,
+            previous_slot_end=previous_end,
+            previous_slot_label=previous_label,
+            search_after=search_after,
+            slot_preview=slot_preview,
+        )
+
+    async def approve_registry_reschedule(
+        self,
+        memo_ref_key: str,
+        payload: MeetingRegistryRescheduleApproveRequest,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryRescheduleApproveRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+        if entry.stage not in RESCHEDULABLE_REGISTRY_STAGES:
+            raise MeetingServiceError(
+                "Перенос доступен только для совещаний с отправленными приглашениями "
+                "или отменённых записей",
+                status_code=400,
+            )
+
+        previous_label = None
+        if entry.slot_start and entry.slot_end:
+            previous_label = format_slot_label(
+                entry.slot_start.isoformat(),
+                entry.slot_end.isoformat(),
+            )
+
+        memo_detail: dict | None = None
+        try:
+            memo_detail, _, _ = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
+        except MemoCacheMissError:
+            pass
+
+        approve_payload = MeetingAgentSlotApproveRequest(
+            slot_start=payload.slot_start,
+            slot_end=payload.slot_end,
+            attendees=payload.attendees,
+            attendee_emails=payload.attendee_emails,
+            subject=payload.subject,
+            location=payload.location,
+        )
+        try:
+            attendee_details, resolved = resolve_approve_recipients(approve_payload)
+        except MeetingApproveError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+
+        emails = [item.email for item in resolved if item.email]
+        if not emails:
+            raise MeetingServiceError("Не указаны e-mail участников для переноса совещания")
+
+        subject = resolve_invite_subject(memo_detail, override=payload.subject) or entry.subject or "Совещание"
+        location = format_invite_location_from_detail(memo_detail, override=payload.location) or entry.location
+        duration = slot_duration_minutes(payload.slot_start, payload.slot_end)
+        room = resolve_room_for_location(location)
+        body = build_approve_invite_body(attendee_details, room=room)
+        resources = [room["email"]] if room and room.get("email") else []
+        reschedule_message = (payload.message or "").strip() or "Совещание перенесено"
+
+        outlook_updated = False
+        new_invite_sent = False
+        sent_payload: dict[str, Any] | None = None
+        can_reschedule_existing = (
+            entry.stage == MeetingRegistryStage.INVITATIONS_SENT and bool(entry.outlook_item_id)
+        )
+
+        if can_reschedule_existing:
+            try:
+                sent_payload = await asyncio.to_thread(
+                    dispatch_reschedule_meeting,
+                    item_id=entry.outlook_item_id or "",
+                    changekey=entry.outlook_changekey or "",
+                    new_start=payload.slot_start,
+                    new_end=payload.slot_end,
+                    duration_minutes=duration,
+                    location=location,
+                    message=reschedule_message,
+                )
+                outlook_updated = sent_payload.get("status") == "rescheduled"
+            except Exception as exc:
+                logger.warning(
+                    "meeting_registry_reschedule_outlook_failed",
+                    ref_key=normalized_ref,
+                    error=str(exc),
+                )
+                sent_payload = None
+
+        if not outlook_updated:
+            try:
+                sent_payload = await asyncio.to_thread(
+                    dispatch_meeting_invite,
+                    attendee=emails[0],
+                    attendees=emails,
+                    subject=subject,
+                    start=payload.slot_start,
+                    duration_minutes=duration,
+                    body=body,
+                    location=location,
+                    resources=resources,
+                )
+                new_invite_sent = True
+            except Exception as exc:
+                raise MeetingServiceError(
+                    f"Не удалось перенести совещание через Outlook/Exchange: {exc}"
+                ) from exc
+
+        entry = await registry.apply_reschedule(
+            memo_ref_key=normalized_ref,
+            slot_start=payload.slot_start,
+            slot_end=payload.slot_end,
+            subject=subject,
+            location=location or None,
+            attendees=emails,
+            rescheduled_by=current_user,
+            sent_payload=sent_payload if isinstance(sent_payload, dict) else None,
+            reschedule_message=reschedule_message,
+        )
+
+        history_message = (
+            f"Совещание перенесено на {format_slot_label(payload.slot_start, payload.slot_end)}"
+        )
+        await self._sync_meeting_slot_to_cache(
+            normalized_ref,
+            slot_start=payload.slot_start,
+            slot_end=payload.slot_end,
+            location=location or None,
+            history_message=history_message,
+        )
+
+        await self.audit.log(
+            action="meeting.registry_rescheduled",
+            actor_id=current_user.id,
+            resource_type="meeting_registry",
+            resource_id=normalized_ref,
+            payload={
+                "subject": subject,
+                "previous_slot_label": previous_label,
+                "new_start": payload.slot_start,
+                "new_end": payload.slot_end,
+                "outlook_updated": outlook_updated,
+                "new_invite_sent": new_invite_sent,
+            },
+        )
+
+        outlook_item_id = entry.outlook_item_id
+        outlook_changekey = entry.outlook_changekey
+        outlook_meeting_url = entry.outlook_meeting_url
+        if isinstance(sent_payload, dict):
+            outlook_item_id = sent_payload.get("outlook_item_id") or outlook_item_id
+            outlook_changekey = sent_payload.get("outlook_changekey") or outlook_changekey
+            outlook_meeting_url = sent_payload.get("outlook_meeting_url") or outlook_meeting_url
+
+        return MeetingRegistryRescheduleApproveRead(
+            ref_key=normalized_ref,
+            stage=MeetingRegistryStageRead.INVITATIONS_SENT,
+            previous_slot_label=previous_label,
+            slot_label=format_slot_label(payload.slot_start, payload.slot_end),
+            subject=subject,
+            start=payload.slot_start,
+            end=payload.slot_end,
+            location=location or None,
+            attendees=(
+                sent_payload.get("attendees") if isinstance(sent_payload, dict) else None
+            ) or emails,
+            rescheduled=True,
+            outlook_updated=outlook_updated,
+            new_invite_sent=new_invite_sent,
+            message=reschedule_message,
+            outlook_item_id=outlook_item_id,
+            outlook_changekey=outlook_changekey,
+            outlook_meeting_url=outlook_meeting_url,
+        )
+
+    async def _sync_meeting_slot_to_cache(
+        self,
+        memo_ref_key: str,
+        *,
+        slot_start: str,
+        slot_end: str,
+        location: str | None,
+        history_message: str | None = None,
+    ) -> None:
+        from app.core.config import settings
+
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return
+        normalized = memo_ref_key.strip().lower()
+        try:
+            await MeetingMemoCacheService().patch_meeting_slot(
+                normalized,
+                slot_start=slot_start,
+                slot_end=slot_end,
+                location=location,
+                history_message=history_message,
+            )
+            await MeetingDashboardCacheService().patch_meeting_slot(
+                normalized,
+                slot_start=slot_start,
+                slot_end=slot_end,
+                location=location,
+            )
+        except Exception as exc:
+            logger.warning(
+                "meeting_slot_cache_patch_failed",
+                ref_key=normalized,
+                error=str(exc),
+            )
 
     async def run(
         self,

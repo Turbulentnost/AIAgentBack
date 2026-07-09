@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services.meeting_memo_cache import patch_dashboard_payload_status
+from app.services.meeting_memo_cache import patch_dashboard_payload_slot, patch_dashboard_payload_status
 from app.services.meeting_memo_cache import _dashboard_items
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 
@@ -213,6 +213,40 @@ class MeetingDashboardCacheService:
         ):
             return False
         patched_payload = patch_dashboard_payload_status(payload, ref_key, status)
+        fetched_at = cached.get("fetched_at")
+        if not isinstance(fetched_at, datetime):
+            fetched_at = datetime.now(timezone.utc)
+        await self._write_cache(day, patched_payload, fetched_at=fetched_at)
+        return True
+
+    async def patch_meeting_slot(
+        self,
+        ref_key: str,
+        *,
+        slot_start: str,
+        slot_end: str,
+        location: str | None = None,
+        target_date: date | None = None,
+    ) -> bool:
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return False
+        day = target_date or date.today()
+        cached = await self._read_cache(day)
+        if cached is None:
+            return False
+        payload = _payload_from_cached(cached)
+        if not any(
+            (item.get("ref_key") or "").strip().lower() == ref_key.strip().lower()
+            for item in _dashboard_items(payload)
+        ):
+            return False
+        patched_payload = patch_dashboard_payload_slot(
+            payload,
+            ref_key,
+            slot_start=slot_start,
+            slot_end=slot_end,
+            location=location,
+        )
         fetched_at = cached.get("fetched_at")
         if not isinstance(fetched_at, datetime):
             fetched_at = datetime.now(timezone.utc)
