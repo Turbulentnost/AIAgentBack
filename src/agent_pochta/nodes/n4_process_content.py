@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from agent_pochta.attachments.imap_fetch import ensure_attachments_from_imap
+from agent_pochta.attachments.pipeline import process_email_attachments
 from agent_pochta.services import ServiceContainer
 from agent_pochta.state import AgentState
 
@@ -14,14 +16,15 @@ def node_process_content(state: AgentState, container: ServiceContainer) -> Agen
     email = state["email"]
     trace = state.get("trace", []) + ["process_content"]
 
-    parts: list[str] = [email.subject, email.body_text]
+    ensure_attachments_from_imap(email, container.vault)
+    result = process_email_attachments(email, container.documents)
+    meta = dict(state.get("meta") or {})
+    meta["attachments_extraction"] = result.extraction_meta
 
-    for att in email.attachments:
-        processed = container.documents.extract(att)
-        att.extracted_text = processed.extracted_text
-        att.ocr_used = processed.ocr_used
-        if processed.extracted_text:
-            parts.append(f"[Вложение {att.filename}]\n{processed.extracted_text}")
-
-    combined = "\n\n".join(p for p in parts if p)
-    return {"combined_text": combined, "trace": trace}
+    return {
+        "email": email,
+        "combined_text": result.combined_text,
+        "attachments_text": result.attachments_text,
+        "meta": meta,
+        "trace": trace,
+    }

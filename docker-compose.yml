@@ -1,3 +1,18 @@
+x-app: &app
+  build: .
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_pochta
+    QDRANT_URL: http://qdrant:6333
+    RAG_BACKEND: qdrant
+    CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-8}
+  volumes:
+    - ./data:/app/data
+  restart: unless-stopped
+
 services:
   postgres:
     image: postgres:16
@@ -6,25 +21,159 @@ services:
       POSTGRES_PASSWORD: agent
       POSTGRES_DB: agent_pochta
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent_pochta"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   rabbitmq:
     image: rabbitmq:3-management
     ports:
-      - "5672:5672"
-      - "15672:15672"   # web UI: guest/guest
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    <<: *app
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "scripts/run_migrate.py"]
+
+  rag-init:
+    <<: *app
+    restart: "no"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    command: ["python", "scripts/init_qdrant.py"]
+
+  api:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rag-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8080}:8080"
+    command: ["python", "scripts/run_api.py"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  celery-worker:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rag-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command:
+      [
+        "sh",
+        "-c",
+        "exec celery -A agent_pochta.workers.celery_app:celery_app worker --loglevel=info -Q celery --concurrency=$${CELERY_WORKER_CONCURRENCY:-8}",
+      ]
+
+  celery-imap-worker:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    command:
+      [
+        "celery",
+        "-A",
+        "agent_pochta.workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=info",
+        "-Q",
+        "imap",
+        "--concurrency=1",
+      ]
+
+  celery-beat:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - .:/app/repo_root:rw
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_pochta
+      QDRANT_URL: http://qdrant:6333
+      RAG_BACKEND: qdrant
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-8}
+      STATS_EXPORT_DIR: data/stats
+      STATS_REPO_ROOT: /app/repo_root
+      STATS_START_TIME: "2026-07-08 08:35:00"
+      STATS_TIMEZONE: Europe/Moscow
+      STATS_EXPORT_INTERVAL_SEC: 600
+    command:
+      [
+        "celery",
+        "-A",
+        "agent_pochta.workers.celery_app:celery_app",
+        "beat",
+        "--loglevel=info",
+        "--schedule=/tmp/celerybeat-schedule",
+      ]
 
 volumes:
   pg_data:

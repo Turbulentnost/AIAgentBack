@@ -1,13 +1,12 @@
-"""Сборка графа агента на LangGraph (раздел 4.1 ТЗ).
+"""Сборка графа агента на LangGraph (ТЗ 3658 + ТЗ-АГТ-ПОЧТА-001).
 
 Маршруты:
-  imap_listener → spam_filter
-  spam_filter   ─ SPAM / серая зона → finalize
-                └ не спам          → identify_sender
-  identify_sender → process_content → route_department
-  route_department ─ confidence < порога → finalize (awaiting_human)
-                   └ ок                  → summarize → create_erp_task → finalize
-  create_erp_task   фиксирует ошибку 1С; finalize всегда терминальный.
+  imap_listener → spam_filter (правила + ТЗ §9)
+  spam_filter   ─ SPAM → finalize
+                └ иначе → identify_sender → process_content → route_department
+  route_department — RuleRouter; при низкой уверенности RAG departments + LLM
+                   ─ SPAM / серая зона / низкая уверенность → finalize
+                   └ ок → create_erp_task → finalize
 """
 
 from __future__ import annotations
@@ -30,9 +29,10 @@ def _route_after_spam(state: AgentState) -> str:
 
 
 def _route_after_department(state: AgentState) -> str:
-    if state.get("status") == ProcessingStatus.AWAITING_HUMAN:
+    status = state.get("status")
+    if status in (ProcessingStatus.SPAM, ProcessingStatus.AWAITING_HUMAN):
         return "finalize"
-    return "summarize"
+    return "create_erp_task"
 
 
 def build_graph(container: ServiceContainer | None = None):
@@ -49,7 +49,6 @@ def build_graph(container: ServiceContainer | None = None):
     g.add_node("identify_sender", bind(nodes.node_identify_sender))
     g.add_node("process_content", bind(nodes.node_process_content))
     g.add_node("route_department", bind(nodes.node_route_department))
-    g.add_node("summarize", bind(nodes.node_summarize))
     g.add_node("create_erp_task", bind(nodes.node_create_erp_task))
     g.add_node("finalize", bind(nodes.node_finalize))
 
@@ -63,9 +62,8 @@ def build_graph(container: ServiceContainer | None = None):
     g.add_edge("process_content", "route_department")
     g.add_conditional_edges(
         "route_department", _route_after_department,
-        {"summarize": "summarize", "finalize": "finalize"},
+        {"create_erp_task": "create_erp_task", "finalize": "finalize"},
     )
-    g.add_edge("summarize", "create_erp_task")
     g.add_edge("create_erp_task", "finalize")
     g.add_edge("finalize", END)
 

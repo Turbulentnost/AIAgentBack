@@ -14,10 +14,12 @@ from agent_pochta.state import AgentState
 
 def node_imap_listener(state: AgentState, container: ServiceContainer) -> AgentState:
     email = state["email"]
+    meta = dict(state.get("meta") or {})
+    meta.update({"mailbox": email.mailbox, "attachments": len(email.attachments)})
     return {
         "status": ProcessingStatus.PROCESSING,
         "human_review": False,
         "errors": [],
         "trace": ["imap_listener"],
-        "meta": {"mailbox": email.mailbox, "attachments": len(email.attachments)},
+        "meta": meta,
     }

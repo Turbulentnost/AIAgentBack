@@ -1,0 +1,10 @@
+--- URL для внешнего доступа ({{PUBLIC_IP}}) ---
+Страница входа:                 {{PUBLIC_BASE}}/login
+Каталог агентов (после входа):  {{PUBLIC_BASE}}/agents
+Входящая корреспонденция:       {{PUBLIC_BASE}}/agents/incoming-mail
+
+Для доступа из интернета нужны:
+  1) Проброс порта {{FRONTEND_PORT}} на этот ПК (NAT/router)
+  2) Разрешение в брандмауэре Windows для порта {{FRONTEND_PORT}}
+  3) Запущенный фронтенд: run_frontend.cmd
+

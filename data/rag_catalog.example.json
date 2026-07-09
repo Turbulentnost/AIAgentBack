@@ -1,0 +1,58 @@
+{
+  "contractors": [
+    {
+      "contractor_id": "C-001",
+      "name": "ООО «Ромашка»",
+      "emails": ["zakaz@romashka.ru"],
+      "department_codes": ["SALES"],
+      "contractor_type": "клиент"
+    },
+    {
+      "contractor_id": "C-GOV-01",
+      "name": "ИФНС России №1",
+      "emails": ["info@nalog.gov.ru"],
+      "department_codes": ["LEGAL", "FINANCE"],
+      "contractor_type": "госорган"
+    },
+    {
+      "contractor_id": "C-002",
+      "name": "ООО «Промтехснаб»",
+      "emails": ["zakupki@promtehsnab.ru", "i.zhukov@promtehsnab.ru"],
+      "department_codes": ["SALES", "FINANCE"],
+      "contractor_type": "клиент"
+    },
+    {
+      "contractor_id": "C-INT-01",
+      "name": "НПО «Турбулентность-ДОН» (внутренний)",
+      "emails": ["npo_ii4@turbo-don.ru"],
+      "department_codes": ["SALES"],
+      "contractor_type": "партнёр"
+    }
+  ],
+  "departments": [
+    {
+      "department_id": "SALES",
+      "department_name": "Отдел продаж",
+      "head_name": "Иванов И.И.",
+      "responsibility": "Заказы, коммерческие предложения, договоры поставки, счета"
+    },
+    {
+      "department_id": "LEGAL",
+      "department_name": "Юридический отдел",
+      "head_name": "Петрова П.П.",
+      "responsibility": "Претензии, суды, запросы госорганов"
+    },
+    {
+      "department_id": "FINANCE",
+      "department_name": "Финансовый отдел",
+      "head_name": "Сидоров С.С.",
+      "responsibility": "Расчётные документы, акты сверки, платежи, счета"
+    },
+    {
+      "department_id": "LOGISTICS",
+      "department_name": "Отдел логистики",
+      "head_name": "Козлов К.К.",
+      "responsibility": "Доставка, отгрузка, склад, доверенности на получение груза"
+    }
+  ]
+}

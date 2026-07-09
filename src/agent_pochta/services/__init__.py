@@ -1,32 +1,25 @@
-"""Слой платформенных сервисов.
-
-Каждый сервис — это абстрактный интерфейс (Protocol/ABC) + реализация.
-По умолчанию собирается контейнер заглушек (`build_stub_container`),
-который позволяет запускать агента без внешней инфраструктуры платформы.
-
-Когда сервисы платформы (ТЗ-ПЛАТФ-001) станут доступны, добавляются
-HTTP-адаптеры с тем же интерфейсом — узлы графа не меняются.
-"""
+"""Сборка контейнера сервисов."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from agent_pochta.config import Settings, get_settings
-from agent_pochta.services.document_service import DocumentService, StubDocumentService
-from agent_pochta.services.integration_service import (
-    IntegrationService,
-    StubIntegrationService,
-)
+from agent_pochta.services.document_service import DocumentService
+from agent_pochta.services.http_document import HttpDocumentService
+from agent_pochta.services.local_document import LocalDocumentService
+from agent_pochta.services.http_integration import HttpIntegrationService
+from agent_pochta.services.http_llm import ChatCompletionsLLMGateway
+from agent_pochta.services.integration_service import IntegrationService, StubIntegrationService
+from agent_pochta.services.odata_integration import ODataIntegrationService
 from agent_pochta.services.llm_gateway import LLMGateway, StubLLMGateway
-from agent_pochta.services.rag import RAGService, StubRAGService
+from agent_pochta.services.rag import RAGService
+from agent_pochta.services.rag_qdrant import build_rag_service
 from agent_pochta.services.vault import StubVaultClient, VaultClient
 
 
 @dataclass
 class ServiceContainer:
-    """Контейнер зависимостей, прокидывается в узлы графа."""
-
     llm: LLMGateway
     documents: DocumentService
     integration: IntegrationService
@@ -34,21 +27,66 @@ class ServiceContainer:
     vault: VaultClient
 
 
+def _build_llm(settings: Settings) -> LLMGateway:
+    if settings.llm_gateway_url:
+        return ChatCompletionsLLMGateway(
+            settings.llm_gateway_url,
+            api_key=settings.llm_gateway_api_key,
+            model=settings.llm_default_model,
+        )
+    return StubLLMGateway()
+
+
+def _build_documents(settings: Settings) -> DocumentService:
+    if settings.document_service_url:
+        return HttpDocumentService(settings.document_service_url)
+    return LocalDocumentService(
+        max_attachment_mb=settings.max_attachment_mb,
+        max_extract_chars=settings.document_extract_max_chars,
+    )
+
+
+def _build_integration(settings: Settings) -> IntegrationService:
+    mode = settings.erp_integration_mode
+    if mode == "odata":
+        if not settings.odata_base_url:
+            raise ValueError("ERP_MODE=odata requires ODATA_BASE_URL")
+        return ODataIntegrationService(
+            settings.odata_base_url,
+            entity=settings.odata_incoming_doc_entity,
+            username=settings.odata_username,
+            password=settings.odata_password,
+            timeout_sec=settings.odata_timeout_sec,
+            field_map_json=settings.odata_incoming_field_map,
+            extra_fields_json=settings.odata_incoming_extra_fields,
+            organization_keys_json=settings.odata_organization_keys,
+            department_keys_json=settings.odata_department_keys,
+            routing_rules_path=settings.odata_routing_rules_path,
+        )
+    if mode == "http":
+        return HttpIntegrationService(settings.integration_service_url)
+    return StubIntegrationService()
+
+
 def build_container(settings: Settings | None = None) -> ServiceContainer:
-    """Собирает контейнер сервисов в зависимости от режима (use_stubs)."""
     settings = settings or get_settings()
+    vault = StubVaultClient()
+
     if settings.use_stubs:
         return ServiceContainer(
             llm=StubLLMGateway(),
-            documents=StubDocumentService(),
+            documents=_build_documents(settings),
             integration=StubIntegrationService(),
-            rag=StubRAGService(),
-            vault=StubVaultClient(),
+            rag=build_rag_service(settings),
+            vault=vault,
         )
-    # TODO: реальные HTTP-адаптеры к сервисам платформы (ТЗ-ПЛАТФ-001).
-    raise NotImplementedError(
-        "Реальные адаптеры сервисов платформы ещё не реализованы. "
-        "Установите USE_STUBS=true либо добавьте HTTP-адаптеры."
+
+    return ServiceContainer(
+        llm=_build_llm(settings),
+        documents=_build_documents(settings),
+        integration=_build_integration(settings),
+        rag=build_rag_service(settings),
+        vault=vault,
     )
 
 

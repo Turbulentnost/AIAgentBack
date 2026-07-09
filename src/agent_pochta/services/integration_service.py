@@ -13,7 +13,12 @@ from agent_pochta.schemas import EmailMessage, RoutingResult
 class IntegrationService(ABC):
     @abstractmethod
     def create_incoming_correspondence(
-        self, email: EmailMessage, routing: RoutingResult, summary_ru: str
+        self,
+        email: EmailMessage,
+        routing: RoutingResult,
+        summary_ru: str,
+        *,
+        xml_document: str | None = None,
     ) -> dict:
         """Создаёт документ «Входящая корреспонденция» + процесс «Исполнение».
 
@@ -28,7 +33,12 @@ class StubIntegrationService(IntegrationService):
     _counter = 0
 
     def create_incoming_correspondence(
-        self, email: EmailMessage, routing: RoutingResult, summary_ru: str
+        self,
+        email: EmailMessage,
+        routing: RoutingResult,
+        summary_ru: str,
+        *,
+        xml_document: str | None = None,
     ) -> dict:
         StubIntegrationService._counter += 1
         n = StubIntegrationService._counter
@@ -46,5 +56,6 @@ class StubIntegrationService(IntegrationService):
                 "Содержание": summary_ru,
                 "Приоритет": routing.priority.value,
                 "Статус": "Передано на исполнение",
+                "XMLРезультат": xml_document or "",
             },
         }

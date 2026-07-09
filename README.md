@@ -49,11 +49,58 @@ python scripts/run_demo.py      # прогон графа на тестовом 
 
 ```bash
 docker compose up -d            # PostgreSQL + Qdrant + RabbitMQ
-python scripts/seed_rag.py      # просмотр демо-данных RAG
-# alembic upgrade head          # миграции БД — добавляются в Фазе 1
+pip install -e .
+cp .env.example .env
+alembic upgrade head            # миграции БД
+python scripts/seed_rag.py --load   # демо-данные в Qdrant (опционально)
 ```
+
+### Спринт 2: IMAP + API + retry 1С
+
+```bash
+docker compose up -d
+pip install -e ".[dev,api]"
+python scripts/run_migrate.py
+
+python scripts/run_celery_worker.py
+python scripts/run_celery_beat.py
+python scripts/run_api.py
+```
+
+На **Windows** worker и beat — в **двух** терминалах (`--beat` в worker не работает).
+
+Если порт 5432 уже занят — в `docker-compose.yml` Postgres публикуется на **5433** (см. `DATABASE_URL`).
+
+**Windows cmd:** не копируйте команды с `# комментарием` — cmd воспринимает `#` как аргумент.
+
+При `USE_STUBS=false` задайте URL сервисов платформы (см. `agent_nd/.env.example`).
+
+```bash
+python scripts/check_platform.py   # LLM + Qdrant
+python scripts/seed_rag.py --load  # коллекции contractors / departments
+```
+
+**Гибридный режим:** без `INTEGRATION_SERVICE_URL` / `DOCUMENT_SERVICE_URL` эти узлы остаются stub (API на платформе ещё не развёрнуты). LLM — через `/chat/completions` (LM Studio `:1234/v1`).
 
 ## Статус
 
-🚧 Каркас (Этап 0–1). Узлы реализованы как заглушки с корректными контрактами.
-Дорожная карта — см. `docs/` (будет добавлена) и раздел 13 ТЗ.
+✅ **Спринт 2** — IMAP polling, HTTP-адаптеры, Celery retry 1С, REST API HITL.
+
+🚧 **Спринт 3** — UI «Входящая корреспонденция» в `agent_nd_front` (`/agents/incoming-mail`).
+
+### UI (agent_nd_front)
+
+```bash
+# Терминал 1: agent-pochta API (если ещё не запущен)
+python scripts/run_api.py
+
+# Терминал 2: фронтенд
+cd "C:\Users\mdj\Desktop\рабочее\agent_nd_front"  # замените на свой путь к репозиторию agent_nd_front
+npm run dev
+```
+
+Откройте http://localhost:5173/agents/incoming-mail (или ссылку «Входящая корреспонденция» в каталоге агентов).
+
+Proxy dev: `/pochta-api` → `http://localhost:8080` (см. `VITE_POCHTA_API_PROXY` в `.env` фронта).
+
+Следующий шаг: human-in-the-loop формы в UI, интеграция с каталогом платформы, `USE_STUBS=false` для ОПЭ.

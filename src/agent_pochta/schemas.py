@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -44,7 +45,9 @@ class EmailMessage(BaseModel):
     body_text: str = ""
     body_html: str | None = None
     received_at: datetime
+    to: list[str] = Field(default_factory=list)
     cc: list[str] = Field(default_factory=list)
+    routing_recipient: str | None = None
     reply_to: str | None = None
     list_unsubscribe: str | None = None
     attachments: list[Attachment] = Field(default_factory=list)
@@ -82,6 +85,17 @@ class Department(BaseModel):
     head_name: str                # ФИО руководителя — для задачи в 1С
     responsibility: str = ""
     keywords: list[str] = Field(default_factory=list)
+
+
+class DepartmentRecord(BaseModel):
+    """Запись справочника departments в PostgreSQL."""
+
+    code: str
+    name: str
+    direction: str | None = None
+    email: str | None = None
+    is_active: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RoutingResult(BaseModel):

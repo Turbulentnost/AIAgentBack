@@ -13,15 +13,55 @@ dist/
 *.local
 ОТ ПОЧТЫ*.txt
 *ДАННЫЕ*.txt
+access-info.txt
+scripts/access-info.public-ip.*.txt
 
-# Данные/логи
+# Celery / runtime
+celerybeat-schedule*
 *.log
-data/
-*.sqlite
 
-# IDE
+# IDE / локальные инструменты
 .idea/
 .vscode/
+.tools/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+*.sqlite
+
+# Сгенерированные отчёты и артефакты анализа
+статистика.json
+статистика.md
+enterprise_positions_report_all.txt
+tz_keywords.txt
+tz_s12.txt
+tz_tables.txt
+
+# Локальные одноразовые скрипты и утилиты (не часть агента)
+list_enterprise_positions.py
+scripts/_*.py
+
+# Данные: по умолчанию не пушим, только конфиги агента
+data/*
+!data/routing_rules.json
+!data/rag_department_keywords.json
+!data/tz_department_topics.json
+!data/rag_catalog.example.json
+!data/spam_patterns.json
+!data/templates/
+!data/templates/**
+
+# Импорты, выгрузки, обучение и отчёты в data/
+data/imports/
+data/stats/
+data/*.xlsx
+data/*.xls
+data/*.docx
+data/*.xml
+data/spam_learning_patterns.json
+data/routing_corrections.json
+data/enterprise_positions.json
+data/*_report*.json
+data/*_comparison*.json
+data/*_mapping*.xlsx
+data/deterministic_routing_rules.draft.json

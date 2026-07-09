@@ -1,49 +1,55 @@
-"""Узел 7. Создание задачи в 1С:ERP — раздел 4, узел 7 (+ раздел 5.2).
+"""Узел 7. Создание задачи в 1С:ERP — раздел 4, узел 7 (+ ТЗ §13).
 
-Вызов Integration Service. При сбое — повтор (10 мин × 5 попыток по ТЗ;
-здесь — мгновенные ретраи tenacity, реальные задержки задаёт Celery).
-Прямой доступ к 1С запрещён.
+Режим dry_run (ТЗ §6): XML формируется, запись в 1С не выполняется.
 """
 
 from __future__ import annotations
 
-from tenacity import retry, stop_after_attempt, wait_fixed
-
+from agent_pochta.config import get_settings
 from agent_pochta.schemas import ErpTaskResult, ProcessingStatus
 from agent_pochta.services import ServiceContainer
 from agent_pochta.state import AgentState
 
-MAX_ATTEMPTS = 5
-
 
 def node_create_erp_task(state: AgentState, container: ServiceContainer) -> AgentState:
     trace = state.get("trace", []) + ["create_erp_task"]
+    settings = get_settings()
     email = state["email"]
     routing = state["routing"]
     summary = state.get("summary_ru", "")
+    meta = dict(state.get("meta") or {})
+    xml_document = meta.get("xml_document")
 
-    @retry(stop=stop_after_attempt(MAX_ATTEMPTS), wait=wait_fixed(0), reraise=True)
-    def _call() -> dict:
-        return container.integration.create_incoming_correspondence(email, routing, summary)
+    if settings.agent_mode == "dry_run":
+        erp = ErpTaskResult(
+            success=True,
+            erp_document_number="DRY-RUN",
+            erp_task_id=None,
+        )
+        meta["dry_run"] = True
+        return {"erp": erp, "trace": trace, "meta": meta}
 
     try:
-        res = _call()
+        res = container.integration.create_incoming_correspondence(
+            email, routing, summary, xml_document=xml_document
+        )
         erp = ErpTaskResult(
             success=True,
             erp_document_number=res["erp_document_number"],
             erp_task_id=res["erp_task_id"],
         )
-        return {"erp": erp, "trace": trace}
-    except Exception as exc:  # noqa: BLE001 — фиксируем любой сбой интеграции
+        return {"erp": erp, "trace": trace, "meta": meta}
+    except Exception as exc:  # noqa: BLE001
         erp = ErpTaskResult(success=False, error=str(exc))
         return {
             "erp": erp,
             "status": ProcessingStatus.ERROR,
             "human_review": True,
             "escalation_reason": (
-                f"Сбой интеграции с 1С после {MAX_ATTEMPTS} попыток: {exc}. "
-                "Уведомление администратору; письмо остаётся в очереди."
+                f"Сбой интеграции с 1С: {exc}. "
+                "Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
             ),
             "errors": state.get("errors", []) + [f"erp: {exc}"],
             "trace": trace,
+            "meta": {**meta, "erp_retry_scheduled": True},
         }

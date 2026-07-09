@@ -16,8 +16,14 @@ class RAGService(ABC):
         """Узел 3 — точный поиск контрагента по email-адресу."""
 
     @abstractmethod
-    def search_departments(self, text: str, top_k: int = 3) -> list[Department]:
-        """Узел 5 — семантический поиск релевантных отделов по тексту письма."""
+    def search_departments(
+        self,
+        text: str,
+        top_k: int = 3,
+        *,
+        recipient: str | None = None,
+    ) -> list[Department]:
+        """Узел 5 — keyword-поиск отделов по тексту письма и адресу получателя."""
 
     @abstractmethod
     def get_department(self, department_id: str) -> Department | None:
@@ -66,6 +72,34 @@ _DEMO_DEPARTMENTS = [
     ),
 ]
 
+_RECIPIENT_KEYWORD_BOOST = 3
+_RECIPIENT_BOOST_SKIP = frozenset({"info", "info@turbo-don.ru"})
+
+
+def score_department_keywords(
+    department: Department,
+    text: str,
+    *,
+    recipient: str | None = None,
+    recipient_boost: int = _RECIPIENT_KEYWORD_BOOST,
+) -> int:
+    """Считает совпадения keywords; local-part получателя весит выше (ТЗ прилож. D)."""
+    text_l = text.lower()
+    recipient_l = (recipient or "").lower().strip()
+    local = recipient_l.split("@", 1)[0] if "@" in recipient_l else recipient_l
+    score = 0
+    for keyword in department.keywords:
+        kw = keyword.lower()
+        if kw in _RECIPIENT_BOOST_SKIP:
+            continue
+        if kw in text_l:
+            score += 1
+        if recipient_l and kw in recipient_l:
+            score += recipient_boost
+        elif local and kw in local:
+            score += recipient_boost
+    return score
+
 
 class StubRAGService(RAGService):
     """In-memory заглушка RAG поверх демо-данных (без Qdrant)."""
@@ -81,11 +115,16 @@ class StubRAGService(RAGService):
                 return c
         return None
 
-    def search_departments(self, text: str, top_k: int = 3) -> list[Department]:
-        text_l = text.lower()
+    def search_departments(
+        self,
+        text: str,
+        top_k: int = 3,
+        *,
+        recipient: str | None = None,
+    ) -> list[Department]:
         scored: list[tuple[int, Department]] = []
         for d in self._departments.values():
-            score = sum(1 for kw in d.keywords if kw in text_l)
+            score = score_department_keywords(d, text, recipient=recipient)
             scored.append((score, d))
         scored.sort(key=lambda x: x[0], reverse=True)
         # Если совпадений нет — возвращаем всё (LLM решит), иначе топ по совпадениям

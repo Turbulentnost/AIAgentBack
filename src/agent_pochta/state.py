@@ -31,6 +31,7 @@ class AgentState(TypedDict, total=False):
 
     # Узел 4 — содержимое (объединённый текст письма + вложений)
     combined_text: str
+    attachments_text: str
 
     # Узел 5 — маршрутизация
     routing: RoutingResult

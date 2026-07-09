@@ -13,7 +13,12 @@ from agent_pochta.config import get_settings
 
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
-    return create_engine(get_settings().database_url, pool_pre_ping=True, future=True)
+    return create_engine(
+        get_settings().database_url,
+        pool_pre_ping=True,
+        future=True,
+        connect_args={"connect_timeout": 3},
+    )
 
 
 @lru_cache(maxsize=1)
