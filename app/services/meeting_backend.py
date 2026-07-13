@@ -15,6 +15,7 @@ from app.services.meeting_invite_format import (
     manager_name_from_memo_document,
     place_from_invite_location,
     place_from_memo_document,
+    resolve_invite_subject,
     resolve_room_for_location,
 )
 from app.tools.Outlook.meeting_rooms import resolve_room_by_name
@@ -488,7 +489,10 @@ class MeetingBackend:
         if not attendees:
             return None
 
-        invite_subject = subject or memo_obj.subject or f"Совещание {memo_obj.number or ''}".strip()
+        invite_subject = resolve_invite_subject(
+            {"title": memo_obj.subject, "number": memo_obj.number},
+            override=subject,
+        )
         manager_name = manager_name_from_memo_document(memo_obj.raw)
         place = room.get("name") or place_from_memo_document(memo_obj.raw) or ""
         location = format_invite_location(manager_name, place)

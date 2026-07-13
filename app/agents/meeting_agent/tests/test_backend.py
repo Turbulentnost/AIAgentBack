@@ -121,6 +121,6 @@ async def test_prepare_invite(user, sample_document: dict) -> None:
     )
 
     assert invite is not None
-    assert invite.subject == "Еженедельное совещание"
+    assert invite.subject == "Еженедельное совещание СЗ-001"
     assert invite.attendees == ["petrov@turbo-don.ru"]
     assert invite.location == "Переговорная 1"

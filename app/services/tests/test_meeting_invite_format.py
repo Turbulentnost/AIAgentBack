@@ -37,7 +37,30 @@ def test_resolve_invite_subject_from_detail() -> None:
         "number": "000010154",
         "application": {},
     }
-    assert resolve_invite_subject(detail) == "Согласование ТЗ на ИИ-агент"
+    assert resolve_invite_subject(detail) == "Согласование ТЗ на ИИ-агент СЗ 000010154"
+
+
+def test_resolve_invite_subject_skips_duplicate_sz() -> None:
+    detail = {
+        "title": "Согласование ТЗ на ИИ-агент СЗ 000010154",
+        "number": "000010154",
+        "application": {},
+    }
+    assert resolve_invite_subject(detail) == "Согласование ТЗ на ИИ-агент СЗ 000010154"
+
+
+def test_resolve_invite_subject_keeps_sz_prefix_in_number() -> None:
+    detail = {
+        "title": "Еженедельное совещание",
+        "number": "СЗ-001",
+        "application": {},
+    }
+    assert resolve_invite_subject(detail) == "Еженедельное совещание СЗ-001"
+
+
+def test_resolve_invite_subject_fallback_with_number() -> None:
+    detail = {"title": None, "number": "000010154", "application": {}}
+    assert resolve_invite_subject(detail) == "Совещание СЗ 000010154"
 
 
 def test_format_invite_location_from_detail() -> None:

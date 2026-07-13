@@ -7,6 +7,49 @@ from app.tools.Outlook.meeting_rooms import resolve_room_by_name
 INVITE_AGENT_FOOTER = "Совещание запланировано ИИ-агентом по планированию совещаний"
 
 
+def _memo_number_text(number: Any) -> str:
+    if isinstance(number, str):
+        return number.strip()
+    if number is None:
+        return ""
+    return str(number).strip()
+
+
+def _sz_subject_suffix(number: str) -> str:
+    """Суффикс «СЗ {номер}» для темы приглашения; не дублирует префикс СЗ в номере."""
+    raw = number.strip()
+    if not raw:
+        return ""
+    if raw.upper().startswith("СЗ"):
+        return f" {raw}"
+    return f" СЗ {raw}"
+
+
+def _subject_already_has_sz(subject: str, number: str) -> bool:
+    """True, если в теме уже есть ссылка на этот номер СЗ."""
+    topic = subject.strip()
+    raw = number.strip()
+    if not topic or not raw:
+        return False
+    upper = topic.upper()
+    markers = [f"СЗ {raw}", f"СЗ{raw}", raw]
+    return any(marker.upper() in upper for marker in markers if marker)
+
+
+def append_sz_to_invite_subject(topic: str, number: str | None) -> str:
+    """Добавляет «СЗ {номер}» сразу после темы совещания."""
+    base = (topic or "").strip()
+    raw = _memo_number_text(number)
+    if not raw:
+        return base
+    if base and _subject_already_has_sz(base, raw):
+        return base
+    suffix = _sz_subject_suffix(raw)
+    if not base:
+        return suffix.strip()
+    return f"{base}{suffix}"
+
+
 def resolve_invite_subject(
     detail: dict[str, Any] | None,
     *,
@@ -16,18 +59,18 @@ def resolve_invite_subject(
     explicit = (override or "").strip()
     if explicit:
         return explicit
+    number = _memo_number_text((detail or {}).get("number")) if detail else ""
     if not detail:
-        return fallback
+        return append_sz_to_invite_subject(fallback, number) if number else fallback
     application = detail.get("application") or {}
     for candidate in (
         detail.get("title"),
         application.get("agenda"),
     ):
         if isinstance(candidate, str) and candidate.strip():
-            return candidate.strip()
-    number = detail.get("number")
-    if isinstance(number, str) and number.strip():
-        return f"Совещание {number.strip()}"
+            return append_sz_to_invite_subject(candidate.strip(), number)
+    if number:
+        return append_sz_to_invite_subject(fallback, number)
     return fallback
 
 
