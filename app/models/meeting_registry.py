@@ -23,6 +23,7 @@ class MeetingRegistryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     initiator_name: Mapped[str | None] = mapped_column(String(256))
     manager_name: Mapped[str | None] = mapped_column(String(256))
     participants_count: Mapped[int] = mapped_column(Integer, default=0)
+    participants: Mapped[list] = mapped_column(JSONB, default=list)
     slot_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     slot_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stage: Mapped[MeetingRegistryStage] = mapped_column(

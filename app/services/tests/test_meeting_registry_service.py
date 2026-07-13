@@ -30,6 +30,7 @@ def _entry(stage: MeetingRegistryStage) -> MeetingRegistryEntry:
         stage=stage,
         invitations_sent_at=now,
         participants_count=2,
+        participants=[],
     )
 
 
@@ -289,39 +290,168 @@ async def test_apply_reschedule_restores_invitations_sent_stage(user) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_registry_participants_returns_participants_from_detail(user) -> None:
+async def test_upsert_from_invite_saves_participants_from_memo_detail(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    added_entry: MeetingRegistryEntry | None = None
+
+    def capture_add(entry: MeetingRegistryEntry) -> None:
+        nonlocal added_entry
+        added_entry = entry
+
+    db.add = MagicMock(side_effect=capture_add)
+    result_mock = MagicMock()
+    result_mock.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result_mock)
+
+    memo_detail = {
+        "number": "000010674",
+        "title": "Организация комиссионной приёмки",
+        "application": {
+            "initiator": {"full_name": "Мануков Роман Григорьевич"},
+            "manager": {"full_name": "Мануков Роман Григорьевич"},
+            "participants": [
+                {"full_name": "Арсуноев Михаил Магомедович"},
+                {"full_name": "Грунтовский Дмитрий Дмитриевич"},
+                {"full_name": "Асланян Артур Карапетович"},
+            ],
+            "participants_count": 3,
+        },
+    }
+
+    await service.upsert_from_invite(
+        memo_ref_key="c9d6ccaa-d60c-5814-8468-7d440d393ee0",
+        slot_start="2026-07-14 16:00",
+        slot_end="2026-07-14 17:00",
+        subject="Тема",
+        location="Зал",
+        attendees=["a@turbo-don.ru"],
+        approved_by=user,
+        memo_detail=memo_detail,
+        attendee_details=[{"fio": "Только приглашённый"}],
+    )
+
+    assert added_entry is not None
+    assert added_entry.participants == [
+        "Арсуноев Михаил Магомедович",
+        "Грунтовский Дмитрий Дмитриевич",
+        "Асланян Артур Карапетович",
+    ]
+    assert added_entry.participants_count == 3
+    assert added_entry.initiator_name == "Мануков Роман Григорьевич"
+
+
+@pytest.mark.asyncio
+async def test_upsert_from_invite_updates_empty_participants_on_repeat_invite(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = []
+    entry.participants_count = 0
+
+    result_mock = MagicMock()
+    result_mock.scalar_one_or_none.return_value = entry
+    db.execute = AsyncMock(return_value=result_mock)
+
+    memo_detail = {
+        "application": {
+            "participants": [
+                {"full_name": "Петров Петр Петрович"},
+                {"full_name": "Иванов Иван Иванович"},
+            ],
+            "participants_count": 2,
+        },
+    }
+
+    updated = await service.upsert_from_invite(
+        memo_ref_key=entry.memo_ref_key,
+        slot_start="2026-07-15 13:00:00+03:00",
+        slot_end="2026-07-15 14:00:00+03:00",
+        subject="Совещание",
+        location="Зал",
+        attendees=["a@turbo-don.ru"],
+        approved_by=user,
+        memo_detail=memo_detail,
+    )
+
+    assert updated.participants == [
+        "Петров Петр Петрович",
+        "Иванов Иван Иванович",
+    ]
+    assert updated.participants_count == 2
+
+
+def test_resolve_registry_participant_names_prefers_memo_detail() -> None:
+    from app.services.meeting_registry_service import resolve_registry_participant_names
+
+    names = resolve_registry_participant_names(
+        memo_detail={
+            "application": {
+                "initiator": {"full_name": "A"},
+                "participants": [
+                    {"full_name": "Петров Петр Петрович"},
+                    {"full_name": "Иванов Иван Иванович"},
+                ],
+            }
+        },
+        attendee_details=[
+            {"fio": "Комарькова Анастасия Эдуардовна"},
+            {"fio": "Мангасарян Давид Каренович"},
+        ],
+    )
+    assert names == [
+        "Петров Петр Петрович",
+        "Иванов Иван Иванович",
+    ]
+
+
+def test_resolve_registry_participant_names_falls_back_to_attendee_details() -> None:
+    from app.services.meeting_registry_service import resolve_registry_participant_names
+
+    names = resolve_registry_participant_names(
+        attendee_details=[
+            {"fio": "Комарькова Анастасия Эдуардовна"},
+            {"fio": "Мангасарян Давид Каренович"},
+        ],
+    )
+    assert names == [
+        "Комарькова Анастасия Эдуардовна",
+        "Мангасарян Давид Каренович",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_registry_participants_returns_participants_from_db(user) -> None:
     db = AsyncMock()
     service = MeetingService(db)
     service._ensure_access = AsyncMock()
 
     entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = [
+        "Сысоева Ирина Леонидовна",
+        "Иванов Иван Иванович",
+        "Петров Петр Петрович",
+    ]
+    entry.participants_count = 3
+    entry.updated_at = entry.invitations_sent_at
+
     registry = MagicMock()
     registry.get_entry = AsyncMock(return_value=entry)
 
-    detail = {
-        "application": {
-            "participants": [
-                {"full_name": "Петров Петр Петрович"},
-                {"full_name": "Иванов Иван Иванович"},
-            ]
-        }
-    }
-    fetched_at = datetime.now(timezone.utc)
-    cache = MagicMock()
-    cache.get_memo_detail_for_agent = AsyncMock(return_value=(detail, fetched_at, True))
-
-    with (
-        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
-        patch("app.services.meeting_service.MeetingMemoCacheService", return_value=cache),
-    ):
+    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
         result = await service.get_registry_participants(
             entry.memo_ref_key,
             current_user=user,
         )
 
     assert result.ref_key == entry.memo_ref_key
-    assert result.participants_count == 2
+    assert result.participants_count == 3
     assert result.participants == [
-        "Петров Петр Петрович",
+        "Сысоева Ирина Леонидовна",
         "Иванов Иван Иванович",
+        "Петров Петр Петрович",
     ]

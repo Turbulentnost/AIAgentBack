@@ -37,7 +37,6 @@ from app.services.meeting_attendee_priority import (
     priority_role_label,
 )
 from app.services.meeting_slot import format_event_time_display, format_slot_label
-from app.services.meeting_attendees import participants_from_detail
 from app.tools.Outlook.slot_search.attendees import (
     _is_resource_calendar_email,
     is_department_mailbox_email,
@@ -467,17 +466,22 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
     )
 
 
-def registry_participants_read(
-    *,
-    ref_key: str,
-    detail: dict[str, Any],
-    fetched_at: str,
-) -> MeetingRegistryParticipantsRead:
-    participants = participants_from_detail(detail)
+def registry_participants_read(entry: MeetingRegistryEntry) -> MeetingRegistryParticipantsRead:
+    raw = entry.participants if isinstance(entry.participants, list) else []
+    participants = [
+        name.strip()
+        for name in raw
+        if isinstance(name, str) and name.strip()
+    ]
+    fetched_at = (
+        entry.updated_at.isoformat()
+        if entry.updated_at
+        else entry.invitations_sent_at.isoformat()
+    )
     return MeetingRegistryParticipantsRead(
-        ref_key=ref_key,
+        ref_key=entry.memo_ref_key,
         participants=participants,
-        participants_count=len(participants),
+        participants_count=len(participants) or int(entry.participants_count or 0),
         fetched_at=fetched_at,
     )
 

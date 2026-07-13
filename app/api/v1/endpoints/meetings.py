@@ -122,7 +122,7 @@ async def get_registry_meeting_participants(
     db: DbSession,
     current_user: CurrentUser,
 ) -> MeetingRegistryParticipantsRead:
-    """Участники совещания из реестра: кэш СЗ или загрузка из 1С при промахе."""
+    """Участники совещания из колонки participants в реестре (без 1С)."""
     await _require_agent_access(db, current_user)
     try:
         return await MeetingService(db).get_registry_participants(

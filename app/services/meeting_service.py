@@ -344,6 +344,7 @@ class MeetingService:
             approved_by=current_user,
             memo_detail=memo_detail,
             sent_payload=sent_payload if isinstance(sent_payload, dict) else None,
+            attendee_details=attendee_details,
         )
 
         await self._sync_approved_status_after_invite(
@@ -733,18 +734,7 @@ class MeetingService:
         if entry is None:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
 
-        try:
-            detail, fetched_at, _from_cache = await MeetingMemoCacheService().get_memo_detail_for_agent(
-                normalized_ref
-            )
-        except MemoCacheMissError as exc:
-            raise MeetingServiceError(str(exc), status_code=503) from exc
-
-        return registry_participants_read(
-            ref_key=normalized_ref,
-            detail=detail,
-            fetched_at=fetched_at.isoformat(),
-        )
+        return registry_participants_read(entry)
 
     @staticmethod
     def _outlook_cancel_not_found(exc: BaseException) -> bool:
@@ -1070,6 +1060,8 @@ class MeetingService:
             rescheduled_by=current_user,
             sent_payload=sent_payload if isinstance(sent_payload, dict) else None,
             reschedule_message=reschedule_message,
+            attendee_details=attendee_details,
+            memo_detail=memo_detail,
         )
 
         history_message = (

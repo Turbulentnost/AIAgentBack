@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MeetingRegistryStage
 from app.models.meeting_registry import MeetingRegistryEntry
 from app.models.user import User
+from app.services.meeting_attendees import participants_from_detail
 from app.services.meeting_invite_format import (
     format_invite_location_from_detail,
     manager_name_from_detail,
@@ -36,11 +37,54 @@ def _person_name(person: dict[str, Any] | None) -> str | None:
     return None
 
 
+def _normalize_participant_names(names: list[str] | None) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in names or []:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(name)
+    return unique
+
+
+def resolve_registry_participant_names(
+    *,
+    memo_detail: dict[str, Any] | None = None,
+    participant_names: list[str] | None = None,
+    attendee_details: list[Any] | None = None,
+) -> list[str]:
+    """ФИО для колонки participants: явный список → detail СЗ → attendee_details."""
+    explicit = _normalize_participant_names(participant_names)
+    if explicit:
+        return explicit
+
+    if memo_detail:
+        from_memo = _normalize_participant_names(participants_from_detail(memo_detail))
+        if from_memo:
+            return from_memo
+
+    from_details: list[str] = []
+    for item in attendee_details or []:
+        if isinstance(item, dict):
+            fio = item.get("fio") or item.get("full_name")
+        else:
+            fio = getattr(item, "fio", None) or getattr(item, "full_name", None)
+        if isinstance(fio, str) and fio.strip():
+            from_details.append(fio.strip())
+    return _normalize_participant_names(from_details)
+
+
 def _snapshot_from_detail(
     memo_detail: dict[str, Any] | None,
     *,
     subject: str | None,
     location: str | None,
+    participant_names: list[str] | None = None,
 ) -> dict[str, Any]:
     application = (memo_detail or {}).get("application") or {}
     title = (memo_detail or {}).get("title")
@@ -49,6 +93,12 @@ def _snapshot_from_detail(
     resolved_location = location or format_invite_location_from_detail(memo_detail)
     if not resolved_location:
         resolved_location = place_from_detail(memo_detail)
+    participants = _normalize_participant_names(participant_names)
+    if not participants and memo_detail:
+        participants = _normalize_participant_names(participants_from_detail(memo_detail))
+    count = len(participants)
+    if count <= 0:
+        count = int(application.get("participants_count") or 0)
     return {
         "memo_number": (memo_detail or {}).get("number"),
         "title": title,
@@ -57,7 +107,8 @@ def _snapshot_from_detail(
         "initiator_name": _person_name(application.get("initiator")),
         "manager_name": manager_name_from_detail(memo_detail)
         or _person_name(application.get("manager")),
-        "participants_count": int(application.get("participants_count") or 0),
+        "participants": participants,
+        "participants_count": count,
     }
 
 
@@ -123,10 +174,23 @@ class MeetingRegistryService:
         memo_detail: dict[str, Any] | None = None,
         sent_payload: dict[str, Any] | None = None,
         approved_at: datetime | None = None,
+        participant_names: list[str] | None = None,
+        attendee_details: list[Any] | None = None,
     ) -> MeetingRegistryEntry:
         normalized_ref = memo_ref_key.strip().lower()
         now = datetime.now(timezone.utc)
-        snapshot = _snapshot_from_detail(memo_detail, subject=subject, location=location)
+        names = resolve_registry_participant_names(
+            memo_detail=memo_detail,
+            participant_names=participant_names,
+            attendee_details=attendee_details,
+        )
+        snapshot = _snapshot_from_detail(
+            memo_detail,
+            subject=subject,
+            location=location,
+            participant_names=names,
+        )
+        participants_count = len(names) if names else int(snapshot.get("participants_count") or 0)
         outlook_fields = _outlook_fields_from_sent_payload(sent_payload)
         slot_start_dt = parse_slot_datetime(slot_start)
         slot_end_dt = parse_slot_datetime(slot_end)
@@ -149,7 +213,8 @@ class MeetingRegistryService:
                 location=snapshot.get("location"),
                 initiator_name=snapshot.get("initiator_name"),
                 manager_name=snapshot.get("manager_name"),
-                participants_count=snapshot.get("participants_count") or 0,
+                participants=names,
+                participants_count=participants_count,
                 slot_start=slot_start_dt,
                 slot_end=slot_end_dt,
                 stage=MeetingRegistryStage.INVITATIONS_SENT,
@@ -174,7 +239,11 @@ class MeetingRegistryService:
             entry.location = snapshot.get("location") or entry.location
             entry.initiator_name = snapshot.get("initiator_name") or entry.initiator_name
             entry.manager_name = snapshot.get("manager_name") or entry.manager_name
-            entry.participants_count = snapshot.get("participants_count") or entry.participants_count
+            if names:
+                entry.participants = names
+                entry.participants_count = len(names)
+            elif participants_count:
+                entry.participants_count = participants_count
             entry.slot_start = slot_start_dt or entry.slot_start
             entry.slot_end = slot_end_dt or entry.slot_end
             entry.invitations_sent_at = now
@@ -260,6 +329,9 @@ class MeetingRegistryService:
         rescheduled_by: User,
         sent_payload: dict[str, Any] | None = None,
         reschedule_message: str | None = None,
+        participant_names: list[str] | None = None,
+        attendee_details: list[Any] | None = None,
+        memo_detail: dict[str, Any] | None = None,
     ) -> MeetingRegistryEntry:
         entry = await self.get_entry(memo_ref_key)
         if entry is None:
@@ -269,6 +341,11 @@ class MeetingRegistryService:
         slot_start_dt = parse_slot_datetime(slot_start)
         slot_end_dt = parse_slot_datetime(slot_end)
         outlook_fields = _outlook_fields_from_sent_payload(sent_payload)
+        names = resolve_registry_participant_names(
+            memo_detail=memo_detail,
+            participant_names=participant_names,
+            attendee_details=attendee_details,
+        )
         payload = dict(entry.payload or {})
         payload["attendees"] = attendees
         payload["sent_payload"] = sent_payload or {}
@@ -294,6 +371,9 @@ class MeetingRegistryService:
             entry.subject = subject
         if location:
             entry.location = location
+        if names:
+            entry.participants = names
+            entry.participants_count = len(names)
         entry.invitations_sent_at = now
         entry.approved_by_user_id = rescheduled_by.id
         if outlook_fields.get("outlook_item_id"):
