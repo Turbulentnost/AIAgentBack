@@ -619,6 +619,168 @@ async def test_get_registry_participants_keeps_db_list_when_pending_removal_exis
 
 
 @pytest.mark.asyncio
+async def test_search_registry_participant_found_and_can_add(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = ["Сысоева Ирина Леонидовна"]
+    entry.participants_count = 1
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+
+    backend = MagicMock()
+    backend.resolve_participants = AsyncMock(
+        return_value=[
+            ResolvedParticipant(
+                fio="Иванов Иван Иванович",
+                email="ivanov@turbo-don.ru",
+                found=True,
+            )
+        ]
+    )
+    service._backend = MagicMock(return_value=backend)
+
+    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+        result = await service.search_registry_participant(
+            entry.memo_ref_key,
+            "Иванов Иван Иванович",
+            current_user=user,
+        )
+
+    assert result.query == "Иванов Иван Иванович"
+    assert result.found is True
+    assert result.email == "ivanov@turbo-don.ru"
+    assert result.already_added is False
+    assert result.can_add is True
+
+
+@pytest.mark.asyncio
+async def test_search_registry_participant_not_found(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = []
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+
+    backend = MagicMock()
+    backend.resolve_participants = AsyncMock(
+        return_value=[
+            ResolvedParticipant(
+                fio="Неизвестный Пользователь",
+                email=None,
+                found=False,
+            )
+        ]
+    )
+    service._backend = MagicMock(return_value=backend)
+
+    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+        result = await service.search_registry_participant(
+            entry.memo_ref_key,
+            "Неизвестный Пользователь",
+            current_user=user,
+        )
+
+    assert result.found is False
+    assert result.can_add is False
+    assert result.email is None
+
+
+@pytest.mark.asyncio
+async def test_search_registry_participant_already_added(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = ["Иванов Иван Иванович"]
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+
+    backend = MagicMock()
+    backend.resolve_participants = AsyncMock(
+        return_value=[
+            ResolvedParticipant(
+                fio="Иванов Иван Иванович",
+                email="ivanov@turbo-don.ru",
+                found=True,
+            )
+        ]
+    )
+    service._backend = MagicMock(return_value=backend)
+
+    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+        result = await service.search_registry_participant(
+            entry.memo_ref_key,
+            "Иванов Иван Иванович",
+            current_user=user,
+        )
+
+    assert result.found is True
+    assert result.already_added is True
+    assert result.can_add is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_registry_participants_removal_clears_pending(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+    service.audit.log = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = [
+        "Комарькова Анастасия Эдуардовна",
+        "Соломичева Светлана Викторовна",
+        "Кондратюк Михаела Борисовна",
+    ]
+    entry.participants_count = 3
+    entry.payload = {
+        "attendees": ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"],
+        "pending_removal": {
+            "participants": [
+                "Комарькова Анастасия Эдуардовна",
+                "Соломичева Светлана Викторовна",
+            ],
+            "removed": ["Кондратюк Михаела Борисовна"],
+            "attendees": ["a@turbo-don.ru", "b@turbo-don.ru"],
+        },
+    }
+    entry.updated_at = entry.invitations_sent_at
+
+    cleared_entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    cleared_entry.participants = entry.participants
+    cleared_entry.participants_count = entry.participants_count
+    cleared_entry.payload = {"attendees": entry.payload["attendees"]}
+    cleared_entry.updated_at = entry.updated_at
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+    registry.clear_pending_removal = AsyncMock(return_value=cleared_entry)
+
+    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+        result = await service.cancel_registry_participants_removal(
+            entry.memo_ref_key,
+            current_user=user,
+        )
+
+    registry.clear_pending_removal.assert_awaited_once()
+    service.audit.log.assert_awaited_once()
+    assert result.pending_confirmation is False
+    assert result.pending_removed == []
+    assert result.participants_count == 3
+    assert "Кондратюк Михаела Борисовна" in result.participants
+
+
+@pytest.mark.asyncio
 async def test_get_registry_history_returns_events(user) -> None:
     db = AsyncMock()
     service = MeetingService(db)

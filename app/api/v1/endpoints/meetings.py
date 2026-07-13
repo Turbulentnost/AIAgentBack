@@ -30,6 +30,7 @@ from app.schemas.meeting import (
     MeetingRegistryCancelRequest,
     MeetingRegistryHistoryRead,
     MeetingRegistryParticipantsRead,
+    MeetingRegistryParticipantSearchRead,
     MeetingRegistryParticipantsApplyRead,
     MeetingRegistryParticipantsApplyRequest,
     MeetingRegistryParticipantsRemovalConfirmRead,
@@ -139,6 +140,28 @@ async def get_registry_meeting_participants(
 
 
 @router.get(
+    "/registry/{memo_ref_key}/participants/search",
+    response_model=MeetingRegistryParticipantSearchRead,
+)
+async def search_registry_meeting_participant(
+    memo_ref_key: uuid.UUID,
+    fio: str,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingRegistryParticipantSearchRead:
+    """Поиск участника по ФИО в Outlook (Exchange GAL) для кнопки «Добавить»."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await MeetingService(db).search_registry_participant(
+            str(memo_ref_key),
+            fio,
+            current_user=current_user,
+        )
+    except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.get(
     "/registry/{memo_ref_key}/history",
     response_model=MeetingRegistryHistoryRead,
 )
@@ -199,6 +222,29 @@ async def confirm_registry_participants_removal(
         result = await MeetingService(db).confirm_registry_participants_removal(
             str(memo_ref_key),
             payload,
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/{memo_ref_key}/participants/cancel-removal",
+    response_model=MeetingRegistryParticipantsRead,
+)
+async def cancel_registry_participants_removal(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingRegistryParticipantsRead:
+    """Отменить ожидание подтверждения удаления участников (сброс pending_removal)."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).cancel_registry_participants_removal(
+            str(memo_ref_key),
             current_user=current_user,
         )
         await db.commit()

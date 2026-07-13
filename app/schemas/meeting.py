@@ -638,6 +638,18 @@ class MeetingRegistryParticipantsRead(BaseModel):
     fetched_at: str
 
 
+class MeetingRegistryParticipantSearchRead(BaseModel):
+    query: str
+    fio: str
+    email: str | None = None
+    found: bool = False
+    already_added: bool = False
+    can_add: bool = Field(
+        default=False,
+        description="Можно добавить участника: найден в Outlook и ещё не в списке",
+    )
+
+
 class MeetingRegistryEventTypeRead(str, Enum):
     INVITATIONS_SENT = "invitations_sent"
     RESCHEDULED = "rescheduled"

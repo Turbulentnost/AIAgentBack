@@ -77,6 +77,7 @@ from app.schemas.meeting import (
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
     MeetingRegistryParticipantsRead,
+    MeetingRegistryParticipantSearchRead,
     MeetingRegistryHistoryRead,
     MeetingRegistryParticipantsApplyRead,
     MeetingRegistryParticipantsApplyRequest,
@@ -743,6 +744,82 @@ class MeetingService:
         await self._ensure_access(current_user)
         normalized_ref = memo_ref_key.strip().lower()
         entry = await MeetingRegistryService(self.db).get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+
+        return registry_participants_read(entry)
+
+    async def search_registry_participant(
+        self,
+        memo_ref_key: str,
+        fio: str,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryParticipantSearchRead:
+        """Поиск участника по ФИО в Exchange GAL для модалки добавления."""
+        await self._ensure_access(current_user)
+        query = fio.strip()
+        normalized_ref = memo_ref_key.strip().lower()
+        entry = await MeetingRegistryService(self.db).get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+
+        current_names = {name.casefold() for name in registry_participant_names(entry)}
+        if not query:
+            return MeetingRegistryParticipantSearchRead(
+                query=query,
+                fio=query,
+                already_added=False,
+                can_add=False,
+            )
+
+        already_added = query.casefold() in current_names
+        backend = self._backend()
+        try:
+            resolved = await backend.resolve_participants([query], current_user=current_user)
+        except MeetingBackendError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+
+        match = resolved[0] if resolved else None
+        found = bool(match and match.found and match.email)
+        return MeetingRegistryParticipantSearchRead(
+            query=query,
+            fio=match.fio if match else query,
+            email=match.email if found and match else None,
+            found=found,
+            already_added=already_added,
+            can_add=found and not already_added,
+        )
+
+    async def cancel_registry_participants_removal(
+        self,
+        memo_ref_key: str,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryParticipantsRead:
+        """Сбрасывает черновик pending_removal без изменения состава в БД и Outlook."""
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+
+        pending = _pending_removal_from_entry(entry)
+        if pending:
+            entry = await registry.clear_pending_removal(normalized_ref)
+            await self.audit.log(
+                action="meeting.registry_participants_removal_cancelled",
+                actor_id=current_user.id,
+                resource_type="meeting_registry",
+                resource_id=normalized_ref,
+                payload={
+                    "removed": list(pending.get("removed") or []),
+                },
+            )
+
+        if entry is None:
+            entry = await registry.get_entry(normalized_ref)
         if entry is None:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
 
