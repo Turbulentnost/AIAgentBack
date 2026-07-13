@@ -58,6 +58,7 @@ from .scoring import (
     _build_quorum_candidate_payload,
     _quorum_candidate_sort_key,
     _quorum_pool_sort_key,
+    _slot_preference_distance,
     count_easy_reschedule_conflicts,
     count_low_movability_conflicts,
     coverage_ratios,
@@ -332,6 +333,8 @@ def find_quorum_slots(
     max_results: int = 3,
     verify_top_n: int = 3,
     verify_calendar: bool = True,
+    latest_allowed: datetime | None = None,
+    raise_if_empty: bool = True,
 ) -> dict[str, Any]:
     if not attendees:
         raise ValueError("Укажите хотя бы одного участника (--attendee).")
@@ -349,6 +352,9 @@ def find_quorum_slots(
     requested = to_local(preferred, config).replace(second=0, microsecond=0)
     earliest_allowed = quorum_search_start(preferred, config)
     search_end = earliest_allowed + timedelta(days=max_days)
+    if latest_allowed is not None:
+        latest_local = to_local(latest_allowed, config).replace(second=0, microsecond=0)
+        search_end = min(search_end, latest_local)
 
     busy_by_attendee = fetch_all_busy_intervals(
         config,
@@ -373,6 +379,10 @@ def find_quorum_slots(
             config=config,
         ):
             checked += 1
+            if latest_allowed is not None:
+                latest_local = to_local(latest_allowed, config).replace(second=0, microsecond=0)
+                if candidate >= latest_local:
+                    continue
             free_attendees, busy_attendees = partition_attendees_at_slot(
                 candidate,
                 duration,
@@ -494,6 +504,20 @@ def find_quorum_slots(
     candidates = candidates[: max(max_results, 1)]
 
     if not candidates:
+        if not raise_if_empty:
+            return {
+                "preferred": requested.isoformat(),
+                "earliest_allowed": earliest_allowed.isoformat(),
+                "search_until": search_end.isoformat(),
+                "min_coverage_ratio": min_coverage_ratio,
+                "required_attendees": required,
+                "attendees": attendees,
+                "checked_candidates": checked,
+                "availability_source": source,
+                "search_mode": "empty",
+                "partial_fallback": use_fallback,
+                "candidates": [],
+            }
         raise RuntimeError(
             f"Quorum-слот не найден: min_coverage={min_coverage_ratio:.0%}, "
             f"required={len(required)}, search_days={max_days}."

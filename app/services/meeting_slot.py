@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
-from app.services.meeting_memo_document import resolve_meeting_schedule
+from app.services.meeting_memo_document import parse_odata_datetime, resolve_meeting_schedule
 
 DISPLAY_TIMEZONE = (settings.OUTLOOK_TIMEZONE or "Europe/Moscow").strip() or "Europe/Moscow"
 
@@ -128,3 +129,85 @@ def format_search_start_after_registry_slot(
     if anchor is None:
         return None
     return format_datetime_for_search(anchor)
+
+
+@dataclass(frozen=True)
+class RegistryEarlierSlotWindow:
+    lower_bound: datetime
+    upper_bound: datetime
+    duration_minutes: int
+    search_from_label: str
+    search_until_label: str
+    current_slot_label: str
+
+
+def _day_start_at_eight(day: datetime) -> datetime:
+    tz = display_timezone()
+    if day.tzinfo is not None:
+        day_local = day.astimezone(tz)
+    else:
+        day_local = day.replace(tzinfo=tz)
+    return day_local.replace(hour=8, minute=0, second=0, microsecond=0)
+
+
+def _resolve_desired_day_from_memo(memo_detail: dict[str, Any] | None) -> datetime | None:
+    application = (memo_detail or {}).get("application") or {}
+    queue = (memo_detail or {}).get("queue") or {}
+
+    desired_raw = queue.get("desired_meeting_date")
+    if isinstance(desired_raw, str) and desired_raw.strip():
+        parsed = parse_slot_datetime(desired_raw) or parse_odata_datetime(desired_raw)
+        if parsed is not None:
+            return parsed
+
+    meeting_start = application.get("meeting_start")
+    if isinstance(meeting_start, str) and meeting_start.strip():
+        parsed = parse_slot_datetime(meeting_start)
+        if parsed is not None:
+            return parsed
+
+    scheduled, _end = resolve_meeting_schedule(queue)
+    return scheduled
+
+
+def resolve_registry_earlier_slot_window(
+    entry: Any,
+    memo_detail: dict[str, Any] | None,
+) -> RegistryEarlierSlotWindow | None:
+    """Окно поиска более раннего слота: [желаемая дата СЗ 08:00, текущий slot_start)."""
+    slot_start = getattr(entry, "slot_start", None)
+    slot_end = getattr(entry, "slot_end", None)
+    if slot_start is None:
+        return None
+
+    upper_bound = slot_start
+    if upper_bound.tzinfo is None:
+        upper_bound = upper_bound.replace(tzinfo=timezone.utc)
+
+    desired_day = _resolve_desired_day_from_memo(memo_detail)
+    if desired_day is None:
+        return None
+
+    lower_bound = _day_start_at_eight(desired_day)
+    if lower_bound.tzinfo is None:
+        lower_bound = lower_bound.replace(tzinfo=upper_bound.tzinfo)
+    elif upper_bound.tzinfo is not None:
+        lower_bound = lower_bound.astimezone(upper_bound.tzinfo)
+
+    if lower_bound >= upper_bound:
+        return None
+
+    if slot_end is not None and slot_start is not None:
+        duration_minutes = max(int((slot_end - slot_start).total_seconds() // 60), 1)
+    else:
+        duration_minutes = 60
+
+    current_end = slot_end.isoformat() if slot_end is not None else upper_bound.isoformat()
+    return RegistryEarlierSlotWindow(
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+        duration_minutes=duration_minutes,
+        search_from_label=format_datetime_for_search(lower_bound),
+        search_until_label=format_datetime_for_search(upper_bound),
+        current_slot_label=format_slot_label(slot_start.isoformat(), current_end),
+    )

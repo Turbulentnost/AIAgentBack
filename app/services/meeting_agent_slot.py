@@ -226,16 +226,22 @@ class MeetingAgentSlotService:
         *,
         backend: MeetingBackend,
         current_user: User,
+        attendee_specs: list[tuple[str, str]] | None = None,
     ) -> tuple[MeetingMemo, list[ResolvedParticipant], list[MeetingAttendeeRead], list[str]]:
-        attendee_specs = collect_attendees_from_detail(detail)
-        if not attendee_specs:
+        specs = attendee_specs or collect_attendees_from_detail(detail)
+        if not specs:
             raise MeetingServiceError(
                 "В заявке нет участников, инициатора или руководителя для отправки приглашений"
             )
 
         memo = _normalize_memo(detail_to_memo_document(detail))
-        cached_emails = emails_by_fio_from_detail(detail)
-        need_lookup = [fio for fio, _role in attendee_specs if fio not in cached_emails]
+        registry_mode = attendee_specs is not None
+        if registry_mode:
+            cached_emails: dict[str, str] = {}
+            need_lookup = [fio for fio, _role in specs]
+        else:
+            cached_emails = emails_by_fio_from_detail(detail)
+            need_lookup = [fio for fio, _role in specs if fio not in cached_emails]
         resolved_lookup = (
             await backend.resolve_participants(need_lookup, current_user=current_user)
             if need_lookup
@@ -246,7 +252,7 @@ class MeetingAgentSlotService:
         attendees: list[MeetingAttendeeRead] = []
         missing_emails: list[str] = []
         resolved: list[ResolvedParticipant] = []
-        for fio, priority_role in attendee_specs:
+        for fio, priority_role in specs:
             cached_email = cached_emails.get(fio)
             match = resolved_by_fio.get(fio)
             email = cached_email or (match.email if match else None)
@@ -263,7 +269,7 @@ class MeetingAgentSlotService:
                     role_label=priority_role_label(priority_role),
                     weight=weight_for_priority_role(
                         priority_role,
-                        person_from_detail_by_fio(detail, fio),
+                        None if registry_mode else person_from_detail_by_fio(detail, fio),
                     ),
                     required_for_slot=found,
                     found=found,
@@ -336,6 +342,7 @@ class MeetingAgentSlotService:
         payload: MeetingAgentSlotPreviewRequest,
         *,
         current_user: User,
+        attendee_specs: list[tuple[str, str]] | None = None,
     ) -> MeetingAgentSlotPreviewRead:
         """Ближайший слот для модалки «Запустить агента»: участники + инициатор + руководитель."""
         normalized_ref = memo_ref_key.strip().lower()
@@ -357,6 +364,7 @@ class MeetingAgentSlotService:
                 detail,
                 backend=backend,
                 current_user=current_user,
+                attendee_specs=attendee_specs,
             )
         except MeetingServiceError:
             duration = payload.duration_minutes or application.get("duration_minutes") or 60
@@ -694,9 +702,15 @@ class MeetingAgentSlotService:
         payload: MeetingAgentSlotPreviewRequest,
         *,
         current_user: User,
+        attendee_specs: list[tuple[str, str]] | None = None,
     ) -> MeetingAgentSlotPreviewRead:
         try:
-            return await self.suggest_agent_slot(memo_ref_key, payload, current_user=current_user)
+            return await self.suggest_agent_slot(
+                memo_ref_key,
+                payload,
+                current_user=current_user,
+                attendee_specs=attendee_specs,
+            )
         except MeetingServiceError as exc:
             return agent_slot_preview_error(
                 memo_ref_key.strip().lower(),

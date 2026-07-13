@@ -832,6 +832,14 @@ class FindQuorumMeetingSlotsInput(BaseModel):
     )
     quiet: bool = Field(default=True)
     include_timing: bool = Field(default=False)
+    latest_allowed: str | None = Field(
+        default=None,
+        description="Верхняя граница поиска (слоты строго раньше этого момента)",
+    )
+    raise_if_empty: bool = Field(
+        default=True,
+        description="False — вернуть пустой список кандидатов вместо ошибки",
+    )
 
 
 class FindQuorumMeetingSlotsOutput(BaseModel):
@@ -871,6 +879,8 @@ async def find_quorum_meeting_slots_tool(
         verify_calendar=payload.verify_calendar,
         quiet=payload.quiet,
         include_timing=payload.include_timing,
+        latest_allowed=payload.latest_allowed,
+        raise_if_empty=payload.raise_if_empty,
     )
     return FindQuorumMeetingSlotsOutput.model_validate(raw)
 

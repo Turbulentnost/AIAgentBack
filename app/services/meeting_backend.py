@@ -291,6 +291,8 @@ class MeetingBackend:
         verify_calendar: bool = True,
         quiet: bool = True,
         include_timing: bool = False,
+        latest_allowed: str | None = None,
+        raise_if_empty: bool = True,
     ) -> list[MeetingQuorumSlot]:
         attendee_emails = _participant_emails(participants)
         if not attendee_emails:
@@ -334,6 +336,8 @@ class MeetingBackend:
                     "verify_calendar": verify_calendar,
                     "quiet": quiet,
                     "include_timing": include_timing,
+                    "latest_allowed": latest_allowed,
+                    "raise_if_empty": raise_if_empty,
                 },
                 current_user=current_user,
             )

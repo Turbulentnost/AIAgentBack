@@ -629,6 +629,12 @@ class MeetingRegistryParticipantsRead(BaseModel):
     ref_key: str
     participants: list[str] = Field(default_factory=list)
     participants_count: int = 0
+    pending_confirmation: bool = False
+    pending_removed: list[str] = Field(default_factory=list)
+    pending_participants: list[str] | None = Field(
+        default=None,
+        description="Целевой состав после подтверждения удаления (пока не применён в БД)",
+    )
     fetched_at: str
 
 
@@ -669,6 +675,22 @@ class MeetingRegistryParticipantsApplyRequest(BaseModel):
         return [str(item).strip() for item in value if str(item or "").strip()]
 
 
+class MeetingRegistryEarlierSlotCandidateRead(BaseModel):
+    slot_start: str
+    slot_end: str
+    slot_label: str
+    coverage_ratio: float | None = None
+    free_attendees_count: int | None = None
+
+
+class MeetingRegistryEarlierSlotSuggestionRead(BaseModel):
+    message: str
+    current_slot_label: str
+    search_from: str
+    search_until: str
+    candidates: list[MeetingRegistryEarlierSlotCandidateRead] = Field(default_factory=list)
+
+
 class MeetingRegistryParticipantsApplyRead(BaseModel):
     ref_key: str
     participants: list[str] = Field(default_factory=list)
@@ -677,6 +699,37 @@ class MeetingRegistryParticipantsApplyRead(BaseModel):
     removed: list[str] = Field(default_factory=list)
     outlook_updated: bool = False
     outlook_warning: str | None = None
+    message: str | None = None
+    earlier_slot_suggestion: MeetingRegistryEarlierSlotSuggestionRead | None = None
+    pending_confirmation: bool = False
+    fetched_at: str
+
+
+class MeetingRegistryParticipantsRemovalConfirmRequest(BaseModel):
+    participants: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    slot_start: str
+    slot_end: str
+    message: str = Field(default="", max_length=2000)
+
+    @field_validator("participants", "removed", mode="before")
+    @classmethod
+    def normalize_names(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+class MeetingRegistryParticipantsRemovalConfirmRead(BaseModel):
+    ref_key: str
+    participants: list[str] = Field(default_factory=list)
+    participants_count: int = 0
+    removed: list[str] = Field(default_factory=list)
+    previous_slot_label: str | None = None
+    slot_label: str
+    slot_start: str
+    slot_end: str
+    outlook_updated: bool = False
     message: str | None = None
     fetched_at: str
 

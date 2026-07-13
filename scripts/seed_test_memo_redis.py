@@ -18,16 +18,17 @@ from app.tools.onec.lookup_email_by_fio import lookup_email_by_fio
 
 REF_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
-DEFAULT_NUMBER = "000000000"
+DEFAULT_NUMBER = "000010681"
 DEFAULT_PARTICIPANTS = (
+    "Лапина Арина Антоновна",
     "Мангасарян Давид Каренович",
     "Комарькова Анастасия Эдуардовна",
 )
 DEFAULT_MEETING_DATE = "2026-07-14"
-DEFAULT_START = "13:00"
-DEFAULT_END = "14:00"
+DEFAULT_START = "10:00"
+DEFAULT_END = "10:30"
 DEFAULT_ROOM = "Зал совещаний КБ"
-DEFAULT_SUBJECT = "Тестовая СЗ: проверка агента совещаний (14.07.2026)"
+DEFAULT_SUBJECT = "Тестовая СЗ: изменение состава участников (14.07.2026)"
 
 
 def _ref_key_for_number(number: str) -> str:
@@ -113,7 +114,20 @@ def build_queue_item(
     return item
 
 
-def build_detail(queue_item: dict, participants: tuple[str, ...]) -> dict:
+def _duration_minutes(start_time: str, end_time: str) -> int:
+    start_hour, start_minute = map(int, start_time.split(":"))
+    end_hour, end_minute = map(int, end_time.split(":"))
+    minutes = (end_hour * 60 + end_minute) - (start_hour * 60 + start_minute)
+    return minutes if minutes > 0 else 30
+
+
+def build_detail(
+    queue_item: dict,
+    participants: tuple[str, ...],
+    *,
+    start_time: str,
+    end_time: str,
+) -> dict:
     detail = build_detail_from_dashboard_item(queue_item)
     manager_name = participants[-1]
     manager_email = _lookup_email(manager_name)
@@ -127,7 +141,7 @@ def build_detail(queue_item: dict, participants: tuple[str, ...]) -> dict:
     )
     detail["application"]["participants_count"] = len(participants)
     detail["application"]["agenda"] = queue_item.get("subject")
-    detail["application"]["duration_minutes"] = 60
+    detail["application"]["duration_minutes"] = _duration_minutes(start_time, end_time)
     detail["cache_source"] = "redis"
     detail["history"] = [
         {
@@ -162,7 +176,12 @@ async def seed_redis(
         subject=subject,
         document_day=day,
     )
-    detail = build_detail(queue_item, participants)
+    detail = build_detail(
+        queue_item,
+        participants,
+        start_time=start_time,
+        end_time=end_time,
+    )
 
     fetched_at = datetime.now(timezone.utc)
     memo_service = MeetingMemoCacheService()
@@ -217,6 +236,7 @@ async def seed_redis(
         "meeting_date": meeting_date,
         "slot": f"{meeting_date} {start_time}–{end_time}",
         "participants": list(participants),
+        "detail": detail,
         "scheduled_label": queue_item.get("scheduled_label"),
         "location": queue_item.get("location"),
         "counts": {
@@ -224,6 +244,68 @@ async def seed_redis(
             "today": len(today),
             "items": len(items),
         },
+    }
+
+
+async def seed_registry(
+    *,
+    ref_key: str,
+    detail: dict,
+    participants: tuple[str, ...],
+    meeting_date: str,
+    start_time: str,
+    end_time: str,
+    room: str,
+    subject: str,
+) -> dict:
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.user import User
+    from app.services.meeting_registry_service import MeetingRegistryService
+
+    slot_start = f"{meeting_date}T{start_time}:00"
+    slot_end = f"{meeting_date}T{end_time}:00"
+    attendees = [
+        email
+        for email in (
+            _lookup_email(name) for name in participants
+        )
+        if email
+    ]
+
+    async with AsyncSessionLocal() as db:
+        user_result = await db.execute(select(User).limit(1))
+        user = user_result.scalar_one_or_none()
+        if user is None:
+            raise RuntimeError("В БД нет пользователя для записи в реестр")
+
+        registry = MeetingRegistryService(db)
+        entry = await registry.upsert_from_invite(
+            memo_ref_key=ref_key,
+            slot_start=slot_start,
+            slot_end=slot_end,
+            subject=subject,
+            location=room,
+            attendees=attendees,
+            approved_by=user,
+            memo_detail=detail,
+            participant_names=list(participants),
+            sent_payload={
+                "attendees": attendees,
+                "status": "seed",
+            },
+        )
+        await db.commit()
+        await db.refresh(entry)
+
+    return {
+        "registry_entry_id": str(entry.id),
+        "stage": entry.stage.value,
+        "participants": list(entry.participants or []),
+        "attendees": attendees,
+        "slot_start": slot_start,
+        "slot_end": slot_end,
     }
 
 
@@ -238,9 +320,10 @@ async def run(
     subject: str,
     ref_key: str | None,
     dashboard_day: date | None,
+    with_registry: bool,
 ) -> dict:
     normalized_ref = (ref_key or _ref_key_for_number(number)).strip().lower()
-    return await seed_redis(
+    report = await seed_redis(
         ref_key=normalized_ref,
         number=number,
         participants=participants,
@@ -251,6 +334,20 @@ async def run(
         subject=subject,
         dashboard_day=dashboard_day,
     )
+    if with_registry:
+        report["registry"] = await seed_registry(
+            ref_key=normalized_ref,
+            detail=report.pop("detail"),
+            participants=participants,
+            meeting_date=meeting_date,
+            start_time=start_time,
+            end_time=end_time,
+            room=room,
+            subject=subject,
+        )
+    else:
+        report.pop("detail", None)
+    return report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -267,6 +364,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Дата dashboard в Redis (ISO). По умолчанию — сегодня.",
     )
+    parser.add_argument(
+        "--participants",
+        default=None,
+        help="ФИО участников через запятую. По умолчанию — встроенный список.",
+    )
+    parser.add_argument(
+        "--with-registry",
+        action="store_true",
+        help="Также создать запись в meeting_registry_entries (без Outlook).",
+    )
     return parser
 
 
@@ -276,10 +383,15 @@ def main(argv: list[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     dashboard_day = date.fromisoformat(args.dashboard_date) if args.dashboard_date else None
+    participants = (
+        tuple(name.strip() for name in args.participants.split(",") if name.strip())
+        if args.participants
+        else DEFAULT_PARTICIPANTS
+    )
     report = asyncio.run(
         run(
             number=args.number,
-            participants=DEFAULT_PARTICIPANTS,
+            participants=participants,
             meeting_date=args.meeting_date,
             start_time=args.start,
             end_time=args.end,
@@ -287,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
             subject=args.subject,
             ref_key=args.ref_key,
             dashboard_day=dashboard_day,
+            with_registry=args.with_registry,
         )
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))

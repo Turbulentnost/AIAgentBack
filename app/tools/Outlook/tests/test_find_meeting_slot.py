@@ -587,6 +587,106 @@ def test_find_quorum_slots_scans_before_preferred_time(monkeypatch) -> None:
     assert candidate["conflicts"][0]["movability"] == "high"
 
 
+def test_find_quorum_slots_latest_allowed_excludes_later_slots(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    attendees = ["a@turbo-don.ru", "b@turbo-don.ru"]
+    preferred = datetime(2026, 7, 14, 16, 0, tzinfo=tz)
+    latest_allowed = datetime(2026, 7, 14, 12, 0, tzinfo=tz)
+    fixed_now = datetime(2026, 7, 7, 9, 0, tzinfo=tz)
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.rules.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+
+    def fake_fetch(*_args, **_kwargs):
+        return {"a@turbo-don.ru": [], "b@turbo-don.ru": []}
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.search.fetch_all_busy_intervals",
+        fake_fetch,
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.search.verify_slot_with_calendar",
+        lambda **_kwargs: (True, fake_fetch()),
+    )
+
+    result = find_quorum_slots(
+        config=config,
+        attendees=attendees,
+        preferred=preferred,
+        duration=timedelta(hours=1),
+        max_days=1,
+        step=timedelta(minutes=60),
+        max_items=50,
+        source="freebusy",
+        workers=1,
+        max_results=5,
+        verify_top_n=0,
+        verify_calendar=False,
+        latest_allowed=latest_allowed,
+        raise_if_empty=False,
+    )
+
+    assert result["candidates"]
+    for candidate in result["candidates"]:
+        start = datetime.fromisoformat(candidate["slot_start"])
+        assert start < latest_allowed
+
+
+def test_find_quorum_slots_raise_if_empty_false_returns_empty_list(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    attendees = ["a@turbo-don.ru"]
+    preferred = datetime(2026, 7, 14, 16, 0, tzinfo=tz)
+    latest_allowed = datetime(2026, 7, 14, 8, 0, tzinfo=tz)
+    fixed_now = datetime(2026, 7, 14, 9, 0, tzinfo=tz)
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.rules.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.search.fetch_all_busy_intervals",
+        lambda *_args, **_kwargs: {"a@turbo-don.ru": []},
+    )
+
+    result = find_quorum_slots(
+        config=config,
+        attendees=attendees,
+        preferred=preferred,
+        duration=timedelta(hours=1),
+        max_days=1,
+        step=timedelta(minutes=60),
+        max_items=50,
+        source="freebusy",
+        workers=1,
+        max_results=3,
+        verify_top_n=0,
+        verify_calendar=False,
+        latest_allowed=latest_allowed,
+        raise_if_empty=False,
+    )
+
+    assert result["candidates"] == []
+    assert result["search_mode"] == "empty"
+
+
 def test_coverage_ratios_uses_weights() -> None:
     attendees = ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru", "d@turbo-don.ru"]
     weights = {

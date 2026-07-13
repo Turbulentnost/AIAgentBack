@@ -32,6 +32,8 @@ from app.schemas.meeting import (
     MeetingRegistryParticipantsRead,
     MeetingRegistryParticipantsApplyRead,
     MeetingRegistryParticipantsApplyRequest,
+    MeetingRegistryParticipantsRemovalConfirmRead,
+    MeetingRegistryParticipantsRemovalConfirmRequest,
     MeetingRegistryRescheduleApproveRead,
     MeetingRegistryRescheduleApproveRequest,
     MeetingRegistryRescheduleSlotPreviewRead,
@@ -170,6 +172,31 @@ async def apply_registry_meeting_participants(
     await _require_agent_access(db, current_user)
     try:
         result = await MeetingService(db).apply_registry_participants(
+            str(memo_ref_key),
+            payload,
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/{memo_ref_key}/participants/confirm-removal",
+    response_model=MeetingRegistryParticipantsRemovalConfirmRead,
+)
+async def confirm_registry_participants_removal(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingRegistryParticipantsRemovalConfirmRequest,
+) -> MeetingRegistryParticipantsRemovalConfirmRead:
+    """Подтвердить удаление участников с переносом на выбранный слот (Outlook + реестр)."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).confirm_registry_participants_removal(
             str(memo_ref_key),
             payload,
             current_user=current_user,

@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from app.models.meeting_registry import MeetingRegistryEntry
+from app.models.enums import MeetingRegistryStage
 from app.services.meeting_slot import (
     format_planned_start_for_search,
     format_search_start_after_registry_slot,
     format_slot_label,
+    resolve_registry_earlier_slot_window,
     slot_duration_minutes,
 )
 
@@ -72,3 +75,28 @@ def test_format_search_start_after_registry_slot_converts_utc_end() -> None:
     slot_end = datetime(2026, 7, 14, 12, 30, tzinfo=timezone.utc)
 
     assert format_search_start_after_registry_slot(None, slot_end) == "2026-07-14 15:30"
+
+
+def test_resolve_registry_earlier_slot_window_uses_desired_date() -> None:
+    entry = MeetingRegistryEntry(
+        memo_ref_key="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        stage=MeetingRegistryStage.INVITATIONS_SENT,
+        invitations_sent_at=datetime(2026, 7, 10, 10, 0, tzinfo=timezone.utc),
+        slot_start=datetime(2026, 7, 14, 13, 0, tzinfo=timezone.utc),
+        slot_end=datetime(2026, 7, 14, 14, 0, tzinfo=timezone.utc),
+    )
+    memo_detail = {
+        "queue": {"desired_meeting_date": "2026-07-10T00:00:00"},
+        "application": {"meeting_start": "2026-07-14T10:00:00+03:00"},
+    }
+
+    window = resolve_registry_earlier_slot_window(entry, memo_detail)
+
+    assert window is not None
+    assert window.duration_minutes == 60
+    assert window.search_from_label == "2026-07-10 08:00"
+    assert window.search_until_label == "2026-07-14 16:00"
+    assert window.current_slot_label == format_slot_label(
+        entry.slot_start.isoformat(),
+        entry.slot_end.isoformat(),
+    )

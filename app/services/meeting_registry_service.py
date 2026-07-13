@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MeetingRegistryEventType, MeetingRegistryStage
 from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
 from app.models.user import User
-from app.services.meeting_attendees import participants_from_detail
+from app.services.meeting_attendees import participants_from_detail, registry_participant_names
 from app.services.meeting_invite_format import (
     format_invite_location_from_detail,
     manager_name_from_detail,
@@ -67,19 +67,20 @@ def participant_names_diff(
 
 def resolve_registry_participant_names(
     *,
+    registry_entry: Any | None = None,
     memo_detail: dict[str, Any] | None = None,
     participant_names: list[str] | None = None,
     attendee_details: list[Any] | None = None,
 ) -> list[str]:
-    """ФИО для колонки participants: явный список → detail СЗ → attendee_details."""
+    """ФИО участников: для существующей записи реестра — только participants из БД."""
+    if registry_entry is not None:
+        from_db = registry_participant_names(registry_entry)
+        if from_db:
+            return from_db
+
     explicit = _normalize_participant_names(participant_names)
     if explicit:
         return explicit
-
-    if memo_detail:
-        from_memo = _normalize_participant_names(participants_from_detail(memo_detail))
-        if from_memo:
-            return from_memo
 
     from_details: list[str] = []
     for item in attendee_details or []:
@@ -89,7 +90,16 @@ def resolve_registry_participant_names(
             fio = getattr(item, "fio", None) or getattr(item, "full_name", None)
         if isinstance(fio, str) and fio.strip():
             from_details.append(fio.strip())
-    return _normalize_participant_names(from_details)
+    normalized_details = _normalize_participant_names(from_details)
+    if normalized_details:
+        return normalized_details
+
+    if memo_detail:
+        from_memo = _normalize_participant_names(participants_from_detail(memo_detail))
+        if from_memo:
+            return from_memo
+
+    return []
 
 
 def _snapshot_from_detail(
@@ -174,11 +184,21 @@ def _operational_payload(
     *,
     attendees: list[str],
     sent_payload: dict[str, Any] | None = None,
+    pending_removal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "attendees": attendees,
         "sent_payload": sent_payload or {},
     }
+    if pending_removal:
+        payload["pending_removal"] = pending_removal
+    return payload
+
+
+def _pending_removal_from_entry(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    pending = payload.get("pending_removal")
+    return pending if isinstance(pending, dict) else None
 
 
 def _slot_label_from_entry(entry: MeetingRegistryEntry) -> str | None:
@@ -242,7 +262,14 @@ class MeetingRegistryService:
     ) -> MeetingRegistryEntry:
         normalized_ref = memo_ref_key.strip().lower()
         now = datetime.now(timezone.utc)
+
+        result = await self.db.execute(
+            select(MeetingRegistryEntry).where(MeetingRegistryEntry.memo_ref_key == normalized_ref)
+        )
+        entry = result.scalar_one_or_none()
+
         names = resolve_registry_participant_names(
+            registry_entry=entry,
             memo_detail=memo_detail,
             participant_names=participant_names,
             attendee_details=attendee_details,
@@ -258,10 +285,6 @@ class MeetingRegistryService:
         slot_start_dt = parse_slot_datetime(slot_start)
         slot_end_dt = parse_slot_datetime(slot_end)
 
-        result = await self.db.execute(
-            select(MeetingRegistryEntry).where(MeetingRegistryEntry.memo_ref_key == normalized_ref)
-        )
-        entry = result.scalar_one_or_none()
         is_new_entry = entry is None
         previous_slot_label = _slot_label_from_entry(entry) if entry else None
         payload = _operational_payload(attendees=attendees, sent_payload=sent_payload)
@@ -435,6 +458,7 @@ class MeetingRegistryService:
         slot_end_dt = parse_slot_datetime(slot_end)
         outlook_fields = _outlook_fields_from_sent_payload(sent_payload)
         names = resolve_registry_participant_names(
+            registry_entry=entry,
             memo_detail=memo_detail,
             participant_names=participant_names,
             attendee_details=attendee_details,
@@ -533,6 +557,44 @@ class MeetingRegistryService:
                 "outlook_payload": outlook_payload or {},
             },
         )
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
+
+    async def save_pending_removal(
+        self,
+        memo_ref_key: str,
+        *,
+        participants: list[str],
+        attendees: list[str],
+        removed: list[str],
+    ) -> MeetingRegistryEntry:
+        entry = await self.get_entry(memo_ref_key)
+        if entry is None:
+            raise ValueError("Совещание не найдено в реестре")
+
+        current_payload = entry.payload if isinstance(entry.payload, dict) else {}
+        payload = _operational_payload(
+            attendees=attendees,
+            sent_payload=current_payload.get("sent_payload"),
+            pending_removal={
+                "participants": _normalize_participant_names(participants),
+                "attendees": attendees,
+                "removed": _normalize_participant_names(removed),
+            },
+        )
+        entry.payload = payload
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
+
+    async def clear_pending_removal(self, memo_ref_key: str) -> MeetingRegistryEntry | None:
+        entry = await self.get_entry(memo_ref_key)
+        if entry is None:
+            return None
+        current_payload = dict(entry.payload or {})
+        current_payload.pop("pending_removal", None)
+        entry.payload = current_payload
         await self.db.flush()
         await self.db.refresh(entry)
         return entry

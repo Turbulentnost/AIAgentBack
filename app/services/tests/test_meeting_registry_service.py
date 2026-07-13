@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -356,16 +357,16 @@ async def test_upsert_from_invite_saves_participants_from_memo_detail(user) -> N
         attendees=["a@turbo-don.ru"],
         approved_by=user,
         memo_detail=memo_detail,
-        attendee_details=[{"fio": "Только приглашённый"}],
     )
 
     assert added_entry is not None
     assert added_entry.participants == [
+        "Мануков Роман Григорьевич",
         "Арсуноев Михаил Магомедович",
         "Грунтовский Дмитрий Дмитриевич",
         "Асланян Артур Карапетович",
     ]
-    assert added_entry.participants_count == 3
+    assert added_entry.participants_count == 4
     assert added_entry.initiator_name == "Мануков Роман Григорьевич"
     events = [call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], MeetingRegistryEvent)]
     assert len(events) == 1
@@ -444,7 +445,32 @@ async def test_upsert_from_invite_updates_empty_participants_on_repeat_invite(us
     assert updated.participants_count == 2
 
 
-def test_resolve_registry_participant_names_prefers_memo_detail() -> None:
+def test_resolve_registry_participant_names_uses_db_when_entry_exists() -> None:
+    from app.services.meeting_registry_service import resolve_registry_participant_names
+
+    entry = SimpleNamespace(
+        participants=[
+            "Соломичева Светлана Викторовна",
+            "Кондратюк Михаела Борисовна",
+        ]
+    )
+    names = resolve_registry_participant_names(
+        registry_entry=entry,
+        memo_detail={
+            "application": {
+                "initiator": {"full_name": "Комарькова Анастасия Эдуардовна"},
+                "participants": [{"full_name": "Комарькова Анастасия Эдуардовна"}],
+            }
+        },
+        attendee_details=[{"fio": "Комарькова Анастасия Эдуардовна"}],
+    )
+    assert names == [
+        "Соломичева Светлана Викторовна",
+        "Кондратюк Михаела Борисовна",
+    ]
+
+
+def test_resolve_registry_participant_names_prefers_memo_detail_without_entry() -> None:
     from app.services.meeting_registry_service import resolve_registry_participant_names
 
     names = resolve_registry_participant_names(
@@ -457,15 +483,36 @@ def test_resolve_registry_participant_names_prefers_memo_detail() -> None:
                 ],
             }
         },
-        attendee_details=[
-            {"fio": "Комарькова Анастасия Эдуардовна"},
-            {"fio": "Мангасарян Давид Каренович"},
-        ],
     )
     assert names == [
+        "A",
         "Петров Петр Петрович",
         "Иванов Иван Иванович",
     ]
+
+
+def test_resolve_registry_participant_names_prefers_attendee_details_over_memo_detail() -> None:
+    from app.services.meeting_registry_service import resolve_registry_participant_names
+
+    memo_detail = {
+        "application": {
+            "initiator": {"full_name": "Комарькова Анастасия Эдуардовна"},
+            "manager": {"full_name": "Соломичева Светлана Викторовна"},
+            "participants": [{"full_name": "Кондратюк Михаела Борисовна"}],
+        }
+    }
+    names = resolve_registry_participant_names(
+        memo_detail=memo_detail,
+        attendee_details=[
+            {"fio": "Соломичева Светлана Викторовна"},
+            {"fio": "Кондратюк Михаела Борисовна"},
+        ],
+    )
+    assert names == [
+        "Соломичева Светлана Викторовна",
+        "Кондратюк Михаела Борисовна",
+    ]
+    assert "Комарькова Анастасия Эдуардовна" not in names
 
 
 def test_resolve_registry_participant_names_falls_back_to_attendee_details() -> None:
@@ -513,6 +560,61 @@ async def test_get_registry_participants_returns_participants_from_db(user) -> N
         "Сысоева Ирина Леонидовна",
         "Иванов Иван Иванович",
         "Петров Петр Петрович",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_registry_participants_keeps_db_list_when_pending_removal_exists(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.initiator_name = "Комарькова Анастасия Эдуардовна"
+    entry.manager_name = "Соломичева Светлана Викторовна"
+    entry.participants = [
+        "Комарькова Анастасия Эдуардовна",
+        "Соломичева Светлана Викторовна",
+        "Мангасарян Давид Каренович",
+        "Азарова Анна Александровна",
+    ]
+    entry.participants_count = 4
+    entry.payload = {
+        "attendees": ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru", "d@turbo-don.ru"],
+        "pending_removal": {
+            "participants": [
+                "Комарькова Анастасия Эдуардовна",
+                "Соломичева Светлана Викторовна",
+                "Мангасарян Давид Каренович",
+            ],
+            "removed": ["Азарова Анна Александровна"],
+            "attendees": ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"],
+        },
+    }
+    entry.updated_at = entry.invitations_sent_at
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+
+    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+        result = await service.get_registry_participants(
+            entry.memo_ref_key,
+            current_user=user,
+        )
+
+    assert result.participants_count == 4
+    assert result.participants == [
+        "Комарькова Анастасия Эдуардовна",
+        "Соломичева Светлана Викторовна",
+        "Мангасарян Давид Каренович",
+        "Азарова Анна Александровна",
+    ]
+    assert result.pending_confirmation is True
+    assert result.pending_removed == ["Азарова Анна Александровна"]
+    assert result.pending_participants == [
+        "Комарькова Анастасия Эдуардовна",
+        "Соломичева Светлана Викторовна",
+        "Мангасарян Давид Каренович",
     ]
 
 
@@ -622,6 +724,7 @@ async def test_apply_registry_participants_updates_db_and_outlook(user) -> None:
     assert result.removed == ["Петров Петр Петрович"]
     assert result.outlook_updated is True
     assert result.participants_count == 2
+    assert result.earlier_slot_suggestion is None
 
 
 @pytest.mark.asyncio

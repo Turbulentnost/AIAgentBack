@@ -13,6 +13,7 @@ from app.services.meeting_backend import (
     MeetingSlotConflict,
 )
 from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
+from app.services.meeting_attendees import registry_participant_names
 from app.schemas.meeting import (
     MeetingAttendeeRead,
     MeetingInviteDraftRead,
@@ -474,12 +475,8 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
 
 
 def registry_participants_read(entry: MeetingRegistryEntry) -> MeetingRegistryParticipantsRead:
-    raw = entry.participants if isinstance(entry.participants, list) else []
-    participants = [
-        name.strip()
-        for name in raw
-        if isinstance(name, str) and name.strip()
-    ]
+    participants = _registry_participants_for_read(entry)
+    pending = _pending_removal_payload(entry)
     fetched_at = (
         entry.updated_at.isoformat()
         if entry.updated_at
@@ -489,8 +486,22 @@ def registry_participants_read(entry: MeetingRegistryEntry) -> MeetingRegistryPa
         ref_key=entry.memo_ref_key,
         participants=participants,
         participants_count=len(participants) or int(entry.participants_count or 0),
+        pending_confirmation=bool(pending),
+        pending_removed=list(pending.get("removed") or []) if pending else [],
+        pending_participants=list(pending.get("participants") or []) if pending else None,
         fetched_at=fetched_at,
     )
+
+
+def _pending_removal_payload(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    pending = payload.get("pending_removal")
+    return pending if isinstance(pending, dict) else None
+
+
+def _registry_participants_for_read(entry: MeetingRegistryEntry) -> list[str]:
+    """ФИО для модалки: только participants из БД реестра."""
+    return registry_participant_names(entry)
 
 
 def registry_cancel_read(

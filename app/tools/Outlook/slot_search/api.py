@@ -285,6 +285,8 @@ def dispatch_find_quorum_meeting_slots(
     verify_calendar: bool = True,
     quiet: bool = True,
     include_timing: bool = False,
+    latest_allowed: str | None = None,
+    raise_if_empty: bool = True,
     config: OutlookConfig | None = None,
 ) -> dict[str, Any]:
     """Ищет слоты для большинства участников и возвращает конфликты для перепланирования."""
@@ -299,6 +301,7 @@ def dispatch_find_quorum_meeting_slots(
 
     tz_name = timezone or config.timezone
     preferred_dt = parse_start(preferred, tz_name)
+    latest_dt = parse_start(latest_allowed, tz_name) if latest_allowed else None
     result = find_quorum_slots(
         config=config,
         attendees=attendee_list,
@@ -315,6 +318,8 @@ def dispatch_find_quorum_meeting_slots(
         max_results=max(max_results, 1),
         verify_top_n=max(verify_top_n, 0),
         verify_calendar=verify_calendar,
+        latest_allowed=latest_dt,
+        raise_if_empty=raise_if_empty,
     )
     if include_timing:
         log_timing_summary()
