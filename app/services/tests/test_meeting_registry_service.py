@@ -9,13 +9,19 @@ import pytest
 from app.models.enums import MeetingRegistryStage
 from app.models.meeting_registry import MeetingRegistryEntry
 from app.models.user import User
-from app.schemas.meeting import MeetingRegistryCancelRequest, MeetingRegistryStageRead
+from app.schemas.meeting import (
+    MeetingRegistryCancelRequest,
+    MeetingRegistryParticipantsApplyRequest,
+    MeetingRegistryStageRead,
+)
+from app.services.meeting_backend import MeetingBackendError, ResolvedParticipant
 from app.services.meeting_registry_service import (
     MeetingRegistryService,
     build_stage_counts,
+    participant_names_diff,
     stage_index,
 )
-from app.services.meeting_service import MeetingService
+from app.services.meeting_service import MeetingService, MeetingServiceError
 
 
 @pytest.fixture
@@ -455,3 +461,118 @@ async def test_get_registry_participants_returns_participants_from_db(user) -> N
         "Иванов Иван Иванович",
         "Петров Петр Петрович",
     ]
+
+
+def test_participant_names_diff_detects_added_and_removed() -> None:
+    added, removed = participant_names_diff(
+        ["Иванов Иван Иванович", "Петров Петр Петрович"],
+        ["Иванов Иван Иванович", "Сидоров Сидор Сидорович"],
+    )
+    assert removed == ["Петров Петр Петрович"]
+    assert added == ["Сидоров Сидор Сидорович"]
+
+
+@pytest.mark.asyncio
+async def test_apply_registry_participants_updates_db_and_outlook(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+    service.audit.log = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = ["Иванов Иван Иванович", "Петров Петр Петрович"]
+    entry.participants_count = 2
+    entry.subject = "Тестовое совещание"
+    entry.slot_start = datetime(2026, 7, 14, 16, 0, tzinfo=timezone.utc)
+    entry.outlook_item_id = "AQMkAD-test"
+    entry.outlook_changekey = "change-key"
+    entry.payload = {"attendees": ["ivanov@turbo-don.ru", "petrov@turbo-don.ru"]}
+    entry.updated_at = entry.invitations_sent_at
+
+    updated_entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    updated_entry.participants = ["Иванов Иван Иванович", "Сидоров Сидор Сидорович"]
+    updated_entry.participants_count = 2
+    updated_entry.updated_at = entry.invitations_sent_at
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+    registry.apply_participants_update = AsyncMock(return_value=updated_entry)
+
+    backend = MagicMock()
+    backend.resolve_participants = AsyncMock(
+        return_value=[
+            ResolvedParticipant(
+                fio="Сидоров Сидор Сидорович",
+                email="sidorov@turbo-don.ru",
+                found=True,
+            ),
+            ResolvedParticipant(
+                fio="Петров Петр Петрович",
+                email="petrov@turbo-don.ru",
+                found=True,
+            ),
+        ]
+    )
+
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch.object(MeetingService, "_backend", return_value=backend),
+        patch(
+            "app.services.meeting_service.dispatch_update_meeting_attendees",
+            return_value={"status": "updated", "target_id": "AQMkAD-test"},
+        ) as outlook_mock,
+    ):
+        result = await service.apply_registry_participants(
+            entry.memo_ref_key,
+            MeetingRegistryParticipantsApplyRequest(
+                participants=["Иванов Иван Иванович", "Сидоров Сидор Сидорович"],
+                added=["Сидоров Сидор Сидорович"],
+                removed=["Петров Петр Петрович"],
+            ),
+            current_user=user,
+        )
+
+    outlook_mock.assert_called_once()
+    registry.apply_participants_update.assert_awaited_once()
+    assert result.added == ["Сидоров Сидор Сидорович"]
+    assert result.removed == ["Петров Петр Петрович"]
+    assert result.outlook_updated is True
+    assert result.participants_count == 2
+
+
+@pytest.mark.asyncio
+async def test_apply_registry_participants_fails_when_added_email_missing(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = ["Иванов Иван Иванович"]
+    entry.payload = {"attendees": ["ivanov@turbo-don.ru"]}
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+
+    backend = MagicMock()
+    backend.resolve_participants = AsyncMock(
+        return_value=[
+            ResolvedParticipant(fio="Неизвестный Участник", email=None, found=False),
+        ]
+    )
+
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch.object(MeetingService, "_backend", return_value=backend),
+    ):
+        with pytest.raises(MeetingServiceError) as exc_info:
+            await service.apply_registry_participants(
+                entry.memo_ref_key,
+                MeetingRegistryParticipantsApplyRequest(
+                    participants=["Иванов Иван Иванович", "Неизвестный Участник"],
+                    added=["Неизвестный Участник"],
+                    removed=[],
+                ),
+                current_user=user,
+            )
+
+    assert exc_info.value.status_code == 400

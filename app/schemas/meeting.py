@@ -632,6 +632,32 @@ class MeetingRegistryParticipantsRead(BaseModel):
     fetched_at: str
 
 
+class MeetingRegistryParticipantsApplyRequest(BaseModel):
+    added: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    participants: list[str] = Field(default_factory=list)
+    message: str = Field(default="", max_length=2000)
+
+    @field_validator("added", "removed", "participants", mode="before")
+    @classmethod
+    def normalize_names(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+class MeetingRegistryParticipantsApplyRead(BaseModel):
+    ref_key: str
+    participants: list[str] = Field(default_factory=list)
+    participants_count: int = 0
+    added: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    outlook_updated: bool = False
+    outlook_warning: str | None = None
+    message: str | None = None
+    fetched_at: str
+
+
 class MeetingRegistryRescheduleSlotPreviewRequest(BaseModel):
     duration_minutes: int | None = None
 

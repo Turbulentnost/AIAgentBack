@@ -52,6 +52,19 @@ def _normalize_participant_names(names: list[str] | None) -> list[str]:
     return unique
 
 
+def participant_names_diff(
+    current: list[str] | None,
+    target: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    current_norm = _normalize_participant_names(current)
+    target_norm = _normalize_participant_names(target)
+    current_by_key = {name.casefold(): name for name in current_norm}
+    target_by_key = {name.casefold(): name for name in target_norm}
+    removed = [current_by_key[key] for key in current_by_key if key not in target_by_key]
+    added = [target_by_key[key] for key in target_by_key if key not in current_by_key]
+    return added, removed
+
+
 def resolve_registry_participant_names(
     *,
     memo_detail: dict[str, Any] | None = None,
@@ -382,6 +395,43 @@ class MeetingRegistryService:
             entry.outlook_changekey = outlook_fields["outlook_changekey"]
         if outlook_fields.get("outlook_meeting_url"):
             entry.outlook_meeting_url = outlook_fields["outlook_meeting_url"]
+        entry.payload = payload
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
+
+    async def apply_participants_update(
+        self,
+        memo_ref_key: str,
+        *,
+        participants: list[str],
+        attendees: list[str],
+        updated_by: User,
+        apply_message: str | None = None,
+        outlook_payload: dict[str, Any] | None = None,
+    ) -> MeetingRegistryEntry:
+        entry = await self.get_entry(memo_ref_key)
+        if entry is None:
+            raise ValueError("Совещание не найдено в реестре")
+        if entry.stage == MeetingRegistryStage.CANCELLED:
+            raise ValueError("Нельзя изменить участников отменённого совещания")
+
+        names = _normalize_participant_names(participants)
+        now = datetime.now(timezone.utc)
+        payload = dict(entry.payload or {})
+        payload["attendees"] = attendees
+        payload["participants_updated_at"] = now.isoformat()
+        payload["participants_updated_by_user_id"] = str(updated_by.id)
+        if apply_message:
+            payload["participants_update_message"] = apply_message
+        if outlook_payload:
+            payload["participants_update_payload"] = outlook_payload
+            target_id = outlook_payload.get("target_id")
+            if isinstance(target_id, str) and target_id.strip():
+                entry.outlook_item_id = target_id.strip()
+
+        entry.participants = names
+        entry.participants_count = len(names)
         entry.payload = payload
         await self.db.flush()
         await self.db.refresh(entry)

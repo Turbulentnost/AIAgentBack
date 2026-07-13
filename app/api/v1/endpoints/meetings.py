@@ -29,6 +29,8 @@ from app.schemas.meeting import (
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
     MeetingRegistryParticipantsRead,
+    MeetingRegistryParticipantsApplyRead,
+    MeetingRegistryParticipantsApplyRequest,
     MeetingRegistryRescheduleApproveRead,
     MeetingRegistryRescheduleApproveRequest,
     MeetingRegistryRescheduleSlotPreviewRead,
@@ -130,6 +132,31 @@ async def get_registry_meeting_participants(
             current_user=current_user,
         )
     except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/{memo_ref_key}/participants/apply",
+    response_model=MeetingRegistryParticipantsApplyRead,
+)
+async def apply_registry_meeting_participants(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingRegistryParticipantsApplyRequest,
+) -> MeetingRegistryParticipantsApplyRead:
+    """Применить изменения состава участников совещания (Outlook + реестр)."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).apply_registry_participants(
+            str(memo_ref_key),
+            payload,
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
         raise _service_error(exc) from exc
 
 

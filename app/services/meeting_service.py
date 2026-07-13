@@ -76,6 +76,8 @@ from app.schemas.meeting import (
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
     MeetingRegistryParticipantsRead,
+    MeetingRegistryParticipantsApplyRead,
+    MeetingRegistryParticipantsApplyRequest,
     MeetingRegistryRescheduleApproveRead,
     MeetingRegistryRescheduleApproveRequest,
     MeetingRegistryRescheduleSlotPreviewRead,
@@ -125,7 +127,11 @@ from app.services.meeting_offline_cache import (
 )
 from app.services.meeting_dashboard_cache import MeetingDashboardCacheService
 from app.services.meeting_permission import MEETING_AGENT_SLUG, can_access_meeting_agent
-from app.services.meeting_registry_service import MeetingRegistryService, build_stage_counts
+from app.services.meeting_registry_service import (
+    MeetingRegistryService,
+    build_stage_counts,
+    participant_names_diff,
+)
 from app.core.logging import get_logger
 from app.services.meeting_duration import resolve_duration_minutes
 from app.services.meeting_invite_format import (
@@ -147,6 +153,7 @@ from app.tools.Outlook.find_meeting_slot import build_slot_participant_details
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite, load_config
 from app.tools.Outlook.reschedule_meeting import dispatch_reschedule_meeting
 from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
+from app.tools.Outlook.update_meeting_attendees import dispatch_update_meeting_attendees
 from app.tools.onec.approve_service_memo import approve_service_memo
 from app.tools.onec.reject_service_memo import reject_service_memo
 from app.services.meeting_memo_cache import (
@@ -735,6 +742,150 @@ class MeetingService:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
 
         return registry_participants_read(entry)
+
+    async def apply_registry_participants(
+        self,
+        memo_ref_key: str,
+        payload: MeetingRegistryParticipantsApplyRequest,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryParticipantsApplyRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+        if entry.stage == MeetingRegistryStage.CANCELLED:
+            raise MeetingServiceError(
+                "Нельзя изменить участников отменённого совещания",
+                status_code=400,
+            )
+
+        current_names = entry.participants if isinstance(entry.participants, list) else []
+        target_names = payload.participants
+        added, removed = participant_names_diff(current_names, target_names)
+        if not added and not removed:
+            raise MeetingServiceError("Список участников не изменился", status_code=400)
+
+        backend = self._backend()
+        fio_to_resolve = list(dict.fromkeys([*added, *removed]))
+        try:
+            resolved = await backend.resolve_participants(
+                fio_to_resolve,
+                current_user=current_user,
+            )
+        except MeetingBackendError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+
+        by_fio = {item.fio.casefold(): item for item in resolved}
+        missing_added = [
+            fio for fio in added if not (by_fio.get(fio.casefold()) and by_fio[fio.casefold()].email)
+        ]
+        if missing_added:
+            raise MeetingServiceError(
+                format_missing_emails_error(missing_added),
+                status_code=400,
+            )
+
+        add_emails = [
+            by_fio[fio.casefold()].email
+            for fio in added
+            if by_fio.get(fio.casefold()) and by_fio[fio.casefold()].email
+        ]
+        remove_emails = [
+            by_fio[fio.casefold()].email
+            for fio in removed
+            if by_fio.get(fio.casefold()) and by_fio[fio.casefold()].email
+        ]
+
+        payload_attendees = list((entry.payload or {}).get("attendees") or [])
+        remove_keys = {email.lower() for email in remove_emails}
+        new_attendees = [email for email in payload_attendees if email.lower() not in remove_keys]
+        existing_keys = {email.lower() for email in new_attendees}
+        for email in add_emails:
+            key = email.lower()
+            if key not in existing_keys:
+                new_attendees.append(email)
+                existing_keys.add(key)
+
+        apply_message = (payload.message or "").strip() or "Состав участников совещания изменён"
+        outlook_updated = False
+        outlook_warning: str | None = None
+        outlook_payload: dict[str, Any] | None = None
+
+        if (add_emails or remove_emails) and (
+            entry.outlook_item_id or (entry.subject and entry.slot_start)
+        ):
+            kwargs: dict[str, Any] = {
+                "add": add_emails,
+                "remove": remove_emails,
+                "message": apply_message,
+            }
+            if entry.outlook_item_id:
+                kwargs["item_id"] = entry.outlook_item_id
+                kwargs["changekey"] = entry.outlook_changekey or ""
+            else:
+                start_label = self._format_registry_slot_start(entry.slot_start)
+                kwargs["subject"] = entry.subject or ""
+                kwargs["start"] = start_label or entry.slot_start.isoformat()
+            try:
+                outlook_payload = await asyncio.to_thread(
+                    dispatch_update_meeting_attendees,
+                    **kwargs,
+                )
+                outlook_updated = outlook_payload.get("status") == "updated"
+            except Exception as exc:
+                raise MeetingServiceError(
+                    f"Не удалось обновить участников в Outlook/Exchange: {exc}"
+                ) from exc
+        elif add_emails or remove_emails:
+            outlook_warning = (
+                "Совещание не привязано к Outlook. Список участников обновлён только в реестре."
+            )
+
+        try:
+            entry = await registry.apply_participants_update(
+                normalized_ref,
+                participants=target_names,
+                attendees=new_attendees,
+                updated_by=current_user,
+                apply_message=apply_message,
+                outlook_payload=outlook_payload,
+            )
+        except ValueError as exc:
+            raise MeetingServiceError(str(exc), status_code=400) from exc
+
+        await self.audit.log(
+            action="meeting.registry_participants_updated",
+            actor_id=current_user.id,
+            resource_type="meeting_registry",
+            resource_id=normalized_ref,
+            payload={
+                "subject": entry.subject,
+                "added": added,
+                "removed": removed,
+                "participants_count": entry.participants_count,
+                "outlook_updated": outlook_updated,
+            },
+        )
+
+        fetched_at = (
+            entry.updated_at.isoformat()
+            if entry.updated_at
+            else entry.invitations_sent_at.isoformat()
+        )
+        return MeetingRegistryParticipantsApplyRead(
+            ref_key=normalized_ref,
+            participants=list(entry.participants or []),
+            participants_count=int(entry.participants_count or 0),
+            added=added,
+            removed=removed,
+            outlook_updated=outlook_updated,
+            outlook_warning=outlook_warning,
+            message=apply_message or None,
+            fetched_at=fetched_at,
+        )
 
     @staticmethod
     def _outlook_cancel_not_found(exc: BaseException) -> bool:
