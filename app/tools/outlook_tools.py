@@ -361,6 +361,10 @@ class CancelMeetingInput(BaseModel):
     attendee: str = Field(default="", description="E-mail участника для уточнения поиска")
     tolerance_minutes: int = Field(default=5, ge=0, le=120)
     message: str = Field(default="", description="Комментарий в уведомлении об отмене")
+    cancel_scope: Literal["occurrence", "series"] = Field(
+        default="occurrence",
+        description="occurrence — одно совещание; series — всю серию",
+    )
     dry_run: bool = Field(
         default=False,
         description="Только показать совещение без отмены",
@@ -379,6 +383,10 @@ class CancelMeetingOutput(BaseModel):
     meetings: list[dict[str, Any]] | None = None
     meeting: dict[str, Any] | None = None
     message: str | None = None
+    cancel_scope: str | None = None
+    target_kind: str | None = None
+    target_id: str | None = None
+    error: str | None = None
 
 
 async def cancel_meeting_tool(
@@ -398,6 +406,7 @@ async def cancel_meeting_tool(
         tolerance_minutes=payload.tolerance_minutes,
         message=payload.message,
         dry_run=payload.dry_run,
+        cancel_scope=payload.cancel_scope,
         timezone=payload.timezone,
     )
     return CancelMeetingOutput.model_validate(raw)
@@ -411,9 +420,9 @@ class CancelMeetingTool(Tool):
     agent_description = (
         "Инструмент cancel_meeting отменяет встречу в календаре Postagent. "
         "list_only=true — список совещаний с id/changekey; для отмены укажи item_id "
-        "(и changekey) или subject + start. dry_run=true — только проверка без отмены. "
-        "message — комментарий участникам. attendee и tolerance_minutes помогают "
-        "различить совпадения."
+        "(и changekey) или subject + start. cancel_scope=occurrence отменяет одно "
+        "совещание из серии; cancel_scope=series — всю серию. dry_run=true — только "
+        "проверка без отмены. message — комментарий участникам."
     )
     input_model = CancelMeetingInput
     output_model = CancelMeetingOutput

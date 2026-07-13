@@ -319,6 +319,16 @@ def dispatch_recurring_meeting_invite(
             occurrences=occurrences,
             end=end_value,
         ),
+        "series": {
+            "is_series": True,
+            "series_master_id": outlook_meta.get("outlook_item_id"),
+            "pattern": pattern,
+            "interval": interval,
+            "weekdays": weekdays,
+            "end_type": end_type,
+            "occurrences": occurrences,
+            "end": end_value.isoformat() if end_value else None,
+        },
         "warning": warning,
         **outlook_meta,
     }

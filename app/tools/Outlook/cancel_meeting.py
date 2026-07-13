@@ -1,6 +1,10 @@
 """
 Отмена совещания в календаре Exchange (EWS) от имени ящика из outlook_config.
 
+Для повторяющихся совещаний (серий):
+  - --scope occurrence — отменить одно вхождение (нужны subject + start)
+  - --scope series     — отменить всю серию целиком
+
 Отмена рассылает уведомление участникам (как «Отменить собрание» в Outlook).
 
 Примеры:
@@ -24,6 +28,11 @@ from exchangelib import EWSDateTime, EWSTimeZone, CalendarItem
 from exchangelib.errors import ErrorItemNotFound
 from exchangelib.properties import HTMLBody
 
+from app.tools.Outlook.meeting_series import (
+    CancelScope,
+    meeting_series_fields,
+    resolve_cancel_target,
+)
 from app.tools.Outlook.outlook_config import OutlookConfig
 from app.tools.Outlook.send_meeting_invite import (
     connect_account,
@@ -93,6 +102,7 @@ def meeting_to_dict(item: Any, *, config: OutlookConfig) -> dict[str, Any]:
         "is_meeting": bool(
             getattr(item, "required_attendees", None) or getattr(item, "resources", None)
         ),
+        **meeting_series_fields(item),
     }
 
 
@@ -223,14 +233,30 @@ def find_meetings_by_subject_on_day(
     return matches
 
 
-def cancel_meeting_item(item: Any, *, message: str = "") -> None:
+def cancel_meeting_item(
+    item: Any,
+    *,
+    message: str = "",
+    cancel_scope: CancelScope = "occurrence",
+) -> dict[str, Any]:
     item = _ensure_calendar_item(item, context="некорректный ответ Exchange")
     if getattr(item, "is_cancelled", False):
         raise RuntimeError(f"Совещание уже отменено: {getattr(item, 'subject', '')}")
+
+    target, target_kind, applied_scope = resolve_cancel_target(item, scope=cancel_scope)
+    if getattr(target, "is_cancelled", False):
+        raise RuntimeError(f"Серия уже отменена: {getattr(target, 'subject', '')}")
+
     kwargs: dict[str, Any] = {}
     if message.strip():
         kwargs["body"] = HTMLBody(message.strip())
-    item.cancel(**kwargs)
+    target.cancel(**kwargs)
+    return {
+        "cancel_scope": applied_scope,
+        "target_kind": target_kind,
+        "target_id": getattr(target, "id", None),
+        "target_subject": getattr(target, "subject", None),
+    }
 
 
 def resolve_meeting(
@@ -292,6 +318,7 @@ def dispatch_cancel_meeting(
     match_mode: str = "exact",
     message: str = "",
     dry_run: bool = False,
+    cancel_scope: CancelScope = "occurrence",
     timezone: str | None = None,
     config: OutlookConfig | None = None,
 ) -> dict[str, Any]:
@@ -331,21 +358,40 @@ def dispatch_cancel_meeting(
     meeting = meeting_to_dict(item, config=config)
 
     if dry_run:
+        try:
+            target, target_kind, applied_scope = resolve_cancel_target(
+                item,
+                scope=cancel_scope,
+            )
+        except RuntimeError as error:
+            return {
+                "action": "cancel",
+                "status": "dry_run",
+                "calendar": calendar,
+                "meeting": meeting,
+                "cancel_scope": cancel_scope,
+                "error": str(error),
+                "message": message,
+            }
         return {
             "action": "cancel",
             "status": "dry_run",
             "calendar": calendar,
             "meeting": meeting,
+            "cancel_scope": applied_scope,
+            "target_kind": target_kind,
+            "target_id": getattr(target, "id", None),
             "message": message,
         }
 
-    cancel_meeting_item(item, message=message)
+    cancel_result = cancel_meeting_item(item, message=message, cancel_scope=cancel_scope)
     return {
         "action": "cancel",
         "status": "cancelled",
         "calendar": calendar,
         "meeting": meeting,
         "message": message,
+        **cancel_result,
     }
 
 
@@ -410,6 +456,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         metavar="MIN",
         help="Допуск по времени начала, минут (по умолчанию 5)",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=["occurrence", "series"],
+        default="occurrence",
+        help="occurrence — одно совещание из серии; series — всю серию целиком",
     )
     parser.add_argument(
         "--message",
@@ -499,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
                 tolerance_minutes=max(args.tolerance, 0),
                 message=args.message,
                 dry_run=args.dry_run,
+                cancel_scope=args.scope,
                 timezone=args.tz,
                 config=config,
             )
@@ -509,10 +562,19 @@ def main(argv: list[str] | None = None) -> int:
                 f"   {meeting['start']} — {meeting['end']}\n"
                 f"   id: {meeting['id']}"
             )
+            if meeting.get("is_series"):
+                print(f"   Серия: да (kind={meeting.get('kind')})")
+            if result.get("cancel_scope"):
+                print(f"   Область отмены: {result['cancel_scope']}")
             if args.dry_run:
                 print("\n(dry-run: отмена не выполнена)")
+                if result.get("error"):
+                    print(f"Ошибка dry-run: {result['error']}")
             else:
-                print("\nСовещание отменено, уведомление отправлено участникам.")
+                if result["cancel_scope"] == "series":
+                    print("\nСерия совещаний отменена, уведомление отправлено участникам.")
+                else:
+                    print("\nСовещание отменено, уведомление отправлено участникам.")
             return 0
 
         print("Укажите --id, либо --subject и --start, либо --list.", file=sys.stderr)
