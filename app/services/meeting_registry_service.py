@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import MeetingRegistryStage
-from app.models.meeting_registry import MeetingRegistryEntry
+from app.models.enums import MeetingRegistryEventType, MeetingRegistryStage
+from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
 from app.models.user import User
 from app.services.meeting_attendees import participants_from_detail
 from app.services.meeting_invite_format import (
@@ -17,7 +17,7 @@ from app.services.meeting_invite_format import (
     place_from_detail,
     resolve_invite_subject,
 )
-from app.services.meeting_slot import parse_slot_datetime
+from app.services.meeting_slot import format_slot_label, parse_slot_datetime
 
 STAGE_ORDER: tuple[MeetingRegistryStage, ...] = (
     MeetingRegistryStage.INVITATIONS_SENT,
@@ -170,9 +170,59 @@ def build_stage_counts(entries: list[MeetingRegistryEntry]) -> dict[str, int]:
     return counts
 
 
+def _operational_payload(
+    *,
+    attendees: list[str],
+    sent_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "attendees": attendees,
+        "sent_payload": sent_payload or {},
+    }
+
+
+def _slot_label_from_entry(entry: MeetingRegistryEntry) -> str | None:
+    if entry.slot_start is None:
+        return None
+    start = entry.slot_start.isoformat()
+    end = entry.slot_end.isoformat() if entry.slot_end else start
+    return format_slot_label(start, end)
+
+
 class MeetingRegistryService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+
+    async def append_event(
+        self,
+        entry: MeetingRegistryEntry,
+        *,
+        event_type: MeetingRegistryEventType,
+        message: str,
+        actor: User | None = None,
+        occurred_at: datetime | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> MeetingRegistryEvent:
+        event = MeetingRegistryEvent(
+            registry_entry_id=entry.id,
+            memo_ref_key=entry.memo_ref_key,
+            occurred_at=occurred_at or datetime.now(timezone.utc),
+            event_type=event_type,
+            message=message.strip(),
+            actor_user_id=actor.id if actor else None,
+            payload=payload or {},
+        )
+        self.db.add(event)
+        return event
+
+    async def list_events(self, memo_ref_key: str) -> list[MeetingRegistryEvent]:
+        normalized_ref = memo_ref_key.strip().lower()
+        result = await self.db.execute(
+            select(MeetingRegistryEvent)
+            .where(MeetingRegistryEvent.memo_ref_key == normalized_ref)
+            .order_by(MeetingRegistryEvent.occurred_at.asc(), MeetingRegistryEvent.id.asc())
+        )
+        return list(result.scalars().all())
 
     async def upsert_from_invite(
         self,
@@ -212,10 +262,9 @@ class MeetingRegistryService:
             select(MeetingRegistryEntry).where(MeetingRegistryEntry.memo_ref_key == normalized_ref)
         )
         entry = result.scalar_one_or_none()
-        payload = {
-            "attendees": attendees,
-            "sent_payload": sent_payload or {},
-        }
+        is_new_entry = entry is None
+        previous_slot_label = _slot_label_from_entry(entry) if entry else None
+        payload = _operational_payload(attendees=attendees, sent_payload=sent_payload)
 
         if entry is None:
             entry = MeetingRegistryEntry(
@@ -272,6 +321,27 @@ class MeetingRegistryService:
             entry.payload = payload
 
         await self.db.flush()
+        slot_label = format_slot_label(slot_start, slot_end)
+        if is_new_entry:
+            invite_message = f"Отправлены приглашения на {slot_label}"
+        else:
+            invite_message = f"Повторно отправлены приглашения на {slot_label}"
+        await self.append_event(
+            entry,
+            event_type=MeetingRegistryEventType.INVITATIONS_SENT,
+            message=invite_message,
+            actor=approved_by,
+            occurred_at=now,
+            payload={
+                "slot_start": slot_start,
+                "slot_end": slot_end,
+                "attendees": attendees,
+                "participants_count": participants_count,
+                "is_repeat": not is_new_entry,
+                "previous_slot_label": previous_slot_label,
+            },
+        )
+        await self.db.flush()
         return entry
 
     async def list_entries(
@@ -317,15 +387,24 @@ class MeetingRegistryService:
 
         now = datetime.now(timezone.utc)
         entry.stage = MeetingRegistryStage.CANCELLED
-        payload = dict(entry.payload or {})
-        payload["cancelled_at"] = now.isoformat()
-        payload["cancelled_by_user_id"] = str(cancelled_by.id)
-        if message:
-            payload["cancel_message"] = message
-        if cancel_payload:
-            payload["cancel_payload"] = cancel_payload
-        payload["outlook_cancelled"] = outlook_cancelled
+        entry.cancelled_at = now
+        payload = _operational_payload(
+            attendees=list((entry.payload or {}).get("attendees") or []),
+            sent_payload=(entry.payload or {}).get("sent_payload"),
+        )
         entry.payload = payload
+        cancel_message = (message or "").strip() or "Совещание отменено"
+        await self.append_event(
+            entry,
+            event_type=MeetingRegistryEventType.CANCELLED,
+            message=cancel_message,
+            actor=cancelled_by,
+            occurred_at=now,
+            payload={
+                "outlook_cancelled": outlook_cancelled,
+                "cancel_payload": cancel_payload or {},
+            },
+        )
         await self.db.flush()
         await self.db.refresh(entry)
         return entry
@@ -351,6 +430,7 @@ class MeetingRegistryService:
             raise ValueError("Совещание не найдено в реестре")
 
         now = datetime.now(timezone.utc)
+        previous_slot_label = _slot_label_from_entry(entry)
         slot_start_dt = parse_slot_datetime(slot_start)
         slot_end_dt = parse_slot_datetime(slot_end)
         outlook_fields = _outlook_fields_from_sent_payload(sent_payload)
@@ -359,23 +439,10 @@ class MeetingRegistryService:
             participant_names=participant_names,
             attendee_details=attendee_details,
         )
-        payload = dict(entry.payload or {})
-        payload["attendees"] = attendees
-        payload["sent_payload"] = sent_payload or {}
-        payload["rescheduled_at"] = now.isoformat()
-        payload["rescheduled_by_user_id"] = str(rescheduled_by.id)
-        if reschedule_message:
-            payload["reschedule_message"] = reschedule_message
-        for key in (
-            "cancelled_at",
-            "cancelled_by_user_id",
-            "cancel_message",
-            "cancel_payload",
-            "outlook_cancelled",
-        ):
-            payload.pop(key, None)
+        payload = _operational_payload(attendees=attendees, sent_payload=sent_payload)
 
         entry.stage = MeetingRegistryStage.INVITATIONS_SENT
+        entry.cancelled_at = None
         if slot_start_dt is not None:
             entry.slot_start = slot_start_dt
         if slot_end_dt is not None:
@@ -396,6 +463,24 @@ class MeetingRegistryService:
         if outlook_fields.get("outlook_meeting_url"):
             entry.outlook_meeting_url = outlook_fields["outlook_meeting_url"]
         entry.payload = payload
+        new_slot_label = format_slot_label(slot_start, slot_end)
+        reschedule_text = (reschedule_message or "").strip() or (
+            f"Совещание перенесено на {new_slot_label}"
+        )
+        await self.append_event(
+            entry,
+            event_type=MeetingRegistryEventType.RESCHEDULED,
+            message=reschedule_text,
+            actor=rescheduled_by,
+            occurred_at=now,
+            payload={
+                "previous_slot_label": previous_slot_label,
+                "slot_start": slot_start,
+                "slot_end": slot_end,
+                "location": location,
+                "subject": subject,
+            },
+        )
         await self.db.flush()
         await self.db.refresh(entry)
         return entry
@@ -417,15 +502,16 @@ class MeetingRegistryService:
             raise ValueError("Нельзя изменить участников отменённого совещания")
 
         names = _normalize_participant_names(participants)
+        previous_names = _normalize_participant_names(
+            entry.participants if isinstance(entry.participants, list) else []
+        )
+        added, removed = participant_names_diff(previous_names, names)
         now = datetime.now(timezone.utc)
-        payload = dict(entry.payload or {})
-        payload["attendees"] = attendees
-        payload["participants_updated_at"] = now.isoformat()
-        payload["participants_updated_by_user_id"] = str(updated_by.id)
-        if apply_message:
-            payload["participants_update_message"] = apply_message
+        payload = _operational_payload(
+            attendees=attendees,
+            sent_payload=(entry.payload or {}).get("sent_payload"),
+        )
         if outlook_payload:
-            payload["participants_update_payload"] = outlook_payload
             target_id = outlook_payload.get("target_id")
             if isinstance(target_id, str) and target_id.strip():
                 entry.outlook_item_id = target_id.strip()
@@ -433,6 +519,20 @@ class MeetingRegistryService:
         entry.participants = names
         entry.participants_count = len(names)
         entry.payload = payload
+        apply_text = (apply_message or "").strip() or "Состав участников совещания изменён"
+        await self.append_event(
+            entry,
+            event_type=MeetingRegistryEventType.PARTICIPANTS_UPDATED,
+            message=apply_text,
+            actor=updated_by,
+            occurred_at=now,
+            payload={
+                "added": added,
+                "removed": removed,
+                "participants_count": len(names),
+                "outlook_payload": outlook_payload or {},
+            },
+        )
         await self.db.flush()
         await self.db.refresh(entry)
         return entry

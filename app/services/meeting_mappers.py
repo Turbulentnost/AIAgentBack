@@ -12,7 +12,7 @@ from app.services.meeting_backend import (
     MeetingSlot,
     MeetingSlotConflict,
 )
-from app.models.meeting_registry import MeetingRegistryEntry
+from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
 from app.schemas.meeting import (
     MeetingAttendeeRead,
     MeetingInviteDraftRead,
@@ -20,6 +20,9 @@ from app.schemas.meeting import (
     MeetingQuorumSlotRead,
     MeetingRegistryItemRead,
     MeetingRegistryCancelRead,
+    MeetingRegistryEventRead,
+    MeetingRegistryEventTypeRead,
+    MeetingRegistryHistoryRead,
     MeetingRegistryParticipantsRead,
     MeetingRegistryStageRead,
     MeetingRoomRead,
@@ -432,13 +435,17 @@ def room_read(item: MeetingRoomOption) -> MeetingRoomRead:
     return MeetingRoomRead(name=item.name, email=item.email, available=item.available)
 
 
-def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
+def _registry_cancelled_at(entry: MeetingRegistryEntry) -> str | None:
+    if entry.cancelled_at is not None:
+        return entry.cancelled_at.isoformat()
     payload = entry.payload if isinstance(entry.payload, dict) else {}
     cancelled_at = payload.get("cancelled_at")
     if isinstance(cancelled_at, str) and cancelled_at.strip():
-        cancelled_at_value: str | None = cancelled_at.strip()
-    else:
-        cancelled_at_value = None
+        return cancelled_at.strip()
+    return None
+
+
+def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
     return MeetingRegistryItemRead(
         ref_key=entry.memo_ref_key,
         memo_number=entry.memo_number,
@@ -457,7 +464,7 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
         outlook_item_id=entry.outlook_item_id,
         outlook_changekey=entry.outlook_changekey,
         outlook_meeting_url=entry.outlook_meeting_url,
-        cancelled_at=cancelled_at_value,
+        cancelled_at=_registry_cancelled_at(entry),
         updated_at=(
             entry.updated_at.isoformat()
             if entry.updated_at
@@ -493,12 +500,6 @@ def registry_cancel_read(
     outlook_warning: str | None = None,
     message: str | None = None,
 ) -> MeetingRegistryCancelRead:
-    payload = entry.payload if isinstance(entry.payload, dict) else {}
-    cancelled_at = payload.get("cancelled_at")
-    if isinstance(cancelled_at, str) and cancelled_at.strip():
-        cancelled_at_value: str | None = cancelled_at.strip()
-    else:
-        cancelled_at_value = None
     return MeetingRegistryCancelRead(
         ref_key=entry.memo_ref_key,
         stage=MeetingRegistryStageRead.CANCELLED,
@@ -506,7 +507,32 @@ def registry_cancel_read(
         outlook_cancelled=outlook_cancelled,
         outlook_warning=outlook_warning,
         message=message,
-        cancelled_at=cancelled_at_value,
+        cancelled_at=_registry_cancelled_at(entry),
+    )
+
+
+def registry_event_read(event: MeetingRegistryEvent) -> MeetingRegistryEventRead:
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    return MeetingRegistryEventRead(
+        id=str(event.id),
+        event_type=MeetingRegistryEventTypeRead(event.event_type.value),
+        occurred_at=event.occurred_at.isoformat(),
+        message=event.message,
+        actor_user_id=str(event.actor_user_id) if event.actor_user_id else None,
+        payload=payload,
+    )
+
+
+def registry_history_read(
+    entry: MeetingRegistryEntry,
+    events: list[MeetingRegistryEvent],
+    *,
+    fetched_at: str,
+) -> MeetingRegistryHistoryRead:
+    return MeetingRegistryHistoryRead(
+        ref_key=entry.memo_ref_key,
+        events=[registry_event_read(item) for item in events],
+        fetched_at=fetched_at,
     )
 
 

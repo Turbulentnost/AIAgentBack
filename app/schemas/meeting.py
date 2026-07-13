@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
@@ -629,6 +629,29 @@ class MeetingRegistryParticipantsRead(BaseModel):
     ref_key: str
     participants: list[str] = Field(default_factory=list)
     participants_count: int = 0
+    fetched_at: str
+
+
+class MeetingRegistryEventTypeRead(str, Enum):
+    INVITATIONS_SENT = "invitations_sent"
+    RESCHEDULED = "rescheduled"
+    CANCELLED = "cancelled"
+    PARTICIPANTS_UPDATED = "participants_updated"
+    STAGE_CHANGED = "stage_changed"
+
+
+class MeetingRegistryEventRead(BaseModel):
+    id: str
+    event_type: MeetingRegistryEventTypeRead
+    occurred_at: str
+    message: str
+    actor_user_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class MeetingRegistryHistoryRead(BaseModel):
+    ref_key: str
+    events: list[MeetingRegistryEventRead] = Field(default_factory=list)
     fetched_at: str
 
 

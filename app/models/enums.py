@@ -485,6 +485,14 @@ class MeetingRegistryStage(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class MeetingRegistryEventType(str, enum.Enum):
+    INVITATIONS_SENT = "invitations_sent"
+    RESCHEDULED = "rescheduled"
+    CANCELLED = "cancelled"
+    PARTICIPANTS_UPDATED = "participants_updated"
+    STAGE_CHANGED = "stage_changed"
+
+
 class DepartmentAnalysisStep(str, enum.Enum):
     INITIALIZING = "initializing"
     LOADING_KNOWLEDGE_BASES = "loading_knowledge_bases"

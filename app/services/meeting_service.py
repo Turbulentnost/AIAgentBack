@@ -46,6 +46,7 @@ from app.services.meeting_mappers import (
     quorum_slot_read,
     registry_item_read,
     registry_cancel_read,
+    registry_history_read,
     registry_participants_read,
     room_read,
     slot_read,
@@ -76,6 +77,7 @@ from app.schemas.meeting import (
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
     MeetingRegistryParticipantsRead,
+    MeetingRegistryHistoryRead,
     MeetingRegistryParticipantsApplyRead,
     MeetingRegistryParticipantsApplyRequest,
     MeetingRegistryRescheduleApproveRead,
@@ -743,6 +745,26 @@ class MeetingService:
 
         return registry_participants_read(entry)
 
+    async def get_registry_history(
+        self,
+        memo_ref_key: str,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryHistoryRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+
+        events = await registry.list_events(normalized_ref)
+        return registry_history_read(
+            entry,
+            events,
+            fetched_at=datetime.now(UTC).isoformat(),
+        )
+
     async def apply_registry_participants(
         self,
         memo_ref_key: str,
@@ -990,9 +1012,15 @@ class MeetingService:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
 
         if entry.stage == MeetingRegistryStage.CANCELLED:
+            events = await registry.list_events(normalized_ref)
+            outlook_cancelled = False
+            for event in reversed(events):
+                if event.event_type.value == "cancelled":
+                    outlook_cancelled = bool((event.payload or {}).get("outlook_cancelled"))
+                    break
             return registry_cancel_read(
                 entry,
-                outlook_cancelled=bool((entry.payload or {}).get("outlook_cancelled")),
+                outlook_cancelled=outlook_cancelled,
                 outlook_warning=None,
                 message=payload.message or None,
             )

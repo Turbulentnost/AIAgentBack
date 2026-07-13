@@ -28,6 +28,7 @@ from app.schemas.meeting import (
     MeetingRegistryRead,
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
+    MeetingRegistryHistoryRead,
     MeetingRegistryParticipantsRead,
     MeetingRegistryParticipantsApplyRead,
     MeetingRegistryParticipantsApplyRequest,
@@ -128,6 +129,26 @@ async def get_registry_meeting_participants(
     await _require_agent_access(db, current_user)
     try:
         return await MeetingService(db).get_registry_participants(
+            str(memo_ref_key),
+            current_user=current_user,
+        )
+    except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.get(
+    "/registry/{memo_ref_key}/history",
+    response_model=MeetingRegistryHistoryRead,
+)
+async def get_registry_meeting_history(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingRegistryHistoryRead:
+    """История изменений совещания в реестре."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await MeetingService(db).get_registry_history(
             str(memo_ref_key),
             current_user=current_user,
         )

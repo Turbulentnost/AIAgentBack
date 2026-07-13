@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import MeetingRegistryStage
+from app.models.enums import MeetingRegistryEventType, MeetingRegistryStage
 
 
 class MeetingRegistryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -37,6 +37,7 @@ class MeetingRegistryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     invitations_sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     protocol_number: Mapped[str | None] = mapped_column(String(128), index=True)
     protocol_ref_key: Mapped[str | None] = mapped_column(String(36))
     approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -49,6 +50,38 @@ class MeetingRegistryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
     approved_by: Mapped["User | None"] = relationship()
+    events: Mapped[list["MeetingRegistryEvent"]] = relationship(
+        back_populates="entry",
+        order_by="MeetingRegistryEvent.occurred_at",
+    )
+
+
+class MeetingRegistryEvent(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "meeting_registry_events"
+
+    registry_entry_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("meeting_registry_entries.id", ondelete="CASCADE"),
+        index=True,
+    )
+    memo_ref_key: Mapped[str] = mapped_column(String(36), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    event_type: Mapped[MeetingRegistryEventType] = mapped_column(
+        SAEnum(
+            MeetingRegistryEventType,
+            name="meetingregistryeventtype",
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        index=True,
+    )
+    message: Mapped[str] = mapped_column(Text)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    payload: Mapped[dict | None] = mapped_column(JSONB)
+
+    entry: Mapped[MeetingRegistryEntry] = relationship(back_populates="events")
+    actor: Mapped["User | None"] = relationship()
 
 
 from app.models.user import User  # noqa: E402

@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.models.enums import MeetingRegistryStage
-from app.models.meeting_registry import MeetingRegistryEntry
+from app.models.enums import MeetingRegistryEventType, MeetingRegistryStage
+from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
 from app.models.user import User
 from app.schemas.meeting import (
     MeetingRegistryCancelRequest,
@@ -31,13 +31,15 @@ def user() -> User:
 
 def _entry(stage: MeetingRegistryStage) -> MeetingRegistryEntry:
     now = datetime.now(timezone.utc)
-    return MeetingRegistryEntry(
+    entry = MeetingRegistryEntry(
         memo_ref_key="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         stage=stage,
         invitations_sent_at=now,
         participants_count=2,
         participants=[],
     )
+    entry.id = uuid4()
+    return entry
 
 
 def test_stage_index_cancelled_is_outside_pipeline() -> None:
@@ -112,10 +114,19 @@ async def test_cancel_registry_meeting_is_idempotent_for_cancelled(user) -> None
     service._ensure_access = AsyncMock()
 
     entry = _entry(MeetingRegistryStage.CANCELLED)
-    entry.payload = {"cancelled_at": "2026-07-09T09:00:00+00:00", "outlook_cancelled": True}
+    entry.cancelled_at = datetime(2026, 7, 9, 9, 0, tzinfo=timezone.utc)
+    cancel_event = MeetingRegistryEvent(
+        registry_entry_id=entry.id,
+        memo_ref_key=entry.memo_ref_key,
+        occurred_at=entry.cancelled_at,
+        event_type=MeetingRegistryEventType.CANCELLED,
+        message="Совещание отменено",
+        payload={"outlook_cancelled": True},
+    )
 
     registry = MagicMock()
     registry.get_entry = AsyncMock(return_value=entry)
+    registry.list_events = AsyncMock(return_value=[cancel_event])
 
     with patch(
         "app.services.meeting_service.MeetingRegistryService",
@@ -130,6 +141,7 @@ async def test_cancel_registry_meeting_is_idempotent_for_cancelled(user) -> None
 
     assert result.cancelled is True
     assert result.stage == MeetingRegistryStageRead.CANCELLED
+    assert result.outlook_cancelled is True
     cancel_outlook.assert_not_called()
     registry.mark_cancelled.assert_not_called()
 
@@ -232,13 +244,15 @@ async def test_cancel_registry_meeting_falls_back_to_subject_start(user) -> None
 
 
 @pytest.mark.asyncio
-async def test_mark_cancelled_sets_payload(user) -> None:
+async def test_mark_cancelled_sets_state_and_event(user) -> None:
     db = AsyncMock()
     db.flush = AsyncMock()
     service = MeetingRegistryService(db)
 
     entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
     entry.payload = {"attendees": ["a@turbo-don.ru"]}
+    added: list[object] = []
+    db.add = MagicMock(side_effect=lambda item: added.append(item))
 
     result_mock = MagicMock()
     result_mock.scalar_one_or_none.return_value = entry
@@ -252,10 +266,16 @@ async def test_mark_cancelled_sets_payload(user) -> None:
     )
 
     assert updated.stage == MeetingRegistryStage.CANCELLED
-    assert updated.payload["cancel_message"] == "Отмена"
-    assert updated.payload["outlook_cancelled"] is True
-    assert updated.payload["cancelled_by_user_id"] == str(user.id)
-    assert "cancelled_at" in updated.payload
+    assert updated.cancelled_at is not None
+    assert updated.payload == {
+        "attendees": ["a@turbo-don.ru"],
+        "sent_payload": {},
+    }
+    events = [item for item in added if isinstance(item, MeetingRegistryEvent)]
+    assert len(events) == 1
+    assert events[0].event_type == MeetingRegistryEventType.CANCELLED
+    assert events[0].message == "Отмена"
+    assert events[0].payload["outlook_cancelled"] is True
 
 
 @pytest.mark.asyncio
@@ -290,8 +310,7 @@ async def test_apply_reschedule_restores_invitations_sent_stage(user) -> None:
 
     assert updated.stage == MeetingRegistryStage.INVITATIONS_SENT
     assert updated.payload["attendees"] == ["a@turbo-don.ru", "b@turbo-don.ru"]
-    assert updated.payload["reschedule_message"] == "Перенос"
-    assert "cancelled_at" not in updated.payload
+    assert updated.cancelled_at is None
     assert updated.outlook_item_id == "new-id"
 
 
@@ -303,9 +322,10 @@ async def test_upsert_from_invite_saves_participants_from_memo_detail(user) -> N
 
     added_entry: MeetingRegistryEntry | None = None
 
-    def capture_add(entry: MeetingRegistryEntry) -> None:
+    def capture_add(item: object) -> None:
         nonlocal added_entry
-        added_entry = entry
+        if isinstance(item, MeetingRegistryEntry):
+            added_entry = item
 
     db.add = MagicMock(side_effect=capture_add)
     result_mock = MagicMock()
@@ -347,6 +367,39 @@ async def test_upsert_from_invite_saves_participants_from_memo_detail(user) -> N
     ]
     assert added_entry.participants_count == 3
     assert added_entry.initiator_name == "Мануков Роман Григорьевич"
+    events = [call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], MeetingRegistryEvent)]
+    assert len(events) == 1
+    assert events[0].event_type == MeetingRegistryEventType.INVITATIONS_SENT
+
+
+@pytest.mark.asyncio
+async def test_list_events_returns_chronological_items(user) -> None:
+    db = AsyncMock()
+    service = MeetingRegistryService(db)
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    first = MeetingRegistryEvent(
+        registry_entry_id=entry.id,
+        memo_ref_key=entry.memo_ref_key,
+        occurred_at=datetime(2026, 7, 13, 10, 0, tzinfo=timezone.utc),
+        event_type=MeetingRegistryEventType.INVITATIONS_SENT,
+        message="Отправлены приглашения",
+    )
+    second = MeetingRegistryEvent(
+        registry_entry_id=entry.id,
+        memo_ref_key=entry.memo_ref_key,
+        occurred_at=datetime(2026, 7, 13, 11, 0, tzinfo=timezone.utc),
+        event_type=MeetingRegistryEventType.RESCHEDULED,
+        message="Совещание перенесено",
+    )
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = [first, second]
+    db.execute = AsyncMock(return_value=result_mock)
+
+    events = await service.list_events(entry.memo_ref_key)
+
+    assert len(events) == 2
+    assert events[0].message == "Отправлены приглашения"
+    assert events[1].message == "Совещание перенесено"
 
 
 @pytest.mark.asyncio
@@ -461,6 +514,37 @@ async def test_get_registry_participants_returns_participants_from_db(user) -> N
         "Иванов Иван Иванович",
         "Петров Петр Петрович",
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_registry_history_returns_events(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    event = MeetingRegistryEvent(
+        registry_entry_id=entry.id,
+        memo_ref_key=entry.memo_ref_key,
+        occurred_at=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+        event_type=MeetingRegistryEventType.INVITATIONS_SENT,
+        message="Отправлены приглашения",
+    )
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+    registry.list_events = AsyncMock(return_value=[event])
+
+    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+        result = await service.get_registry_history(
+            entry.memo_ref_key,
+            current_user=user,
+        )
+
+    assert result.ref_key == entry.memo_ref_key
+    assert len(result.events) == 1
+    assert result.events[0].message == "Отправлены приглашения"
+    assert result.events[0].event_type.value == "invitations_sent"
 
 
 def test_participant_names_diff_detects_added_and_removed() -> None:
