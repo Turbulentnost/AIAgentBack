@@ -8,6 +8,7 @@ TOOL_NAMES: list[str] = [
     "find_meeting_slot",
     "meeting_rooms",
     "send_meeting_invite",
+    "send_recurring_meeting_invite",
     "reschedule_meeting",
     "cancel_meeting",
     "create_service_memo",

@@ -15,6 +15,7 @@ from app.tools.Outlook.meeting_rooms import dispatch_meeting_rooms
 from app.tools.Outlook.read_calendars import fetch_outlook_calendars
 from app.tools.Outlook.reschedule_meeting import dispatch_reschedule_meeting
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
+from app.tools.Outlook.send_recurring_meeting_invite import dispatch_recurring_meeting_invite
 from app.tools.registry import register_tool
 from app.tools.schemas import ToolContext
 
@@ -195,6 +196,156 @@ class SendMeetingInviteTool(Tool):
 
 
 register_tool(SendMeetingInviteTool())
+
+
+class SendRecurringMeetingInviteInput(BaseModel):
+    attendee: str = Field(description="E-mail основного приглашаемого")
+    subject: str = Field(description="Тема совещания")
+    start: str = Field(
+        description="Первое совещание: YYYY-MM-DD HH:MM, YYYY-MM-DDTHH:MM или DD.MM.YYYY HH:MM",
+    )
+    duration_minutes: int = Field(default=60, ge=1, le=24 * 60)
+    pattern: Literal["weekly", "daily", "monthly"] = Field(
+        default="weekly",
+        description="Паттерн повторения",
+    )
+    interval: int = Field(
+        default=1,
+        ge=1,
+        le=99,
+        description="Интервал: каждые N недель/дней/месяцев",
+    )
+    weekdays: list[str] = Field(
+        default_factory=list,
+        description="Дни недели для weekly (Monday..Sunday). Пусто — день из start",
+    )
+    day_of_month: int | None = Field(
+        default=None,
+        ge=1,
+        le=31,
+        description="День месяца для monthly",
+    )
+    end_type: Literal["occurrences", "end_date", "no_end"] = Field(
+        default="occurrences",
+        description="Как заканчивается серия",
+    )
+    occurrences: int | None = Field(
+        default=3,
+        ge=1,
+        le=999,
+        description="Число встреч при end_type=occurrences",
+    )
+    end: str | None = Field(
+        default=None,
+        description="Дата окончания серии при end_type=end_date (YYYY-MM-DD)",
+    )
+    body: str = Field(default="", description="Текст приглашения")
+    location: str = Field(default="", description="Место проведения")
+    attendees: list[str] = Field(
+        default_factory=list,
+        description="Дополнительные участники",
+    )
+    resources: list[str] = Field(
+        default_factory=list,
+        description="E-mail переговорных",
+    )
+    timezone: str | None = Field(
+        default=None,
+        description="Часовой пояс для start (по умолчанию OUTLOOK_TIMEZONE)",
+    )
+
+
+class SendRecurringMeetingInviteOutput(BaseModel):
+    status: str
+    from_address: str = Field(alias="from")
+    login: str
+    attendees: list[str]
+    subject: str
+    start: str
+    end: str
+    duration_minutes: int
+    location: str
+    resources: list[str]
+    timezone: str
+    recurrence: str
+    recurrence_summary: dict[str, Any]
+    warning: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+async def send_recurring_meeting_invite_tool(
+    payload: SendRecurringMeetingInviteInput,
+    context: ToolContext,
+) -> SendRecurringMeetingInviteOutput:
+    del context
+    extra = [person.strip() for person in payload.attendees if person.strip()]
+    people = [payload.attendee.strip(), *extra]
+    unique_people: list[str] = []
+    seen: set[str] = set()
+    for person in people:
+        key = person.lower()
+        if person and key not in seen:
+            seen.add(key)
+            unique_people.append(person)
+
+    raw = await asyncio.to_thread(
+        dispatch_recurring_meeting_invite,
+        attendee=unique_people[0],
+        attendees=unique_people,
+        subject=payload.subject,
+        start=payload.start,
+        duration_minutes=payload.duration_minutes,
+        pattern=payload.pattern,
+        interval=payload.interval,
+        weekdays=payload.weekdays or None,
+        day_of_month=payload.day_of_month,
+        end_type=payload.end_type,
+        occurrences=payload.occurrences,
+        end=payload.end,
+        body=payload.body,
+        location=payload.location,
+        resources=payload.resources,
+        timezone=payload.timezone,
+    )
+    return SendRecurringMeetingInviteOutput.model_validate(raw)
+
+
+class SendRecurringMeetingInviteTool(Tool):
+    name = "send_recurring_meeting_invite"
+    description = (
+        "Создаёт повторяющееся совещание в календаре Exchange (EWS) "
+        "и рассылает приглашения участникам."
+    )
+    agent_description = (
+        "Инструмент send_recurring_meeting_invite создаёт серию встреч в календаре Postagent. "
+        "Укажи attendee, subject, start, duration_minutes, pattern (weekly/daily/monthly). "
+        "Для weekly — weekdays (например Tuesday); end_type=occurrences с occurrences=3 "
+        "или end_type=end_date с end=YYYY-MM-DD. attendees и resources — как в send_meeting_invite."
+    )
+    input_model = SendRecurringMeetingInviteInput
+    output_model = SendRecurringMeetingInviteOutput
+    required_permissions = ["send_meeting_invite"]
+    preview_default_params = {
+        "attendee": "user@example.com",
+        "subject": "Регламентное совещание",
+        "start": "2026-07-14 16:00",
+        "duration_minutes": 30,
+        "pattern": "weekly",
+        "weekdays": ["Tuesday"],
+        "end_type": "occurrences",
+        "occurrences": 3,
+    }
+
+    async def execute(
+        self,
+        payload: SendRecurringMeetingInviteInput,
+        context: ToolContext,
+    ) -> SendRecurringMeetingInviteOutput:
+        return await send_recurring_meeting_invite_tool(payload, context)
+
+
+register_tool(SendRecurringMeetingInviteTool())
 
 
 class CancelMeetingInput(BaseModel):

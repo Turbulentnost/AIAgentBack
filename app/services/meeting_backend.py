@@ -582,6 +582,7 @@ _MEETING_TOOL_NAMES = [
     "find_quorum_meeting_slots",
     "meeting_rooms",
     "send_meeting_invite",
+    "send_recurring_meeting_invite",
     "reschedule_meeting",
     "cancel_meeting",
     "create_service_memo",
