@@ -206,6 +206,62 @@ def _surnames_match(left: str, right: str) -> bool:
     return left_latin == right_latin
 
 
+def _token_matches_query_token(query_token: str, name_token: str) -> bool:
+    if not query_token or not name_token:
+        return False
+    if query_token == name_token:
+        return True
+    if name_token.startswith(query_token) or query_token.startswith(name_token):
+        return True
+    if len(query_token) == 1 and name_token.startswith(query_token):
+        return True
+    left_latin = _transliterate_token(query_token)
+    right_latin = _transliterate_token(name_token)
+    if left_latin and right_latin:
+        if left_latin == right_latin:
+            return True
+        if right_latin.startswith(left_latin) or left_latin.startswith(right_latin):
+            return True
+        if len(query_token) == 1 and right_latin.startswith(left_latin):
+            return True
+    return False
+
+
+def _name_matches_query(query: str, resolved_name: str) -> bool:
+    if _name_matches_fio(query, resolved_name):
+        return True
+    query_parts = normalize_name(query).split()
+    name_parts = normalize_name(resolved_name).split()
+    if not query_parts or not name_parts:
+        return False
+    return all(
+        any(_token_matches_query_token(query_part, name_part) for name_part in name_parts)
+        for query_part in query_parts
+    )
+
+
+def _suggestion_score(query: str, resolved_name: str) -> int:
+    if _name_matches_fio(query, resolved_name):
+        return 1000
+    query_norm = normalize_name(query)
+    name_norm = normalize_name(resolved_name)
+    if name_norm.startswith(query_norm):
+        return 500 + len(query_norm)
+    query_parts = query_norm.split()
+    name_parts = name_norm.split()
+    score = 0
+    if query_parts and name_parts and query_parts[0] == name_parts[0]:
+        score += 300
+    elif query_parts and name_parts and _surnames_match(query_parts[0], name_parts[0]):
+        score += 200
+    score += sum(
+        10
+        for query_part in query_parts
+        if any(_token_matches_query_token(query_part, name_part) for name_part in name_parts)
+    )
+    return score
+
+
 def _name_matches_fio(fio: str, resolved_name: str) -> bool:
     target = normalize_name(fio)
     name = normalize_name(resolved_name)
@@ -296,3 +352,112 @@ def load_exchange_gal_emails_for_fio(
                 }
             )
     return entries
+
+
+MAX_GAL_SUGGESTIONS = 10
+
+
+def search_exchange_gal_users(
+    query: str,
+    *,
+    account: Account | None = None,
+    config: OutlookConfig | None = None,
+    limit: int = MAX_GAL_SUGGESTIONS,
+) -> list[dict[str, str]]:
+    """Подсказки по частичному ФИО через Exchange GAL (без строгого совпадения)."""
+    normalized_query = query.strip()
+    if not normalized_query:
+        return []
+
+    config = config or load_config()
+    if not config.email or not config.password:
+        return []
+
+    try:
+        account = account or connect_account(config)
+    except (ValueError, OSError):
+        return []
+
+    candidates: list[tuple[int, str, str]] = []
+    seen_emails: set[str] = set()
+    for gal_query in _gal_queries(normalized_query):
+        try:
+            matches = account.protocol.resolve_names([gal_query], return_full_contact_data=True)
+        except Exception:
+            continue
+        for item in matches or []:
+            resolved_name = _resolved_display_name(item)
+            mailbox = item[0] if isinstance(item, tuple) else item
+            email = _mailbox_email(mailbox)
+            if not is_valid_email(email) or not is_corporate_email(email):
+                continue
+            if not resolved_name or not _name_matches_query(normalized_query, resolved_name):
+                continue
+            if email in seen_emails:
+                continue
+            seen_emails.add(email)
+            candidates.append(
+                (_suggestion_score(normalized_query, resolved_name), resolved_name, email)
+            )
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return [
+        {"fio": resolved_name, "email": email}
+        for _score, resolved_name, email in candidates[: max(limit, 1)]
+    ]
+
+
+def pick_exact_exchange_gal_user(
+    query: str,
+    candidates: list[dict[str, str]],
+) -> dict[str, str] | None:
+    """Точное совпадение для активации кнопки «Добавить»."""
+    normalized_query = query.strip()
+    if not normalized_query:
+        return None
+    strict = [
+        candidate
+        for candidate in candidates
+        if _name_matches_fio(normalized_query, candidate.get("fio", ""))
+    ]
+    if len(strict) == 1:
+        return strict[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def search_result_message(
+    *,
+    found: bool,
+    already_added: bool,
+    suggestions_count: int,
+) -> str | None:
+    if found:
+        if already_added:
+            return "Участник уже в списке"
+        return None
+    if suggestions_count > 1:
+        return "Выберите участника из списка"
+    if suggestions_count == 1:
+        return None
+    return "Не найден в Outlook"
+
+
+def dispatch_search_exchange_gal_users(
+    query: str,
+    *,
+    limit: int = MAX_GAL_SUGGESTIONS,
+) -> list[dict[str, str]]:
+    exchange_account = None
+    try:
+        outlook_config = load_config()
+        if outlook_config.email and outlook_config.password:
+            exchange_account = connect_account(outlook_config)
+    except (ValueError, OSError):
+        exchange_account = None
+    return search_exchange_gal_users(
+        query,
+        account=exchange_account,
+        limit=limit,
+    )

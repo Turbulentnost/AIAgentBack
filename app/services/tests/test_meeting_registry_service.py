@@ -631,19 +631,21 @@ async def test_search_registry_participant_found_and_can_add(user) -> None:
     registry = MagicMock()
     registry.get_entry = AsyncMock(return_value=entry)
 
-    backend = MagicMock()
-    backend.resolve_participants = AsyncMock(
-        return_value=[
-            ResolvedParticipant(
-                fio="Иванов Иван Иванович",
-                email="ivanov@turbo-don.ru",
-                found=True,
-            )
-        ]
-    )
-    service._backend = MagicMock(return_value=backend)
+    candidates = [
+        {"fio": "Иванов Иван Иванович", "email": "ivanov@turbo-don.ru"},
+    ]
 
-    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch(
+            "app.services.meeting_service.dispatch_search_exchange_gal_users",
+            return_value=candidates,
+        ),
+        patch(
+            "app.services.meeting_service.pick_exact_exchange_gal_user",
+            return_value=candidates[0],
+        ),
+    ):
         result = await service.search_registry_participant(
             entry.memo_ref_key,
             "Иванов Иван Иванович",
@@ -655,6 +657,97 @@ async def test_search_registry_participant_found_and_can_add(user) -> None:
     assert result.email == "ivanov@turbo-don.ru"
     assert result.already_added is False
     assert result.can_add is True
+    assert len(result.suggestions) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_registry_participant_unique_partial_match_is_found(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = []
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+
+    candidates = [
+        {
+            "fio": "Уставицкий Сергей Владимирович",
+            "email": "sktb_razvitie5@turbo-don.ru",
+        },
+    ]
+
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch(
+            "app.services.meeting_service.dispatch_search_exchange_gal_users",
+            return_value=candidates,
+        ),
+        patch(
+            "app.services.meeting_service.pick_exact_exchange_gal_user",
+            return_value=candidates[0],
+        ),
+    ):
+        result = await service.search_registry_participant(
+            entry.memo_ref_key,
+            "уставицкий",
+            current_user=user,
+        )
+
+    assert result.found is True
+    assert result.can_add is True
+    assert result.fio == "Уставицкий Сергей Владимирович"
+    assert result.message is None
+
+
+@pytest.mark.asyncio
+async def test_search_registry_participant_returns_suggestions_for_partial_query(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = []
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+
+    candidates = [
+        {
+            "fio": "Комарькова Анастасия Эдуардовна",
+            "email": "a.komarkova@turbo-don.ru",
+        },
+        {
+            "fio": "Комарькова Мария Сергеевна",
+            "email": "m.komarkova@turbo-don.ru",
+        },
+    ]
+
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch(
+            "app.services.meeting_service.dispatch_search_exchange_gal_users",
+            return_value=candidates,
+        ),
+        patch(
+            "app.services.meeting_service.pick_exact_exchange_gal_user",
+            return_value=None,
+        ),
+    ):
+        result = await service.search_registry_participant(
+            entry.memo_ref_key,
+            "комарькова",
+            current_user=user,
+        )
+
+    assert result.found is False
+    assert result.can_add is False
+    assert result.email is None
+    assert len(result.suggestions) == 2
+    assert result.suggestions[0].fio == "Комарькова Анастасия Эдуардовна"
+    assert result.message == "Выберите участника из списка"
 
 
 @pytest.mark.asyncio
@@ -669,19 +762,17 @@ async def test_search_registry_participant_not_found(user) -> None:
     registry = MagicMock()
     registry.get_entry = AsyncMock(return_value=entry)
 
-    backend = MagicMock()
-    backend.resolve_participants = AsyncMock(
-        return_value=[
-            ResolvedParticipant(
-                fio="Неизвестный Пользователь",
-                email=None,
-                found=False,
-            )
-        ]
-    )
-    service._backend = MagicMock(return_value=backend)
-
-    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch(
+            "app.services.meeting_service.dispatch_search_exchange_gal_users",
+            return_value=[],
+        ),
+        patch(
+            "app.services.meeting_service.pick_exact_exchange_gal_user",
+            return_value=None,
+        ),
+    ):
         result = await service.search_registry_participant(
             entry.memo_ref_key,
             "Неизвестный Пользователь",
@@ -691,6 +782,8 @@ async def test_search_registry_participant_not_found(user) -> None:
     assert result.found is False
     assert result.can_add is False
     assert result.email is None
+    assert result.suggestions == []
+    assert result.message == "Не найден в Outlook"
 
 
 @pytest.mark.asyncio
@@ -705,19 +798,21 @@ async def test_search_registry_participant_already_added(user) -> None:
     registry = MagicMock()
     registry.get_entry = AsyncMock(return_value=entry)
 
-    backend = MagicMock()
-    backend.resolve_participants = AsyncMock(
-        return_value=[
-            ResolvedParticipant(
-                fio="Иванов Иван Иванович",
-                email="ivanov@turbo-don.ru",
-                found=True,
-            )
-        ]
-    )
-    service._backend = MagicMock(return_value=backend)
+    candidates = [
+        {"fio": "Иванов Иван Иванович", "email": "ivanov@turbo-don.ru"},
+    ]
 
-    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch(
+            "app.services.meeting_service.dispatch_search_exchange_gal_users",
+            return_value=candidates,
+        ),
+        patch(
+            "app.services.meeting_service.pick_exact_exchange_gal_user",
+            return_value=candidates[0],
+        ),
+    ):
         result = await service.search_registry_participant(
             entry.memo_ref_key,
             "Иванов Иван Иванович",

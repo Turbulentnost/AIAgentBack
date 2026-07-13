@@ -185,6 +185,7 @@ def _operational_payload(
     attendees: list[str],
     sent_payload: dict[str, Any] | None = None,
     pending_removal: dict[str, Any] | None = None,
+    pending_add: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "attendees": attendees,
@@ -192,12 +193,20 @@ def _operational_payload(
     }
     if pending_removal:
         payload["pending_removal"] = pending_removal
+    if pending_add:
+        payload["pending_add"] = pending_add
     return payload
 
 
 def _pending_removal_from_entry(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
     payload = entry.payload if isinstance(entry.payload, dict) else {}
     pending = payload.get("pending_removal")
+    return pending if isinstance(pending, dict) else None
+
+
+def _pending_add_from_entry(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    pending = payload.get("pending_add")
     return pending if isinstance(pending, dict) else None
 
 
@@ -584,6 +593,48 @@ class MeetingRegistryService:
             },
         )
         entry.payload = payload
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
+
+    async def save_pending_add(
+        self,
+        memo_ref_key: str,
+        *,
+        participants: list[str],
+        attendees: list[str],
+        added: list[str],
+        removed: list[str] | None = None,
+        keep_current_slot: bool,
+    ) -> MeetingRegistryEntry:
+        entry = await self.get_entry(memo_ref_key)
+        if entry is None:
+            raise ValueError("Совещание не найдено в реестре")
+
+        current_payload = entry.payload if isinstance(entry.payload, dict) else {}
+        payload = _operational_payload(
+            attendees=attendees,
+            sent_payload=current_payload.get("sent_payload"),
+            pending_add={
+                "participants": _normalize_participant_names(participants),
+                "attendees": attendees,
+                "added": _normalize_participant_names(added),
+                "removed": _normalize_participant_names(removed),
+                "keep_current_slot": keep_current_slot,
+            },
+        )
+        entry.payload = payload
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
+
+    async def clear_pending_add(self, memo_ref_key: str) -> MeetingRegistryEntry | None:
+        entry = await self.get_entry(memo_ref_key)
+        if entry is None:
+            return None
+        current_payload = dict(entry.payload or {})
+        current_payload.pop("pending_add", None)
+        entry.payload = current_payload
         await self.db.flush()
         await self.db.refresh(entry)
         return entry

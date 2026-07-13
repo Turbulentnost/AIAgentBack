@@ -16,6 +16,7 @@ from app.schemas.meeting import (
 from app.services.meeting_backend import MeetingBackend, MeetingBackendError, MeetingQuorumSlot
 from app.services.meeting_constants import (
     QUORUM_MAX_CANDIDATES,
+    REGISTRY_COMMON_SLOT_MIN_COVERAGE_RATIO,
     REGISTRY_EARLIER_SLOT_MIN_COVERAGE_RATIO,
     SLOT_PREVIEW_MAX_DAYS,
     SLOT_PREVIEW_TIMEOUT_SECONDS,
@@ -24,13 +25,23 @@ from app.services.meeting_mappers import quorum_slot_is_fully_free
 from app.services.meeting_slot import (
     format_slot_label,
     parse_slot_datetime,
+    resolve_registry_common_slot_window,
     resolve_registry_earlier_slot_window,
 )
+from app.tools.Outlook.find_meeting_slot import build_slot_participant_details
+from app.tools.Outlook.send_meeting_invite import load_config
 
 logger = get_logger(__name__)
 
 EARLIER_SLOT_MESSAGE = (
     "После удаления участников доступны более ранние слоты для совещания"
+)
+ADD_CURRENT_SLOT_MESSAGE = (
+    "Новый участник свободен в текущее время совещания. Подтвердите добавление."
+)
+COMMON_SLOT_MESSAGE = (
+    "Для всех участников нет общего свободного времени в текущий слот. "
+    "Выберите новое время совещания."
 )
 
 
@@ -161,6 +172,133 @@ async def suggest_earlier_slots_after_removal(
 
     return MeetingRegistryEarlierSlotSuggestionRead(
         message=EARLIER_SLOT_MESSAGE,
+        current_slot_label=window.current_slot_label,
+        search_from=window.search_from_label,
+        search_until=window.search_until_label,
+        candidates=[_candidate_read(slot) for slot in ranked],
+    )
+
+
+async def check_registry_attendees_free_at_current_slot(
+    *,
+    entry: MeetingRegistryEntry,
+    attendee_details: list[dict[str, str]],
+) -> bool:
+    """Проверяет, свободны ли все участники в текущем слоте совещания реестра."""
+    if entry.slot_start is None or entry.slot_end is None:
+        return False
+
+    attendees = [
+        {"fio": item["fio"], "email": item["email"], "role": item.get("role", "participant")}
+        for item in attendee_details
+        if item.get("email")
+    ]
+    if not attendees:
+        return False
+
+    slot_start = entry.slot_start
+    slot_end = entry.slot_end
+    if slot_start.tzinfo is None:
+        slot_start = slot_start.replace(tzinfo=timezone.utc)
+    if slot_end.tzinfo is None:
+        slot_end = slot_end.replace(tzinfo=timezone.utc)
+
+    try:
+        payload = await asyncio.to_thread(
+            build_slot_participant_details,
+            config=load_config(),
+            attendees=attendees,
+            slot_start=slot_start,
+            slot_end=slot_end,
+        )
+    except Exception as exc:
+        logger.warning(
+            "meeting.registry_add_slot_check_failed",
+            ref_key=entry.memo_ref_key,
+            error=str(exc),
+        )
+        return False
+
+    participants = payload.get("participants") or []
+    if not participants:
+        return False
+    return all(participant.get("status") == "free" for participant in participants)
+
+
+async def suggest_common_slots_after_add(
+    *,
+    entry: MeetingRegistryEntry,
+    attendee_emails: list[str],
+    memo_detail: dict | None,
+    current_user: User,
+    backend: MeetingBackend,
+) -> MeetingRegistryEarlierSlotSuggestionRead | None:
+    """Ищет общий свободный слот для полного состава, начиная с текущего времени совещания."""
+    del memo_detail
+    emails = [email.strip() for email in attendee_emails if email and email.strip()]
+    if not emails:
+        return None
+
+    window = resolve_registry_common_slot_window(entry)
+    if window is None:
+        return None
+
+    participants = [
+        ResolvedParticipant(fio=email, email=email, found=True) for email in emails
+    ]
+    max_days = _max_search_days(window.lower_bound, window.upper_bound)
+
+    try:
+        quorum_slots = await asyncio.wait_for(
+            backend.find_quorum_slots(
+                memo=None,
+                participants=participants,
+                planned_start=window.search_from_label,
+                duration_minutes=window.duration_minutes,
+                current_user=current_user,
+                max_days=max_days,
+                min_coverage_ratio=REGISTRY_COMMON_SLOT_MIN_COVERAGE_RATIO,
+                max_results=QUORUM_MAX_CANDIDATES,
+                verify_calendar=True,
+                quiet=True,
+                raise_if_empty=False,
+            ),
+            timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "meeting.registry_common_slot_timeout",
+            ref_key=entry.memo_ref_key,
+            timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS,
+        )
+        return None
+    except MeetingBackendError as exc:
+        logger.warning(
+            "meeting.registry_common_slot_failed",
+            ref_key=entry.memo_ref_key,
+            error=str(exc),
+        )
+        return None
+    except Exception as exc:
+        logger.warning(
+            "meeting.registry_common_slot_error",
+            ref_key=entry.memo_ref_key,
+            error=str(exc),
+        )
+        return None
+
+    ranked = _filter_fully_free_candidates(
+        _filter_and_sort_candidates(
+            quorum_slots,
+            lower_bound=window.lower_bound,
+            upper_bound=window.upper_bound,
+        )
+    )
+    if not ranked:
+        return None
+
+    return MeetingRegistryEarlierSlotSuggestionRead(
+        message=COMMON_SLOT_MESSAGE,
         current_slot_label=window.current_slot_label,
         search_from=window.search_from_label,
         search_until=window.search_until_label,

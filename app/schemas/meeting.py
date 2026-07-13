@@ -631,11 +631,22 @@ class MeetingRegistryParticipantsRead(BaseModel):
     participants_count: int = 0
     pending_confirmation: bool = False
     pending_removed: list[str] = Field(default_factory=list)
+    pending_added: list[str] = Field(default_factory=list)
     pending_participants: list[str] | None = Field(
         default=None,
-        description="Целевой состав после подтверждения удаления (пока не применён в БД)",
+        description="Целевой состав после подтверждения (пока не применён в БД)",
+    )
+    confirmation_kind: str | None = Field(
+        default=None,
+        description="removal | add_current_slot | add_reschedule",
     )
     fetched_at: str
+
+
+class MeetingRegistryParticipantSuggestionRead(BaseModel):
+    fio: str
+    email: str
+    already_added: bool = False
 
 
 class MeetingRegistryParticipantSearchRead(BaseModel):
@@ -647,6 +658,14 @@ class MeetingRegistryParticipantSearchRead(BaseModel):
     can_add: bool = Field(
         default=False,
         description="Можно добавить участника: найден в Outlook и ещё не в списке",
+    )
+    suggestions: list[MeetingRegistryParticipantSuggestionRead] = Field(
+        default_factory=list,
+        description="Подсказки при частичном совпадении ФИО",
+    )
+    message: str | None = Field(
+        default=None,
+        description="Подсказка для UI: не найден, выберите из списка, уже добавлен",
     )
 
 
@@ -713,7 +732,41 @@ class MeetingRegistryParticipantsApplyRead(BaseModel):
     outlook_warning: str | None = None
     message: str | None = None
     earlier_slot_suggestion: MeetingRegistryEarlierSlotSuggestionRead | None = None
+    common_slot_suggestion: MeetingRegistryEarlierSlotSuggestionRead | None = None
+    confirmation_kind: str | None = Field(
+        default=None,
+        description="removal | add_current_slot | add_reschedule",
+    )
     pending_confirmation: bool = False
+    fetched_at: str
+
+
+class MeetingRegistryParticipantsAddConfirmRequest(BaseModel):
+    participants: list[str] = Field(default_factory=list)
+    added: list[str] = Field(default_factory=list)
+    slot_start: str | None = None
+    slot_end: str | None = None
+    message: str = Field(default="", max_length=2000)
+
+    @field_validator("participants", "added", mode="before")
+    @classmethod
+    def normalize_names(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+class MeetingRegistryParticipantsAddConfirmRead(BaseModel):
+    ref_key: str
+    participants: list[str] = Field(default_factory=list)
+    participants_count: int = 0
+    added: list[str] = Field(default_factory=list)
+    previous_slot_label: str | None = None
+    slot_label: str | None = None
+    slot_start: str | None = None
+    slot_end: str | None = None
+    outlook_updated: bool = False
+    message: str | None = None
     fetched_at: str
 
 

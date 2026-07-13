@@ -6,6 +6,8 @@ SLOT_PREVIEW_TIMEOUT_SECONDS = 180
 QUORUM_MIN_COVERAGE_RATIO = 0.7
 # Подбор более раннего слота после удаления участников — только когда свободны все оставшиеся.
 REGISTRY_EARLIER_SLOT_MIN_COVERAGE_RATIO = 1.0
+# Подбор общего слота после добавления участника — только полностью свободные слоты.
+REGISTRY_COMMON_SLOT_MIN_COVERAGE_RATIO = 1.0
 QUORUM_MAX_CANDIDATES = 3
 QUORUM_VERIFY_TOP_N = 3
 MEMO_FETCH_LIMIT = 50

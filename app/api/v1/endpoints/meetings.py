@@ -33,6 +33,8 @@ from app.schemas.meeting import (
     MeetingRegistryParticipantSearchRead,
     MeetingRegistryParticipantsApplyRead,
     MeetingRegistryParticipantsApplyRequest,
+    MeetingRegistryParticipantsAddConfirmRead,
+    MeetingRegistryParticipantsAddConfirmRequest,
     MeetingRegistryParticipantsRemovalConfirmRead,
     MeetingRegistryParticipantsRemovalConfirmRequest,
     MeetingRegistryRescheduleApproveRead,
@@ -195,6 +197,31 @@ async def apply_registry_meeting_participants(
     await _require_agent_access(db, current_user)
     try:
         result = await MeetingService(db).apply_registry_participants(
+            str(memo_ref_key),
+            payload,
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/{memo_ref_key}/participants/confirm-add",
+    response_model=MeetingRegistryParticipantsAddConfirmRead,
+)
+async def confirm_registry_participants_add(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingRegistryParticipantsAddConfirmRequest,
+) -> MeetingRegistryParticipantsAddConfirmRead:
+    """Подтвердить добавление участников в текущий или новый слот (Outlook + реестр)."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).confirm_registry_participants_add(
             str(memo_ref_key),
             payload,
             current_user=current_user,

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
+from app.services.meeting_constants import SLOT_PREVIEW_MAX_DAYS
 from app.services.meeting_memo_document import parse_odata_datetime, resolve_meeting_schedule
 
 DISPLAY_TIMEZONE = (settings.OUTLOOK_TIMEZONE or "Europe/Moscow").strip() or "Europe/Moscow"
@@ -204,6 +205,49 @@ def resolve_registry_earlier_slot_window(
 
     current_end = slot_end.isoformat() if slot_end is not None else upper_bound.isoformat()
     return RegistryEarlierSlotWindow(
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+        duration_minutes=duration_minutes,
+        search_from_label=format_datetime_for_search(lower_bound),
+        search_until_label=format_datetime_for_search(upper_bound),
+        current_slot_label=format_slot_label(slot_start.isoformat(), current_end),
+    )
+
+
+@dataclass(frozen=True)
+class RegistryCommonSlotWindow:
+    lower_bound: datetime
+    upper_bound: datetime
+    duration_minutes: int
+    search_from_label: str
+    search_until_label: str
+    current_slot_label: str
+
+
+def resolve_registry_common_slot_window(
+    entry: Any,
+    *,
+    max_days: int = SLOT_PREVIEW_MAX_DAYS,
+) -> RegistryCommonSlotWindow | None:
+    """Окно поиска общего слота после добавления участника: [текущий slot_start, +max_days)."""
+    slot_start = getattr(entry, "slot_start", None)
+    slot_end = getattr(entry, "slot_end", None)
+    if slot_start is None:
+        return None
+
+    lower_bound = slot_start
+    if lower_bound.tzinfo is None:
+        lower_bound = lower_bound.replace(tzinfo=timezone.utc)
+
+    horizon_days = max(1, min(max_days, SLOT_PREVIEW_MAX_DAYS))
+    upper_bound = lower_bound + timedelta(days=horizon_days)
+    if slot_end is not None and slot_start is not None:
+        duration_minutes = max(int((slot_end - slot_start).total_seconds() // 60), 1)
+    else:
+        duration_minutes = 60
+
+    current_end = slot_end.isoformat() if slot_end is not None else lower_bound.isoformat()
+    return RegistryCommonSlotWindow(
         lower_bound=lower_bound,
         upper_bound=upper_bound,
         duration_minutes=duration_minutes,

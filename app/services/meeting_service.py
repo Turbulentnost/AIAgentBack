@@ -78,9 +78,12 @@ from app.schemas.meeting import (
     MeetingRegistryCancelRequest,
     MeetingRegistryParticipantsRead,
     MeetingRegistryParticipantSearchRead,
+    MeetingRegistryParticipantSuggestionRead,
     MeetingRegistryHistoryRead,
     MeetingRegistryParticipantsApplyRead,
     MeetingRegistryParticipantsApplyRequest,
+    MeetingRegistryParticipantsAddConfirmRead,
+    MeetingRegistryParticipantsAddConfirmRequest,
     MeetingRegistryParticipantsRemovalConfirmRead,
     MeetingRegistryParticipantsRemovalConfirmRequest,
     MeetingRegistryRescheduleApproveRead,
@@ -107,6 +110,9 @@ from app.services.meeting_agent_approve import (
     resolve_approve_recipients,
 )
 from app.services.meeting_attendee_priority import (
+    PRIORITY_INITIATOR,
+    PRIORITY_MANAGER,
+    PRIORITY_PARTICIPANT,
     priority_role_label,
     weight_for_priority_role,
 )
@@ -133,11 +139,23 @@ from app.services.meeting_dashboard_cache import MeetingDashboardCacheService
 from app.services.meeting_permission import MEETING_AGENT_SLUG, can_access_meeting_agent
 from app.services.meeting_registry_service import (
     MeetingRegistryService,
+    _pending_add_from_entry,
     _pending_removal_from_entry,
     build_stage_counts,
     participant_names_diff,
 )
-from app.services.meeting_registry_slot import suggest_earlier_slots_after_removal
+from app.services.meeting_registry_slot import (
+    ADD_CURRENT_SLOT_MESSAGE,
+    COMMON_SLOT_MESSAGE,
+    check_registry_attendees_free_at_current_slot,
+    suggest_common_slots_after_add,
+    suggest_earlier_slots_after_removal,
+)
+from app.tools.onec.exchange_gal_lookup import (
+    dispatch_search_exchange_gal_users,
+    pick_exact_exchange_gal_user,
+    search_result_message,
+)
 from app.core.logging import get_logger
 from app.services.meeting_duration import resolve_duration_minutes
 from app.services.meeting_invite_format import (
@@ -749,6 +767,36 @@ class MeetingService:
 
         return registry_participants_read(entry)
 
+    @staticmethod
+    def _attendee_details_for_target_names(
+        entry: Any,
+        target_names: list[str],
+        by_fio: dict[str, ResolvedParticipant],
+    ) -> list[dict[str, str]]:
+        initiator_key = (
+            entry.initiator_name.strip().casefold()
+            if isinstance(getattr(entry, "initiator_name", None), str) and entry.initiator_name.strip()
+            else None
+        )
+        manager_key = (
+            entry.manager_name.strip().casefold()
+            if isinstance(getattr(entry, "manager_name", None), str) and entry.manager_name.strip()
+            else None
+        )
+        details: list[dict[str, str]] = []
+        for name in target_names:
+            match = by_fio.get(name.casefold())
+            email = match.email if match and match.email else ""
+            key = name.casefold()
+            if initiator_key and key == initiator_key:
+                role = PRIORITY_INITIATOR
+            elif manager_key and key == manager_key:
+                role = PRIORITY_MANAGER
+            else:
+                role = PRIORITY_PARTICIPANT
+            details.append({"fio": name, "email": email, "role": role})
+        return details
+
     async def search_registry_participant(
         self,
         memo_ref_key: str,
@@ -773,22 +821,50 @@ class MeetingService:
                 can_add=False,
             )
 
-        already_added = query.casefold() in current_names
-        backend = self._backend()
-        try:
-            resolved = await backend.resolve_participants([query], current_user=current_user)
-        except MeetingBackendError as exc:
-            raise MeetingServiceError(str(exc)) from exc
+        candidates = await asyncio.to_thread(dispatch_search_exchange_gal_users, query)
+        exact_match = pick_exact_exchange_gal_user(query, candidates)
+        suggestions = [
+            MeetingRegistryParticipantSuggestionRead(
+                fio=item["fio"],
+                email=item["email"],
+                already_added=item["fio"].casefold() in current_names,
+            )
+            for item in candidates
+        ]
 
-        match = resolved[0] if resolved else None
-        found = bool(match and match.found and match.email)
+        if exact_match:
+            exact_fio = exact_match["fio"]
+            already_added = exact_fio.casefold() in current_names
+            found = True
+            return MeetingRegistryParticipantSearchRead(
+                query=query,
+                fio=exact_fio,
+                email=exact_match["email"],
+                found=found,
+                already_added=already_added,
+                can_add=not already_added,
+                suggestions=suggestions,
+                message=search_result_message(
+                    found=found,
+                    already_added=already_added,
+                    suggestions_count=len(suggestions),
+                ),
+            )
+
+        found = False
         return MeetingRegistryParticipantSearchRead(
             query=query,
-            fio=match.fio if match else query,
-            email=match.email if found and match else None,
+            fio=query,
+            email=None,
             found=found,
-            already_added=already_added,
-            can_add=found and not already_added,
+            already_added=query.casefold() in current_names,
+            can_add=False,
+            suggestions=suggestions,
+            message=search_result_message(
+                found=found,
+                already_added=query.casefold() in current_names,
+                suggestions_count=len(suggestions),
+            ),
         )
 
     async def cancel_registry_participants_removal(
@@ -806,6 +882,7 @@ class MeetingService:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
 
         pending = _pending_removal_from_entry(entry)
+        pending_add = _pending_add_from_entry(entry)
         if pending:
             entry = await registry.clear_pending_removal(normalized_ref)
             await self.audit.log(
@@ -815,6 +892,18 @@ class MeetingService:
                 resource_id=normalized_ref,
                 payload={
                     "removed": list(pending.get("removed") or []),
+                },
+            )
+
+        if pending_add:
+            entry = await registry.clear_pending_add(normalized_ref)
+            await self.audit.log(
+                action="meeting.registry_participants_add_cancelled",
+                actor_id=current_user.id,
+                resource_type="meeting_registry",
+                resource_id=normalized_ref,
+                payload={
+                    "added": list(pending_add.get("added") or []),
                 },
             )
 
@@ -919,6 +1008,100 @@ class MeetingService:
 
         removal_only = bool(removed) and not added
         earlier_slot_suggestion = None
+        common_slot_suggestion = None
+
+        if added and entry.slot_start is not None and entry.slot_end is not None:
+            memo_detail: dict | None = None
+            try:
+                memo_detail, _, _ = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
+            except MemoCacheMissError:
+                pass
+
+            try:
+                all_resolved = await backend.resolve_participants(
+                    target_names,
+                    current_user=current_user,
+                )
+            except MeetingBackendError as exc:
+                raise MeetingServiceError(str(exc)) from exc
+
+            all_by_fio = {item.fio.casefold(): item for item in all_resolved}
+            missing_target = [
+                fio
+                for fio in target_names
+                if not (all_by_fio.get(fio.casefold()) and all_by_fio[fio.casefold()].email)
+            ]
+            if missing_target:
+                raise MeetingServiceError(
+                    format_missing_emails_error(missing_target),
+                    status_code=400,
+                )
+
+            attendee_details = self._attendee_details_for_target_names(
+                entry,
+                target_names,
+                all_by_fio,
+            )
+            all_free = await check_registry_attendees_free_at_current_slot(
+                entry=entry,
+                attendee_details=attendee_details,
+            )
+
+            if all_free:
+                await registry.save_pending_add(
+                    normalized_ref,
+                    participants=target_names,
+                    attendees=new_attendees,
+                    added=added,
+                    removed=removed,
+                    keep_current_slot=True,
+                )
+                return MeetingRegistryParticipantsApplyRead(
+                    ref_key=normalized_ref,
+                    participants=target_names,
+                    participants_count=len(target_names),
+                    added=added,
+                    removed=removed,
+                    outlook_updated=False,
+                    message=ADD_CURRENT_SLOT_MESSAGE,
+                    confirmation_kind="add_current_slot",
+                    pending_confirmation=True,
+                    fetched_at=fetched_at,
+                )
+
+            common_slot_suggestion = await suggest_common_slots_after_add(
+                entry=entry,
+                attendee_emails=new_attendees,
+                memo_detail=memo_detail,
+                current_user=current_user,
+                backend=backend,
+            )
+            await registry.save_pending_add(
+                normalized_ref,
+                participants=target_names,
+                attendees=new_attendees,
+                added=added,
+                removed=removed,
+                keep_current_slot=False,
+            )
+            return MeetingRegistryParticipantsApplyRead(
+                ref_key=normalized_ref,
+                participants=target_names,
+                participants_count=len(target_names),
+                added=added,
+                removed=removed,
+                outlook_updated=False,
+                message=(
+                    COMMON_SLOT_MESSAGE
+                    if common_slot_suggestion
+                    else "Не удалось подобрать общий свободный слот для всех участников"
+                ),
+                common_slot_suggestion=common_slot_suggestion,
+                confirmation_kind="add_reschedule",
+                pending_confirmation=True,
+                fetched_at=fetched_at,
+            )
+
         if removal_only:
             if entry.slot_start is not None:
                 memo_detail: dict | None = None
@@ -947,6 +1130,7 @@ class MeetingService:
                 removed=removed,
                 outlook_updated=False,
                 earlier_slot_suggestion=earlier_slot_suggestion,
+                confirmation_kind="removal",
                 pending_confirmation=True,
                 fetched_at=fetched_at,
             )
@@ -1253,6 +1437,226 @@ class MeetingService:
             slot_end=payload.slot_end,
             outlook_updated=outlook_updated,
             message=reschedule_message,
+            fetched_at=fetched_at,
+        )
+
+    async def confirm_registry_participants_add(
+        self,
+        memo_ref_key: str,
+        payload: MeetingRegistryParticipantsAddConfirmRequest,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryParticipantsAddConfirmRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+        if entry.stage == MeetingRegistryStage.CANCELLED:
+            raise MeetingServiceError(
+                "Нельзя изменить участников отменённого совещания",
+                status_code=400,
+            )
+
+        pending = _pending_add_from_entry(entry)
+        if not pending:
+            raise MeetingServiceError(
+                "Нет ожидающего подтверждения добавления участников",
+                status_code=400,
+            )
+
+        target_names = list(pending.get("participants") or payload.participants)
+        added = list(pending.get("added") or payload.added)
+        pending_attendees = list(pending.get("attendees") or [])
+        keep_current_slot = bool(pending.get("keep_current_slot"))
+
+        if not added:
+            raise MeetingServiceError(
+                "Подтверждение доступно только для сценария добавления участников",
+                status_code=400,
+            )
+        if {name.casefold() for name in added} != {name.casefold() for name in payload.added}:
+            raise MeetingServiceError(
+                "Список добавляемых участников не совпадает с текущим состоянием совещания",
+                status_code=400,
+            )
+        if {name.casefold() for name in target_names} != {
+            name.casefold() for name in payload.participants
+        }:
+            raise MeetingServiceError(
+                "Список участников не совпадает с текущим состоянием совещания",
+                status_code=400,
+            )
+
+        backend = self._backend()
+        try:
+            resolved = await backend.resolve_participants(added, current_user=current_user)
+        except MeetingBackendError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+
+        by_fio = {item.fio.casefold(): item for item in resolved}
+        add_emails = [
+            by_fio[fio.casefold()].email
+            for fio in added
+            if by_fio.get(fio.casefold()) and by_fio[fio.casefold()].email
+        ]
+        if len(add_emails) != len(added):
+            raise MeetingServiceError(
+                format_missing_emails_error(added),
+                status_code=400,
+            )
+
+        new_attendees = pending_attendees or list((entry.payload or {}).get("attendees") or [])
+        previous_label = None
+        if entry.slot_start and entry.slot_end:
+            previous_label = format_slot_label(
+                entry.slot_start.isoformat(),
+                entry.slot_end.isoformat(),
+            )
+
+        composition_message = (payload.message or "").strip() or "Состав участников совещания изменён"
+        outlook_updated = False
+        attendee_outlook_payload: dict[str, Any] | None = None
+        reschedule_outlook_payload: dict[str, Any] | None = None
+        slot_start = payload.slot_start
+        slot_end = payload.slot_end
+        slot_label: str | None = previous_label
+        reschedule_message: str | None = None
+
+        memo_detail: dict | None = None
+        try:
+            memo_detail, _, _ = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
+        except MemoCacheMissError:
+            pass
+
+        subject = resolve_invite_subject(memo_detail) or entry.subject or "Совещание"
+        location = format_invite_location_from_detail(memo_detail) or entry.location
+
+        if entry.outlook_item_id or (entry.subject and entry.slot_start):
+            kwargs: dict[str, Any] = {
+                "add": add_emails,
+                "message": composition_message,
+            }
+            if entry.outlook_item_id:
+                kwargs["item_id"] = entry.outlook_item_id
+                kwargs["changekey"] = entry.outlook_changekey or ""
+            else:
+                start_label = self._format_registry_slot_start(entry.slot_start)
+                kwargs["subject"] = entry.subject or ""
+                kwargs["start"] = start_label or entry.slot_start.isoformat()
+            try:
+                attendee_outlook_payload = await asyncio.to_thread(
+                    dispatch_update_meeting_attendees,
+                    **kwargs,
+                )
+                outlook_updated = attendee_outlook_payload.get("status") == "updated"
+            except Exception as exc:
+                raise MeetingServiceError(
+                    f"Не удалось обновить участников в Outlook/Exchange: {exc}"
+                ) from exc
+
+        if not keep_current_slot:
+            if not slot_start or not slot_end:
+                raise MeetingServiceError(
+                    "Укажите новый слот совещания для всех участников",
+                    status_code=400,
+                )
+            reschedule_message = (payload.message or "").strip() or "Совещание перенесено"
+            duration = slot_duration_minutes(slot_start, slot_end)
+            if entry.outlook_item_id:
+                try:
+                    reschedule_outlook_payload = await asyncio.to_thread(
+                        dispatch_reschedule_meeting,
+                        item_id=entry.outlook_item_id or "",
+                        changekey=entry.outlook_changekey or "",
+                        new_start=slot_start,
+                        new_end=slot_end,
+                        duration_minutes=duration,
+                        location=location,
+                        message=reschedule_message,
+                    )
+                    outlook_updated = reschedule_outlook_payload.get("status") == "rescheduled"
+                except Exception as exc:
+                    raise MeetingServiceError(
+                        f"Не удалось перенести совещание в Outlook/Exchange: {exc}"
+                    ) from exc
+            slot_label = format_slot_label(slot_start, slot_end)
+
+        entry = await registry.apply_participants_update(
+            normalized_ref,
+            participants=target_names,
+            attendees=new_attendees,
+            updated_by=current_user,
+            apply_message=composition_message,
+            outlook_payload=attendee_outlook_payload,
+        )
+
+        if not keep_current_slot and slot_start and slot_end:
+            entry = await registry.apply_reschedule(
+                memo_ref_key=normalized_ref,
+                slot_start=slot_start,
+                slot_end=slot_end,
+                subject=subject,
+                location=location or None,
+                attendees=new_attendees,
+                rescheduled_by=current_user,
+                sent_payload=(
+                    reschedule_outlook_payload
+                    if isinstance(reschedule_outlook_payload, dict)
+                    else None
+                ),
+                reschedule_message=reschedule_message or "Совещание перенесено",
+                participant_names=target_names,
+                memo_detail=memo_detail,
+            )
+            await self._sync_meeting_slot_to_cache(
+                normalized_ref,
+                slot_start=slot_start,
+                slot_end=slot_end,
+                location=location or None,
+                history_message=f"Совещание перенесено на {slot_label}",
+            )
+
+        await registry.clear_pending_add(normalized_ref)
+
+        await self.audit.log(
+            action="meeting.registry_participants_add_confirmed",
+            actor_id=current_user.id,
+            resource_type="meeting_registry",
+            resource_id=normalized_ref,
+            payload={
+                "subject": entry.subject,
+                "added": added,
+                "participants_count": entry.participants_count,
+                "slot_start": slot_start,
+                "slot_end": slot_end,
+                "outlook_updated": outlook_updated,
+                "keep_current_slot": keep_current_slot,
+            },
+        )
+
+        fetched_at = (
+            entry.updated_at.isoformat()
+            if entry.updated_at
+            else entry.invitations_sent_at.isoformat()
+        )
+
+        return MeetingRegistryParticipantsAddConfirmRead(
+            ref_key=normalized_ref,
+            participants=list(entry.participants or []),
+            participants_count=int(entry.participants_count or 0),
+            added=added,
+            previous_slot_label=previous_label if not keep_current_slot else None,
+            slot_label=slot_label,
+            slot_start=slot_start if not keep_current_slot else (
+                entry.slot_start.isoformat() if entry.slot_start else None
+            ),
+            slot_end=slot_end if not keep_current_slot else (
+                entry.slot_end.isoformat() if entry.slot_end else None
+            ),
+            outlook_updated=outlook_updated,
+            message=composition_message,
             fetched_at=fetched_at,
         )
 

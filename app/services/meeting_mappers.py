@@ -476,7 +476,25 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
 
 def registry_participants_read(entry: MeetingRegistryEntry) -> MeetingRegistryParticipantsRead:
     participants = _registry_participants_for_read(entry)
-    pending = _pending_removal_payload(entry)
+    pending_removal = _pending_removal_payload(entry)
+    pending_add = _pending_add_payload(entry)
+    pending = pending_add or pending_removal
+    confirmation_kind = None
+    pending_added: list[str] = []
+    pending_removed: list[str] = []
+    pending_participants = None
+    if pending_add:
+        confirmation_kind = (
+            "add_current_slot"
+            if pending_add.get("keep_current_slot")
+            else "add_reschedule"
+        )
+        pending_added = list(pending_add.get("added") or [])
+        pending_participants = list(pending_add.get("participants") or [])
+    elif pending_removal:
+        confirmation_kind = "removal"
+        pending_removed = list(pending_removal.get("removed") or [])
+        pending_participants = list(pending_removal.get("participants") or [])
     fetched_at = (
         entry.updated_at.isoformat()
         if entry.updated_at
@@ -487,8 +505,10 @@ def registry_participants_read(entry: MeetingRegistryEntry) -> MeetingRegistryPa
         participants=participants,
         participants_count=len(participants) or int(entry.participants_count or 0),
         pending_confirmation=bool(pending),
-        pending_removed=list(pending.get("removed") or []) if pending else [],
-        pending_participants=list(pending.get("participants") or []) if pending else None,
+        pending_removed=pending_removed,
+        pending_added=pending_added,
+        pending_participants=pending_participants,
+        confirmation_kind=confirmation_kind,
         fetched_at=fetched_at,
     )
 
@@ -496,6 +516,12 @@ def registry_participants_read(entry: MeetingRegistryEntry) -> MeetingRegistryPa
 def _pending_removal_payload(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
     payload = entry.payload if isinstance(entry.payload, dict) else {}
     pending = payload.get("pending_removal")
+    return pending if isinstance(pending, dict) else None
+
+
+def _pending_add_payload(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    pending = payload.get("pending_add")
     return pending if isinstance(pending, dict) else None
 
 
