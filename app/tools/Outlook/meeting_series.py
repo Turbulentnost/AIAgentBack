@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any, Literal
 
 MeetingKind = Literal["single", "series_master", "series_occurrence"]
-CancelScope = Literal["occurrence", "series"]
+SeriesScope = Literal["occurrence", "series"]
+CancelScope = SeriesScope
+RescheduleScope = SeriesScope
 
 SERIES_MASTER_TYPE = "RecurringMaster"
 SERIES_OCCURRENCE_TYPES = frozenset({"Occurrence", "Exception"})
@@ -26,11 +28,19 @@ def is_recurring_meeting(item: Any) -> bool:
     return meeting_kind(item) != "single"
 
 
-def available_cancel_scopes(item: Any) -> list[CancelScope]:
+def available_series_scopes(item: Any) -> list[SeriesScope]:
     kind = meeting_kind(item)
     if kind == "single":
         return ["occurrence"]
     return ["occurrence", "series"]
+
+
+def available_cancel_scopes(item: Any) -> list[CancelScope]:
+    return available_series_scopes(item)
+
+
+def available_reschedule_scopes(item: Any) -> list[RescheduleScope]:
+    return available_series_scopes(item)
 
 
 def series_master_id(item: Any) -> str | None:
@@ -43,14 +53,31 @@ def series_master_id(item: Any) -> str | None:
     return None
 
 
-def resolve_cancel_target(item: Any, *, scope: CancelScope) -> tuple[Any, MeetingKind, CancelScope]:
-    """Возвращает CalendarItem для отмены и фактический scope."""
+def _series_scope_error(*, kind: MeetingKind, scope: SeriesScope, action: str) -> RuntimeError:
+    if scope == "series" and kind == "single":
+        return RuntimeError(
+            f"Это разовое совещание, серии нет. Используйте {action}_scope=occurrence."
+        )
+    if scope == "occurrence" and kind == "series_master":
+        return RuntimeError(
+            "Найдена серия целиком (RecurringMaster). "
+            f"Для {action} одного совещания укажите start конкретного вхождения "
+            f"или {action}_scope=series, чтобы обработать всю серию."
+        )
+    raise RuntimeError(f"Неподдерживаемая комбинация kind={kind}, scope={scope}")
+
+
+def resolve_series_target(
+    item: Any,
+    *,
+    scope: SeriesScope,
+    action: Literal["cancel", "reschedule"],
+) -> tuple[Any, MeetingKind, SeriesScope]:
+    """Возвращает CalendarItem для отмены/переноса и фактический scope."""
     kind = meeting_kind(item)
     if scope == "series":
         if kind == "single":
-            raise RuntimeError(
-                "Это разовое совещание, серии нет. Используйте cancel_scope=occurrence."
-            )
+            raise _series_scope_error(kind=kind, scope=scope, action=action)
         if kind == "series_occurrence":
             master = item.recurring_master()
             master.refresh()
@@ -58,17 +85,25 @@ def resolve_cancel_target(item: Any, *, scope: CancelScope) -> tuple[Any, Meetin
         return item, kind, "series"
 
     if kind == "series_master":
-        raise RuntimeError(
-            "Найдена серия целиком (RecurringMaster). "
-            "Для отмены одного совещания укажите start конкретного вхождения "
-            "или cancel_scope=series, чтобы отменить всю серию."
-        )
+        raise _series_scope_error(kind=kind, scope=scope, action=action)
     return item, kind, "occurrence"
+
+
+def resolve_cancel_target(item: Any, *, scope: CancelScope) -> tuple[Any, MeetingKind, CancelScope]:
+    return resolve_series_target(item, scope=scope, action="cancel")
+
+
+def resolve_reschedule_target(
+    item: Any,
+    *,
+    scope: RescheduleScope,
+) -> tuple[Any, MeetingKind, RescheduleScope]:
+    return resolve_series_target(item, scope=scope, action="reschedule")
 
 
 def meeting_series_fields(item: Any) -> dict[str, Any]:
     kind = meeting_kind(item)
-    scopes = available_cancel_scopes(item)
+    scopes = available_series_scopes(item)
     return {
         "kind": kind,
         "item_type": meeting_item_type(item),
@@ -76,4 +111,5 @@ def meeting_series_fields(item: Any) -> dict[str, Any]:
         "is_series": kind != "single",
         "series_master_id": series_master_id(item),
         "cancel_scope_options": scopes,
+        "reschedule_scope_options": scopes,
     }

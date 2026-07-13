@@ -468,6 +468,10 @@ class RescheduleMeetingInput(BaseModel):
     attendee: str = Field(default="", description="E-mail участника для уточнения поиска")
     tolerance_minutes: int = Field(default=5, ge=0, le=120)
     message: str = Field(default="", description="Комментарий в уведомлении о переносе")
+    reschedule_scope: Literal["occurrence", "series"] = Field(
+        default="occurrence",
+        description="occurrence — одно совещание; series — всю серию",
+    )
     dry_run: bool = Field(default=False, description="Только показать изменения без переноса")
     timezone: str | None = Field(
         default=None,
@@ -486,6 +490,10 @@ class RescheduleMeetingOutput(BaseModel):
     new_end: str | None = None
     location: str | None = None
     message: str | None = None
+    reschedule_scope: str | None = None
+    target_kind: str | None = None
+    target_id: str | None = None
+    error: str | None = None
 
 
 async def reschedule_meeting_tool(
@@ -509,6 +517,7 @@ async def reschedule_meeting_tool(
         tolerance_minutes=payload.tolerance_minutes,
         message=payload.message,
         dry_run=payload.dry_run,
+        reschedule_scope=payload.reschedule_scope,
         timezone=payload.timezone,
     )
     return RescheduleMeetingOutput.model_validate(raw)
@@ -522,8 +531,9 @@ class RescheduleMeetingTool(Tool):
     agent_description = (
         "Инструмент reschedule_meeting переносит встречу на новое время. "
         "list_only=true — список совещаний; для переноса укажи new_start и "
-        "item_id (с changekey) или subject + start. new_end или duration_minutes "
-        "задают новую длительность. location меняет место. dry_run=true — "
+        "item_id (с changekey) или subject + start. reschedule_scope=occurrence "
+        "переносит одно совещание из серии; reschedule_scope=series — всю серию. "
+        "new_end или duration_minutes задают новую длительность. dry_run=true — "
         "только проверка. message — комментарий участникам."
     )
     input_model = RescheduleMeetingInput
