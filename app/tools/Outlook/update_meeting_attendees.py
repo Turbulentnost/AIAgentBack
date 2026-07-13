@@ -10,6 +10,9 @@
   python -m app.tools.Outlook.update_meeting_attendees \\
     --subject "Регламент" --start "2026-07-14 16:00" --add new.user@turbo-don.ru --yes
   python -m app.tools.Outlook.update_meeting_attendees \\
+    --subject "Регламент" --start "2026-07-14 16:00" --add new.user@turbo-don.ru \\
+    --scope series --yes
+  python -m app.tools.Outlook.update_meeting_attendees \\
     --id "AQMkAD..." --remove old.user@turbo-don.ru --yes
   python -m app.tools.Outlook.update_meeting_attendees \\
     --subject "Регламент" --start "2026-07-14 16:00" --remove old.user@turbo-don.ru \\
