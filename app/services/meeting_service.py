@@ -46,6 +46,7 @@ from app.services.meeting_mappers import (
     quorum_slot_read,
     registry_item_read,
     registry_cancel_read,
+    registry_participants_read,
     room_read,
     slot_read,
 )
@@ -74,6 +75,7 @@ from app.schemas.meeting import (
     MeetingRegistryItemRead,
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
+    MeetingRegistryParticipantsRead,
     MeetingRegistryRescheduleApproveRead,
     MeetingRegistryRescheduleApproveRequest,
     MeetingRegistryRescheduleSlotPreviewRead,
@@ -717,6 +719,31 @@ class MeetingService:
             stage_counts=build_stage_counts(all_entries),
             fetched_at=datetime.now(UTC).isoformat(),
             error=None,
+        )
+
+    async def get_registry_participants(
+        self,
+        memo_ref_key: str,
+        *,
+        current_user: User,
+    ) -> MeetingRegistryParticipantsRead:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        entry = await MeetingRegistryService(self.db).get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+
+        try:
+            detail, fetched_at, _from_cache = await MeetingMemoCacheService().get_memo_detail_for_agent(
+                normalized_ref
+            )
+        except MemoCacheMissError as exc:
+            raise MeetingServiceError(str(exc), status_code=503) from exc
+
+        return registry_participants_read(
+            ref_key=normalized_ref,
+            detail=detail,
+            fetched_at=fetched_at.isoformat(),
         )
 
     @staticmethod

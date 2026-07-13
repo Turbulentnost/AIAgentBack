@@ -17,9 +17,11 @@ from app.schemas.meeting import (
     MeetingAttendeeRead,
     MeetingInviteDraftRead,
     MeetingMemoRead,
+    MeetingParticipantDetailRead,
     MeetingQuorumSlotRead,
     MeetingRegistryItemRead,
     MeetingRegistryCancelRead,
+    MeetingRegistryParticipantsRead,
     MeetingRegistryStageRead,
     MeetingRoomRead,
     MeetingSlotBlockingEventRead,
@@ -36,6 +38,7 @@ from app.services.meeting_attendee_priority import (
     priority_role_label,
 )
 from app.services.meeting_slot import format_event_time_display, format_slot_label
+from app.services.meeting_attendees import participants_from_detail
 from app.tools.Outlook.slot_search.attendees import (
     _is_resource_calendar_email,
     is_department_mailbox_email,
@@ -462,6 +465,24 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
             if entry.updated_at
             else entry.invitations_sent_at.isoformat()
         ),
+    )
+
+
+def registry_participants_read(
+    *,
+    ref_key: str,
+    detail: dict[str, Any],
+    fetched_at: str,
+) -> MeetingRegistryParticipantsRead:
+    participants = [
+        MeetingParticipantDetailRead.model_validate(item)
+        for item in participants_from_detail(detail)
+    ]
+    return MeetingRegistryParticipantsRead(
+        ref_key=ref_key,
+        participants=participants,
+        participants_count=len(participants),
+        fetched_at=fetched_at,
     )
 
 

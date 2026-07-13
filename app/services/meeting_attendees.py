@@ -122,3 +122,46 @@ def attendee_priority_specs_from_detail(
 
 def attendee_fio_from_detail(detail: dict[str, Any]) -> list[str]:
     return [name for name, _role in collect_attendees_from_detail(detail)]
+
+
+def participants_from_detail(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    """Участники СЗ (без инициатора и руководителя) для реестра совещаний."""
+    application = detail.get("application") or {}
+    queue = detail.get("queue") or {}
+    participants: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for participant in application.get("participants") or []:
+        if not isinstance(participant, dict):
+            continue
+        name = _person_name(participant)
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        participants.append(
+            {
+                "ref_key": participant.get("ref_key"),
+                "full_name": name,
+                "department": participant.get("department"),
+            }
+        )
+
+    if participants:
+        return participants
+
+    for name in queue.get("participant_names") or []:
+        if not isinstance(name, str):
+            continue
+        normalized = name.strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        participants.append({"full_name": normalized})
+
+    return participants

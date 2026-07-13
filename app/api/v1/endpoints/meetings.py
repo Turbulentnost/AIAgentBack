@@ -28,6 +28,7 @@ from app.schemas.meeting import (
     MeetingRegistryRead,
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
+    MeetingRegistryParticipantsRead,
     MeetingRegistryRescheduleApproveRead,
     MeetingRegistryRescheduleApproveRequest,
     MeetingRegistryRescheduleSlotPreviewRead,
@@ -108,6 +109,26 @@ async def get_meetings_registry(
     """Реестр совещаний: СЗ с отправленными приглашениями и этапами исполнения."""
     try:
         return await MeetingService(db).list_registry(stage=stage, current_user=current_user)
+    except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.get(
+    "/registry/{memo_ref_key}/participants",
+    response_model=MeetingRegistryParticipantsRead,
+)
+async def get_registry_meeting_participants(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingRegistryParticipantsRead:
+    """Участники совещания из реестра: кэш СЗ или загрузка из 1С при промахе."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await MeetingService(db).get_registry_participants(
+            str(memo_ref_key),
+            current_user=current_user,
+        )
     except MeetingServiceError as exc:
         raise _service_error(exc) from exc
 

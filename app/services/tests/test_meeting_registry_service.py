@@ -286,3 +286,42 @@ async def test_apply_reschedule_restores_invitations_sent_stage(user) -> None:
     assert updated.payload["reschedule_message"] == "Перенос"
     assert "cancelled_at" not in updated.payload
     assert updated.outlook_item_id == "new-id"
+
+
+@pytest.mark.asyncio
+async def test_get_registry_participants_returns_participants_from_detail(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+
+    detail = {
+        "application": {
+            "participants": [
+                {"full_name": "Петров Петр Петрович"},
+                {"full_name": "Иванов Иван Иванович"},
+            ]
+        }
+    }
+    fetched_at = datetime.now(timezone.utc)
+    cache = MagicMock()
+    cache.get_memo_detail_for_agent = AsyncMock(return_value=(detail, fetched_at, True))
+
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch("app.services.meeting_service.MeetingMemoCacheService", return_value=cache),
+    ):
+        result = await service.get_registry_participants(
+            entry.memo_ref_key,
+            current_user=user,
+        )
+
+    assert result.ref_key == entry.memo_ref_key
+    assert result.participants_count == 2
+    assert [item.full_name for item in result.participants] == [
+        "Петров Петр Петрович",
+        "Иванов Иван Иванович",
+    ]

@@ -2,6 +2,7 @@ from app.services.meeting_attendees import (
     attendee_fio_from_detail,
     collect_attendees_from_detail,
     emails_by_fio_from_detail,
+    participants_from_detail,
 )
 
 
@@ -59,3 +60,33 @@ def test_emails_by_fio_from_detail_reads_cached_emails() -> None:
         "B": "b@turbo-don.ru",
         "C": "c@turbo-don.ru",
     }
+
+
+def test_participants_from_detail_returns_only_participants() -> None:
+    detail = {
+        "application": {
+            "initiator": {"full_name": "Сысоева Ирина Леонидовна"},
+            "manager": {"full_name": "Иванов Иван Иванович"},
+            "participants": [
+                {"full_name": "Петров Петр Петрович", "department": "УД"},
+                {"full_name": "Сысоева Ирина Леонидовна"},
+            ],
+        }
+    }
+
+    assert participants_from_detail(detail) == [
+        {"ref_key": None, "full_name": "Петров Петр Петрович", "department": "УД"},
+        {"ref_key": None, "full_name": "Сысоева Ирина Леонидовна", "department": None},
+    ]
+
+
+def test_participants_from_detail_falls_back_to_queue_names() -> None:
+    detail = {
+        "application": {"participants": []},
+        "queue": {"participant_names": ["Иванов Иван Иванович", "Петров Петр Петрович"]},
+    }
+
+    assert participants_from_detail(detail) == [
+        {"full_name": "Иванов Иван Иванович"},
+        {"full_name": "Петров Петр Петрович"},
+    ]

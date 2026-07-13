@@ -625,6 +625,13 @@ class MeetingRegistryRead(BaseModel):
     error: str | None = None
 
 
+class MeetingRegistryParticipantsRead(BaseModel):
+    ref_key: str
+    participants: list[MeetingParticipantDetailRead] = Field(default_factory=list)
+    participants_count: int = 0
+    fetched_at: str
+
+
 class MeetingRegistryRescheduleSlotPreviewRequest(BaseModel):
     duration_minutes: int | None = None
 
