@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from app.services.meeting_duration import normalize_request_duration_minutes
 
@@ -70,7 +70,7 @@ class MeetingStoIssueRead(BaseModel):
 
 
 class MeetingHistoryEventRead(BaseModel):
-    timestamp: str
+    timestamp: str = Field(validation_alias=AliasChoices("timestamp", "at"))
     message: str
 
 

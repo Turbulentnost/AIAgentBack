@@ -173,7 +173,7 @@ def load_memos_from_excel(path: Path, *, use_onec: bool) -> list[dict[str, Any]]
         detail["cache_source"] = "excel"
         detail["history"] = [
             {
-                "at": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "message": "СЗ загружена из Excel (offline cache)",
             }
         ]

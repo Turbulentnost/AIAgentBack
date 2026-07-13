@@ -131,7 +131,7 @@ def build_detail(queue_item: dict, participants: tuple[str, ...]) -> dict:
     detail["cache_source"] = "redis"
     detail["history"] = [
         {
-            "at": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "message": "Тестовая СЗ создана в Redis (seed)",
         }
     ]
