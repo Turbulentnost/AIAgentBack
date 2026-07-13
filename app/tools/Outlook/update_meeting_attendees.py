@@ -20,8 +20,13 @@ import json
 import sys
 from typing import Any, Literal
 
-from exchangelib.items import SEND_ONLY_TO_ALL
-from exchangelib.properties import Attendee, HTMLBody, Mailbox
+from exchangelib.properties import Attendee, Mailbox
+
+from app.tools.Outlook.attendee_update_notifications import (
+    SEND_ONLY_TO_CHANGED,
+    build_new_attendees_calendar_invite_body,
+    send_attendee_update_notifications,
+)
 
 from app.tools.Outlook.cancel_meeting import (
     list_meetings,
@@ -32,6 +37,7 @@ from app.tools.Outlook.cancel_meeting import (
 from app.tools.Outlook.meeting_series import AttendeesScope, resolve_attendees_target
 from app.tools.Outlook.outlook_config import OutlookConfig
 from app.tools.Outlook.send_meeting_invite import (
+    connect_account,
     load_config,
     parse_start,
     primary_smtp_address,
@@ -190,22 +196,35 @@ def update_meeting_attendees_item(
     if changes["added"] or changes["removed"]:
         update_fields.extend(["required_attendees", "optional_attendees"])
 
-    if message.strip():
-        note = message.strip()
-        existing = str(target.body or "").strip()
-        target.body = HTMLBody(f"{existing}\n\n<p>{note}</p>" if existing else note)
+    account = getattr(target, "account", None) or connect_account(load_config())
+    if changes["added"]:
+        target.body = build_new_attendees_calendar_invite_body(
+            item=target,
+            changes=changes,
+            account=account,
+            message=message,
+        )
         update_fields.append("body")
 
     target.save(
         update_fields=update_fields,
-        send_meeting_invitations=SEND_ONLY_TO_ALL,
+        send_meeting_invitations=SEND_ONLY_TO_CHANGED,
     )
+
+    notification_result = send_attendee_update_notifications(
+        account=account,
+        item=target,
+        changes=changes,
+        message=message,
+    )
+
     return {
         "attendees_scope": applied_scope,
         "target_kind": target_kind,
         "target_id": getattr(target, "id", None),
         "target_subject": getattr(target, "subject", None),
         **changes,
+        **notification_result,
     }
 
 
