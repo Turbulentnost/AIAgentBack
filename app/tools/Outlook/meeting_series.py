@@ -53,6 +53,13 @@ def series_master_id(item: Any) -> str | None:
     return None
 
 
+AttendeesScope = SeriesScope
+
+
+def available_attendees_scopes(item: Any) -> list[AttendeesScope]:
+    return available_series_scopes(item)
+
+
 def _series_scope_error(*, kind: MeetingKind, scope: SeriesScope, action: str) -> RuntimeError:
     if scope == "series" and kind == "single":
         return RuntimeError(
@@ -71,7 +78,7 @@ def resolve_series_target(
     item: Any,
     *,
     scope: SeriesScope,
-    action: Literal["cancel", "reschedule"],
+    action: Literal["cancel", "reschedule", "attendees"],
 ) -> tuple[Any, MeetingKind, SeriesScope]:
     """Возвращает CalendarItem для отмены/переноса и фактический scope."""
     kind = meeting_kind(item)
@@ -101,6 +108,14 @@ def resolve_reschedule_target(
     return resolve_series_target(item, scope=scope, action="reschedule")
 
 
+def resolve_attendees_target(
+    item: Any,
+    *,
+    scope: AttendeesScope,
+) -> tuple[Any, MeetingKind, AttendeesScope]:
+    return resolve_series_target(item, scope=scope, action="attendees")
+
+
 def meeting_series_fields(item: Any) -> dict[str, Any]:
     kind = meeting_kind(item)
     scopes = available_series_scopes(item)
@@ -112,4 +127,5 @@ def meeting_series_fields(item: Any) -> dict[str, Any]:
         "series_master_id": series_master_id(item),
         "cancel_scope_options": scopes,
         "reschedule_scope_options": scopes,
+        "attendees_scope_options": scopes,
     }

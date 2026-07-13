@@ -584,6 +584,7 @@ _MEETING_TOOL_NAMES = [
     "send_meeting_invite",
     "send_recurring_meeting_invite",
     "reschedule_meeting",
+    "update_meeting_attendees",
     "cancel_meeting",
     "create_service_memo",
     "approve_service_memo",

@@ -16,6 +16,7 @@ from app.tools.Outlook.read_calendars import fetch_outlook_calendars
 from app.tools.Outlook.reschedule_meeting import dispatch_reschedule_meeting
 from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite
 from app.tools.Outlook.send_recurring_meeting_invite import dispatch_recurring_meeting_invite
+from app.tools.Outlook.update_meeting_attendees import dispatch_update_meeting_attendees
 from app.tools.registry import register_tool
 from app.tools.schemas import ToolContext
 
@@ -550,6 +551,100 @@ class RescheduleMeetingTool(Tool):
 
 
 register_tool(RescheduleMeetingTool())
+
+
+class UpdateMeetingAttendeesInput(BaseModel):
+    list_only: bool = Field(default=False, description="Показать совещания в календаре организатора")
+    days: int = Field(default=14, ge=1, le=365)
+    item_id: str = Field(default="", description="EWS ItemId совещания")
+    changekey: str = Field(default="", description="EWS ChangeKey")
+    subject: str = Field(default="", description="Тема для поиска совещания")
+    start: str = Field(default="", description="Начало для поиска: YYYY-MM-DD HH:MM")
+    attendee: str = Field(default="", description="E-mail участника для уточнения поиска")
+    tolerance_minutes: int = Field(default=5, ge=0, le=120)
+    add: list[str] = Field(default_factory=list, description="E-mail участников для добавления")
+    remove: list[str] = Field(default_factory=list, description="E-mail участников для удаления")
+    attendees_scope: Literal["occurrence", "series"] = Field(
+        default="occurrence",
+        description="occurrence — одно совещание; series — всю серию",
+    )
+    message: str = Field(default="", description="Комментарий в уведомлении")
+    dry_run: bool = Field(default=False, description="Только показать изменения")
+    timezone: str | None = Field(default=None, description="Часовой пояс для start")
+
+
+class UpdateMeetingAttendeesOutput(BaseModel):
+    action: str
+    status: str | None = None
+    calendar: str | None = None
+    meetings_count: int | None = None
+    meetings: list[dict[str, Any]] | None = None
+    meeting: dict[str, Any] | None = None
+    add: list[str] | None = None
+    remove: list[str] | None = None
+    before: list[str] | None = None
+    after: list[str] | None = None
+    added: list[str] | None = None
+    removed: list[str] | None = None
+    skipped_remove: list[str] | None = None
+    attendees_scope: str | None = None
+    target_kind: str | None = None
+    target_id: str | None = None
+    message: str | None = None
+    error: str | None = None
+
+
+async def update_meeting_attendees_tool(
+    payload: UpdateMeetingAttendeesInput,
+    context: ToolContext,
+) -> UpdateMeetingAttendeesOutput:
+    del context
+    raw = await asyncio.to_thread(
+        dispatch_update_meeting_attendees,
+        list_only=payload.list_only,
+        days=payload.days,
+        item_id=payload.item_id,
+        changekey=payload.changekey,
+        subject=payload.subject,
+        start=payload.start,
+        attendee=payload.attendee,
+        tolerance_minutes=payload.tolerance_minutes,
+        add=payload.add,
+        remove=payload.remove,
+        message=payload.message,
+        dry_run=payload.dry_run,
+        attendees_scope=payload.attendees_scope,
+        timezone=payload.timezone,
+    )
+    return UpdateMeetingAttendeesOutput.model_validate(raw)
+
+
+class UpdateMeetingAttendeesTool(Tool):
+    name = "update_meeting_attendees"
+    description = (
+        "Добавляет или удаляет участников совещания в календаре Exchange (EWS) "
+        "и рассылает обновлённое приглашение."
+    )
+    agent_description = (
+        "Инструмент update_meeting_attendees меняет состав участников встречи. "
+        "Укажи add/remove и item_id или subject+start. attendees_scope=occurrence "
+        "меняет одно вхождение серии, attendees_scope=series — всю серию. "
+        "dry_run=true — только предпросмотр."
+    )
+    input_model = UpdateMeetingAttendeesInput
+    output_model = UpdateMeetingAttendeesOutput
+    required_permissions = ["reschedule_meeting"]
+    preview_default_params = {"list_only": True, "days": 7}
+
+    async def execute(
+        self,
+        payload: UpdateMeetingAttendeesInput,
+        context: ToolContext,
+    ) -> UpdateMeetingAttendeesOutput:
+        return await update_meeting_attendees_tool(payload, context)
+
+
+register_tool(UpdateMeetingAttendeesTool())
 
 
 class FindMeetingSlotInput(BaseModel):
