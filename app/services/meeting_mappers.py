@@ -17,7 +17,6 @@ from app.schemas.meeting import (
     MeetingAttendeeRead,
     MeetingInviteDraftRead,
     MeetingMemoRead,
-    MeetingParticipantDetailRead,
     MeetingQuorumSlotRead,
     MeetingRegistryItemRead,
     MeetingRegistryCancelRead,
@@ -474,10 +473,7 @@ def registry_participants_read(
     detail: dict[str, Any],
     fetched_at: str,
 ) -> MeetingRegistryParticipantsRead:
-    participants = [
-        MeetingParticipantDetailRead.model_validate(item)
-        for item in participants_from_detail(detail)
-    ]
+    participants = participants_from_detail(detail)
     return MeetingRegistryParticipantsRead(
         ref_key=ref_key,
         participants=participants,

@@ -321,7 +321,7 @@ async def test_get_registry_participants_returns_participants_from_detail(user) 
 
     assert result.ref_key == entry.memo_ref_key
     assert result.participants_count == 2
-    assert [item.full_name for item in result.participants] == [
+    assert result.participants == [
         "Петров Петр Петрович",
         "Иванов Иван Иванович",
     ]

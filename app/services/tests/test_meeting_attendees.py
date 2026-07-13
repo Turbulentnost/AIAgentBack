@@ -75,8 +75,8 @@ def test_participants_from_detail_returns_only_participants() -> None:
     }
 
     assert participants_from_detail(detail) == [
-        {"ref_key": None, "full_name": "Петров Петр Петрович", "department": "УД"},
-        {"ref_key": None, "full_name": "Сысоева Ирина Леонидовна", "department": None},
+        "Петров Петр Петрович",
+        "Сысоева Ирина Леонидовна",
     ]
 
 
@@ -87,6 +87,6 @@ def test_participants_from_detail_falls_back_to_queue_names() -> None:
     }
 
     assert participants_from_detail(detail) == [
-        {"full_name": "Иванов Иван Иванович"},
-        {"full_name": "Петров Петр Петрович"},
+        "Иванов Иван Иванович",
+        "Петров Петр Петрович",
     ]

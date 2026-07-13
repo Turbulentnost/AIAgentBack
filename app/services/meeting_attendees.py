@@ -124,11 +124,11 @@ def attendee_fio_from_detail(detail: dict[str, Any]) -> list[str]:
     return [name for name, _role in collect_attendees_from_detail(detail)]
 
 
-def participants_from_detail(detail: dict[str, Any]) -> list[dict[str, Any]]:
+def participants_from_detail(detail: dict[str, Any]) -> list[str]:
     """Участники СЗ (без инициатора и руководителя) для реестра совещаний."""
     application = detail.get("application") or {}
     queue = detail.get("queue") or {}
-    participants: list[dict[str, Any]] = []
+    participants: list[str] = []
     seen: set[str] = set()
 
     for participant in application.get("participants") or []:
@@ -141,13 +141,7 @@ def participants_from_detail(detail: dict[str, Any]) -> list[dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
-        participants.append(
-            {
-                "ref_key": participant.get("ref_key"),
-                "full_name": name,
-                "department": participant.get("department"),
-            }
-        )
+        participants.append(name)
 
     if participants:
         return participants
@@ -162,6 +156,6 @@ def participants_from_detail(detail: dict[str, Any]) -> list[dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
-        participants.append({"full_name": normalized})
+        participants.append(normalized)
 
     return participants
