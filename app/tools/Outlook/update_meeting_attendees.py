@@ -25,6 +25,7 @@ from exchangelib.properties import Attendee, Mailbox
 from app.tools.Outlook.attendee_update_notifications import (
     SEND_ONLY_TO_CHANGED,
     build_new_attendees_calendar_invite_body,
+    build_removed_attendees_calendar_body,
     send_attendee_update_notifications,
 )
 
@@ -188,28 +189,60 @@ def update_meeting_attendees_item(
     if getattr(target, "is_cancelled", False):
         raise RuntimeError(f"Совещание уже отменено: {getattr(target, 'subject', '')}")
 
-    changes = apply_attendee_changes(target, add=add, remove=remove)
+    remove_emails = normalize_emails(remove or [])
+    add_emails = normalize_emails(add or [])
+    before_emails = all_attendee_emails(target)
+    account = getattr(target, "account", None) or connect_account(load_config())
+
+    if remove_emails and add_emails:
+        removed_part = apply_attendee_changes(target, remove=remove_emails)
+        if removed_part["removed"]:
+            target.body = build_removed_attendees_calendar_body(item=target, message=message)
+            target.save(
+                update_fields=["required_attendees", "optional_attendees", "body"],
+                send_meeting_invitations=SEND_ONLY_TO_CHANGED,
+            )
+        added_part = apply_attendee_changes(target, add=add_emails)
+        if added_part["added"]:
+            target.body = build_new_attendees_calendar_invite_body(
+                item=target,
+                changes={"after": all_attendee_emails(target)},
+                account=account,
+                message=message,
+            )
+            target.save(
+                update_fields=["required_attendees", "optional_attendees", "body"],
+                send_meeting_invitations=SEND_ONLY_TO_CHANGED,
+            )
+        changes = {
+            "before": before_emails,
+            "after": all_attendee_emails(target),
+            "added": added_part["added"],
+            "removed": removed_part["removed"],
+            "skipped_remove": removed_part["skipped_remove"],
+        }
+    else:
+        changes = apply_attendee_changes(target, add=add_emails, remove=remove_emails)
+        update_fields: list[str] = ["required_attendees", "optional_attendees"]
+        if changes["removed"]:
+            target.body = build_removed_attendees_calendar_body(item=target, message=message)
+            update_fields.append("body")
+        elif changes["added"]:
+            target.body = build_new_attendees_calendar_invite_body(
+                item=target,
+                changes=changes,
+                account=account,
+                message=message,
+            )
+            update_fields.append("body")
+
+        target.save(
+            update_fields=update_fields,
+            send_meeting_invitations=SEND_ONLY_TO_CHANGED,
+        )
+
     if not changes["added"] and not changes["removed"]:
         raise RuntimeError("Состав участников не изменился.")
-
-    update_fields: list[str] = []
-    if changes["added"] or changes["removed"]:
-        update_fields.extend(["required_attendees", "optional_attendees"])
-
-    account = getattr(target, "account", None) or connect_account(load_config())
-    if changes["added"]:
-        target.body = build_new_attendees_calendar_invite_body(
-            item=target,
-            changes=changes,
-            account=account,
-            message=message,
-        )
-        update_fields.append("body")
-
-    target.save(
-        update_fields=update_fields,
-        send_meeting_invitations=SEND_ONLY_TO_CHANGED,
-    )
 
     notification_result = send_attendee_update_notifications(
         account=account,

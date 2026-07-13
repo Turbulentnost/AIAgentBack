@@ -171,6 +171,22 @@ def build_new_attendees_notification_body(
     return "\n".join(sections)
 
 
+def build_removed_attendees_notification_body(
+    *,
+    subject: str,
+    extra_message: str = "",
+    footer: str = INVITE_AGENT_FOOTER,
+) -> str:
+    sections = [
+        f'Вы были исключены из участников совещания по теме "{subject.strip()}"',
+    ]
+    if extra_message.strip():
+        sections.extend(["", extra_message.strip()])
+    if footer.strip():
+        sections.extend(["", footer.strip()])
+    return "\n".join(sections)
+
+
 def plain_text_to_html(text: str) -> HTMLBody:
     blocks = text.strip().split("\n\n")
     html_blocks: list[str] = []
@@ -194,6 +210,20 @@ def build_new_attendees_calendar_invite_body(
     text = build_new_attendees_notification_body(
         subject=subject,
         roster_pairs=roster_pairs,
+        extra_message=message,
+    )
+    return plain_text_to_html(text)
+
+
+def build_removed_attendees_calendar_body(
+    *,
+    item: Any,
+    message: str = "",
+) -> HTMLBody:
+    """Тело уведомления об отмене участия (SendOnlyToChanged для удалённых)."""
+    subject = str(getattr(item, "subject", "") or "Совещание").strip()
+    text = build_removed_attendees_notification_body(
+        subject=subject,
         extra_message=message,
     )
     return plain_text_to_html(text)
@@ -259,6 +289,7 @@ def send_attendee_update_notifications(
     protected = {email for email in [organizer_email(item)] if email}
     notified_existing: list[str] = []
     notified_new: list[str] = []
+    notified_removed: list[str] = []
     errors: list[str] = []
 
     for email in existing_attendee_recipients(before=before, added=added, removed=removed):
@@ -287,9 +318,16 @@ def send_attendee_update_notifications(
             continue
         notified_new.append(email)
 
+    # Удалённым — в уведомлении об отмене участия (SendOnlyToChanged).
+    for email in removed:
+        if email.lower() in protected or not is_notification_recipient(email):
+            continue
+        notified_removed.append(email)
+
     return {
         "notified_existing": notified_existing,
         "notified_new": notified_new,
+        "notified_removed": notified_removed,
         "notification_errors": errors,
     }
 
@@ -300,7 +338,8 @@ __all__ = [
     "attendee_line",
     "build_existing_attendees_notification_body",
     "build_new_attendees_calendar_invite_body",
-    "build_new_attendees_notification_body",
+    "build_removed_attendees_calendar_body",
+    "build_removed_attendees_notification_body",
     "plain_text_to_html",
     "resolve_attendee_pair",
     "resolve_attendee_pairs",

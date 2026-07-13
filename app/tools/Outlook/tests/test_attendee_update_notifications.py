@@ -10,6 +10,8 @@ from app.tools.Outlook.attendee_update_notifications import (
     build_existing_attendees_notification_body,
     build_new_attendees_calendar_invite_body,
     build_new_attendees_notification_body,
+    build_removed_attendees_calendar_body,
+    build_removed_attendees_notification_body,
     existing_attendee_recipients,
     resolve_attendee_pair,
 )
@@ -74,6 +76,25 @@ def test_resolve_attendee_pair_uses_item_display_name() -> None:
         "Комарькова Анастасия Эдуардовна",
         "keep@co.ru",
     )
+
+
+def test_build_removed_attendees_notification_body() -> None:
+    body = build_removed_attendees_notification_body(
+        subject="Тестовая СЗ: проверка агента совещаний",
+    )
+    assert (
+        'Вы были исключены из участников совещания по теме "Тестовая СЗ: проверка агента совещаний"'
+        in body
+    )
+    assert INVITE_AGENT_FOOTER in body
+
+
+def test_build_removed_attendees_calendar_body_contains_exclusion_text() -> None:
+    item = SimpleNamespace(subject="Тестовая СЗ")
+    body = build_removed_attendees_calendar_body(item=item)
+    html = str(body)
+    assert "Вы были исключены из участников совещания по теме" in html
+    assert INVITE_AGENT_FOOTER in html
 
 
 def test_build_new_attendees_calendar_invite_body_contains_welcome_text() -> None:

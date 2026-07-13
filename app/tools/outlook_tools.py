@@ -589,6 +589,7 @@ class UpdateMeetingAttendeesOutput(BaseModel):
     skipped_remove: list[str] | None = None
     notified_existing: list[str] | None = None
     notified_new: list[str] | None = None
+    notified_removed: list[str] | None = None
     notification_errors: list[str] | None = None
     attendees_scope: str | None = None
     target_kind: str | None = None
@@ -627,15 +628,14 @@ class UpdateMeetingAttendeesTool(Tool):
     description = (
         "Добавляет или удаляет участников совещания в календаре Exchange (EWS) "
         "и рассылает персональные уведомления: существующим — об обновлении состава, "
-        "новым — календарное приглашение с текстом о добавлении."
+        "новым — календарное приглашение, удалённым — уведомление об исключении."
     )
     agent_description = (
         "Инструмент update_meeting_attendees меняет состав участников встречи. "
         "Укажи add/remove и item_id или subject+start. attendees_scope=occurrence "
         "меняет одно вхождение серии, attendees_scope=series — всю серию. "
-        "Существующим участникам уходит письмо об обновлении состава, "
-        "новым — календарное приглашение с текстом о добавлении. "
-        "dry_run=true — только предпросмотр."
+        "Существующим — письмо об обновлении состава, новым — календарное приглашение, "
+        "удалённым — уведомление об исключении. dry_run=true — только предпросмотр."
     )
     input_model = UpdateMeetingAttendeesInput
     output_model = UpdateMeetingAttendeesOutput
