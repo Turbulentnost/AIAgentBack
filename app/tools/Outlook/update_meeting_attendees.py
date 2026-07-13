@@ -11,6 +11,9 @@
     --subject "Регламент" --start "2026-07-14 16:00" --add new.user@turbo-don.ru --yes
   python -m app.tools.Outlook.update_meeting_attendees \\
     --id "AQMkAD..." --remove old.user@turbo-don.ru --yes
+  python -m app.tools.Outlook.update_meeting_attendees \\
+    --subject "Регламент" --start "2026-07-14 16:00" --remove old.user@turbo-don.ru \\
+    --scope series --yes
 """
 
 from __future__ import annotations
@@ -481,14 +484,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{meeting['subject']}\n   {meeting['start']} — {meeting['end']}")
         print(f"Было: {', '.join(result.get('before') or []) or '—'}")
         print(f"Стало: {', '.join(result.get('after') or []) or '—'}")
+        if meeting.get("is_series"):
+            print(f"Серия: да (kind={meeting.get('kind')})")
         if result.get("attendees_scope"):
-            print(f"Область: {result['attendees_scope']}")
+            print(f"Область изменения: {result['attendees_scope']}")
         if args.dry_run:
             print("\n(dry-run: изменения не применены)")
             if result.get("error"):
                 print(f"Ошибка dry-run: {result['error']}")
         else:
-            print("\nСостав участников обновлён, уведомления отправлены.")
+            if result.get("attendees_scope") == "series":
+                print("\nСостав участников серии обновлён, уведомления отправлены.")
+            else:
+                print("\nСостав участников обновлён, уведомления отправлены.")
         return 0
     except Exception as error:
         print(f"Ошибка: {error}", file=sys.stderr)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from exchangelib.properties import Attendee, Mailbox
@@ -9,6 +10,7 @@ from app.tools.Outlook.update_meeting_attendees import (
     all_attendee_emails,
     apply_attendee_changes,
     normalize_emails,
+    update_meeting_attendees_item,
 )
 
 
@@ -76,3 +78,88 @@ def test_apply_attendee_changes_requires_changes() -> None:
     result = apply_attendee_changes(item, add=["keep@turbo-don.ru"])
     assert result["added"] == []
     assert result["removed"] == []
+
+
+def test_update_meeting_attendees_item_occurrence_scope_removes_from_occurrence() -> None:
+    occurrence = SimpleNamespace(
+        type="Occurrence",
+        id="occ-1",
+        subject="Серия",
+        is_cancelled=False,
+        organizer=SimpleNamespace(email_address="postagant@turbo-don.ru"),
+        required_attendees=[attendee("keep@turbo-don.ru"), attendee("old@turbo-don.ru")],
+        optional_attendees=[],
+        body="",
+        account=SimpleNamespace(),
+    )
+    occurrence.save = MagicMock()
+
+    with patch(
+        "app.tools.Outlook.update_meeting_attendees.send_attendee_update_notifications",
+        return_value={
+            "notified_existing": ["keep@turbo-don.ru"],
+            "notified_new": [],
+            "notified_removed": ["old@turbo-don.ru"],
+            "notification_errors": [],
+        },
+    ):
+        result = update_meeting_attendees_item(
+            occurrence,
+            remove=["old@turbo-don.ru"],
+            attendees_scope="occurrence",
+        )
+
+    occurrence.save.assert_called_once()
+    assert result["attendees_scope"] == "occurrence"
+    assert result["target_kind"] == "series_occurrence"
+    assert result["removed"] == ["old@turbo-don.ru"]
+    assert all_attendee_emails(occurrence) == ["keep@turbo-don.ru"]
+
+
+def test_update_meeting_attendees_item_series_scope_removes_from_master() -> None:
+    master = SimpleNamespace(
+        type="RecurringMaster",
+        id="master-1",
+        subject="Серия",
+        is_cancelled=False,
+        organizer=SimpleNamespace(email_address="postagant@turbo-don.ru"),
+        required_attendees=[attendee("keep@turbo-don.ru"), attendee("old@turbo-don.ru")],
+        optional_attendees=[],
+        body="",
+        account=SimpleNamespace(),
+    )
+    master.save = MagicMock()
+    master.refresh = MagicMock()
+    occurrence = SimpleNamespace(
+        type="Occurrence",
+        id="occ-1",
+        subject="Серия",
+        is_cancelled=False,
+        recurring_master=MagicMock(return_value=master),
+    )
+
+    with patch(
+        "app.tools.Outlook.update_meeting_attendees.send_attendee_update_notifications",
+        return_value={
+            "notified_existing": ["keep@turbo-don.ru"],
+            "notified_new": [],
+            "notified_removed": ["old@turbo-don.ru"],
+            "notification_errors": [],
+        },
+    ):
+        result = update_meeting_attendees_item(
+            occurrence,
+            remove=["old@turbo-don.ru"],
+            attendees_scope="series",
+        )
+
+    master.refresh.assert_called_once()
+    master.save.assert_called_once()
+    occurrence_save = getattr(occurrence, "save", None)
+    if occurrence_save is not None:
+        occurrence_save.assert_not_called()
+    assert result["attendees_scope"] == "series"
+    assert result["target_kind"] == "series_master"
+    assert result["target_id"] == "master-1"
+    assert result["removed"] == ["old@turbo-don.ru"]
+    assert all_attendee_emails(master) == ["keep@turbo-don.ru"]

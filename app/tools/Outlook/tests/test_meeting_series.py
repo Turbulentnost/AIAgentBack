@@ -6,8 +6,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.tools.Outlook.meeting_series import (
+    available_attendees_scopes,
     available_reschedule_scopes,
     meeting_series_fields,
+    resolve_attendees_target,
     resolve_reschedule_target,
     resolve_series_target,
 )
@@ -41,7 +43,27 @@ def test_meeting_series_fields_includes_reschedule_scope_options() -> None:
     item = SimpleNamespace(type="Occurrence", id="occ-1", recurring_master=MagicMock())
     fields = meeting_series_fields(item)
     assert fields["reschedule_scope_options"] == ["occurrence", "series"]
+    assert fields["attendees_scope_options"] == ["occurrence", "series"]
     assert available_reschedule_scopes(item) == ["occurrence", "series"]
+    assert available_attendees_scopes(item) == ["occurrence", "series"]
+
+
+def test_resolve_attendees_target_series_from_occurrence() -> None:
+    master = SimpleNamespace(type="RecurringMaster", id="master-1", is_cancelled=False)
+    master.refresh = MagicMock()
+    occurrence = SimpleNamespace(
+        type="Occurrence",
+        id="occ-1",
+        is_cancelled=False,
+        recurring_master=MagicMock(return_value=master),
+    )
+
+    target, kind, scope = resolve_attendees_target(occurrence, scope="series")
+
+    assert target is master
+    master.refresh.assert_called_once()
+    assert kind == "series_master"
+    assert scope == "series"
 
 
 def test_resolve_series_target_uses_action_label_in_error() -> None:
@@ -51,3 +73,6 @@ def test_resolve_series_target_uses_action_label_in_error() -> None:
 
     with pytest.raises(RuntimeError, match="reschedule_scope=occurrence"):
         resolve_series_target(item, scope="series", action="reschedule")
+
+    with pytest.raises(RuntimeError, match="attendees_scope=occurrence"):
+        resolve_series_target(item, scope="series", action="attendees")
