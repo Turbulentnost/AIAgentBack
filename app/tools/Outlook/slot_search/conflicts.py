@@ -386,9 +386,68 @@ def conflicting_calendar_items_at_slot(
         )
     return records
 
+def conflicting_company_calendar_items_at_slot(
+    items: list[Any],
+    slot_start: datetime,
+    duration: timedelta,
+    config: OutlookConfig,
+    *,
+    attendee_email: str,
+) -> list[dict[str, Any]]:
+    """Конфликты из общего календаря компании для конкретного участника."""
+    normalized_email = attendee_email.strip().lower()
+    if not normalized_email:
+        return []
+
+    attendee_set = {normalized_email}
+    local_start = to_local(slot_start, config)
+    local_end = local_start + duration
+    records: list[dict[str, Any]] = []
+    for item in items:
+        interval = event_interval(item, config)
+        if interval is None:
+            continue
+        event_start, event_end = interval
+        if not intervals_overlap(local_start, local_end, event_start, event_end):
+            continue
+
+        event_attendees = [
+            email
+            for email in calendar_item_attendee_emails(item)
+            if email in attendee_set
+        ]
+        if not event_attendees:
+            continue
+
+        subject = str(getattr(item, "subject", "") or "").strip()
+        busy_type = str(getattr(item, "legacy_free_busy_status", "") or "").strip()
+        organizer = None
+        organizer_obj = getattr(item, "organizer", None)
+        if organizer_obj is not None:
+            organizer = getattr(organizer_obj, "email_address", None) or str(organizer_obj)
+        records.append(
+            {
+                "event_start": event_start.isoformat(),
+                "event_end": event_end.isoformat(),
+                "event_subject": subject or None,
+                "busy_type": busy_type or None,
+                "organizer": organizer,
+                "event_attendees": calendar_item_attendee_emails(item),
+                "event_attendee_names": calendar_item_attendee_display_names(item),
+                "movability": movability_score(busy_type=busy_type, subject=subject),
+                "movability_reason": movability_reason(
+                    busy_type=busy_type,
+                    subject=subject,
+                    source="company_calendar",
+                ),
+                "source": "company_calendar",
+            }
+        )
+    return records
+
 def dedupe_conflict_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Один интервал — одна запись; при дубле оставляем запись с темой (calendar > freebusy > interval)."""
-    source_rank = {"calendar": 0, "freebusy": 1, "interval": 2}
+    """Один интервал — одна запись; при дубле оставляем запись с темой (calendar > company > freebusy > interval)."""
+    source_rank = {"calendar": 0, "company_calendar": 1, "freebusy": 2, "interval": 3}
     by_interval: dict[tuple[str, str], dict[str, Any]] = {}
     order: list[tuple[str, str]] = []
 

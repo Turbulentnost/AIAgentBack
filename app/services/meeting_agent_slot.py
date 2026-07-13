@@ -17,6 +17,9 @@ from app.schemas.meeting import (
     MeetingAgentSlotPreviewRequest,
     MeetingAttendeeRead,
     MeetingSlotCoverageRead,
+    MeetingSlotParticipantStatusRead,
+    MeetingSlotRescheduleRecommendationRead,
+    MeetingSlotRoomStatusRead,
 )
 from app.services.meeting_agent_errors import (
     format_calendar_error,
@@ -162,6 +165,44 @@ def _room_participant_payload(room_status: dict[str, Any]) -> dict[str, Any]:
         "blocking_events": [],
         "calendar_access_error": room_status.get("calendar_access_error"),
     }
+
+
+def build_slot_detail_availability(
+    participants: list[MeetingSlotParticipantStatusRead],
+    *,
+    room: MeetingSlotRoomStatusRead | None,
+) -> tuple[bool, list[MeetingSlotRescheduleRecommendationRead]]:
+    """Определяет доступность слота и список встреч для переноса."""
+    people = [item for item in participants if item.role != "room"]
+    slot_available = all(item.status == "free" for item in people)
+    if room is not None and room.status == "busy":
+        slot_available = False
+
+    recommendations: list[MeetingSlotRescheduleRecommendationRead] = []
+    for participant in people:
+        if participant.status != "busy":
+            continue
+        for event in participant.blocking_events:
+            recommendations.append(
+                MeetingSlotRescheduleRecommendationRead(
+                    participant_fio=participant.fio,
+                    event_label=event.event_label,
+                    event_time_label=event.event_time_label,
+                    reschedule_hint_label=event.reschedule_hint_label,
+                )
+            )
+
+    if room is not None and room.status == "busy":
+        recommendations.append(
+            MeetingSlotRescheduleRecommendationRead(
+                participant_fio=room.name,
+                event_label="Переговорная занята",
+                event_time_label=None,
+                reschedule_hint_label=None,
+            )
+        )
+
+    return slot_available, recommendations
 
 
 class MeetingAgentSlotService:
@@ -819,6 +860,10 @@ class MeetingAgentSlotService:
         participants.append(
             participant_status_read(_room_participant_payload(room_raw), attendees=[])
         )
+        slot_available, reschedule_recommendations = build_slot_detail_availability(
+            participants,
+            room=room,
+        )
         return MeetingAgentSlotDetailRead(
             memo_ref_key=normalized_ref,
             slot_start=payload.slot_start,
@@ -827,6 +872,8 @@ class MeetingAgentSlotService:
             duration_minutes=duration,
             participants=participants,
             room=room,
+            slot_available=slot_available,
+            reschedule_recommendations=reschedule_recommendations,
         )
 
     async def get_agent_slot_detail_safe(

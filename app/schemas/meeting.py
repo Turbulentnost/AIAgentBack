@@ -393,6 +393,16 @@ class MeetingSlotRoomStatusRead(BaseModel):
     )
 
 
+class MeetingSlotRescheduleRecommendationRead(BaseModel):
+    participant_fio: str
+    event_label: str
+    event_time_label: str | None = None
+    reschedule_hint_label: str | None = Field(
+        default=None,
+        description="Предлагаемое окно для переноса конфликтующей встречи",
+    )
+
+
 class MeetingAgentSlotDetailRead(BaseModel):
     memo_ref_key: str
     slot_start: str
@@ -401,6 +411,14 @@ class MeetingAgentSlotDetailRead(BaseModel):
     duration_minutes: int
     participants: list[MeetingSlotParticipantStatusRead] = Field(default_factory=list)
     room: MeetingSlotRoomStatusRead | None = None
+    slot_available: bool | None = Field(
+        default=None,
+        description="Все участники и переговорная свободны в выбранном слоте",
+    )
+    reschedule_recommendations: list[MeetingSlotRescheduleRecommendationRead] = Field(
+        default_factory=list,
+        description="Встречи, которые нужно перенести для освобождения слота",
+    )
     error: str | None = None
     error_stage: str | None = Field(
         default=None,

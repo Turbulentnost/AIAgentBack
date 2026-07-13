@@ -23,6 +23,7 @@ from .conflicts import (
     attach_reschedule_hints,
     build_conflict_records,
     conflicting_calendar_items_at_slot,
+    conflicting_company_calendar_items_at_slot,
     conflicting_events_at_slot,
     conflicting_intervals_at_slot,
     dedupe_conflict_records,
@@ -79,6 +80,24 @@ def build_slot_participant_details(
         window_start,
         window_end,
     ) if attendee_emails else {}
+
+    company_calendar_items: list[Any] = []
+    company_calendar = (config.company_calendar or "").strip()
+    if company_calendar:
+        try:
+            company_calendar_items = read_calendar_items_in_range(
+                config,
+                company_calendar,
+                range_start=window_start,
+                range_end=window_end,
+                max_items=max_calendar_items,
+            )
+        except Exception as exc:
+            logger.warning(
+                "company_calendar_read_failed calendar=%s error=%s",
+                company_calendar,
+                exc,
+            )
 
     participants: list[dict[str, Any]] = []
     for attendee in attendees:
@@ -151,7 +170,23 @@ def build_slot_participant_details(
             for record in interval_records:
                 record["source"] = "interval"
 
-        merged_records = dedupe_conflict_records(calendar_records + freebusy_records + interval_records)
+        company_records: list[dict[str, Any]] = []
+        if company_calendar_items:
+            company_records = conflicting_company_calendar_items_at_slot(
+                company_calendar_items,
+                slot_start,
+                duration,
+                config,
+                attendee_email=email,
+            )
+
+        merged_records = dedupe_conflict_records(
+            calendar_records + freebusy_records + interval_records + company_records
+        )
+        if company_records and any(
+            str(record.get("event_subject") or "").strip() for record in merged_records
+        ):
+            calendar_error = None
 
         blocking_events = attach_reschedule_hints(
             merged_records,

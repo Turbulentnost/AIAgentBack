@@ -36,6 +36,8 @@ def agent_slot_detail_error(
         slot_label=format_slot_label(slot_start, slot_end),
         duration_minutes=duration,
         participants=[],
+        slot_available=False,
+        reschedule_recommendations=[],
         error=message,
         error_stage=error_stage,
     )
