@@ -1189,6 +1189,80 @@ def test_build_slot_participant_details_marks_free_and_busy(monkeypatch) -> None
     assert by_email["a@turbo-don.ru"]["blocking_events"][0]["event_subject"] == "Согласование бюджета"
 
 
+def test_build_slot_participant_details_skips_company_calendar_by_default(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    slot_start = datetime(2026, 7, 9, 8, 45, tzinfo=tz)
+    slot_end = datetime(2026, 7, 9, 10, 45, tzinfo=tz)
+    busy_block = (
+        datetime(2026, 7, 9, 8, 30, tzinfo=tz),
+        datetime(2026, 7, 9, 9, 30, tzinfo=tz),
+    )
+    company_calls: list[str] = []
+
+    def _read_calendar(_config, mailbox, **_kwargs):
+        company_calls.append(mailbox)
+        return []
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.api.fetch_all_busy_intervals",
+        lambda *_args, **_kwargs: {"a@turbo-don.ru": [busy_block]},
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.api.fetch_freebusy_calendar_events",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.api.read_calendar_items_in_range",
+        _read_calendar,
+    )
+
+    build_slot_participant_details(
+        config=config,
+        attendees=[{"fio": "A", "email": "a@turbo-don.ru", "role": "manager"}],
+        slot_start=slot_start,
+        slot_end=slot_end,
+    )
+
+    assert company_calls == ["a@turbo-don.ru"]
+    assert config.company_calendar not in company_calls
+
+
+def test_build_slot_participant_details_reads_company_calendar_when_requested(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    slot_start = datetime(2026, 7, 9, 8, 45, tzinfo=tz)
+    slot_end = datetime(2026, 7, 9, 10, 45, tzinfo=tz)
+    company_calls: list[str] = []
+
+    def _read_calendar(_config, mailbox, **_kwargs):
+        company_calls.append(mailbox)
+        return []
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.api.fetch_all_busy_intervals",
+        lambda *_args, **_kwargs: {"a@turbo-don.ru": []},
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.api.fetch_freebusy_calendar_events",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.api.read_calendar_items_in_range",
+        _read_calendar,
+    )
+
+    build_slot_participant_details(
+        config=config,
+        attendees=[{"fio": "A", "email": "a@turbo-don.ru", "role": "manager"}],
+        slot_start=slot_start,
+        slot_end=slot_end,
+        include_company_calendar=True,
+    )
+
+    assert config.company_calendar in company_calls
+
+
 def test_preliminary_slot_impact_prefers_lighter_busy_set() -> None:
     weights = {
         "director@turbo-don.ru": 3.0,

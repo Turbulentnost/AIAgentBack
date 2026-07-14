@@ -21,6 +21,7 @@ from app.schemas.meeting import (
     MeetingQuorumSlotRead,
     MeetingRegistryItemRead,
     MeetingRegistryCancelRead,
+    MeetingRegistryCurrentSlotAvailabilityRead,
     MeetingRegistryEventRead,
     MeetingRegistryEventTypeRead,
     MeetingRegistryHistoryRead,
@@ -32,6 +33,7 @@ from app.schemas.meeting import (
     MeetingSlotCoverageRead,
     MeetingSlotParticipantStatusRead,
     MeetingSlotRead,
+    MeetingSlotRescheduleRecommendationRead,
     MeetingSlotRoomStatusRead,
 )
 from app.services.meeting_attendee_priority import (
@@ -332,6 +334,20 @@ def conflict_read(
     )
 
 
+def reschedule_recommendation_from_conflict(
+    conflict: MeetingSlotConflict,
+    *,
+    attendees: list[MeetingAttendeeRead],
+) -> MeetingSlotRescheduleRecommendationRead:
+    mapped = conflict_read(conflict, attendees=attendees)
+    return MeetingSlotRescheduleRecommendationRead(
+        participant_fio=mapped.fio or mapped.email,
+        event_label=mapped.event_label or mapped.event_subject or "Встреча",
+        event_time_label=mapped.event_time_label,
+        reschedule_hint_label=mapped.reschedule_hint_label,
+    )
+
+
 def blocking_event_read(
     record: dict[str, Any],
     *,
@@ -471,6 +487,23 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
             if entry.updated_at
             else entry.invitations_sent_at.isoformat()
         ),
+    )
+
+
+def registry_current_slot_availability_read(
+    *,
+    slot_label: str,
+    availability: Any,
+) -> MeetingRegistryCurrentSlotAvailabilityRead:
+    return MeetingRegistryCurrentSlotAvailabilityRead(
+        slot_label=slot_label,
+        free_count=int(availability.free_count),
+        total_count=int(availability.total_count),
+        all_free=bool(availability.all_free),
+        participants=[
+            participant_status_read(item, attendees=[])
+            for item in (availability.participants or [])
+        ],
     )
 
 

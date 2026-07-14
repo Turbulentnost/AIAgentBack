@@ -97,6 +97,26 @@ def emails_by_fio_from_detail(detail: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
+def emails_for_resolved_participant_names(
+    names: list[str],
+    by_fio: dict[str, Any],
+) -> list[str]:
+    """E-mail целевого состава в порядке ФИО (без дублей по адресу)."""
+    emails: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        match = by_fio.get(name.casefold())
+        email = getattr(match, "email", None) if match is not None else None
+        if not isinstance(email, str) or not email.strip():
+            continue
+        key = email.strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        emails.append(email.strip())
+    return emails
+
+
 def registry_participant_names(entry: Any) -> list[str]:
     """ФИО участников совещания из колонки participants записи реестра."""
     source = entry.participants if isinstance(getattr(entry, "participants", None), list) else []

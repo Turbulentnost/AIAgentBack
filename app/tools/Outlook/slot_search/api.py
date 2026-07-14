@@ -43,6 +43,7 @@ def build_slot_participant_details(
     source: AvailabilitySource = "freebusy",
     max_items: int = 500,
     workers: int = 4,
+    include_company_calendar: bool = False,
 ) -> dict[str, Any]:
     """Статус каждого участника в выбранном слоте: свободен/занят и мешающие встречи."""
     duration = slot_end - slot_start
@@ -82,22 +83,23 @@ def build_slot_participant_details(
     ) if attendee_emails else {}
 
     company_calendar_items: list[Any] = []
-    company_calendar = (config.company_calendar or "").strip()
-    if company_calendar:
-        try:
-            company_calendar_items = read_calendar_items_in_range(
-                config,
-                company_calendar,
-                range_start=window_start,
-                range_end=window_end,
-                max_items=max_calendar_items,
-            )
-        except Exception as exc:
-            logger.warning(
-                "company_calendar_read_failed calendar=%s error=%s",
-                company_calendar,
-                exc,
-            )
+    if include_company_calendar:
+        company_calendar = (config.company_calendar or "").strip()
+        if company_calendar:
+            try:
+                company_calendar_items = read_calendar_items_in_range(
+                    config,
+                    company_calendar,
+                    range_start=window_start,
+                    range_end=window_end,
+                    max_items=max_calendar_items,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "company_calendar_read_failed calendar=%s error=%s",
+                    company_calendar,
+                    exc,
+                )
 
     participants: list[dict[str, Any]] = []
     for attendee in attendees:

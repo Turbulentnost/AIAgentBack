@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 
 from exchangelib import EWSDateTime, EWSTimeZone, CalendarItem
 from exchangelib.errors import ErrorItemNotFound
-from exchangelib.properties import HTMLBody
+from app.tools.Outlook.outlook_html_body import plain_text_to_html
 
 from app.tools.Outlook.meeting_series import (
     CancelScope,
@@ -249,7 +249,7 @@ def cancel_meeting_item(
 
     kwargs: dict[str, Any] = {}
     if message.strip():
-        kwargs["body"] = HTMLBody(message.strip())
+        kwargs["body"] = plain_text_to_html(message.strip())
     target.cancel(**kwargs)
     return {
         "cancel_scope": applied_scope,

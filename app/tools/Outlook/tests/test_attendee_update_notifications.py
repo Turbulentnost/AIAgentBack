@@ -93,6 +93,7 @@ def test_build_removed_attendees_calendar_body_contains_exclusion_text() -> None
     item = SimpleNamespace(subject="Тестовая СЗ")
     body = build_removed_attendees_calendar_body(item=item)
     html = str(body)
+    assert "Arial" in html
     assert "Вы были исключены из участников совещания по теме" in html
     assert INVITE_AGENT_FOOTER in html
 
@@ -109,6 +110,7 @@ def test_build_new_attendees_calendar_invite_body_contains_welcome_text() -> Non
         account=None,
     )
     html = str(body)
+    assert "Arial" in html
     assert "Вы были добавлены участником на совещание по теме" in html
     assert "Тестовая СЗ" in html
     assert INVITE_AGENT_FOOTER in html

@@ -9,6 +9,7 @@ from exchangelib.items import SEND_ONLY_TO_CHANGED
 from exchangelib.properties import HTMLBody, Mailbox
 
 from app.tools.Outlook.meeting_rooms import load_rooms
+from app.tools.Outlook.outlook_html_body import plain_text_to_html
 from app.tools.Outlook.outlook_config import OutlookConfig
 from app.tools.Outlook.slot_search.attendees import (
     calendar_attendee_display_name,
@@ -185,15 +186,6 @@ def build_removed_attendees_notification_body(
     if footer.strip():
         sections.extend(["", footer.strip()])
     return "\n".join(sections)
-
-
-def plain_text_to_html(text: str) -> HTMLBody:
-    blocks = text.strip().split("\n\n")
-    html_blocks: list[str] = []
-    for block in blocks:
-        lines = block.split("\n")
-        html_blocks.append("<p>" + "<br>".join(lines) + "</p>")
-    return HTMLBody("".join(html_blocks))
 
 
 def build_new_attendees_calendar_invite_body(

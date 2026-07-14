@@ -72,6 +72,7 @@ from app.services.meeting_mappers import (
     participant_status_read,
     quorum_slot_is_fully_free,
     quorum_slot_read,
+    reschedule_recommendation_from_conflict,
     room_status_read,
     slot_read,
 )
@@ -205,6 +206,27 @@ def build_slot_detail_availability(
     return slot_available, recommendations
 
 
+def _reschedule_recommendation_key(
+    item: MeetingSlotRescheduleRecommendationRead,
+) -> tuple[str | None, str | None, str | None]:
+    return (item.participant_fio, item.event_label, item.event_time_label)
+
+
+def merge_reschedule_recommendations(
+    primary: list[MeetingSlotRescheduleRecommendationRead],
+    extra: list[MeetingSlotRescheduleRecommendationRead],
+) -> list[MeetingSlotRescheduleRecommendationRead]:
+    seen = {_reschedule_recommendation_key(item) for item in primary}
+    merged = list(primary)
+    for item in extra:
+        key = _reschedule_recommendation_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
 class MeetingAgentSlotService:
     def __init__(
         self,
@@ -276,6 +298,47 @@ class MeetingAgentSlotService:
                 )
             )
         return memo, resolved, attendees, missing_emails
+
+    async def _company_calendar_reschedule_recommendations(
+        self,
+        *,
+        resolved: list[ResolvedParticipant],
+        attendees: list[MeetingAttendeeRead],
+        backend: MeetingBackend,
+        planned_start: str,
+        duration_minutes: int,
+        current_user: User,
+    ) -> list[MeetingSlotRescheduleRecommendationRead]:
+        if not resolved:
+            return []
+        try:
+            conflicts = await backend.find_company_calendar_reschedule_candidates(
+                participants=resolved,
+                attendee_roles=email_roles_from_attendees(attendees),
+                required_attendee_emails=leadership_required_emails(attendees) or None,
+                attendee_weights=attendee_weights_from_attendees(attendees),
+                planned_start=planned_start,
+                duration_minutes=duration_minutes,
+                max_days=SLOT_PREVIEW_MAX_DAYS,
+                current_user=current_user,
+            )
+        except MeetingBackendError as exc:
+            logger.warning(
+                "meeting.slot_detail.company_calendar_failed",
+                error=str(exc),
+            )
+            return []
+        except Exception as exc:
+            logger.warning(
+                "meeting.slot_detail.company_calendar_failed",
+                error=str(exc),
+            )
+            return []
+
+        return [
+            reschedule_recommendation_from_conflict(conflict, attendees=attendees)
+            for conflict in conflicts
+        ]
 
     async def _enrich_attendees_with_nearest_slots(
         self,
@@ -878,6 +941,19 @@ class MeetingAgentSlotService:
             participants,
             room=room,
         )
+        if not slot_available:
+            company_recommendations = await self._company_calendar_reschedule_recommendations(
+                resolved=_resolved,
+                attendees=attendees,
+                backend=backend,
+                planned_start=format_planned_start_for_search(slot_start_dt) or payload.slot_start,
+                duration_minutes=duration,
+                current_user=current_user,
+            )
+            reschedule_recommendations = merge_reschedule_recommendations(
+                reschedule_recommendations,
+                company_recommendations,
+            )
         return MeetingAgentSlotDetailRead(
             memo_ref_key=normalized_ref,
             slot_start=payload.slot_start,

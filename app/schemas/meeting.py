@@ -712,6 +712,15 @@ class MeetingRegistryEarlierSlotCandidateRead(BaseModel):
     slot_label: str
     coverage_ratio: float | None = None
     free_attendees_count: int | None = None
+    total_attendees_count: int | None = None
+
+
+class MeetingRegistryCurrentSlotAvailabilityRead(BaseModel):
+    slot_label: str
+    free_count: int
+    total_count: int
+    all_free: bool
+    participants: list[MeetingSlotParticipantStatusRead] = Field(default_factory=list)
 
 
 class MeetingRegistryEarlierSlotSuggestionRead(BaseModel):
@@ -733,6 +742,7 @@ class MeetingRegistryParticipantsApplyRead(BaseModel):
     message: str | None = None
     earlier_slot_suggestion: MeetingRegistryEarlierSlotSuggestionRead | None = None
     common_slot_suggestion: MeetingRegistryEarlierSlotSuggestionRead | None = None
+    current_slot_availability: MeetingRegistryCurrentSlotAvailabilityRead | None = None
     confirmation_kind: str | None = Field(
         default=None,
         description="removal | add_current_slot | add_reschedule",

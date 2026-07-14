@@ -23,7 +23,7 @@ from typing import Any
 
 from exchangelib.fields import WEEKDAY_NAMES
 from exchangelib.items import SEND_ONLY_TO_ALL
-from exchangelib.properties import HTMLBody
+from app.tools.Outlook.outlook_html_body import append_plain_text_to_html, plain_text_to_html
 from exchangelib.recurrence import WeeklyPattern
 
 from app.tools.Outlook.cancel_meeting import (
@@ -116,7 +116,7 @@ def reschedule_meeting_item(
     if message.strip():
         note = message.strip()
         existing = str(target.body or "").strip()
-        target.body = HTMLBody(f"{existing}\n\n<p>{note}</p>" if existing else note)
+        target.body = append_plain_text_to_html(existing, note)
 
     update_fields = ["start", "end"]
     if applied_scope == "series":

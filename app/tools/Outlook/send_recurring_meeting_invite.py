@@ -38,6 +38,7 @@ from exchangelib.recurrence import (
 )
 
 from app.tools.Outlook.outlook_config import OutlookConfig, build_outlook_config
+from app.tools.Outlook.outlook_html_body import plain_text_to_html
 from app.tools.Outlook.outlook_meeting_link import calendar_item_outlook_meta
 from app.tools.Outlook.send_meeting_invite import (
     connect_account,
@@ -225,11 +226,12 @@ def send_recurring_meeting_invite(
     )
     room_resources = [email.strip() for email in (resources or []) if email.strip()]
 
+    invite_body = plain_text_to_html(body or subject)
     item = CalendarItem(
         account=account,
         folder=account.calendar,
         subject=subject,
-        body=body or subject,
+        body=invite_body,
         start=start,
         end=meeting_end,
         location=location,

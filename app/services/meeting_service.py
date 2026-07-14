@@ -47,6 +47,7 @@ from app.services.meeting_mappers import (
     registry_item_read,
     registry_cancel_read,
     registry_history_read,
+    registry_current_slot_availability_read,
     registry_participants_read,
     room_read,
     slot_read,
@@ -129,6 +130,7 @@ from app.services.meeting_agent_errors import (
 )
 from app.services.meeting_attendees import (
     collect_attendees_from_registry_entry,
+    emails_for_resolved_participant_names,
     registry_participant_names,
 )
 from app.services.meeting_offline_cache import (
@@ -147,7 +149,7 @@ from app.services.meeting_registry_service import (
 from app.services.meeting_registry_slot import (
     ADD_CURRENT_SLOT_MESSAGE,
     COMMON_SLOT_MESSAGE,
-    check_registry_attendees_free_at_current_slot,
+    resolve_registry_current_slot_availability,
     suggest_common_slots_after_add,
     suggest_earlier_slots_after_removal,
 )
@@ -1042,10 +1044,24 @@ class MeetingService:
                 target_names,
                 all_by_fio,
             )
-            all_free = await check_registry_attendees_free_at_current_slot(
+            new_attendees = emails_for_resolved_participant_names(target_names, all_by_fio)
+            current_slot_label = format_slot_label(
+                entry.slot_start.isoformat(),
+                entry.slot_end.isoformat() if entry.slot_end else entry.slot_start.isoformat(),
+            )
+            availability = await resolve_registry_current_slot_availability(
                 entry=entry,
                 attendee_details=attendee_details,
             )
+            current_slot_availability = (
+                registry_current_slot_availability_read(
+                    slot_label=current_slot_label,
+                    availability=availability,
+                )
+                if availability is not None
+                else None
+            )
+            all_free = bool(availability and availability.all_free)
 
             if all_free:
                 await registry.save_pending_add(
@@ -1066,6 +1082,7 @@ class MeetingService:
                     message=ADD_CURRENT_SLOT_MESSAGE,
                     confirmation_kind="add_current_slot",
                     pending_confirmation=True,
+                    current_slot_availability=current_slot_availability,
                     fetched_at=fetched_at,
                 )
 
@@ -1099,6 +1116,7 @@ class MeetingService:
                 common_slot_suggestion=common_slot_suggestion,
                 confirmation_kind="add_reschedule",
                 pending_confirmation=True,
+                current_slot_availability=current_slot_availability,
                 fetched_at=fetched_at,
             )
 

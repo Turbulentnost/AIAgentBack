@@ -370,8 +370,8 @@ async def test_apply_registry_participants_add_only_defers_when_all_free(user) -
             ),
         ),
         patch(
-            "app.services.meeting_service.check_registry_attendees_free_at_current_slot",
-            AsyncMock(return_value=True),
+            "app.services.meeting_service.resolve_registry_current_slot_availability",
+            AsyncMock(return_value=MagicMock(all_free=True, free_count=2, total_count=2, participants=[])),
         ),
         patch(
             "app.services.meeting_service.dispatch_update_meeting_attendees",
@@ -450,8 +450,8 @@ async def test_apply_registry_participants_add_only_suggests_common_slot_when_bu
             ),
         ),
         patch(
-            "app.services.meeting_service.check_registry_attendees_free_at_current_slot",
-            AsyncMock(return_value=False),
+            "app.services.meeting_service.resolve_registry_current_slot_availability",
+            AsyncMock(return_value=MagicMock(all_free=False, free_count=1, total_count=2, participants=[])),
         ),
         patch(
             "app.services.meeting_service.suggest_common_slots_after_add",

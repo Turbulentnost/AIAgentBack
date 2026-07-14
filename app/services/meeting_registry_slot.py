@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 from app.agents.meeting_agent.backend import ResolvedParticipant
 from app.core.logging import get_logger
@@ -43,6 +45,14 @@ COMMON_SLOT_MESSAGE = (
     "Для всех участников нет общего свободного времени в текущий слот. "
     "Выберите новое время совещания."
 )
+
+
+@dataclass(frozen=True)
+class RegistryCurrentSlotAvailability:
+    all_free: bool
+    free_count: int
+    total_count: int
+    participants: list[dict[str, Any]]
 
 
 def _max_search_days(lower_bound: datetime, upper_bound: datetime) -> int:
@@ -95,6 +105,7 @@ def _candidate_read(slot: MeetingQuorumSlot) -> MeetingRegistryEarlierSlotCandid
         slot_label=format_slot_label(slot.start, slot.end),
         coverage_ratio=slot.coverage_ratio,
         free_attendees_count=slot.free_count,
+        total_attendees_count=slot.total_count,
     )
 
 
@@ -179,14 +190,14 @@ async def suggest_earlier_slots_after_removal(
     )
 
 
-async def check_registry_attendees_free_at_current_slot(
+async def resolve_registry_current_slot_availability(
     *,
     entry: MeetingRegistryEntry,
     attendee_details: list[dict[str, str]],
-) -> bool:
-    """Проверяет, свободны ли все участники в текущем слоте совещания реестра."""
+) -> RegistryCurrentSlotAvailability | None:
+    """Статус каждого участника в текущем слоте совещания реестра."""
     if entry.slot_start is None or entry.slot_end is None:
-        return False
+        return None
 
     attendees = [
         {"fio": item["fio"], "email": item["email"], "role": item.get("role", "participant")}
@@ -194,7 +205,7 @@ async def check_registry_attendees_free_at_current_slot(
         if item.get("email")
     ]
     if not attendees:
-        return False
+        return None
 
     slot_start = entry.slot_start
     slot_end = entry.slot_end
@@ -217,12 +228,32 @@ async def check_registry_attendees_free_at_current_slot(
             ref_key=entry.memo_ref_key,
             error=str(exc),
         )
-        return False
+        return None
 
     participants = payload.get("participants") or []
     if not participants:
-        return False
-    return all(participant.get("status") == "free" for participant in participants)
+        return None
+    free_count = sum(1 for participant in participants if participant.get("status") == "free")
+    total_count = len(participants)
+    return RegistryCurrentSlotAvailability(
+        all_free=free_count == total_count and total_count > 0,
+        free_count=free_count,
+        total_count=total_count,
+        participants=participants,
+    )
+
+
+async def check_registry_attendees_free_at_current_slot(
+    *,
+    entry: MeetingRegistryEntry,
+    attendee_details: list[dict[str, str]],
+) -> bool:
+    """Проверяет, свободны ли все участники в текущем слоте совещания реестра."""
+    availability = await resolve_registry_current_slot_availability(
+        entry=entry,
+        attendee_details=attendee_details,
+    )
+    return bool(availability and availability.all_free)
 
 
 async def suggest_common_slots_after_add(
