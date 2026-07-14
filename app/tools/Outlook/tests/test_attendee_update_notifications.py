@@ -45,6 +45,27 @@ def test_build_existing_attendees_notification_body() -> None:
     assert INVITE_AGENT_FOOTER in body
 
 
+def test_build_existing_attendees_notification_body_for_addition() -> None:
+    body = build_existing_attendees_notification_body(
+        subject="Согласование ТЗ",
+        slot_label="14.07.2026, 09:30–10:30",
+        added_pairs=[("Попов Павел Павлович", "popov@turbo-don.ru")],
+        removed_pairs=[],
+        roster_pairs=[
+            ("Иванов Иван Иванович", "ivanov@turbo-don.ru"),
+            ("Сидоров Сидор Сидорович", "sidorov@turbo-don.ru"),
+            ("Попов Павел Павлович", "popov@turbo-don.ru"),
+        ],
+    )
+    assert (
+        'Состав участников совещания 14.07.2026, 09:30–10:30 по теме "Согласование ТЗ" был изменен. '
+        "Обновленный состав:"
+    ) in body
+    assert "Попов Павел Павлович <popov@turbo-don.ru>" in body
+    assert "Добавленные участники:" in body
+    assert "Новые участники:" not in body
+
+
 def test_build_existing_attendees_notification_body_for_removal() -> None:
     body = build_existing_attendees_notification_body(
         subject="Согласование ТЗ",
@@ -90,7 +111,17 @@ def test_existing_attendee_recipients_excludes_added_and_removed() -> None:
     assert recipients == ["a@co.ru"]
 
 
-def test_stakeholder_notification_recipients_prefers_stakeholders() -> None:
+def test_stakeholder_notification_recipients_prefers_stakeholders_on_add() -> None:
+    recipients = stakeholder_notification_recipients(
+        stakeholder_emails=["manager@turbo-don.ru", "initiator@turbo-don.ru"],
+        before=["a@co.ru", "b@co.ru"],
+        added=["c@co.ru"],
+        removed=[],
+    )
+    assert recipients == ["manager@turbo-don.ru", "initiator@turbo-don.ru"]
+
+
+def test_stakeholder_notification_recipients_prefers_stakeholders_on_remove() -> None:
     recipients = stakeholder_notification_recipients(
         stakeholder_emails=["manager@turbo-don.ru", "initiator@turbo-don.ru"],
         before=["a@co.ru", "b@co.ru"],
@@ -137,19 +168,23 @@ def test_build_removed_attendees_calendar_body_contains_exclusion_text() -> None
     assert INVITE_AGENT_FOOTER in html
 
 
-def test_build_new_attendees_calendar_invite_body_contains_welcome_text() -> None:
+def test_build_new_attendees_calendar_invite_body_uses_standard_invite_format() -> None:
     item = SimpleNamespace(
         subject="Тестовая СЗ",
-        required_attendees=[attendee("new@co.ru", "Лапина Арина Антоновна")],
+        required_attendees=[
+            attendee("ivanov@turbo-don.ru", "Иванов Иван Иванович"),
+            attendee("popov@turbo-don.ru", "Попов Павел Павлович"),
+        ],
         optional_attendees=[],
     )
     body = build_new_attendees_calendar_invite_body(
         item=item,
-        changes={"after": ["new@co.ru"]},
+        changes={"after": ["ivanov@turbo-don.ru", "popov@turbo-don.ru"]},
         account=None,
     )
     html = str(body)
     assert "Arial" in html
-    assert "Вы были добавлены участником на совещание по теме" in html
-    assert "Тестовая СЗ" in html
+    assert "Иванов Иван Иванович <ivanov@turbo-don.ru>" in html
+    assert "Попов Павел Павлович <popov@turbo-don.ru>" in html
     assert INVITE_AGENT_FOOTER in html
+    assert "Вы были добавлены участником" not in html

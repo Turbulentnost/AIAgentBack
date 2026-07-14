@@ -8,6 +8,7 @@ from exchangelib import Account, Message
 from exchangelib.items import SEND_ONLY_TO_CHANGED
 from exchangelib.properties import HTMLBody, Mailbox
 
+from app.services.meeting_invite_format import format_invite_body
 from app.services.meeting_slot import format_slot_label
 from app.tools.Outlook.meeting_rooms import load_rooms
 from app.tools.Outlook.outlook_html_body import plain_text_to_html
@@ -165,7 +166,7 @@ def build_existing_attendees_notification_body(
         ]
         sections.extend(attendee_lines(roster_pairs))
         if added_pairs:
-            sections.append("Новые участники:")
+            sections.append("Добавленные участники:")
             sections.extend(attendee_lines(added_pairs))
         if removed_pairs:
             sections.append("Удаленные участники:")
@@ -238,14 +239,11 @@ def build_new_attendees_calendar_invite_body(
     message: str = "",
 ) -> HTMLBody:
     """Тело календарного приглашения для новых участников (SendOnlyToChanged)."""
-    subject = str(getattr(item, "subject", "") or "Совещание").strip()
     after = list(changes.get("after") or [])
     roster_pairs = resolve_attendee_pairs(after, item=item, account=account)
-    text = build_new_attendees_notification_body(
-        subject=subject,
-        roster_pairs=roster_pairs,
-        extra_message=message,
-    )
+    text = format_invite_body(roster_pairs, footer=INVITE_AGENT_FOOTER)
+    if message.strip():
+        text = f"{message.strip()}\n\n{text}"
     return plain_text_to_html(text)
 
 
@@ -349,7 +347,7 @@ def send_attendee_update_notifications(
     notified_removed: list[str] = []
     errors: list[str] = []
 
-    if removed:
+    if added or removed:
         composition_recipients = stakeholder_notification_recipients(
             stakeholder_emails=stakeholder_emails,
             before=before,
@@ -368,7 +366,7 @@ def send_attendee_update_notifications(
             continue
         body = build_existing_attendees_notification_body(
             subject=subject,
-            slot_label=slot_label if removed else "",
+            slot_label=slot_label if (added or removed) else "",
             added_pairs=added_pairs,
             removed_pairs=removed_pairs,
             roster_pairs=roster_pairs,

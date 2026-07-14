@@ -1181,7 +1181,7 @@ class MeetingService:
                 "remove": remove_emails,
                 "message": apply_message,
             }
-            if remove_emails:
+            if add_emails or remove_emails:
                 kwargs["stakeholder_emails"] = await self._resolve_registry_stakeholder_emails(
                     entry,
                     backend=backend,
@@ -1580,9 +1580,15 @@ class MeetingService:
         location = format_invite_location_from_detail(memo_detail) or entry.location
 
         if entry.outlook_item_id or (entry.subject and entry.slot_start):
+            stakeholder_emails = await self._resolve_registry_stakeholder_emails(
+                entry,
+                backend=backend,
+                current_user=current_user,
+            )
             kwargs: dict[str, Any] = {
                 "add": add_emails,
                 "message": composition_message,
+                "stakeholder_emails": stakeholder_emails,
             }
             if entry.outlook_item_id:
                 kwargs["item_id"] = entry.outlook_item_id
