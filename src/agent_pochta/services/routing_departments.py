@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter, defaultdict
+from functools import lru_cache
 from pathlib import Path
 
 from agent_pochta.config import PROJECT_ROOT
@@ -170,6 +171,51 @@ def resolve_enterprise_positions_path(path: Path | str | None = None) -> Path:
     )
 
 
+@lru_cache(maxsize=4)
+def load_onec_department_names_map(enterprise_path: str = "") -> dict[str, str]:
+    """Код подразделения → название из Catalog_СтруктураПредприятия (без ликвид.)."""
+    try:
+        file = resolve_enterprise_positions_path(enterprise_path or None)
+    except FileNotFoundError:
+        if enterprise_path:
+            raise
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "enterprise_positions.json not found at %s; department names from 1C structure are skipped",
+            _DEFAULT_ENTERPRISE_PATH,
+        )
+        return {}
+    enterprise = json.loads(file.read_text(encoding="utf-8"))
+    names: dict[str, str] = {}
+    for row in enterprise.get("structure_departments_routing_codes") or []:
+        code = str(row.get("code") or "").strip()
+        name = str(row.get("name") or "").strip()
+        if not code or not name or not re.match(r"00-\d{6}", code):
+            continue
+        if is_liquidated_department(row.get("name"), row.get("path")):
+            continue
+        names[code] = name
+    return names
+
+
+def resolve_department_display_name(
+    code: str,
+    fallback: str | None = None,
+    *,
+    enterprise_path: Path | str | None = None,
+) -> str:
+    """Отображаемое имя отдела: приоритет у структуры 1С, иначе fallback."""
+    code = (code or "").strip()
+    if not code:
+        return (fallback or "").strip()
+    path_key = str(resolve_enterprise_positions_path(enterprise_path)) if enterprise_path else ""
+    name = load_onec_department_names_map(path_key).get(code)
+    if name:
+        return name
+    return (fallback or code).strip()
+
+
 def resolve_comparison_report_path(path: Path | str | None = None) -> Path | None:
     if path:
         candidate = Path(path)
@@ -262,6 +308,11 @@ def is_liquidated_department(
     if name.startswith("(ликв.)") or "(ликв.)" in name:
         return True
     if "_Ликвидированные" in path or name == "_Ликвидированные":
+        return True
+    name_norm = name.lower().replace("ё", "е")
+    if "ликвидирован" in name_norm:
+        return True
+    if name_norm.startswith("_") and "ликв" in name_norm:
         return True
     return False
 
@@ -404,7 +455,6 @@ def build_departments_from_structure(
         Path(extra_keywords_path) if extra_keywords_path else None
     )
     tz_routing_codes = _tz_routing_codes(enterprise, rules)
-    rules_names = {str(k): str(v) for k, v in rules.get("department_names", {}).items()}
     assignments = enterprise.get("assignments") or []
 
     keywords_by_code: dict[str, set[str]] = {}
@@ -424,7 +474,7 @@ def build_departments_from_structure(
 
         name_onec = str(row.get("name") or code).strip()
         path = str(row.get("path") or "").strip()
-        department_name = rules_names.get(code) or name_onec
+        department_name = name_onec
 
         keywords: set[str] = set()
         if code in rules_departments:
@@ -485,21 +535,15 @@ def list_active_departments_for_ui(
     enterprise_file = resolve_enterprise_positions_path(enterprise_path)
     enterprise = json.loads(enterprise_file.read_text(encoding="utf-8"))
     tz_routing_codes = _tz_routing_codes(enterprise, rules)
+    onec_names = load_onec_department_names_map(str(enterprise_file))
 
     items: list[dict[str, str]] = []
-    for row in enterprise.get("structure_departments_routing_codes") or []:
-        code = str(row.get("code") or "").strip()
-        if not code or not re.match(r"00-\d{6}", code):
-            continue
+    for code, name in sorted(onec_names.items()):
         if _should_skip_code(code, tz_routing_codes):
             continue
-        if is_liquidated_department(row.get("name"), row.get("path")):
-            continue
-
-        name = str(row.get("name") or code).strip()
         items.append({"id": code, "name": name})
 
-    return sorted(items, key=lambda item: item["id"])
+    return items
 
 
 def directions_by_code_from_rules(rules: dict) -> dict[str, str]:

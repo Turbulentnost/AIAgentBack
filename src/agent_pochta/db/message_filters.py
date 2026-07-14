@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
+
+from sqlalchemy import and_, cast, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from zoneinfo import ZoneInfo
 
 MSK = ZoneInfo("Europe/Moscow")
+INFO_MAILBOX = "info@turbo-don.ru"
+TEST_II_MAILBOX = "test_ii@turbo-don.ru"
+INFO_RECIPIENT_Q = "info"
 
 
 def parse_optional_date(value: str | None) -> date | None:
@@ -21,3 +29,212 @@ def msk_day_start_utc(day: date) -> datetime:
 
 def msk_day_end_exclusive_utc(day: date) -> datetime:
     return msk_day_start_utc(day + timedelta(days=1))
+
+
+def normalize_email_address(addr: str) -> str:
+    return addr.lower().strip()
+
+
+def payload_recipient_lists(payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+    to_raw = payload.get("to") or []
+    cc_raw = payload.get("cc") or []
+    to_list = [normalize_email_address(str(item)) for item in to_raw if str(item).strip()]
+    cc_list = [normalize_email_address(str(item)) for item in cc_raw if str(item).strip()]
+    return to_list, cc_list
+
+
+def _jsonb_contains_email(payload, key: str, email: str):
+    """SQL: JSON-массив key содержит email (без учёта регистра)."""
+    array_expr = func.coalesce(payload[key], cast("[]", JSONB))
+    elem = func.jsonb_array_elements_text(array_expr).table_valued("value")
+    return (
+        select(literal(1))
+        .select_from(elem)
+        .where(func.lower(elem.c.value) == email)
+        .exists()
+    )
+
+
+def is_info_to_test_ii_routing(*, mailbox: str, payload: dict[str, Any] | None) -> bool:
+    """Письмо по цепочке info@turbo-don.ru → test_ii@turbo-don.ru."""
+    if not payload:
+        return False
+
+    routing_raw = payload.get("routing_recipient")
+    routing = normalize_email_address(str(routing_raw)) if routing_raw else ""
+    if routing != TEST_II_MAILBOX:
+        return False
+
+    to_list, cc_list = payload_recipient_lists(payload)
+    has_info = INFO_MAILBOX in to_list or INFO_MAILBOX in cc_list
+    has_test_ii_to = TEST_II_MAILBOX in to_list
+
+    if has_test_ii_to and not has_info:
+        return False
+
+    if has_info:
+        return True
+
+    if not to_list and not cc_list:
+        return normalize_email_address(mailbox) == TEST_II_MAILBOX
+
+    return False
+
+
+def is_only_info_to(*, mailbox: str, payload: dict[str, Any] | None) -> bool:
+    """Письмо адресовано только info@turbo-don.ru (поле Кому), без других To/Cc."""
+    if not payload:
+        return False
+
+    to_list, cc_list = payload_recipient_lists(payload)
+    if cc_list:
+        return False
+
+    other_in_to = [addr for addr in to_list if addr != INFO_MAILBOX]
+    if other_in_to:
+        return False
+
+    routing_raw = payload.get("routing_recipient")
+    routing = normalize_email_address(str(routing_raw)) if routing_raw else ""
+    if routing:
+        return routing == INFO_MAILBOX
+
+    if to_list == [INFO_MAILBOX]:
+        return True
+    if not to_list and normalize_email_address(mailbox) == INFO_MAILBOX:
+        return True
+    return False
+
+
+# Backward-compatible alias for tests/callers during transition.
+is_only_info_recipient = is_info_to_test_ii_routing
+
+
+def load_payload_dict(raw_payload_json: str | None) -> dict[str, Any] | None:
+    if not raw_payload_json:
+        return None
+    try:
+        payload = json.loads(raw_payload_json)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def recipient_display_value(*, mailbox: str, payload: dict[str, Any] | None) -> str:
+    """Значение графы «Кому» в UI: routing_recipient или список To."""
+    if not payload:
+        return ""
+    routing_raw = payload.get("routing_recipient")
+    routing = str(routing_raw).strip() if routing_raw else ""
+    if routing:
+        return routing
+    to_list, _ = payload_recipient_lists(payload)
+    return ", ".join(to_list)
+
+
+def matches_recipient_q(*, mailbox: str, payload: dict[str, Any] | None, query: str) -> bool:
+    """Подстрока в графе «Кому» (без учёта регистра)."""
+    needle = query.strip().lower()
+    if not needle:
+        return True
+    displayed = recipient_display_value(mailbox=mailbox, payload=payload).lower()
+    return needle in displayed if displayed else False
+
+
+def matches_info_recipient_only(*, mailbox: str, payload: dict[str, Any] | None) -> bool:
+    """Outlook-style имяполучателя:(info) — «Кому» содержит info (без учёта регистра)."""
+    return matches_recipient_q(mailbox=mailbox, payload=payload, query=INFO_RECIPIENT_Q)
+
+
+def recipient_q_sql_filter(mailbox_column, raw_payload_column, query: str):
+    """SQL: подстрока в routing_recipient или (если пуст) в любом адресе To."""
+    payload = cast(raw_payload_column, JSONB)
+    pattern = f"%{query.strip().lower()}%"
+
+    routing = func.lower(func.coalesce(payload["routing_recipient"].astext, ""))
+    routing_nonempty = func.coalesce(payload["routing_recipient"].astext, "") != ""
+    routing_match = and_(routing_nonempty, routing.like(pattern))
+
+    array_expr = func.coalesce(payload["to"], cast("[]", JSONB))
+    elem = func.jsonb_array_elements_text(array_expr).table_valued("value")
+    to_any_match = (
+        select(literal(1))
+        .select_from(elem)
+        .where(func.lower(elem.c.value).like(pattern))
+        .exists()
+    )
+    routing_empty = func.coalesce(payload["routing_recipient"].astext, "") == ""
+
+    return and_(
+        raw_payload_column.isnot(None),
+        or_(routing_match, and_(routing_empty, to_any_match)),
+    )
+
+
+def info_to_test_ii_sql_filter(mailbox_column, raw_payload_column):
+    """SQL-условие PostgreSQL: цепочка info@ → test_ii@."""
+    payload = cast(raw_payload_column, JSONB)
+    routing = func.lower(func.coalesce(payload["routing_recipient"].astext, ""))
+
+    info_in_to = _jsonb_contains_email(payload, "to", INFO_MAILBOX)
+    info_in_cc = _jsonb_contains_email(payload, "cc", INFO_MAILBOX)
+    test_ii_in_to = _jsonb_contains_email(payload, "to", TEST_II_MAILBOX)
+
+    empty_to = func.coalesce(func.jsonb_array_length(payload["to"]), 0) == 0
+    empty_cc = func.coalesce(func.jsonb_array_length(payload["cc"]), 0) == 0
+
+    intake_ok = or_(
+        info_in_to,
+        info_in_cc,
+        and_(empty_to, empty_cc, func.lower(mailbox_column) == TEST_II_MAILBOX),
+    )
+    not_direct_test_ii = or_(info_in_to, info_in_cc, ~test_ii_in_to)
+
+    return and_(
+        routing == TEST_II_MAILBOX,
+        raw_payload_column.isnot(None),
+        intake_ok,
+        not_direct_test_ii,
+    )
+
+
+def only_info_to_sql_filter(mailbox_column, raw_payload_column):
+    """SQL-условие PostgreSQL: Кому только info@turbo-don.ru, без других получателей."""
+    payload = cast(raw_payload_column, JSONB)
+    empty_cc = func.coalesce(func.jsonb_array_length(payload["cc"]), 0) == 0
+
+    array_expr = func.coalesce(payload["to"], cast("[]", JSONB))
+    elem = func.jsonb_array_elements_text(array_expr).table_valued("value")
+    has_other_to = (
+        select(literal(1))
+        .select_from(elem)
+        .where(func.lower(elem.c.value) != INFO_MAILBOX)
+        .exists()
+    )
+    no_foreign_to = ~has_other_to
+
+    routing = func.lower(func.coalesce(payload["routing_recipient"].astext, ""))
+    routing_is_info = routing == INFO_MAILBOX
+    routing_empty = routing == ""
+
+    info_in_to = _jsonb_contains_email(payload, "to", INFO_MAILBOX)
+    empty_to = func.coalesce(func.jsonb_array_length(payload["to"]), 0) == 0
+
+    with_routing_info = and_(routing_is_info, no_foreign_to)
+    without_routing = and_(
+        routing_empty,
+        or_(
+            and_(info_in_to, no_foreign_to),
+            and_(empty_to, func.lower(mailbox_column) == INFO_MAILBOX),
+        ),
+    )
+
+    return and_(
+        raw_payload_column.isnot(None),
+        empty_cc,
+        or_(with_routing_info, without_routing),
+    )
+
+
+# Backward-compatible alias.
+only_info_recipient_sql_filter = info_to_test_ii_sql_filter

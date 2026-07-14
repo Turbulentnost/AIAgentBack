@@ -9,6 +9,10 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from agent_pochta.db.models import ChangeEventRow
+from agent_pochta.stats.classification_log import (
+    log_operator_department_event,
+    log_operator_spam_event,
+)
 from agent_pochta.db.session import get_session_factory
 
 EVENT_TYPES = frozenset(
@@ -75,7 +79,24 @@ def log_field_change(
     )
     session.add(row)
     session.flush()
+    if event_type in {"department_change", "routing_approve"}:
+        _mirror_department_to_classification(session, row=row)
     return row
+
+
+def _mirror_department_to_classification(session: Session, *, row: ChangeEventRow) -> None:
+    old_parts = str(row.old_value or "").split(" — ", 1)
+    new_parts = str(row.new_value or "").split(" — ", 1)
+    log_operator_department_event(
+        session,
+        message_id=row.message_id,
+        email_id=row.email_id,
+        original_department_id=old_parts[0] if old_parts else None,
+        original_department_name=old_parts[1] if len(old_parts) > 1 else None,
+        department_id=new_parts[0] if new_parts else "",
+        department_name=new_parts[1] if len(new_parts) > 1 else None,
+        source=row.source,
+    )
 
 
 def _log_with_optional_session(
@@ -147,6 +168,7 @@ def log_spam_decision(
     email_id: uuid.UUID | None = None,
     decision: str,
     reason: str | None = None,
+    old_is_spam: bool | None = None,
     actor: str = "operator",
     source: str = "api:resolve-human",
 ) -> ChangeEventRow | None:
@@ -164,7 +186,7 @@ def log_spam_decision(
             event_type = "not_spam_mark"
             old_value, new_value = "spam", "not_spam"
 
-        return log_field_change(
+        row = log_field_change(
             db_session,
             message_id=message_id,
             email_id=email_id,
@@ -175,6 +197,17 @@ def log_spam_decision(
             actor=actor,
             source=source,
         )
+        if row is not None:
+            log_operator_spam_event(
+                db_session,
+                message_id=message_id,
+                email_id=email_id,
+                decision=decision,
+                reason=reason,
+                old_is_spam=old_is_spam,
+                source=source,
+            )
+        return row
 
     return _log_with_optional_session(session, _write, commit=session is None)
 
@@ -187,7 +220,7 @@ def log_restore_from_spam(
     actor: str = "operator",
     source: str = "api:restore-from-spam",
 ) -> ChangeEventRow | None:
-    return log_field_change(
+    row = log_field_change(
         session,
         message_id=message_id,
         email_id=email_id,
@@ -198,6 +231,17 @@ def log_restore_from_spam(
         actor=actor,
         source=source,
     )
+    if row is not None:
+        log_operator_spam_event(
+            session,
+            message_id=message_id,
+            email_id=email_id,
+            decision="mark_not_spam",
+            reason="восстановлено из спама",
+            old_is_spam=True,
+            source=source,
+        )
+    return row
 
 
 def log_department_resolution(

@@ -4,7 +4,8 @@
 - Если departments/contractors пусты — seed из routing_rules + демо-контрагенты
 - Если spam_learning пуст — resync из spam_learning_patterns.json
 
-Запуск вручную:  python scripts/init_qdrant.py
+Полная синхронизация вручную:  python scripts/sync_rag_to_qdrant.py
+Запуск init:  python scripts/init_qdrant.py
 """
 
 from __future__ import annotations

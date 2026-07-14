@@ -12,7 +12,7 @@ from agent_pochta.services.odata_incoming_mapper import (
     build_department_name_lookup,
     build_incoming_document_payload,
     load_field_map,
-    load_guid_map,
+    resolve_guid_map,
 )
 from agent_pochta.services.routing_departments import load_routing_rules
 
@@ -32,17 +32,22 @@ class ODataIntegrationService(IntegrationService):
         extra_fields_json: str = "",
         organization_keys_json: str = "",
         department_keys_json: str = "",
+        organization_keys_file: str = "",
+        department_keys_file: str = "",
         routing_rules_path: str = "",
     ) -> None:
         self._entity = entity.strip("/")
         self._field_map = load_field_map(field_map_json)
-        self._extra_fields = self._parse_extra_fields(extra_fields_json)
-        self._organization_keys = load_guid_map(
+        parsed_extra = self._parse_extra_fields(extra_fields_json)
+        self._extra_fields = parsed_extra if parsed_extra else {"Posted": False}
+        self._organization_keys = resolve_guid_map(
             organization_keys_json,
+            file_path=organization_keys_file,
             env_name="ODATA_ORGANIZATION_KEYS",
         )
-        self._department_keys = load_guid_map(
+        self._department_keys = resolve_guid_map(
             department_keys_json,
+            file_path=department_keys_file,
             env_name="ODATA_DEPARTMENT_KEYS",
         )
         self._department_names = build_department_name_lookup(
@@ -88,7 +93,8 @@ class ODataIntegrationService(IntegrationService):
         number = data.get("Number")
         return {
             "erp_document_number": number,
-            "erp_task_id": ref_key,
+            # Задачи в Документообороте создаются вручную; здесь только документ 1С.
+            "erp_task_id": None,
             "erp_document_id": ref_key,
             "fields": payload,
             "odata_response": data,

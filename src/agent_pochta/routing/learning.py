@@ -6,12 +6,24 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
-from agent_pochta.routing.corrections import save_routing_correction
+from agent_pochta.routing.corrections import (
+    _correction_fingerprint,
+    _is_useful_keyword,
+    extract_correction_keywords,
+    load_corrections,
+    save_corrections,
+    save_routing_correction,
+)
 from agent_pochta.rules.spam_learning import (
+    load_spam_learning,
     remove_spam_patterns_by_message_id,
     save_spam_antipattern,
+    save_spam_learning,
     save_spam_pattern,
 )
 
@@ -25,7 +37,9 @@ def collect_department_learning_keywords(correction_entry: dict) -> list[str]:
         if not value:
             return
         normalized = value.strip().lower()
-        if len(normalized) < 3 or normalized in seen:
+        if not _is_useful_keyword(normalized):
+            return
+        if normalized in seen:
             return
         seen.add(normalized)
         result.append(normalized)
@@ -88,7 +102,6 @@ def learn_from_routing_correction(
 ) -> dict:
     """Сохраняет коррекцию и обогащает keywords отдела в Qdrant."""
     entry = save_routing_correction(
-        message_id=message_id,
         sender_email=sender_email,
         recipient=recipient,
         subject=subject,
@@ -204,4 +217,154 @@ def learn_from_spam_mark(
         "spam_pattern_saved": True,
         "spam_pattern_id": entry["id"],
         "qdrant_synced": bool(entry.get("qdrant_synced")),
+    }
+
+
+def _should_migrate_spam_entry(
+    entry: dict,
+    *,
+    correction_fingerprints: set[tuple[str, str, str]],
+) -> bool:
+    from agent_pochta.routing.hitl import (
+        is_routing_escalation_reason,
+        parse_recipient_from_message_id,
+        resolve_department_from_recipient,
+    )
+
+    message_id = str(entry.get("message_id") or "")
+    reason = str(entry.get("reason") or "")
+
+    if is_routing_escalation_reason(reason):
+        return True
+
+    recipient = parse_recipient_from_message_id(message_id)
+    department = resolve_department_from_recipient(recipient) if recipient else None
+    if department is None:
+        return False
+    fingerprint = (
+        str(entry.get("sender_email") or "").lower().strip(),
+        str(recipient or "").lower().strip(),
+        department[0],
+    )
+    return fingerprint in correction_fingerprints
+
+
+def migrate_misrouted_spam_entries(
+    *,
+    spam_path=None,
+    corrections_path=None,
+    since: str | None = "2026-07-09",
+    dry_run: bool = False,
+) -> dict:
+    """Переносит ошибочные записи из spam_learning в routing (departments Qdrant path).
+
+    Удаляет из spam_learning записи с причинами маршрутизации и дубликаты,
+    для которых уже есть routing_corrections или можно вывести отдел по recipient.
+    """
+    from agent_pochta.routing.hitl import (
+        parse_recipient_from_message_id,
+        resolve_department_from_recipient,
+    )
+
+    corrections_store = load_corrections(corrections_path)
+    correction_entries = list(corrections_store.get("entries") or [])
+    correction_fingerprints = {_correction_fingerprint(entry) for entry in correction_entries}
+
+    spam_store = load_spam_learning(spam_path)
+    kept: list[dict] = []
+    removed: list[dict] = []
+    migrated: list[dict] = []
+
+    for entry in spam_store.get("entries") or []:
+        created_at = str(entry.get("created_at") or "")
+        if since and created_at and created_at[:10] < since:
+            kept.append(entry)
+            continue
+        if not _should_migrate_spam_entry(entry, correction_fingerprints=correction_fingerprints):
+            kept.append(entry)
+            continue
+        removed.append(entry)
+
+    for entry in removed:
+        message_id = str(entry.get("message_id") or "")
+        recipient = parse_recipient_from_message_id(message_id)
+        department = resolve_department_from_recipient(recipient) if recipient else None
+        if department is None:
+            continue
+
+        department_id, department_name = department
+        fingerprint = (
+            str(entry.get("sender_email") or "").lower().strip(),
+            str(recipient or "").lower().strip(),
+            department_id,
+        )
+        if fingerprint in correction_fingerprints:
+            continue
+
+        subject_hint = str(entry.get("subject") or "")
+        body_hint = str(entry.get("body") or "")
+        if not subject_hint:
+            keywords = entry.get("keywords") or []
+            subject_hint = str(keywords[0]) if keywords else ""
+            body_hint = " ".join(str(kw) for kw in keywords[1:3] if kw)
+
+        migrated_entry = {
+            "id": str(uuid.uuid4()),
+            "created_at": entry.get("created_at") or datetime.now(timezone.utc).isoformat(),
+            "sender_email": str(entry.get("sender_email") or "").lower().strip(),
+            "recipient": recipient,
+            "subject": subject_hint,
+            "keywords": extract_correction_keywords(
+                subject_hint,
+                body_hint,
+                recipient=recipient,
+                department_id=department_id,
+                corpus_entries=correction_entries,
+            ),
+            "department_id": department_id,
+            "department_name": department_name,
+            "original_department_id": department_id,
+            "original_department_name": department_name,
+            "migrated_from_spam_learning_id": entry.get("id"),
+            "migration_reason": entry.get("reason"),
+        }
+        correction_entries.append(migrated_entry)
+        correction_fingerprints.add(fingerprint)
+        migrated.append(migrated_entry)
+
+    if dry_run:
+        return {
+            "removed_count": len(removed),
+            "migrated_count": len(migrated),
+            "kept_count": len(kept),
+            "removed_ids": [entry.get("id") for entry in removed if entry.get("id")],
+            "migrated_fingerprints": [
+                _correction_fingerprint(entry) for entry in migrated
+            ],
+            "dry_run": True,
+        }
+
+    if removed:
+        spam_store["entries"] = kept
+        save_spam_learning(spam_store, spam_path)
+        from agent_pochta.rules.spam_learning import resync_spam_learning_to_qdrant
+
+        resync_spam_learning_to_qdrant(spam_path)
+
+    if migrated:
+        corrections_store["entries"] = correction_entries
+        save_corrections(corrections_store, corrections_path)
+        for migrated_entry in migrated:
+            enrich_department_in_qdrant(
+                migrated_entry["department_id"],
+                collect_department_learning_keywords(migrated_entry),
+            )
+
+    return {
+        "removed_count": len(removed),
+        "migrated_count": len(migrated),
+        "kept_count": len(kept),
+        "removed_ids": [entry.get("id") for entry in removed if entry.get("id")],
+        "migrated_fingerprints": [_correction_fingerprint(entry) for entry in migrated],
+        "dry_run": False,
     }

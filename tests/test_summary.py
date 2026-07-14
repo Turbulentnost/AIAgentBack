@@ -5,13 +5,48 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from agent_pochta.schemas import Attachment, EmailMessage, RoutingResult, Priority
-from agent_pochta.services.summary import build_summary_context, clamp_summary, prepare_text_for_summary
+from agent_pochta.services.summary import build_summary_context, clamp_summary, extract_partner_from_signature, prepare_text_for_summary
 
 
 def test_prepare_text_strips_signature():
     text = "Просим выставить счёт на поставку по договору номер 123 от организации."
     text += "\n\nС уважением,\nИванов"
     assert "Иванов" not in prepare_text_for_summary(text)
+
+
+def test_extract_partner_from_signature_lan_service():
+    body = (
+        "Добрый день! ОЛ 31222, 31340 отправлены в просчет.\n\n"
+        "С уважением,\n"
+        "Менеджер\n"
+        "ООО ЛАН-Сервис"
+    )
+    assert extract_partner_from_signature(body) == "ООО ЛАН-Сервис"
+
+
+def test_extract_partner_from_signature_karbin():
+    body = (
+        "Просим согласовать спецификацию.\n\n"
+        "С уважением,\n"
+        "Иванов И.И.\n"
+        "ООО «Карбин»\n"
+        "тел. +7 (863) 123-45-67"
+    )
+    assert extract_partner_from_signature(body) == "ООО «Карбин»"
+
+
+def test_build_summary_context_includes_email_signature():
+    body = "Текст запроса.\n\nС уважением,\nООО ЛАН-Сервис"
+    email = EmailMessage(
+        message_id="<sig@example>",
+        mailbox="info@turbo-don.ru",
+        sender_email="sales@lan-service.ru",
+        subject="ОЛ 31222",
+        body_text=body,
+        received_at=datetime.now(timezone.utc),
+    )
+    ctx = build_summary_context(email, body)
+    assert "ООО ЛАН-Сервис" in ctx["email_signature"]
 
 
 def test_clamp_summary_limits_sentences():

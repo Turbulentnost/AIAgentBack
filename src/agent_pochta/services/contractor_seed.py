@@ -33,23 +33,57 @@ def partner_from_payload(
     raw_payload_json: str | None,
     *,
     sender_name: str | None = None,
+    sender_email: str | None = None,
+    summary_ru: str | None = None,
 ) -> str | None:
-    """Партнёр из xml_document; запасной вариант — sender_name."""
+    """Партнёр из xml_document; при ФИО в XML — повторное определение по домену/обзору."""
+    from datetime import datetime, timezone
+
+    from agent_pochta.schemas import EmailMessage
+    from agent_pochta.services.llm_analyze import looks_like_org_name, resolve_partner_name
+
+    body_text = ""
+    xml_partner: str | None = None
     if raw_payload_json:
         try:
             payload = json.loads(raw_payload_json)
         except json.JSONDecodeError:
             payload = {}
         if isinstance(payload, dict):
+            body_text = str(payload.get("body_text") or "")
             xml = payload.get("xml_document")
             if isinstance(xml, str) and xml.strip():
                 parsed = parse_document_xml(xml)
                 if parsed:
-                    partner = normalize_partner_name(parsed.get("partner"))
-                    if partner:
-                        return partner
+                    xml_partner = normalize_partner_name(parsed.get("partner"))
 
-    return normalize_partner_name(sender_name)
+    if xml_partner and looks_like_org_name(xml_partner):
+        return xml_partner
+
+    email: EmailMessage | None = None
+    if sender_email:
+        email = EmailMessage(
+            message_id="",
+            mailbox="",
+            sender_email=sender_email,
+            sender_name=sender_name,
+            body_text=body_text,
+            received_at=datetime.now(timezone.utc),
+        )
+
+    resolved = resolve_partner_name(
+        llm_partner=xml_partner if xml_partner and looks_like_org_name(xml_partner) else None,
+        rag_partner=None,
+        email=email,
+        body_text=body_text or None,
+        summary_ru=summary_ru,
+    )
+    if resolved:
+        return resolved
+
+    if sender_name and looks_like_org_name(sender_name):
+        return normalize_partner_name(sender_name)
+    return None
 
 
 def extract_contractors_from_messages(
@@ -65,7 +99,11 @@ def extract_contractors_from_messages(
             skipped_invalid += 1
             continue
 
-        name = partner_from_payload(raw_payload_json, sender_name=sender_name)
+        name = partner_from_payload(
+            raw_payload_json,
+            sender_name=sender_name,
+            sender_email=email,
+        )
         if not name:
             skipped_invalid += 1
             continue

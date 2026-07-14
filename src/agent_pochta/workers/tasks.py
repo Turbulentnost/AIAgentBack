@@ -9,7 +9,7 @@ import structlog
 
 from agent_pochta.config import get_settings
 from agent_pochta.db.models import EmailMessageRow
-from agent_pochta.db.repository import EmailRepository
+from agent_pochta.db.repository import EmailRepository, persist_processing_start
 from agent_pochta.db.session import get_session_factory
 from agent_pochta.demo_filter import is_demo_email
 from agent_pochta.email_payload import email_from_task_payload
@@ -21,10 +21,12 @@ from agent_pochta.workers.runtime import get_worker_graph
 
 logger = structlog.get_logger(__name__)
 
-_TERMINAL_STATUSES = {
+_SKIP_IMAP_REQUEUE_STATUSES = {
     ProcessingStatus.DONE.value,
     ProcessingStatus.SPAM.value,
     ProcessingStatus.AWAITING_HUMAN.value,
+    ProcessingStatus.PROCESSING.value,
+    ProcessingStatus.ERROR.value,
 }
 
 
@@ -37,7 +39,7 @@ def _is_already_processed(message_id: str) -> bool:
         return False
     if row is None:
         return False
-    return row.status in _TERMINAL_STATUSES
+    return row.status in _SKIP_IMAP_REQUEUE_STATUSES
 
 
 def should_enqueue_email(email: EmailMessage) -> bool:
@@ -80,8 +82,15 @@ def process_email_task(self, email_payload: dict) -> dict:
             )
             continue
 
+        row_id = persist_processing_start(attempt_email)
         graph = get_worker_graph()
-        result = graph.invoke({"email": attempt_email})
+        try:
+            result = graph.invoke({"email": attempt_email})
+        except Exception as exc:
+            logger.exception("process_email_failed", message_id=attempt_id)
+            if row_id is not None and self.request.retries >= self.max_retries:
+                _fail_reprocessing(row_id, reason=f"Сбой обработки письма: {exc}")
+            raise
 
         status = result.get("status")
         erp = result.get("erp")
@@ -177,7 +186,7 @@ def retry_erp_task(self, message_id: str) -> dict:
             row = EmailRepository(session).get_by_message_id(message_id)
             if row:
                 row.erp_document_number = res["erp_document_number"]
-                row.erp_task_id = res["erp_task_id"]
+                row.erp_task_id = res.get("erp_task_id") or res.get("erp_document_id")
                 row.status = ProcessingStatus.DONE.value
                 row.human_review = False
                 row.erp_retry_count = 0
@@ -197,8 +206,100 @@ def retry_erp_task(self, message_id: str) -> dict:
         return {"ok": False, "attempt": attempt, "error": str(exc)}
 
 
-@celery_app.task(name="agent_pochta.continue_after_human")
-def continue_after_human_task(row_id: str) -> dict:
+def _hitl_meta_from_row(row: EmailMessageRow) -> dict:
+    meta: dict = {}
+    if not row.raw_payload_json:
+        return meta
+    try:
+        payload = json.loads(row.raw_payload_json)
+    except json.JSONDecodeError:
+        return meta
+    if isinstance(payload, dict):
+        xml = payload.get("xml_document")
+        if isinstance(xml, str) and xml.strip():
+            meta["xml_document"] = xml
+    return meta
+
+
+def _fail_post_hitl_processing(row_id: uuid.UUID, *, reason: str) -> None:
+    """Фиксирует сбой post-HITL без отмены решения оператора (status=error)."""
+    factory = get_session_factory()
+    with factory() as session:
+        row = EmailRepository(session).get_by_id(row_id)
+        if row is None or row.status != ProcessingStatus.PROCESSING.value:
+            return
+        row.status = ProcessingStatus.ERROR.value
+        row.human_review = False
+        row.spam_reason = reason
+        session.commit()
+
+
+def _resolve_terminal_status(status) -> ProcessingStatus:
+    if isinstance(status, ProcessingStatus):
+        resolved = status
+    else:
+        try:
+            resolved = ProcessingStatus(str(status))
+        except ValueError:
+            resolved = ProcessingStatus.DONE
+    if resolved == ProcessingStatus.PROCESSING:
+        return ProcessingStatus.DONE
+    return resolved
+
+
+def _sync_post_hitl_result(row_id: uuid.UUID, result: dict) -> None:
+    """Гарантирует финальный статус в БД после post-HITL пайплайна."""
+    from datetime import datetime, timezone
+
+    factory = get_session_factory()
+    with factory() as session:
+        row = EmailRepository(session).get_by_id(row_id)
+        if row is None:
+            return
+
+        status = _resolve_terminal_status(result.get("status", ProcessingStatus.DONE))
+        row.status = status.value
+        row.human_review = bool(result.get("human_review"))
+
+        if summary := result.get("summary_ru"):
+            row.summary_ru = summary
+
+        erp = result.get("erp")
+        if erp is not None and erp.success:
+            row.erp_document_number = erp.erp_document_number
+            row.erp_task_id = erp.erp_task_id
+            row.erp_retry_count = 0
+
+        if status in {ProcessingStatus.DONE, ProcessingStatus.ERROR}:
+            row.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        if escalation := result.get("escalation_reason"):
+            if not row.spam_reason:
+                row.spam_reason = escalation
+
+        session.commit()
+
+
+def _fail_reprocessing(row_id: uuid.UUID, *, reason: str) -> None:
+    """Фиксирует сбой повторной обработки (status=error, требует внимания оператора)."""
+    factory = get_session_factory()
+    with factory() as session:
+        row = EmailRepository(session).get_by_id(row_id)
+        if row is None or row.status != ProcessingStatus.PROCESSING.value:
+            return
+        row.status = ProcessingStatus.ERROR.value
+        row.human_review = True
+        row.spam_reason = reason
+        session.commit()
+
+
+@celery_app.task(
+    name="agent_pochta.continue_after_human",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=120,
+)
+def continue_after_human_task(self, row_id: str) -> dict:
     """Обзор + 1С после подтверждения отдела оператором (выход из серой зоны)."""
     from agent_pochta.schemas import SpamResult
     from agent_pochta.workers.hitl import continue_after_human_approval
@@ -206,10 +307,11 @@ def continue_after_human_task(row_id: str) -> dict:
 
     factory = get_session_factory()
     container = get_worker_container()
+    row_uuid = uuid.UUID(row_id)
 
     with factory() as session:
         repo = EmailRepository(session)
-        row = repo.get_by_id(uuid.UUID(row_id))
+        row = repo.get_by_id(row_uuid)
         if row is None:
             return {"ok": False, "reason": "not_found"}
         email = repo.load_email_from_row(row)
@@ -217,6 +319,10 @@ def continue_after_human_task(row_id: str) -> dict:
         if email is None:
             return {"ok": False, "reason": "no_payload"}
         if routing is None:
+            _fail_post_hitl_processing(
+                row_uuid,
+                reason="Не удалось продолжить обработку: отсутствует маршрутизация",
+            )
             return {"ok": False, "reason": "no_routing"}
 
         spam: SpamResult | None = None
@@ -227,16 +333,39 @@ def continue_after_human_task(row_id: str) -> dict:
                 reason="Подтверждено оператором (не спам)",
             )
 
+        summary_ru = (row.summary_ru or "").strip() or None
+        hitl_meta = _hitl_meta_from_row(row)
+
         row.status = ProcessingStatus.PROCESSING.value
         row.human_review = False
         session.commit()
 
-    result = continue_after_human_approval(
-        email=email,
-        routing=routing,
-        container=container,
-        spam=spam,
-    )
+    try:
+        result = continue_after_human_approval(
+            email=email,
+            routing=routing,
+            container=container,
+            spam=spam,
+            summary_ru=summary_ru,
+            meta=hitl_meta,
+        )
+    except Exception as exc:
+        logger.exception("continue_after_human_failed", row_id=row_id)
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc) from exc
+        _fail_post_hitl_processing(
+            row_uuid,
+            reason=f"Сбой после подтверждения оператором: {exc}",
+        )
+        return {"ok": False, "reason": str(exc), "message_id": email.message_id}
+
+    _sync_post_hitl_result(row_uuid, result)
+
+    erp = result.get("erp")
+    meta = result.get("meta") or {}
+    if erp and not erp.success and meta.get("erp_retry_scheduled"):
+        _schedule_erp_retry(email.message_id)
+
     return {
         "ok": True,
         "status": str(result.get("status")),
@@ -274,13 +403,19 @@ def export_statistics_task() -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-@celery_app.task(name="agent_pochta.reprocess_message")
-def reprocess_message_task(row_id: str, *, restored_from_spam: bool = False) -> dict:
+@celery_app.task(
+    name="agent_pochta.reprocess_message",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=120,
+)
+def reprocess_message_task(self, row_id: str, *, restored_from_spam: bool = False) -> dict:
     """Повторный прогон графа (восстановление из спама / ручной перезапуск)."""
     factory = get_session_factory()
+    row_uuid = uuid.UUID(row_id)
     with factory() as session:
         repo = EmailRepository(session)
-        row = repo.get_by_id(uuid.UUID(row_id))
+        row = repo.get_by_id(row_uuid)
         if row is None:
             return {"ok": False, "reason": "not_found"}
         email = repo.load_email_from_row(row)
@@ -298,6 +433,17 @@ def reprocess_message_task(row_id: str, *, restored_from_spam: bool = False) -> 
         session.commit()
 
     meta = {"restored_from_spam": restored_from_spam} if restored_from_spam else {}
+    persist_processing_start(email)
     graph = get_worker_graph()
-    result = graph.invoke({"email": email, "meta": meta})
+    try:
+        result = graph.invoke({"email": email, "meta": meta})
+    except Exception as exc:
+        logger.exception("reprocess_message_failed", row_id=row_id)
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc) from exc
+        _fail_reprocessing(
+            row_uuid,
+            reason=f"Сбой повторной обработки: {exc}",
+        )
+        return {"ok": False, "reason": str(exc), "message_id": email.message_id}
     return {"ok": True, "status": str(result.get("status")), "message_id": email.message_id}

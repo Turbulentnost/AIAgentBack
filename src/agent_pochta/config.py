@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     imap_connect_timeout_sec: int = Field(default=30, alias="IMAP_CONNECT_TIMEOUT_SEC")
     imap_max_connect_retries: int = Field(default=3, alias="IMAP_MAX_CONNECT_RETRIES")
     imap_connect_retry_delay_sec: int = Field(default=300, alias="IMAP_CONNECT_RETRY_DELAY_SEC")
+    imap_catchup_days: int = Field(default=7, alias="IMAP_CATCHUP_DAYS")
 
     # Повторы 1С (раздел 5.2)
     erp_retry_max: int = Field(default=5, alias="ERP_RETRY_MAX")
@@ -93,6 +94,14 @@ class Settings(BaseSettings):
     odata_incoming_extra_fields: str = Field(default="", alias="ODATA_INCOMING_EXTRA_FIELDS")
     odata_organization_keys: str = Field(default="", alias="ODATA_ORGANIZATION_KEYS")
     odata_department_keys: str = Field(default="", alias="ODATA_DEPARTMENT_KEYS")
+    odata_organization_keys_file: str = Field(
+        default="data/odata_organization_keys.json",
+        alias="ODATA_ORGANIZATION_KEYS_FILE",
+    )
+    odata_department_keys_file: str = Field(
+        default="data/odata_department_keys.json",
+        alias="ODATA_DEPARTMENT_KEYS_FILE",
+    )
     odata_routing_rules_path: str = Field(default="", alias="ODATA_ROUTING_RULES_PATH")
     odata_timeout_sec: float = Field(default=60.0, alias="ODATA_TIMEOUT_SEC")
     celery_broker_url: str = Field(

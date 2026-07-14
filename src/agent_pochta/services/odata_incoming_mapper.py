@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
+from agent_pochta.routing.xml_builder import resolve_document_theme
 from agent_pochta.routing.xml_parser import parse_document_xml
 from agent_pochta.schemas import EmailMessage, Priority, RoutingResult
 
@@ -77,15 +79,51 @@ def load_guid_map(raw: str = "", *, env_name: str) -> dict[str, str]:
     }
 
 
-def build_department_name_lookup(rules: dict[str, Any] | None) -> dict[str, str]:
-    """Собирает code → name из routing_rules (department_names и правил с полем name)."""
-    if not rules:
+def load_guid_map_from_file(path: str | Path, *, env_name: str) -> dict[str, str]:
+    """Читает код → GUID из JSON-файла (data/odata_*_keys.json)."""
+    file_path = Path(path)
+    if not file_path.is_file():
         return {}
-    lookup: dict[str, str] = {
-        str(code): str(name)
-        for code, name in (rules.get("department_names") or {}).items()
-        if str(code).strip() and str(name).strip()
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid {env_name} file {file_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{env_name} file {file_path} must contain a JSON object")
+    return {
+        str(code).strip(): str(guid).strip()
+        for code, guid in data.items()
+        if str(code).strip() and str(guid).strip()
     }
+
+
+def resolve_guid_map(
+    inline_json: str = "",
+    *,
+    file_path: str = "",
+    env_name: str,
+) -> dict[str, str]:
+    """Inline JSON из .env имеет приоритет над файлом."""
+    inline = load_guid_map(inline_json, env_name=env_name)
+    if inline:
+        return inline
+    if file_path.strip():
+        return load_guid_map_from_file(file_path, env_name=env_name)
+    return {}
+
+
+def build_department_name_lookup(rules: dict[str, Any] | None) -> dict[str, str]:
+    """Собирает code → name: приоритет у структуры 1С, затем routing_rules."""
+    from agent_pochta.services.routing_departments import load_onec_department_names_map
+
+    lookup: dict[str, str] = dict(load_onec_department_names_map())
+    if not rules:
+        return lookup
+    for code, name in (rules.get("department_names") or {}).items():
+        code = str(code).strip()
+        name = str(name).strip()
+        if code and name and code not in lookup:
+            lookup[code] = name
     for bucket in (
         "email_keyword_rules",
         "exact_email_rules",
@@ -95,7 +133,7 @@ def build_department_name_lookup(rules: dict[str, Any] | None) -> dict[str, str]
         for rule in rules.get(bucket) or []:
             code = str(rule.get("code") or "").strip()
             name = str(rule.get("name") or rule.get("about") or "").strip()
-            if code and name:
+            if code and name and code not in lookup:
                 lookup.setdefault(code, name)
     reserve_code = str(rules.get("reserve_code") or "").strip()
     reserve_name = str(rules.get("reserve_name") or "").strip()
@@ -109,13 +147,13 @@ def resolve_department_name(
     *,
     department_names: dict[str, str] | None = None,
 ) -> str:
-    """Название подразделения: routing → справочник routing_rules."""
-    name = (routing.department_name or "").strip()
-    if name:
-        return name
-    if department_names:
-        return (department_names.get(routing.department_id) or "").strip()
-    return ""
+    """Название подразделения: структура 1С → routing → справочник routing_rules."""
+    from agent_pochta.services.routing_departments import resolve_department_display_name
+
+    fallback = (routing.department_name or "").strip()
+    if not fallback and department_names:
+        fallback = (department_names.get(routing.department_id) or "").strip()
+    return resolve_department_display_name(routing.department_id, fallback)
 
 
 def resolve_organization_key(
@@ -247,7 +285,13 @@ def build_incoming_document_payload(
         (parsed or {}).get("mail_datetime"),
         email.received_at,
     )
-    theme = (parsed or {}).get("theme") or email.subject or "Без темы"
+    theme = resolve_document_theme(
+        email,
+        explicit_theme=(parsed or {}).get("theme") or "",
+        combined_text=email.body_text or "",
+        process_type=(parsed or {}).get("process") or "",
+        claim=bool((parsed or {}).get("claim")),
+    )
     partner = (parsed or {}).get("partner") or ""
     if partner == "-":
         partner = ""

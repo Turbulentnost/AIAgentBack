@@ -9,10 +9,18 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from agent_pochta.db.message_filters import msk_day_end_exclusive_utc, msk_day_start_utc
+from agent_pochta.db.message_filters import (
+    INFO_RECIPIENT_Q,
+    msk_day_end_exclusive_utc,
+    msk_day_start_utc,
+    info_to_test_ii_sql_filter,
+    only_info_to_sql_filter,
+    recipient_q_sql_filter,
+)
 from agent_pochta.demo_filter import demo_row_filter
 
 from agent_pochta.config import get_settings
+from agent_pochta.routing.hitl import is_routing_escalation_reason
 from agent_pochta.db.models import EmailAttachmentRow, EmailMessageRow
 from agent_pochta.db.session import get_session_factory
 from agent_pochta.email_payload import email_to_task_payload
@@ -40,6 +48,10 @@ class EmailRepository:
         date_from: date | None = None,
         date_to: date | None = None,
         search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
     ):
         if status:
             query = query.filter(EmailMessageRow.status == status)
@@ -56,6 +68,36 @@ class EmailRepository:
                     EmailMessageRow.sender_name.ilike(pattern),
                 )
             )
+        if recipient_q:
+            query = query.filter(
+                recipient_q_sql_filter(
+                    EmailMessageRow.mailbox,
+                    EmailMessageRow.raw_payload_json,
+                    recipient_q,
+                )
+            )
+        if info_recipient_only:
+            query = query.filter(
+                recipient_q_sql_filter(
+                    EmailMessageRow.mailbox,
+                    EmailMessageRow.raw_payload_json,
+                    INFO_RECIPIENT_Q,
+                )
+            )
+        if only_info_to_test_ii:
+            query = query.filter(
+                info_to_test_ii_sql_filter(
+                    EmailMessageRow.mailbox,
+                    EmailMessageRow.raw_payload_json,
+                )
+            )
+        if only_info_to:
+            query = query.filter(
+                only_info_to_sql_filter(
+                    EmailMessageRow.mailbox,
+                    EmailMessageRow.raw_payload_json,
+                )
+            )
         query = query.filter(~demo_row_filter(EmailMessageRow))
         return query
 
@@ -66,6 +108,10 @@ class EmailRepository:
         date_from: date | None = None,
         date_to: date | None = None,
         search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> list[EmailMessageRow]:
@@ -76,6 +122,10 @@ class EmailRepository:
             date_from=date_from,
             date_to=date_to,
             search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
         )
         return query.offset(offset).limit(limit).all()
 
@@ -86,6 +136,10 @@ class EmailRepository:
         date_from: date | None = None,
         date_to: date | None = None,
         search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
     ) -> int:
         query = self._session.query(func.count(EmailMessageRow.id))
         query = self._apply_message_filters(
@@ -94,6 +148,10 @@ class EmailRepository:
             date_from=date_from,
             date_to=date_to,
             search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
         )
         return int(query.scalar() or 0)
 
@@ -110,6 +168,10 @@ class EmailRepository:
         date_from: date | None = None,
         date_to: date | None = None,
         search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
     ) -> dict[str, int]:
         query = self._session.query(EmailMessageRow.status, func.count(EmailMessageRow.id))
         query = self._apply_message_filters(
@@ -117,13 +179,57 @@ class EmailRepository:
             date_from=date_from,
             date_to=date_to,
             search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
         )
         rows = query.group_by(EmailMessageRow.status).all()
         return {status: int(count) for status, count in rows}
 
+    def ensure_processing_row(self, email: EmailMessage) -> uuid.UUID:
+        """Создаёт или обновляет запись со status=processing до завершения графа."""
+        row = self.get_by_message_id(email.message_id)
+        payload_json = json.dumps(email_to_task_payload(email, for_storage=True), ensure_ascii=False)
+
+        if row is None:
+            row = EmailMessageRow(
+                id=uuid.uuid4(),
+                message_id=email.message_id,
+                received_at=email.received_at,
+                mailbox=email.mailbox,
+                sender_email=email.sender_email,
+                sender_name=email.sender_name,
+                subject=email.subject,
+                attachments_count=len(email.attachments),
+                status=ProcessingStatus.PROCESSING.value,
+                human_review=False,
+                raw_payload_json=payload_json,
+            )
+            self._session.add(row)
+        else:
+            row.sender_name = email.sender_name
+            row.subject = email.subject
+            row.received_at = email.received_at
+            row.mailbox = email.mailbox
+            row.sender_email = email.sender_email
+            row.attachments_count = len(email.attachments)
+            row.status = ProcessingStatus.PROCESSING.value
+            row.human_review = False
+            row.raw_payload_json = payload_json
+
+        self._session.flush()
+        return row.id
+
     def upsert_from_state(self, state: AgentState) -> uuid.UUID:
         email = state["email"]
         row = self.get_by_message_id(email.message_id)
+        from agent_pochta.stats.classification_log import (
+            log_agent_classification_from_state,
+            snapshot_from_row,
+        )
+
+        before = snapshot_from_row(row)
         if row is None:
             row = EmailMessageRow(
                 id=uuid.uuid4(),
@@ -161,8 +267,13 @@ class EmailRepository:
 
         routing = state.get("routing")
         if routing is not None:
+            from agent_pochta.services.routing_departments import resolve_department_display_name
+
             row.department_id = routing.department_id
-            row.department_name = routing.department_name
+            row.department_name = resolve_department_display_name(
+                routing.department_id,
+                routing.department_name,
+            )
             row.dept_confidence = routing.confidence
             row.priority = routing.priority.value
 
@@ -182,7 +293,10 @@ class EmailRepository:
         row.human_review = bool(state.get("human_review"))
 
         if escalation := state.get("escalation_reason"):
-            if not row.spam_reason:
+            if is_routing_escalation_reason(escalation):
+                payload["hitl_reason"] = escalation
+                row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+            elif not row.spam_reason:
                 row.spam_reason = escalation
 
         row.attachments.clear()
@@ -203,6 +317,7 @@ class EmailRepository:
             )
 
         self._session.flush()
+        log_agent_classification_from_state(self._session, row, before, state)
         return row.id
 
     def mark_restored_from_spam(self, row_id: uuid.UUID) -> EmailMessageRow | None:
@@ -404,6 +519,24 @@ class EmailRepository:
             reasoning="Восстановлено из записи БД",
             priority=priority,
         )
+
+
+def persist_processing_start(email: EmailMessage) -> uuid.UUID | None:
+    """Фиксирует начало обработки в БД (вкладка «В работе» в UI)."""
+    from agent_pochta.demo_filter import is_demo_email
+
+    if is_demo_email(email):
+        return None
+
+    factory = get_session_factory()
+    try:
+        with factory() as session:
+            repo = EmailRepository(session)
+            row_id = repo.ensure_processing_row(email)
+            session.commit()
+            return row_id
+    except Exception:
+        return None
 
 
 def persist_processing_result(state: AgentState) -> uuid.UUID | None:

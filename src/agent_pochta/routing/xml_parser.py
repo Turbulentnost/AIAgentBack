@@ -12,6 +12,7 @@ from agent_pochta.routing.xml_builder import (
     RESERVE_DEPARTMENT_CODE,
     SPAM_DEPARTMENT_CODE,
     build_xml_document,
+    resolve_document_theme,
     sanitize_theme,
     strip_forbidden_tags,
     validate_xml_document,
@@ -116,7 +117,7 @@ def ensure_xml_document(state: AgentState) -> str | None:
             confidence_score=int(decision_meta.get("confidence_score") or 0),
             partner=decision_meta.get("partner"),
             claim=bool(decision_meta.get("claim")),
-            theme=sanitize_theme(email.subject or ""),
+            theme=resolve_document_theme(email),
         )
     else:
         is_spam = bool(spam and spam.is_spam)
@@ -128,7 +129,7 @@ def ensure_xml_document(state: AgentState) -> str | None:
             )
         ]
         decision = RoutingDecision(
-            theme=sanitize_theme(email.subject or ""),
+            theme=resolve_document_theme(email),
             services=services,
             confidence_level=ConfidenceLevel.LOW,
         )
@@ -214,7 +215,12 @@ def rebuild_xml_document_from_row(
         confidence_score=100,
         partner=partner or None,
         claim=claim,
-        theme=sanitize_theme((existing or {}).get("theme") or email.subject or ""),
+        theme=resolve_document_theme(
+            email,
+            explicit_theme=(existing or {}).get("theme") or "",
+            process_type=service_process,
+            claim=claim,
+        ),
     )
 
     recipient = (

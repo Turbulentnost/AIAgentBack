@@ -13,7 +13,7 @@ from agent_pochta.routing import RouteEngine, route_email
 from agent_pochta.routing.engine import rebuild_decision_xml
 from agent_pochta.routing.recipients import build_routing_search_text
 from agent_pochta.routing.models import ConfidenceLevel
-from agent_pochta.routing.xml_builder import build_stub_xml_theme, sanitize_theme
+from agent_pochta.routing.xml_builder import build_subject_xml_theme, sanitize_theme
 from agent_pochta.schemas import Priority, ProcessingStatus, RoutingResult, SenderIdentity, SpamResult
 from agent_pochta.services import ServiceContainer
 from agent_pochta.routing.process_type import infer_process_type_heuristic
@@ -170,6 +170,10 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
         primary_code = primary.code
         dept_name = primary.name
 
+    from agent_pochta.services.routing_departments import resolve_department_display_name
+
+    dept_name = resolve_department_display_name(primary_code, dept_name)
+
     rule_routing = RoutingResult(
         department_id=primary_code,
         department_name=dept_name,
@@ -229,7 +233,11 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             sender=sender,
             attachments_text=attachments_text,
         )
-        xml_theme = build_stub_xml_theme(email.subject or "", text)
+        xml_theme = build_subject_xml_theme(
+            email.subject or "",
+            combined_text=text,
+            claim=decision.claim,
+        )
     else:
         spam = existing_spam
         summary_ru = container.llm.summarize_ru(
@@ -239,7 +247,11 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             sender=sender,
             attachments_text=attachments_text,
         )
-        xml_theme = build_stub_xml_theme(email.subject or "", text)
+        xml_theme = build_subject_xml_theme(
+            email.subject or "",
+            combined_text=text,
+            claim=decision.claim,
+        )
 
     if resolved_process is None:
         resolved_process = infer_process_type_heuristic(
@@ -262,6 +274,9 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
         llm_partner=llm_partner,
         rag_partner=decision.partner,
         email=email,
+        body_text=text or email.body_text,
+        summary_ru=summary_ru,
+        qdrant_url=settings.qdrant_url if settings.rag_department_enabled else None,
     )
     initial_partner = decision.partner
     if resolved_partner != decision.partner:

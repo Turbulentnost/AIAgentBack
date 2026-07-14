@@ -206,3 +206,30 @@ def test_learn_from_spam_mark_returns_qdrant_flag(
     assert result["spam_pattern_saved"] is True
     assert result["spam_pattern_id"]
     assert result["qdrant_synced"] is False
+
+
+def test_learn_from_spam_mark_syncs_qdrant(
+    learning_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SPAM_LEARNING_PATH", str(learning_file))
+    monkeypatch.setenv("RAG_BACKEND", "qdrant")
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
+    from agent_pochta.config import reset_settings
+
+    reset_settings()
+
+    with patch(
+        "agent_pochta.services.spam_learning_rag_qdrant.upsert_spam_learning_entry"
+    ) as upsert_mock:
+        result = learn_from_spam_mark(
+            message_id="<spam@example>",
+            sender_email="promo@spam-offers.xyz",
+            subject="Вебинар",
+            body="Рекламная рассылка",
+            spam_reason="Реклама",
+            path=learning_file,
+        )
+
+    assert result["qdrant_synced"] is True
+    upsert_mock.assert_called_once()

@@ -38,8 +38,8 @@ def test_log_department_change(session: MagicMock) -> None:
     )
     assert row is not None
     assert row.event_type == "department_change"
-    session.add.assert_called_once()
-    saved = session.add.call_args.args[0]
+    assert session.add.call_count == 2
+    saved = session.add.call_args_list[0].args[0]
     assert isinstance(saved, ChangeEventRow)
     assert saved.old_value == "00-000001 — Старый"
 

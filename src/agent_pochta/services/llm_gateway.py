@@ -121,7 +121,7 @@ class StubLLMGateway(LLMGateway):
     ) -> IncomingEmailAnalysis:
         from agent_pochta.schemas import RoutingResult
         from agent_pochta.routing.process_type import resolve_process_type
-        from agent_pochta.routing.xml_builder import build_stub_xml_theme
+        from agent_pochta.routing.xml_builder import build_subject_xml_theme
         from agent_pochta.services.llm_analyze import resolve_partner_name
 
         if skip_spam_check:
@@ -155,11 +155,17 @@ class StubLLMGateway(LLMGateway):
                 reasoning=choice["reasoning"],
             ),
             summary_ru=summary,
-            xml_theme=build_stub_xml_theme(email.subject or "", combined_text),
+            xml_theme=build_subject_xml_theme(
+                email.subject or "",
+                combined_text=combined_text,
+                claim=claim,
+            ),
             partner_name=resolve_partner_name(
                 llm_partner=None,
                 rag_partner=sender.contractor.name if sender and sender.contractor else None,
                 email=email,
+                body_text=combined_text or email.body_text,
+                summary_ru=summary,
             ),
             process_type=resolve_process_type(
                 llm_process=None,

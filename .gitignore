@@ -70,3 +70,6 @@ data/deterministic_routing_rules.draft.json
 
 # Демо-заглушка правил в пакете (реальный файл — data/routing_rules.json)
 src/agent_pochta/routing/data/routing_rules.json
+
+# Local backups (secrets, DB dumps)
+backup/

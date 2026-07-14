@@ -50,7 +50,7 @@ def test_department_ids_are_1c_codes():
 def test_build_departments_from_structure_expands_catalog():
     departments = build_departments_from_structure()
     codes = {d.department_id for d in departments}
-    assert len(departments) == 139
+    assert len(departments) == 142
     assert "00-000032" not in codes
     assert "00-999999" not in codes
     assert "00-000002" in codes
@@ -92,7 +92,7 @@ def test_recipient_email_boosts_structure_department():
 def test_list_active_departments_for_ui_uses_onec_names():
     departments = list_active_departments_for_ui()
     by_id = {item["id"]: item["name"] for item in departments}
-    assert len(departments) == 134
+    assert len(departments) == 132
     assert by_id["00-000065"] == "Отдел МТО"
     assert by_id["00-000002"] == "Бухгалтерия"
     assert "00-999999" not in by_id

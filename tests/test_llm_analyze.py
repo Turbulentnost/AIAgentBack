@@ -6,11 +6,14 @@ from datetime import datetime, timezone
 
 from agent_pochta.schemas import EmailMessage
 from agent_pochta.services.llm_analyze import (
+    infer_partner_from_domain,
     infer_partner_from_email,
+    looks_like_person_name,
     normalize_partner_name,
     parse_analyze_response,
     resolve_partner_name,
 )
+from agent_pochta.services.summary import extract_partner_from_signature
 
 
 def _email(**kw) -> EmailMessage:
@@ -36,10 +39,7 @@ def test_parse_full_analyze_response():
         "dept_confidence": 0.91,
         "reasoning": "Запрос на счёт",
         "summary_ru": "Клиент просит счёт. Нужно выставить документ.",
-        "xml_theme": (
-            "Клиент просит выставить счёт на поставку оборудования - "
-            "Запрос на выставление счёта"
-        ),
+        "xml_theme": "Запрос: Счёт на оплату",
         "process_type": "исполнение",
     }
     candidates = [{"department_id": "SALES", "department_name": "Продажи"}]
@@ -54,8 +54,8 @@ def test_parse_full_analyze_response():
     assert analysis.routing.department_id == "SALES"
     assert analysis.routing.confidence == 0.91
     assert "счёт" in analysis.summary_ru.lower()
-    assert " - " in analysis.xml_theme
-    assert analysis.xml_theme.endswith("Запрос на выставление счёта")
+    assert analysis.xml_theme.startswith("Запрос:")
+    assert "Счёт" in analysis.xml_theme
     assert analysis.process_type == "исполнение"
 
 
@@ -122,7 +122,7 @@ def test_parse_analyze_fills_xml_theme_when_missing():
         subject="Акт сверки",
         combined_text="Направляем акт сверки за квартал.",
     )
-    assert " - " in analysis.xml_theme
+    assert analysis.xml_theme.startswith("Запрос:")
     assert "акт сверки" in analysis.xml_theme.lower()
 
 
@@ -158,19 +158,21 @@ def test_parse_analyze_extracts_partner_name():
 
 
 def test_resolve_partner_prefers_llm_over_rag():
-    email = _email(sender_email="info@gazprom-neft.ru", sender_name="")
+    body = "Добрый день! Просим выставить счёт."
+    email = _email(sender_email="info@gazprom-neft.ru", sender_name="", body_text=body)
     assert (
         resolve_partner_name(
             llm_partner="ПАО «Газпром нефть»",
             rag_partner="Старый контрагент",
             email=email,
+            body_text=body,
         )
         == "ПАО «Газпром нефть»"
     )
 
 
 def test_resolve_partner_falls_back_to_rag():
-    email = _email()
+    email = _email(sender_email="client@gmail.com")
     assert (
         resolve_partner_name(
             llm_partner="",
@@ -181,8 +183,58 @@ def test_resolve_partner_falls_back_to_rag():
     )
 
 
+def test_resolve_partner_prefers_signature_over_llm_domain_guess():
+    body = (
+        "Добрый день! ОЛ 31222, 31340 отправлены в просчет.\n\n"
+        "С уважением,\n"
+        "Менеджер\n"
+        "ООО ЛАН-Сервис"
+    )
+    email = _email(
+        sender_email="sales@lan-service.ru",
+        sender_name="Lan Service",
+        body_text=body,
+        subject="ОЛ 31222, 31240 в работу",
+    )
+    assert (
+        resolve_partner_name(
+            llm_partner="Lan Service",
+            rag_partner="Lan Service",
+            email=email,
+            body_text=body,
+        )
+        == "ООО ЛАН-Сервис"
+    )
+
+
+def test_resolve_partner_prefers_signature_over_rag_and_domain():
+    body = (
+        "Добрый день! ОЛ 31222, 31340 отправлены в просчет.\n\n"
+        "С уважением,\n"
+        "Менеджер\n"
+        "ООО ЛАН-Сервис"
+    )
+    email = _email(
+        sender_email="sales@lan-service.ru",
+        sender_name="Lan Service",
+        body_text=body,
+        subject="ОЛ 31222, 31240 в работу",
+    )
+    assert extract_partner_from_signature(body) == "ООО ЛАН-Сервис"
+    assert (
+        resolve_partner_name(
+            llm_partner=None,
+            rag_partner="Lan Service",
+            email=email,
+            body_text=body,
+        )
+        == "ООО ЛАН-Сервис"
+    )
+    assert infer_partner_from_email(email) == "Lan Service"
+
+
 def test_resolve_partner_infers_from_sender_name():
-    email = _email(sender_name="ООО ТехноСервис")
+    email = _email(sender_email="client@gmail.com", sender_name="ООО ТехноСервис")
     assert resolve_partner_name(llm_partner=None, rag_partner=None, email=email) == "ООО ТехноСервис"
 
 
@@ -194,3 +246,54 @@ def test_infer_partner_from_corporate_domain():
 def test_normalize_partner_rejects_dash():
     assert normalize_partner_name("-") is None
     assert normalize_partner_name("неизвестно") is None
+
+
+def test_looks_like_person_name():
+    assert looks_like_person_name("Oksana Popova") is True
+    assert looks_like_person_name("Оксана Попова") is True
+    assert looks_like_person_name("ООО «Ромашка»") is False
+    assert looks_like_person_name("H-Energy") is False
+
+
+def test_infer_partner_from_domain_h_energy():
+    assert infer_partner_from_domain("forte@h-energy.ru") == "H-Energy"
+
+
+def test_infer_partner_from_email_prefers_domain_over_person_from():
+    email = _email(
+        sender_email="forte@h-energy.ru",
+        sender_name="Oksana Popova",
+    )
+    assert infer_partner_from_email(email) == "H-Energy"
+
+
+def test_resolve_partner_rejects_llm_person_name_for_corporate_domain():
+    body = "Добрый день, направляем документы."
+    email = _email(
+        sender_email="forte@h-energy.ru",
+        sender_name="Oksana Popova",
+        body_text=body,
+    )
+    assert (
+        resolve_partner_name(
+            llm_partner="Oksana Popova",
+            rag_partner=None,
+            email=email,
+            body_text=body,
+            summary_ru="Оксана Попова от компании H-Energy отвечает на запрос.",
+        )
+        == "H-Energy"
+    )
+
+
+def test_resolve_partner_uses_summary_company_when_domain_unknown():
+    email = _email(sender_email="user@gmail.com", sender_name="Oksana Popova")
+    assert (
+        resolve_partner_name(
+            llm_partner="Oksana Popova",
+            rag_partner=None,
+            email=email,
+            summary_ru="Оксана Попова от компании H-Energy отвечает на запрос.",
+        )
+        == "H-Energy"
+    )

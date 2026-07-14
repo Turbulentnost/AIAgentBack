@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ssl
 from dataclasses import dataclass
+from datetime import date
 
 from imapclient import IMAPClient
 
@@ -86,10 +87,17 @@ class ImapMailboxClient:
 
     def fetch_unseen(self, mark_seen: bool = True) -> list[EmailMessage]:
         """Возвращает непрочитанные письма INBOX."""
+        return self._fetch_by_search(["UNSEEN"], mark_seen=mark_seen)
+
+    def fetch_since(self, since: date, *, mark_seen: bool = False) -> list[EmailMessage]:
+        """Возвращает письма INBOX с даты since (включительно) для догоняющего опроса."""
+        return self._fetch_by_search(["SINCE", since.strftime("%d-%b-%Y")], mark_seen=mark_seen)
+
+    def _fetch_by_search(self, criteria: list, *, mark_seen: bool) -> list[EmailMessage]:
         client = self._connect()
         try:
             client.select_folder("INBOX", readonly=not mark_seen)
-            uids = client.search(["UNSEEN"])
+            uids = client.search(criteria)
             if not uids:
                 return []
 
@@ -144,3 +152,16 @@ def fetch_unseen_messages(
     credentials = resolve_imap_credentials(mailbox, vault)
     client = ImapMailboxClient(mailbox, credentials, settings=settings)
     return client.fetch_unseen()
+
+
+def fetch_since_messages(
+    mailbox: str,
+    vault: VaultClient,
+    since: date,
+    settings: Settings | None = None,
+    *,
+    mark_seen: bool = False,
+) -> list[EmailMessage]:
+    credentials = resolve_imap_credentials(mailbox, vault)
+    client = ImapMailboxClient(mailbox, credentials, settings=settings)
+    return client.fetch_since(since, mark_seen=mark_seen)

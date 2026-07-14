@@ -61,6 +61,8 @@ def _build_integration(settings: Settings) -> IntegrationService:
             extra_fields_json=settings.odata_incoming_extra_fields,
             organization_keys_json=settings.odata_organization_keys,
             department_keys_json=settings.odata_department_keys,
+            organization_keys_file=settings.odata_organization_keys_file,
+            department_keys_file=settings.odata_department_keys_file,
             routing_rules_path=settings.odata_routing_rules_path,
         )
     if mode == "http":

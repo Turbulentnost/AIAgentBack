@@ -9,11 +9,18 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from agent_pochta.config import get_settings
 from agent_pochta.demo_filter import is_demo_message
-from agent_pochta.db.message_filters import parse_optional_date
+from agent_pochta.db.message_filters import (
+    MSK,
+    msk_day_end_exclusive_utc,
+    msk_day_start_utc,
+    parse_optional_date,
+)
+from agent_pochta.stats.classification_log import collect_classification_summary
 from agent_pochta.db.catalog_repository import CatalogRepository
 from agent_pochta.db.department_repository import DepartmentRepository
 from agent_pochta.db.repository import EmailRepository
@@ -23,6 +30,7 @@ from agent_pochta.routing.learning import (
     learn_from_not_spam,
     learn_from_spam_mark,
 )
+from agent_pochta.routing.hitl import hitl_reason_from_row, row_requires_routing_review
 from agent_pochta.stats.change_log import (
     log_department_resolution,
     log_restore_from_spam,
@@ -38,6 +46,7 @@ from agent_pochta.services.llm_analyze import normalize_partner_name
 from agent_pochta.services.rag_qdrant import search_contractors as qdrant_search_contractors
 from agent_pochta.routing.xml_parser import parse_document_xml
 from agent_pochta.imap.body_fetch import fetch_and_cache_email_body, payload_body_text, row_has_cached_body
+from agent_pochta.metrics.prometheus_exporter import refresh_prometheus_metrics
 from agent_pochta.workers.tasks import (
     continue_after_human_task,
     reprocess_message_task,
@@ -78,9 +87,11 @@ def _payload_meta(row) -> dict[str, Any]:
     to_raw = payload.get("to") or []
     to_list = [str(item).strip() for item in to_raw if str(item).strip()]
     routing_recipient = payload.get("routing_recipient")
+    hitl_reason = payload.get("hitl_reason")
     return {
         "to": to_list,
         "routing_recipient": str(routing_recipient).strip() if routing_recipient else None,
+        "hitl_reason": str(hitl_reason).strip() if hitl_reason else None,
     }
 
 
@@ -119,7 +130,12 @@ def _payload_body_text(row) -> str:
 
 def _row_partner_fields(row) -> dict[str, Any]:
     """Партнёр для UI: из XML, иначе sender_name."""
-    partner_name = partner_from_payload(row.raw_payload_json, sender_name=row.sender_name)
+    partner_name = partner_from_payload(
+        row.raw_payload_json,
+        sender_name=row.sender_name,
+        sender_email=row.sender_email,
+        summary_ru=row.summary_ru,
+    )
     return {
         "contractor_id": row.contractor_id,
         "is_new_contractor": row.is_new_contractor,
@@ -145,6 +161,7 @@ def _row_to_list_dict(row) -> dict[str, Any]:
         "is_spam": row.is_spam,
         "spam_confidence": row.spam_confidence,
         "spam_reason": row.spam_reason,
+        "hitl_reason": meta.get("hitl_reason") or hitl_reason_from_row(row),
         "department_id": row.department_id,
         "department_name": row.department_name,
         "dept_confidence": row.dept_confidence,
@@ -197,13 +214,18 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/metrics")
+def metrics() -> Response:
+    """Prometheus scrape endpoint (обновляет Gauges из PostgreSQL при каждом запросе)."""
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    refresh_prometheus_metrics()
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.get("/api/v1/departments")
 def list_routing_departments() -> list[dict[str, str]]:
-    factory = get_session_factory()
-    with factory() as session:
-        items = DepartmentRepository(session).list_for_ui()
-        if items:
-            return items
+    """Справочник отделов для UI: названия из структуры 1С."""
     return list_active_departments_for_ui()
 
 
@@ -280,6 +302,24 @@ def email_messages_stats(
     date_from: str | None = Query(default=None, description="YYYY-MM-DD (MSK)"),
     date_to: str | None = Query(default=None, description="YYYY-MM-DD (MSK)"),
     q: str | None = Query(default=None, min_length=1, max_length=200),
+    recipient_q: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Поиск только по графе «Кому» (routing_recipient / To)",
+    ),
+    info_recipient_only: bool = Query(
+        default=False,
+        description="Только письма, где «Кому» содержит info (Outlook: имяполучателя:(info))",
+    ),
+    only_info_to_test_ii: bool = Query(
+        default=False,
+        description="Только письма по цепочке info@turbo-don.ru → test_ii@turbo-don.ru",
+    ),
+    only_info_to: bool = Query(
+        default=False,
+        description="Только письма с получателем info@turbo-don.ru (Кому), без других адресов",
+    ),
 ) -> dict[str, Any]:
     parsed_from, parsed_to = _message_list_filters(date_from=date_from, date_to=date_to)
     with get_session_factory()() as session:
@@ -288,11 +328,42 @@ def email_messages_stats(
             date_from=parsed_from,
             date_to=parsed_to,
             search=q,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
         )
         return {
             "total": sum(by_status.values()),
             "by_status": by_status,
         }
+
+
+@app.get("/api/v1/classification-events/summary")
+def classification_events_summary(
+    date_from: str | None = Query(default=None, description="YYYY-MM-DD (MSK)"),
+    date_to: str | None = Query(default=None, description="YYYY-MM-DD (MSK)"),
+) -> dict[str, Any]:
+    """Агрегаты classification_events для графиков и оценки точности."""
+    parsed_from, parsed_to = _message_list_filters(date_from=date_from, date_to=date_to)
+    settings = get_settings()
+    if parsed_from:
+        start_utc = msk_day_start_utc(parsed_from)
+    else:
+        raw = settings.stats_start_time.strip()
+        try:
+            start_local = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=MSK)
+        except ValueError:
+            start_local = datetime.fromisoformat(raw).replace(tzinfo=MSK)
+        start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+    if parsed_to:
+        end_utc = msk_day_end_exclusive_utc(parsed_to)
+    else:
+        end_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    with get_session_factory()() as session:
+        return collect_classification_summary(session, start_utc=start_utc, end_utc=end_utc)
 
 
 @app.get("/api/v1/email-messages")
@@ -301,6 +372,24 @@ def list_email_messages(
     date_from: str | None = Query(default=None, description="YYYY-MM-DD (MSK)"),
     date_to: str | None = Query(default=None, description="YYYY-MM-DD (MSK)"),
     q: str | None = Query(default=None, min_length=1, max_length=200),
+    recipient_q: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Поиск только по графе «Кому» (routing_recipient / To)",
+    ),
+    info_recipient_only: bool = Query(
+        default=False,
+        description="Только письма, где «Кому» содержит info (Outlook: имяполучателя:(info))",
+    ),
+    only_info_to_test_ii: bool = Query(
+        default=False,
+        description="Только письма по цепочке info@turbo-don.ru → test_ii@turbo-don.ru",
+    ),
+    only_info_to: bool = Query(
+        default=False,
+        description="Только письма с получателем info@turbo-don.ru (Кому), без других адресов",
+    ),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -312,6 +401,10 @@ def list_email_messages(
             date_from=parsed_from,
             date_to=parsed_to,
             search=q,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
             limit=limit,
             offset=offset,
         )
@@ -320,6 +413,10 @@ def list_email_messages(
             date_from=parsed_from,
             date_to=parsed_to,
             search=q,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
         )
         return {
             "items": [_row_to_list_dict(row) for row in rows],
@@ -444,12 +541,14 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
             raise HTTPException(status_code=404, detail="Message not found")
 
         if body.decision == "mark_spam":
+            spam_reason = resolve_human_spam_reason(hitl_reason_from_row(row))
             log_spam_decision(
                 session,
                 message_id=row.message_id,
                 email_id=row.id,
                 decision="mark_spam",
-                reason=resolve_human_spam_reason(row.spam_reason),
+                reason=spam_reason,
+                old_is_spam=row.is_spam,
             )
             repo.apply_human_resolution(row.id, status=ProcessingStatus.SPAM.value, is_spam=True)
             repo.clear_xml_document(row)
@@ -461,7 +560,7 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
                     sender_email=email.sender_email,
                     subject=email.subject or "",
                     body=repo.learning_text_from_row(row, email),
-                    spam_reason=resolve_human_spam_reason(row.spam_reason),
+                    spam_reason=spam_reason,
                     session=session,
                     email_id=row.id,
                 )
@@ -480,10 +579,11 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
                 email_id=row.id,
                 decision="mark_not_spam",
                 reason="Отмечено офис-менеджером как не спам",
+                old_is_spam=row.is_spam,
             )
             email = repo.load_email_from_row(row)
             learning: dict[str, Any] = {}
-            if email is not None:
+            if email is not None and not row_requires_routing_review(row):
                 learning = learn_from_not_spam(
                     message_id=row.message_id,
                     sender_email=email.sender_email,
@@ -522,6 +622,14 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
                 ProcessingStatus.DONE.value,
                 ProcessingStatus.ERROR.value,
             }
+            if already_processed:
+                resolve_status = (
+                    ProcessingStatus.DONE.value
+                    if row.status == ProcessingStatus.ERROR.value
+                    else row.status
+                )
+            else:
+                resolve_status = ProcessingStatus.PROCESSING.value
             log_department_resolution(
                 session,
                 message_id=row.message_id,
@@ -534,13 +642,17 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
             partner_override = normalize_partner_name(body.partner_name)
             repo.apply_human_resolution(
                 row.id,
-                status=row.status if already_processed else ProcessingStatus.PROCESSING.value,
+                status=resolve_status,
                 department_id=body.department_id,
                 department_name=department_name,
                 is_spam=None if already_processed else False,
                 contractor_id=body.contractor_id,
                 partner_name=body.partner_name,
             )
+            if resolve_status == ProcessingStatus.DONE.value and not row.processed_at:
+                from datetime import datetime, timezone
+
+                row.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             if (
                 partner_override
                 and not body.contractor_id

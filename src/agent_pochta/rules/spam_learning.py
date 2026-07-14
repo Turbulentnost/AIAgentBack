@@ -73,11 +73,13 @@ def reason_indicates_not_spam(reason: str | None) -> bool:
 def resolve_human_spam_reason(stored_reason: str | None) -> str:
     """Причина для spam-паттерна после решения оператора mark_spam.
 
-    Не копируем LLM-текст «не спам» из row.spam_reason — только явная причина
-    спама или стандартная формулировка оператора.
+    Не копируем LLM-текст «не спам» или причину эскалации маршрута — только
+    явная причина спама или стандартная формулировка оператора.
     """
+    from agent_pochta.routing.hitl import is_routing_escalation_reason
+
     reason = (stored_reason or "").strip()
-    if not reason or reason_indicates_not_spam(reason):
+    if not reason or reason_indicates_not_spam(reason) or is_routing_escalation_reason(reason):
         return _OPERATOR_SPAM_REASON
     return reason
 
@@ -448,11 +450,20 @@ def resync_spam_learning_to_qdrant(path: Path | str | None = None) -> dict:
         return {"synced": 0, "reason": "stub_backend"}
 
     store = load_spam_learning(path)
+    entries = store.get("entries") or []
     synced = 0
-    for entry in store.get("entries") or []:
+    for entry in entries:
         if _upsert_learning_qdrant(entry):
             synced += 1
-    return {"synced": synced, "total": len(store.get("entries") or [])}
+    pruned = 0
+    try:
+        from agent_pochta.services.spam_learning_rag_qdrant import prune_spam_learning_orphans
+
+        valid_ids = {str(e.get("id")) for e in entries if e.get("id")}
+        pruned = prune_spam_learning_orphans(settings.qdrant_url, valid_ids)
+    except Exception:
+        pruned = 0
+    return {"synced": synced, "total": len(entries), "pruned": pruned}
 
 
 def check_learned_spam(email: EmailMessage) -> SpamResult | None:

@@ -36,20 +36,26 @@ def node_create_erp_task(state: AgentState, container: ServiceContainer) -> Agen
         erp = ErpTaskResult(
             success=True,
             erp_document_number=res["erp_document_number"],
-            erp_task_id=res["erp_task_id"],
+            erp_task_id=res.get("erp_task_id") or res.get("erp_document_id"),
         )
         return {"erp": erp, "trace": trace, "meta": meta}
     except Exception as exc:  # noqa: BLE001
         erp = ErpTaskResult(success=False, error=str(exc))
-        return {
+        human_approved = "human_approved" in state.get("trace", [])
+        escalation = (
+            f"Сбой интеграции с 1С: {exc}. "
+            "Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+        )
+        patch: AgentState = {
             "erp": erp,
-            "status": ProcessingStatus.ERROR,
-            "human_review": True,
-            "escalation_reason": (
-                f"Сбой интеграции с 1С: {exc}. "
-                "Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
-            ),
+            "escalation_reason": escalation,
             "errors": state.get("errors", []) + [f"erp: {exc}"],
             "trace": trace,
             "meta": {**meta, "erp_retry_scheduled": True},
         }
+        if human_approved:
+            patch["human_review"] = False
+        else:
+            patch["status"] = ProcessingStatus.ERROR
+            patch["human_review"] = True
+        return patch

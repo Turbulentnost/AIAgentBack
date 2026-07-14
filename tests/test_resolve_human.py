@@ -84,6 +84,40 @@ def _mock_repo(row: EmailMessageRow):
             yield repo, session
 
 
+def test_approve_routing_on_error_sets_done_and_skips_pipeline():
+    row = _email_row(status=ProcessingStatus.ERROR.value)
+    client = TestClient(app)
+
+    with _mock_repo(row) as (repo, _session):
+        with patch("agent_pochta.api.app.continue_after_human_task") as continue_task:
+            with patch(
+                "agent_pochta.api.app.learn_from_routing_correction",
+                return_value={
+                    "correction_saved": True,
+                    "correction_id": "c1",
+                    "keywords_added": 0,
+                    "qdrant_updated": False,
+                    "learning_keywords": [],
+                },
+            ):
+                response = client.post(
+                    f"/api/v1/email-messages/{row.id}/resolve-human",
+                    json={
+                        "decision": "approve_routing",
+                        "department_id": "00-000002",
+                        "department_name": "Бухгалтерия",
+                    },
+                )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "correction_saved"
+    assert row.status == ProcessingStatus.DONE.value
+    assert row.department_id == "00-000002"
+    continue_task.delay.assert_not_called()
+    repo.rebuild_xml_after_human_correction.assert_called_once()
+
+
 def test_approve_routing_on_done_keeps_status_and_skips_pipeline():
     row = _email_row(status=ProcessingStatus.DONE.value)
     client = TestClient(app)
@@ -154,6 +188,34 @@ def test_approve_routing_on_awaiting_human_schedules_pipeline():
     assert row.status == ProcessingStatus.PROCESSING.value
     continue_task.delay.assert_called_once_with(str(row.id))
     repo.rebuild_xml_after_human_correction.assert_called_once()
+
+
+def test_approve_routing_on_processing_reschedules_pipeline():
+    row = _email_row(status=ProcessingStatus.PROCESSING.value)
+    client = TestClient(app)
+    task = MagicMock(id="task-retry")
+
+    with _mock_repo(row) as (_repo, _session):
+        with patch("agent_pochta.api.app.continue_after_human_task") as continue_task:
+            continue_task.delay.return_value = task
+            with patch(
+                "agent_pochta.api.app.learn_from_routing_correction",
+                return_value={"correction_saved": True},
+            ):
+                response = client.post(
+                    f"/api/v1/email-messages/{row.id}/resolve-human",
+                    json={
+                        "decision": "approve_routing",
+                        "department_id": "00-000002",
+                        "department_name": "Бухгалтерия",
+                    },
+                )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "continuing"
+    assert payload["task_id"] == "task-retry"
+    continue_task.delay.assert_called_once_with(str(row.id))
 
 
 def test_mark_spam_on_done_sets_spam_status():

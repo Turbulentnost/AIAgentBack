@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urljoin
 
@@ -54,6 +55,18 @@ class ODataClient:
                 json=payload,
                 headers={"Accept": "application/json", "Content-Type": "application/json"},
             )
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData POST {entity} failed ({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
             response.raise_for_status()
             data = response.json()
             if isinstance(data, dict):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -18,8 +19,11 @@ from agent_pochta.services.odata_incoming_mapper import (
     build_incoming_document_payload,
     load_field_map,
     load_guid_map,
+    load_guid_map_from_file,
+    resolve_guid_map,
     resolve_department_name,
 )
+from agent_pochta.services.routing_departments import resolve_department_display_name
 from agent_pochta.services.odata_integration import ODataIntegrationService
 
 SAMPLE_XML = (
@@ -82,8 +86,8 @@ def test_build_incoming_document_payload_maps_required_fields(
         organization_keys=ORG_KEYS,
         department_keys=DEPT_KEYS,
     )
-    assert payload["ТемаСлужебнойЗаписки"] == "Тестовая тема"
-    assert payload["Подразделение"] == "Отдел тест"
+    assert payload["ТемаСлужебнойЗаписки"] == "Запрос: Тема письма из почты"
+    assert payload["Подразделение"] == resolve_department_display_name("00-000076", "Отдел тест")
     assert payload["Партнер"] == "ООО Пример"
     assert payload["ПлательщикНаправление"] == "ООО Пример"
     assert payload["Направление"] == "КС"
@@ -142,15 +146,50 @@ def test_payer_defaults_to_partner_when_missing() -> None:
     assert payload["ПлательщикНаправление"] == "ООО Контрагент"
 
 
+def test_build_incoming_document_payload_uses_email_subject_not_xml_body_theme() -> None:
+    subject = "ОЛ 31222, 31240 в работу"
+    body_theme = (
+        f"{subject} Добрый день!ОЛ 31222, 31340 отправлены в просчет."
+        "Потребуются габаритные чертежи."
+    )
+    xml = (
+        "<document>"
+        f"<organization>НП</organization><theme>{body_theme}</theme>"
+        "<направление>КС</направление><claim>false</claim><partner>-</partner>"
+        "<services><service><name>00-000076</name><process>исполнение</process>"
+        "<reasoning>Тест</reasoning></service></services>"
+        "<email_sender>sender@example.com</email_sender>"
+        "<email_recipient>info@turbo-don.ru</email_recipient>"
+        "<mail_datetime>2026-07-03 10:00:00</mail_datetime><process>исполнение</process>"
+        "</document>"
+    )
+    email = EmailMessage(
+        message_id="<ol@test>",
+        mailbox="info@turbo-don.ru",
+        sender_email="sender@example.com",
+        subject=subject,
+        body_text="Добрый день!ОЛ 31222, 31340 отправлены в просчет.",
+        received_at=datetime(2026, 7, 3, 10, 0, tzinfo=timezone.utc),
+    )
+    routing = RoutingResult(
+        department_id="00-000076",
+        department_name="Отдел",
+        confidence=1.0,
+        reasoning="",
+    )
+    payload = build_incoming_document_payload(email, routing, "Обзор", xml_document=xml)
+    assert payload["ТемаСлужебнойЗаписки"] == "Отправить в просчёт: ОЛ 31222, 31240 в работу"
+
+
 def test_resolve_department_name_falls_back_to_rules_lookup() -> None:
     routing = RoutingResult(
-        department_id="00-000054",
+        department_id="00-999998",
         department_name="",
         confidence=1.0,
         reasoning="",
     )
-    names = {"00-000054": "Отдел тендерных продаж"}
-    assert resolve_department_name(routing, department_names=names) == "Отдел тендерных продаж"
+    names = {"00-999998": "Резервный отдел из правил"}
+    assert resolve_department_name(routing, department_names=names) == "Резервный отдел из правил"
 
 
 def test_build_department_name_lookup_collects_rule_names() -> None:
@@ -163,13 +202,14 @@ def test_build_department_name_lookup_collects_rule_names() -> None:
             "reserve_name": "Управление делами",
         }
     )
-    assert lookup["00-000054"] == "Отдел тендерных продаж"
+    assert lookup["00-000054"] == resolve_department_display_name("00-000054", "Отдел тендерных продаж")
     assert lookup["00-000066"] == "Управление делами"
 
 
 def test_odata_client_create_entity_posts_json() -> None:
     client = ODataClient("http://1c.local/odata/standard.odata/", username="u", password="p")
     mock_response = MagicMock()
+    mock_response.status_code = 200
     mock_response.json.return_value = {"Ref_Key": "abc", "Number": "ВК-000001"}
     mock_response.raise_for_status = MagicMock()
 
@@ -216,7 +256,7 @@ def test_odata_integration_service_returns_document_ids(
     assert payload["Кому"] == "00-000076"
     assert result["erp_document_number"] == "ВК-000042"
     assert result["erp_document_id"] == "11111111-2222-3333-4444-555555555555"
-    assert result["erp_task_id"] == "11111111-2222-3333-4444-555555555555"
+    assert result["erp_task_id"] is None
 
 
 def test_build_container_uses_odata_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,9 +271,30 @@ def test_build_container_uses_odata_when_configured(monkeypatch: pytest.MonkeyPa
     assert isinstance(container.integration, ODataIntegrationService)
 
 
+def test_odata_client_create_entity_raises_on_odata_error_message() -> None:
+    client = ODataClient("http://1c.local/odata/standard.odata/")
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.json.return_value = {
+        "odata.error": {"message": {"value": "Нарушение прав доступа!"}},
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    mock_http = MagicMock()
+    mock_http.__enter__ = MagicMock(return_value=mock_http)
+    mock_http.__exit__ = MagicMock(return_value=False)
+    mock_http.post.return_value = mock_response
+
+    with patch("agent_pochta.services.odata_client.httpx.Client", return_value=mock_http):
+        with pytest.raises(ValueError, match="Нарушение прав доступа"):
+            client.create_entity("Document_ТД_ВходящаяКорреспонденция", {})
+
+
 def test_odata_client_create_entity_raises_on_http_error() -> None:
     client = ODataClient("http://1c.local/odata/standard.odata/")
     mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.json.side_effect = json.JSONDecodeError("err", "", 0)
     mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
         "403",
         request=MagicMock(),
@@ -259,6 +320,30 @@ def test_field_map_override() -> None:
     merged = load_field_map(json.dumps({"xml_result": "ТекстHTML", "department_name": ""}))
     assert merged["xml_result"] == "ТекстHTML"
     assert merged["department_name"] == ""
+
+
+def test_resolve_guid_map_prefers_inline_over_file(tmp_path: Path) -> None:
+    file_path = tmp_path / "keys.json"
+    file_path.write_text('{"00-000001": "from-file"}', encoding="utf-8")
+    resolved = resolve_guid_map(
+        '{"00-000001": "from-inline"}',
+        file_path=str(file_path),
+        env_name="ODATA_DEPARTMENT_KEYS",
+    )
+    assert resolved == {"00-000001": "from-inline"}
+
+
+def test_resolve_guid_map_loads_file_when_inline_empty(tmp_path: Path) -> None:
+    file_path = tmp_path / "keys.json"
+    file_path.write_text('{"НП": "11111111-1111-1111-1111-111111111111"}', encoding="utf-8")
+    resolved = resolve_guid_map("", file_path=str(file_path), env_name="ODATA_ORGANIZATION_KEYS")
+    assert resolved["НП"] == "11111111-1111-1111-1111-111111111111"
+
+
+def test_load_guid_map_from_file(tmp_path: Path) -> None:
+    file_path = tmp_path / "org.json"
+    file_path.write_text('{"АЛ": "abc"}', encoding="utf-8")
+    assert load_guid_map_from_file(file_path, env_name="ODATA_ORGANIZATION_KEYS") == {"АЛ": "abc"}
 
 
 def test_load_guid_map_invalid_json_raises() -> None:

@@ -142,6 +142,29 @@ def list_spam_learning_in_qdrant(url: str) -> list[dict]:
         client.close()
 
 
+
+
+def prune_spam_learning_orphans(url: str, valid_entry_ids: set[str]) -> int:
+    """Delete Qdrant points whose id is not in the current JSON store."""
+    if not valid_entry_ids:
+        return 0
+    client = QdrantClient(url=url, prefer_grpc=False)
+    try:
+        _ensure_collection(client)
+        points, _ = client.scroll(
+            collection_name=SPAM_LEARNING_COLLECTION,
+            limit=2000,
+            with_payload=False,
+        )
+        stale = [point.id for point in points if str(point.id) not in valid_entry_ids]
+        if not stale:
+            return 0
+        client.delete(collection_name=SPAM_LEARNING_COLLECTION, points_selector=stale)
+        return len(stale)
+    finally:
+        client.close()
+
+
 def find_spam_learning_match(
     url: str,
     *,
