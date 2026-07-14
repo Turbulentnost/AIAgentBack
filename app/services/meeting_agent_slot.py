@@ -57,6 +57,7 @@ from app.services.meeting_backend import (
     _normalize_memo,
 )
 from app.services.meeting_constants import (
+    COMPANY_CALENDAR_TIMEOUT_SECONDS,
     QUORUM_MAX_CANDIDATES,
     QUORUM_MIN_COVERAGE_RATIO,
     QUORUM_VERIFY_TOP_N,
@@ -171,6 +172,15 @@ def _room_participant_payload(room_status: dict[str, Any]) -> dict[str, Any]:
         "blocking_events": [],
         "calendar_access_error": room_status.get("calendar_access_error"),
     }
+
+
+def participants_busy(
+    participants: list[MeetingSlotParticipantStatusRead],
+) -> bool:
+    """Занят ли хотя бы один участник (без переговорной)."""
+    return any(
+        item.status == "busy" for item in participants if item.role != "room"
+    )
 
 
 def build_slot_detail_availability(
@@ -317,16 +327,25 @@ class MeetingAgentSlotService:
         if not resolved:
             return []
         try:
-            conflicts = await backend.find_company_calendar_reschedule_candidates(
-                participants=resolved,
-                attendee_roles=email_roles_from_attendees(attendees),
-                required_attendee_emails=leadership_required_emails(attendees) or None,
-                attendee_weights=attendee_weights_from_attendees(attendees),
-                planned_start=planned_start,
-                duration_minutes=duration_minutes,
-                max_days=SLOT_PREVIEW_MAX_DAYS,
-                current_user=current_user,
+            conflicts = await asyncio.wait_for(
+                backend.find_company_calendar_reschedule_candidates(
+                    participants=resolved,
+                    attendee_roles=email_roles_from_attendees(attendees),
+                    required_attendee_emails=leadership_required_emails(attendees) or None,
+                    attendee_weights=attendee_weights_from_attendees(attendees),
+                    planned_start=planned_start,
+                    duration_minutes=duration_minutes,
+                    max_days=SLOT_PREVIEW_MAX_DAYS,
+                    current_user=current_user,
+                ),
+                timeout=COMPANY_CALENDAR_TIMEOUT_SECONDS,
             )
+        except TimeoutError:
+            logger.warning(
+                "meeting.slot_detail.company_calendar_timeout",
+                timeout_seconds=COMPANY_CALENDAR_TIMEOUT_SECONDS,
+            )
+            return []
         except MeetingBackendError as exc:
             logger.warning(
                 "meeting.slot_detail.company_calendar_failed",
@@ -946,7 +965,7 @@ class MeetingAgentSlotService:
             participants,
             room=room,
         )
-        if not slot_available:
+        if participants_busy(participants):
             company_recommendations = await self._company_calendar_reschedule_recommendations(
                 resolved=_resolved,
                 attendees=attendees,
@@ -1184,7 +1203,7 @@ class MeetingAgentSlotService:
             participants,
             room=room_status,
         )
-        if not slot_available:
+        if participants_busy(participants):
             company_recommendations = await self._company_calendar_reschedule_recommendations(
                 resolved=resolved,
                 attendees=attendees,

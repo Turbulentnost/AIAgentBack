@@ -839,6 +839,88 @@ async def test_get_agent_slot_detail_uses_company_calendar_when_slot_busy(user) 
     assert "Корпоративная встреча" in labels
 
 
+@pytest.mark.asyncio
+async def test_get_agent_slot_detail_skips_company_calendar_when_only_room_busy(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    detail = {
+        "ref_key": "abc",
+        "queue": {},
+        "application": {
+            "initiator": {"full_name": "A", "email": "a@turbo-don.ru"},
+            "manager": {"full_name": "B", "email": "b@turbo-don.ru"},
+            "participants": [{"full_name": "C", "email": "c@turbo-don.ru"}],
+            "duration_minutes": 120,
+            "location": "Зал совещаний КБ",
+        },
+    }
+    backend = AsyncMock()
+    backend.resolve_participants = AsyncMock()
+    backend.find_company_calendar_reschedule_candidates = AsyncMock(return_value=[])
+    service._backend = lambda: backend
+
+    all_free_details = {
+        "slot_start": "2026-07-09T08:45:00+03:00",
+        "slot_end": "2026-07-09T10:45:00+03:00",
+        "duration_minutes": 120,
+        "participants": [
+            {
+                "fio": "A",
+                "email": "a@turbo-don.ru",
+                "role": "initiator",
+                "status": "free",
+                "blocking_events": [],
+                "calendar_access_error": None,
+            },
+            {
+                "fio": "C",
+                "email": "c@turbo-don.ru",
+                "role": "participant",
+                "status": "free",
+                "blocking_events": [],
+                "calendar_access_error": None,
+            },
+        ],
+    }
+
+    with patch(
+        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
+        AsyncMock(return_value=(detail, None, True)),
+    ):
+        with patch(
+            "app.services.meeting_agent_slot.build_slot_participant_details",
+            return_value=all_free_details,
+        ):
+            with patch(
+                "app.services.meeting_agent_slot.check_rooms_status",
+                return_value=[
+                    {
+                        "name": "Зал совещаний КБ",
+                        "email": "konfzalkb@turbo-don.ru",
+                        "status": "busy",
+                        "status_label": "занята",
+                        "busy_events": 1,
+                    }
+                ],
+            ):
+                result = await service.get_agent_slot_detail(
+                    "abc",
+                    MeetingAgentSlotDetailRequest(
+                        slot_start="2026-07-09 08:45",
+                        slot_end="2026-07-09 10:45",
+                    ),
+                    current_user=user,
+                )
+
+    assert result.error is None
+    assert result.slot_available is False
+    backend.find_company_calendar_reschedule_candidates.assert_not_awaited()
+    labels = [item.event_label for item in result.reschedule_recommendations]
+    assert "Переговорная занята" in labels
+
+
 def test_format_fio_short_uses_surname_and_initials() -> None:
     from app.services.meeting_mappers import format_fio_short
 
