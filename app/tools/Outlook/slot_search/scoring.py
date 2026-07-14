@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.services.meeting_constants import RESCHEDULE_HINT_SEARCH_DAYS
 from app.tools.Outlook.cancel_meeting import to_local
 from app.tools.Outlook.outlook_config import OutlookConfig
 
@@ -172,7 +173,10 @@ def _build_quorum_candidate_payload(
 ) -> dict[str, Any]:
     slot_start: datetime = item["slot_start"]
     slot_end: datetime = item["slot_end"]
-    conflict_window_end = min(search_end, slot_end + timedelta(days=3))
+    conflict_window_end = min(
+        search_end,
+        slot_end + timedelta(days=RESCHEDULE_HINT_SEARCH_DAYS),
+    )
     conflict_events = fetch_freebusy_calendar_events(
         config,
         busy_attendees,

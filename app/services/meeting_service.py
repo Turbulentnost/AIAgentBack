@@ -244,7 +244,7 @@ class MeetingService:
             current_user=current_user,
         )
         try:
-            slots = await backend.find_slots(
+            find_result = await backend.find_slots(
                 memo=memo,
                 participants=participants,
                 planned_start=payload.planned_start.isoformat() if payload.planned_start else None,
@@ -253,7 +253,7 @@ class MeetingService:
             )
         except MeetingBackendError as exc:
             raise MeetingServiceError(str(exc)) from exc
-        return [slot_read(item) for item in slots]
+        return [slot_read(item) for item in find_result.slots]
     def _slot_service(self) -> MeetingAgentSlotService:
         return MeetingAgentSlotService(self.db, backend_factory=self._backend)
 

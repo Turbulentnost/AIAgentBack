@@ -94,3 +94,36 @@ def _human_calendar_attendee_emails(item: Any) -> list[str]:
         if email and not _is_resource_calendar_email(email)
     ]
 
+
+def participant_involved_in_calendar_item(
+    item: Any,
+    *,
+    attendee_email: str,
+    attendee_fio: str | None = None,
+) -> bool:
+    """Участник указан в событии общего календаря (email, организатор или ФИО)."""
+    normalized_email = attendee_email.strip().lower()
+    if not normalized_email:
+        return False
+
+    involved_emails = {email.lower() for email in calendar_item_attendee_emails(item)}
+    if normalized_email in involved_emails:
+        return True
+
+    organizer = normalize_calendar_email(getattr(item, "organizer", None))
+    if organizer == normalized_email:
+        return True
+
+    fio = (attendee_fio or "").strip()
+    if not fio:
+        return False
+
+    surname = fio.split()[0].casefold()
+    if not surname:
+        return False
+
+    for display_name in calendar_item_attendee_display_names(item):
+        if surname in display_name.casefold():
+            return True
+    return False
+

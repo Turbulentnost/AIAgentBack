@@ -344,6 +344,66 @@ def fetch_freebusy_calendar_events(
         for email, view in views_by_email.items()
     }
 
+
+def busy_intervals_and_events_from_freebusy(
+    config: OutlookConfig,
+    attendees: list[str],
+    range_start: datetime,
+    range_end: datetime,
+    *,
+    max_items: int = 500,
+) -> tuple[dict[str, list[tuple[datetime, datetime]]], dict[str, list[Any]]]:
+    """Один GetUserAvailability: занятость + calendar_events по участникам."""
+    attendee_list = [email.strip() for email in attendees if email.strip()]
+    if not attendee_list:
+        return {}, {}
+
+    views_by_email = fetch_free_busy_views(config, attendee_list, range_start, range_end)
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] = {}
+    events_by_attendee: dict[str, list[Any]] = {}
+
+    for email, view in views_by_email.items():
+        with timed_step("parse.freebusy_intervals", attendee=email):
+            try:
+                intervals = freebusy_busy_intervals(
+                    view,
+                    attendee=email,
+                    range_start=range_start,
+                    range_end=range_end,
+                    config=config,
+                )
+            except RuntimeError as exc:
+                logger.warning(
+                    "Free/busy недоступен для %s, пробуем calendar.view: %s",
+                    email,
+                    exc,
+                )
+                intervals = fetch_busy_intervals_calendar(
+                    config,
+                    email,
+                    range_start,
+                    range_end,
+                    max_items=max_items,
+                )
+        busy_by_attendee[email] = intervals
+        events_by_attendee[email] = list(getattr(view, "calendar_events", None) or [])
+        merged = getattr(view, "merged", None)
+        merged_len = len(merged) if isinstance(merged, str) else 0
+        busy_chars = (
+            sum(1 for char in merged if char not in MERGED_FREE_CHARS)
+            if isinstance(merged, str)
+            else 0
+        )
+        logger.info(
+            "  %s: занятых интервалов=%d, merged_len=%d, busy_chars=%d",
+            email,
+            len(intervals),
+            merged_len,
+            busy_chars,
+        )
+
+    return busy_by_attendee, events_by_attendee
+
 def coalesce_intervals(
     intervals: list[tuple[datetime, datetime]],
     config: OutlookConfig,

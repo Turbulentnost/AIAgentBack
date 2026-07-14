@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.services.meeting_constants import COMPANY_CALENDAR_SLOT_MAX_ITEMS, RESCHEDULE_HINT_SEARCH_DAYS
 from app.tools.Outlook.meeting_rooms import (
     DEFAULT_ROOMS_FILE,
     check_rooms_status,
@@ -17,7 +18,11 @@ from app.tools.Outlook.read_calendars import read_calendar_items_in_range
 from app.tools.Outlook.send_meeting_invite import load_config, parse_start
 
 from .availability import is_free_for_attendee
-from .busy import fetch_all_busy_intervals, fetch_freebusy_calendar_events
+from .busy import (
+    fetch_all_busy_intervals,
+    busy_intervals_and_events_from_freebusy,
+    fetch_freebusy_calendar_events,
+)
 from .constants import AvailabilitySource
 from .conflicts import (
     attach_reschedule_hints,
@@ -27,9 +32,85 @@ from .conflicts import (
     conflicting_events_at_slot,
     conflicting_intervals_at_slot,
     dedupe_conflict_records,
+    hydrate_company_calendar_items_for_slot,
+    movability_reason,
 )
 from .search import find_nearest_slot, find_quorum_slots
 from .timing import get_timing_report, logger, log_timing_summary, reset_timing_report, setup_logging, timed_step
+
+
+def _cached_blocking_events(
+    records: list[dict[str, Any]],
+    *,
+    email: str,
+) -> list[dict[str, Any]]:
+    """Детали конфликта из кэша без подсказок переноса (ручное планирование)."""
+    events: list[dict[str, Any]] = []
+    for record in records:
+        source = record.get("source") or "interval"
+        if source not in {"calendar", "freebusy", "interval", "company_calendar"}:
+            source = "interval"
+        events.append(
+            {
+                **record,
+                "source": source,
+                "movability": record.get("movability") or "medium",
+                "movability_reason": movability_reason(
+                    busy_type=str(record.get("busy_type") or ""),
+                    subject=str(record.get("event_subject") or ""),
+                    source=source,
+                ),
+                "can_auto_reschedule": False,
+                "reschedule_hint_start": None,
+                "reschedule_hint_end": None,
+                "email": email,
+            }
+        )
+    return events
+
+
+def _busy_intervals_for_email(
+    email: str,
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+) -> list[tuple[datetime, datetime]]:
+    normalized = email.strip().lower()
+    return busy_by_attendee.get(normalized, busy_by_attendee.get(email, []))
+
+
+def _busy_attendee_emails(
+    *,
+    attendee_emails: list[str],
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    slot_start: datetime,
+    duration: timedelta,
+    config: OutlookConfig,
+) -> list[str]:
+    return [
+        email
+        for email in attendee_emails
+        if not is_free_for_attendee(
+            slot_start,
+            duration,
+            _busy_intervals_for_email(email, busy_by_attendee),
+            config,
+        )
+    ]
+
+
+def _company_calendar_query_range(
+    *,
+    slot_start: datetime,
+    slot_end: datetime,
+) -> tuple[datetime, datetime]:
+    """Окно чтения общего календаря: только выбранный слот ± запас.
+
+    Нельзя расширять до busy-блока из freebusy-кэша: там часто 08:00–17:00,
+    и EWS читает сотни событий за весь день вместо 30-минутного слота.
+    """
+    from app.services.meeting_constants import COMPANY_CALENDAR_SLOT_PAD_MINUTES
+
+    pad = timedelta(minutes=COMPANY_CALENDAR_SLOT_PAD_MINUTES)
+    return slot_start - pad, slot_end + pad
 
 
 def build_slot_participant_details(
@@ -44,8 +125,18 @@ def build_slot_participant_details(
     max_items: int = 500,
     workers: int = 4,
     include_company_calendar: bool = False,
+    light_reschedule_hints: bool = False,
+    cached_busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] | None = None,
 ) -> dict[str, Any]:
-    """Статус каждого участника в выбранном слоте: свободен/занят и мешающие встречи."""
+    """Статус каждого участника в выбранном слоте: свободен/занят и мешающие встречи.
+
+    Ручное планирование (cached_busy_by_attendee задан):
+    1. Кэш free/busy — источник занят/свободен на слоте.
+    2. Все свободны по кэшу — без запросов в Exchange.
+    3. Занятые по кэшу — общий календарь на слот ±15 мин для деталей встречи.
+       Участник свободен только если календарь успешно прочитан, на слоте есть
+       события, но участник не указан ни в одном; при ошибке чтения — занят по кэшу.
+    """
     duration = slot_end - slot_start
     if duration <= timedelta(0):
         raise ValueError("slot_end должно быть позже slot_start")
@@ -59,47 +150,93 @@ def build_slot_participant_details(
     window_start = slot_start - timedelta(hours=1)
     window_end = slot_end + timedelta(hours=1)
     hint_search_end = min(
-        slot_end + timedelta(days=3),
+        slot_end + timedelta(days=RESCHEDULE_HINT_SEARCH_DAYS),
         slot_start + timedelta(days=30),
     )
 
     busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] = {}
+    conflict_events: dict[str, list[Any]] = {}
     if attendee_emails:
-        busy_by_attendee = fetch_all_busy_intervals(
-            config,
-            attendee_emails,
-            window_start,
-            window_end,
-            source=source,
-            max_items=max_items,
-            workers=workers,
-        )
+        if cached_busy_by_attendee is not None:
+            busy_by_attendee = cached_busy_by_attendee
+            logger.info(
+                "slot_details.reuse_cached_busy attendees=%d",
+                len(attendee_emails),
+            )
+        else:
+            busy_by_attendee, conflict_events = busy_intervals_and_events_from_freebusy(
+                config,
+                attendee_emails,
+                window_start,
+                window_end,
+                max_items=max_items,
+            )
 
-    conflict_events = fetch_freebusy_calendar_events(
-        config,
-        attendee_emails,
-        window_start,
-        window_end,
-    ) if attendee_emails else {}
+    use_cached_busy_only = cached_busy_by_attendee is not None
+    busy_attendee_emails = _busy_attendee_emails(
+        attendee_emails=attendee_emails,
+        busy_by_attendee=busy_by_attendee,
+        slot_start=slot_start,
+        duration=duration,
+        config=config,
+    )
 
     company_calendar_items: list[Any] = []
-    if include_company_calendar:
+    company_calendar_loaded = False
+    if include_company_calendar and busy_attendee_emails:
         company_calendar = (config.company_calendar or "").strip()
         if company_calendar:
+            calendar_range_start, calendar_range_end = _company_calendar_query_range(
+                slot_start=slot_start,
+                slot_end=slot_end,
+            )
+            calendar_max_items = min(max_calendar_items, COMPANY_CALENDAR_SLOT_MAX_ITEMS)
+            range_minutes = int(
+                (calendar_range_end - calendar_range_start).total_seconds() // 60
+            )
+            logger.info(
+                "slot_details.company_calendar_for_busy_slot attendees=%d busy=%d "
+                "range_start=%s range_end=%s range_minutes=%d cached=%s",
+                len(attendee_emails),
+                len(busy_attendee_emails),
+                calendar_range_start.isoformat(),
+                calendar_range_end.isoformat(),
+                range_minutes,
+                use_cached_busy_only,
+            )
             try:
                 company_calendar_items = read_calendar_items_in_range(
                     config,
                     company_calendar,
-                    range_start=window_start,
-                    range_end=window_end,
-                    max_items=max_calendar_items,
+                    range_start=calendar_range_start,
+                    range_end=calendar_range_end,
+                    max_items=calendar_max_items,
+                    load_attendees=False,
+                )
+                hydrated_count = hydrate_company_calendar_items_for_slot(
+                    company_calendar_items,
+                    slot_start=slot_start,
+                    slot_end=slot_end,
+                    config=config,
+                )
+                company_calendar_loaded = True
+                logger.info(
+                    "slot_details.company_calendar_read items=%d hydrated=%d",
+                    len(company_calendar_items),
+                    hydrated_count,
                 )
             except Exception as exc:
+                company_calendar_loaded = False
                 logger.warning(
                     "company_calendar_read_failed calendar=%s error=%s",
                     company_calendar,
                     exc,
                 )
+    elif use_cached_busy_only:
+        logger.info(
+            "slot_details.cached_all_free attendees=%d",
+            len(attendee_emails),
+        )
 
     participants: list[dict[str, Any]] = []
     for attendee in attendees:
@@ -119,7 +256,7 @@ def build_slot_participant_details(
             )
             continue
 
-        busy_intervals = busy_by_attendee.get(email, [])
+        busy_intervals = _busy_intervals_for_email(email, busy_by_attendee)
         if is_free_for_attendee(slot_start, duration, busy_intervals, config):
             participants.append(
                 {
@@ -133,24 +270,113 @@ def build_slot_participant_details(
             )
             continue
 
+        if use_cached_busy_only and include_company_calendar:
+            company_records: list[dict[str, Any]] = []
+            if company_calendar_items:
+                company_records = conflicting_company_calendar_items_at_slot(
+                    company_calendar_items,
+                    slot_start,
+                    duration,
+                    config,
+                    attendee_email=email,
+                    attendee_fio=fio,
+                )
+            if (
+                company_calendar_loaded
+                and company_calendar_items
+                and not company_records
+            ):
+                logger.info(
+                    "slot_details.cache_busy_treated_free email=%s company_items=%d",
+                    email,
+                    len(company_calendar_items),
+                )
+                participants.append(
+                    {
+                        "fio": fio,
+                        "email": email,
+                        "role": role,
+                        "status": "free",
+                        "blocking_events": [],
+                        "calendar_access_error": None,
+                    }
+                )
+                continue
+
+            if not company_records:
+                interval_records = conflicting_intervals_at_slot(
+                    busy_intervals,
+                    slot_start,
+                    duration,
+                    config,
+                )
+                for record in interval_records:
+                    record["source"] = "interval"
+                blocking_events = _cached_blocking_events(interval_records, email=email)
+                if not company_calendar_loaded:
+                    logger.info(
+                        "slot_details.cache_busy_without_company_calendar email=%s",
+                        email,
+                    )
+                participants.append(
+                    {
+                        "fio": fio,
+                        "email": email,
+                        "role": role,
+                        "status": "busy",
+                        "blocking_events": blocking_events,
+                        "calendar_access_error": None,
+                    }
+                )
+                continue
+
+            if light_reschedule_hints:
+                blocking_events = attach_reschedule_hints(
+                    company_records,
+                    owner_email=email,
+                    busy_intervals=busy_intervals,
+                    config=config,
+                    step=step,
+                    search_end=hint_search_end,
+                    reserved_slot=(slot_start, slot_end),
+                    light_hints=False,
+                )
+                for event in blocking_events:
+                    event["email"] = email
+            else:
+                blocking_events = _cached_blocking_events(company_records, email=email)
+
+            participants.append(
+                {
+                    "fio": fio,
+                    "email": email,
+                    "role": role,
+                    "status": "busy",
+                    "blocking_events": blocking_events,
+                    "calendar_access_error": None,
+                }
+            )
+            continue
+
         calendar_error: str | None = None
         calendar_records: list[dict[str, Any]] = []
-        try:
-            calendar_items = read_calendar_items_in_range(
-                config,
-                email,
-                range_start=window_start,
-                range_end=window_end,
-                max_items=max_calendar_items,
-            )
-            calendar_records = conflicting_calendar_items_at_slot(
-                calendar_items,
-                slot_start,
-                duration,
-                config,
-            )
-        except Exception as exc:
-            calendar_error = str(exc).strip() or "Не удалось прочитать календарь участника"
+        if not include_company_calendar:
+            try:
+                calendar_items = read_calendar_items_in_range(
+                    config,
+                    email,
+                    range_start=window_start,
+                    range_end=window_end,
+                    max_items=max_calendar_items,
+                )
+                calendar_records = conflicting_calendar_items_at_slot(
+                    calendar_items,
+                    slot_start,
+                    duration,
+                    config,
+                )
+            except Exception as exc:
+                calendar_error = str(exc).strip() or "Не удалось прочитать календарь участника"
 
         freebusy_records = conflicting_events_at_slot(
             conflict_events.get(email, []),
@@ -161,8 +387,19 @@ def build_slot_participant_details(
         for record in freebusy_records:
             record["source"] = "freebusy"
 
+        company_records: list[dict[str, Any]] = []
+        if company_calendar_items:
+            company_records = conflicting_company_calendar_items_at_slot(
+                company_calendar_items,
+                slot_start,
+                duration,
+                config,
+                attendee_email=email,
+                attendee_fio=fio,
+            )
+
         interval_records: list[dict[str, Any]] = []
-        if not calendar_records and not freebusy_records:
+        if not calendar_records and not freebusy_records and not company_records:
             interval_records = conflicting_intervals_at_slot(
                 busy_intervals,
                 slot_start,
@@ -172,35 +409,30 @@ def build_slot_participant_details(
             for record in interval_records:
                 record["source"] = "interval"
 
-        company_records: list[dict[str, Any]] = []
-        if company_calendar_items:
-            company_records = conflicting_company_calendar_items_at_slot(
-                company_calendar_items,
-                slot_start,
-                duration,
-                config,
-                attendee_email=email,
-            )
-
         merged_records = dedupe_conflict_records(
-            calendar_records + freebusy_records + interval_records + company_records
+            calendar_records + freebusy_records + company_records + interval_records
         )
         if company_records and any(
             str(record.get("event_subject") or "").strip() for record in merged_records
         ):
             calendar_error = None
 
-        blocking_events = attach_reschedule_hints(
-            merged_records,
-            owner_email=email,
-            busy_intervals=busy_intervals,
-            config=config,
-            step=step,
-            search_end=hint_search_end,
-            reserved_slot=(slot_start, slot_end),
-        )
-        for event in blocking_events:
-            event["email"] = email
+        if use_cached_busy_only:
+            # Ручное планирование: без подсказок переноса, только факты конфликта.
+            blocking_events = _cached_blocking_events(merged_records, email=email)
+        else:
+            blocking_events = attach_reschedule_hints(
+                merged_records,
+                owner_email=email,
+                busy_intervals=busy_intervals,
+                config=config,
+                step=step,
+                search_end=hint_search_end,
+                reserved_slot=(slot_start, slot_end),
+                light_hints=light_reschedule_hints,
+            )
+            for event in blocking_events:
+                event["email"] = email
 
         participants.append(
             {

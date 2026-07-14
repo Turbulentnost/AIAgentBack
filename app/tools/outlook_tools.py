@@ -698,6 +698,10 @@ class FindMeetingSlotOutput(BaseModel):
     search_until: str
     availability_source: str
     rooms_status: list[dict[str, Any]] | None = None
+    availability_snapshot: dict[str, Any] | None = Field(
+        default=None,
+        description="Снимок free/busy для переиспользования при ручной проверке слота",
+    )
 
 
 async def find_meeting_slot_tool(
@@ -853,6 +857,10 @@ class FindQuorumMeetingSlotsOutput(BaseModel):
     availability_source: str
     search_mode: str
     candidates: list[MeetingQuorumCandidateOutput]
+    availability_snapshot: dict[str, Any] | None = Field(
+        default=None,
+        description="Снимок free/busy для повторного использования в slot-preview/details",
+    )
 
 
 async def find_quorum_meeting_slots_tool(

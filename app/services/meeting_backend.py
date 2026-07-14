@@ -84,6 +84,18 @@ class MeetingSlot:
 
 
 @dataclass(slots=True)
+class FindSlotsResult:
+    slots: list[MeetingSlot]
+    availability_snapshot: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class FindQuorumSlotsResult:
+    slots: list[MeetingQuorumSlot]
+    availability_snapshot: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
 class MeetingSlotConflict:
     email: str
     fio: str | None = None
@@ -237,10 +249,10 @@ class MeetingBackend:
         verify_calendar: bool = True,
         quiet: bool = True,
         include_timing: bool = False,
-    ) -> list[MeetingSlot]:
+    ) -> FindSlotsResult:
         attendee_emails = _participant_emails(participants)
         if not attendee_emails:
-            return []
+            return FindSlotsResult(slots=[])
 
         duration = duration_minutes or _duration_from_memo(memo) or DEFAULT_DURATION_MINUTES
         preferred = planned_start or _preferred_from_memo(memo) or _default_preferred()
@@ -268,10 +280,16 @@ class MeetingBackend:
         slot_start = payload.get("slot_start")
         slot_end = payload.get("slot_end")
         if not slot_start or not slot_end:
-            return []
+            return FindSlotsResult(
+                slots=[],
+                availability_snapshot=payload.get("availability_snapshot"),
+            )
 
         confidence = 0.95 if len(attendee_emails) == len([p for p in participants if _participant_found(p)]) else 0.7
-        return [MeetingSlot(start=slot_start, end=slot_end, confidence=confidence)]
+        return FindSlotsResult(
+            slots=[MeetingSlot(start=slot_start, end=slot_end, confidence=confidence)],
+            availability_snapshot=payload.get("availability_snapshot"),
+        )
 
     async def find_quorum_slots(
         self,
@@ -293,10 +311,10 @@ class MeetingBackend:
         include_timing: bool = False,
         latest_allowed: str | None = None,
         raise_if_empty: bool = True,
-    ) -> list[MeetingQuorumSlot]:
+    ) -> FindQuorumSlotsResult:
         attendee_emails = _participant_emails(participants)
         if not attendee_emails:
-            return []
+            return FindQuorumSlotsResult(slots=[])
 
         roles_by_email = attendee_roles or {}
         weights_by_email = attendee_weights or {
@@ -390,7 +408,10 @@ class MeetingBackend:
                     low_movability_count=int(item.get("low_movability_count") or 0),
                 )
             )
-        return result
+        return FindQuorumSlotsResult(
+            slots=result,
+            availability_snapshot=payload.get("availability_snapshot"),
+        )
 
     async def find_company_calendar_reschedule_candidates(
         self,

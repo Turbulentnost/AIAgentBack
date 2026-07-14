@@ -12,12 +12,14 @@ from .attendees import (
     calendar_item_attendee_display_names,
     calendar_item_attendee_emails,
     normalize_calendar_email,
+    participant_involved_in_calendar_item,
 )
 from .availability import is_free_for_all, is_free_for_attendee
 from .busy import (
     coalesce_intervals,
     event_interval,
     fetch_busy_intervals_freebusy,
+    fetch_busy_intervals_freebusy_events,
     fetch_freebusy_calendar_events,
     freebusy_event_interval,
 )
@@ -127,6 +129,62 @@ def _apply_reserved_slot_to_busy(
         config=config,
     )
 
+def _exclude_window_from_busy(
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    *,
+    exclude_start: datetime,
+    exclude_end: datetime,
+    config: OutlookConfig,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    """Убирает переносимую встречу из занятости — ищем окно для её переноса."""
+    local_exclude_start = to_local(exclude_start, config)
+    local_exclude_end = to_local(exclude_end, config)
+    updated: dict[str, list[tuple[datetime, datetime]]] = {}
+    for email, intervals in busy_by_attendee.items():
+        pruned: list[tuple[datetime, datetime]] = []
+        for busy_start, busy_end in intervals:
+            busy_start_local = to_local(busy_start, config)
+            busy_end_local = to_local(busy_end, config)
+            if busy_end_local <= local_exclude_start or busy_start_local >= local_exclude_end:
+                pruned.append((busy_start_local, busy_end_local))
+                continue
+            if busy_start_local < local_exclude_start:
+                pruned.append((busy_start_local, local_exclude_start))
+            if busy_end_local > local_exclude_end:
+                pruned.append((local_exclude_end, busy_end_local))
+        updated[email] = coalesce_intervals(pruned, config)
+    return updated
+
+
+def _fetch_group_busy_for_hint(
+    config: OutlookConfig,
+    attendees: list[str],
+    fetch_start: datetime,
+    fetch_end: datetime,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    try:
+        busy_by_attendee = fetch_busy_intervals_freebusy_events(
+            config,
+            attendees,
+            fetch_start,
+            fetch_end,
+        )
+        if any(intervals for intervals in busy_by_attendee.values()):
+            return busy_by_attendee
+    except Exception as exc:
+        logger.warning(
+            "reschedule_hint_group_events_fetch_failed attendees=%s error=%s",
+            len(attendees),
+            exc,
+        )
+    return fetch_busy_intervals_freebusy(
+        config,
+        attendees,
+        fetch_start,
+        fetch_end,
+    )
+
+
 def suggest_reschedule_window(
     *,
     event_start: datetime,
@@ -139,6 +197,7 @@ def suggest_reschedule_window(
     blocked_hint_slots: list[tuple[datetime, datetime]] | None = None,
     owner_email: str | None = None,
     meeting_attendees: list[str] | None = None,
+    skip_group_busy_fetch: bool = False,
 ) -> tuple[datetime, datetime] | None:
     event_start = to_local(event_start, config)
     event_end = to_local(event_end, config)
@@ -175,13 +234,13 @@ def suggest_reschedule_window(
         attendee_emails.insert(0, owner)
 
     group_attendees = _human_attendees_for_reschedule_hint(attendee_emails)
-    use_group_check = len(group_attendees) >= 2
+    use_group_check = len(group_attendees) >= 2 and not skip_group_busy_fetch
     busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] | None = None
     if use_group_check:
         fetch_start = event_end
         fetch_end = search_end
         try:
-            busy_by_attendee = fetch_busy_intervals_freebusy(
+            busy_by_attendee = _fetch_group_busy_for_hint(
                 config,
                 group_attendees,
                 fetch_start,
@@ -197,6 +256,12 @@ def suggest_reschedule_window(
             use_group_check = False
 
     if use_group_check and busy_by_attendee is not None:
+        busy_by_attendee = _exclude_window_from_busy(
+            busy_by_attendee,
+            exclude_start=event_start,
+            exclude_end=event_end,
+            config=config,
+        )
         busy_by_attendee = _apply_blocked_slots_to_busy(
             busy_by_attendee,
             owner_email=owner,
@@ -386,6 +451,33 @@ def conflicting_calendar_items_at_slot(
         )
     return records
 
+
+def hydrate_company_calendar_items_for_slot(
+    items: list[Any],
+    *,
+    slot_start: datetime,
+    slot_end: datetime,
+    config: OutlookConfig,
+) -> int:
+    """Догружает участников только у событий общего календаря, пересекающих слот."""
+    from app.tools.Outlook.read_calendars import hydrate_calendar_item_attendees
+
+    local_start = to_local(slot_start, config)
+    local_end = to_local(slot_end, config)
+    overlapping: list[Any] = []
+    for item in items:
+        interval = event_interval(item, config)
+        if interval is None:
+            continue
+        event_start, event_end = interval
+        if intervals_overlap(local_start, local_end, event_start, event_end):
+            overlapping.append(item)
+    if not overlapping:
+        return 0
+    hydrate_calendar_item_attendees(overlapping)
+    return len(overlapping)
+
+
 def conflicting_company_calendar_items_at_slot(
     items: list[Any],
     slot_start: datetime,
@@ -393,13 +485,13 @@ def conflicting_company_calendar_items_at_slot(
     config: OutlookConfig,
     *,
     attendee_email: str,
+    attendee_fio: str | None = None,
 ) -> list[dict[str, Any]]:
     """Конфликты из общего календаря компании для конкретного участника."""
     normalized_email = attendee_email.strip().lower()
     if not normalized_email:
         return []
 
-    attendee_set = {normalized_email}
     local_start = to_local(slot_start, config)
     local_end = local_start + duration
     records: list[dict[str, Any]] = []
@@ -411,12 +503,11 @@ def conflicting_company_calendar_items_at_slot(
         if not intervals_overlap(local_start, local_end, event_start, event_end):
             continue
 
-        event_attendees = [
-            email
-            for email in calendar_item_attendee_emails(item)
-            if email in attendee_set
-        ]
-        if not event_attendees:
+        if not participant_involved_in_calendar_item(
+            item,
+            attendee_email=normalized_email,
+            attendee_fio=attendee_fio,
+        ):
             continue
 
         subject = str(getattr(item, "subject", "") or "").strip()
@@ -483,6 +574,53 @@ def dedupe_conflict_records(records: list[dict[str, Any]]) -> list[dict[str, Any
 
     return [by_interval[key] for key in order]
 
+def _skip_group_busy_fetch_for_hint(
+    *,
+    light_hints: bool,
+    meeting_attendees: list[Any] | None,
+) -> bool:
+    """Лёгкий режим только для одиночных встреч; для совещаний нужен group freebusy."""
+    group = _human_attendees_for_reschedule_hint(
+        [
+            email
+            for email in (meeting_attendees or [])
+            if isinstance(email, str) and email.strip()
+        ]
+    )
+    return light_hints and len(group) < 2
+
+
+def _busy_intervals_for_hint(
+    *,
+    owner_email: str,
+    event_end: datetime,
+    search_end: datetime,
+    busy_intervals: list[tuple[datetime, datetime]],
+    config: OutlookConfig,
+    use_cached_only: bool,
+) -> list[tuple[datetime, datetime]]:
+    if use_cached_only:
+        return busy_intervals
+    normalized_owner = owner_email.strip().lower()
+    if not normalized_owner:
+        return busy_intervals
+    try:
+        fetched = fetch_busy_intervals_freebusy(
+            config,
+            [normalized_owner],
+            event_end,
+            search_end,
+        )
+        return fetched.get(normalized_owner, busy_intervals)
+    except Exception as exc:
+        logger.warning(
+            "reschedule_hint_owner_busy_fetch_failed email=%s error=%s",
+            normalized_owner,
+            exc,
+        )
+        return busy_intervals
+
+
 def attach_reschedule_hints(
     records: list[dict[str, Any]],
     *,
@@ -492,24 +630,84 @@ def attach_reschedule_hints(
     step: timedelta,
     search_end: datetime,
     reserved_slot: tuple[datetime, datetime] | None = None,
+    light_hints: bool = False,
 ) -> list[dict[str, Any]]:
     conflicts: list[dict[str, Any]] = []
     assigned_hints: list[tuple[datetime, datetime]] = []
-    for record in records:
-        event_start = datetime.fromisoformat(record["event_start"])
-        event_end = datetime.fromisoformat(record["event_end"])
+    hints_by_event: dict[tuple[str, str, str], tuple[datetime, datetime] | None] = {}
+
+    def _event_key(record: dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            str(record["event_start"]),
+            str(record["event_end"]),
+            str(record.get("event_subject") or ""),
+        )
+
+    def _resolve_hint(
+        *,
+        event_start: datetime,
+        event_end: datetime,
+        meeting_attendees: list[Any] | None,
+        skip_group_busy: bool,
+        hint_busy_intervals: list[tuple[datetime, datetime]],
+    ) -> tuple[datetime, datetime] | None:
         hint = suggest_reschedule_window(
             event_start=event_start,
             event_end=event_end,
-            busy_intervals=busy_intervals,
+            busy_intervals=hint_busy_intervals,
             config=config,
             step=step,
             search_end=search_end,
             reserved_slot=reserved_slot,
             blocked_hint_slots=assigned_hints,
             owner_email=owner_email,
-            meeting_attendees=record.get("event_attendees"),
+            meeting_attendees=meeting_attendees,
+            skip_group_busy_fetch=skip_group_busy,
         )
+        if hint is not None or skip_group_busy:
+            return hint
+        return suggest_reschedule_window(
+            event_start=event_start,
+            event_end=event_end,
+            busy_intervals=hint_busy_intervals,
+            config=config,
+            step=step,
+            search_end=search_end,
+            reserved_slot=reserved_slot,
+            blocked_hint_slots=assigned_hints,
+            owner_email=owner_email,
+            meeting_attendees=[owner_email],
+            skip_group_busy_fetch=True,
+        )
+
+    for record in records:
+        event_start = datetime.fromisoformat(record["event_start"])
+        event_end = datetime.fromisoformat(record["event_end"])
+        meeting_attendees = record.get("event_attendees")
+        event_key = _event_key(record)
+        if event_key in hints_by_event:
+            hint = hints_by_event[event_key]
+        else:
+            skip_group_busy = _skip_group_busy_fetch_for_hint(
+                light_hints=light_hints,
+                meeting_attendees=meeting_attendees,
+            )
+            hint_busy_intervals = _busy_intervals_for_hint(
+                owner_email=owner_email,
+                event_end=event_end,
+                search_end=search_end,
+                busy_intervals=busy_intervals,
+                config=config,
+                use_cached_only=not skip_group_busy,
+            )
+            hint = _resolve_hint(
+                event_start=event_start,
+                event_end=event_end,
+                meeting_attendees=meeting_attendees,
+                skip_group_busy=skip_group_busy,
+                hint_busy_intervals=hint_busy_intervals,
+            )
+            hints_by_event[event_key] = hint
         if hint is not None:
             assigned_hints.append(hint)
         subject = str(record.get("event_subject") or "")

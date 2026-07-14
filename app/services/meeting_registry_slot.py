@@ -132,7 +132,7 @@ async def suggest_earlier_slots_after_removal(
     max_days = _max_search_days(window.lower_bound, window.upper_bound)
 
     try:
-        quorum_slots = await asyncio.wait_for(
+        quorum_result = await asyncio.wait_for(
             backend.find_quorum_slots(
                 memo=None,
                 participants=participants,
@@ -149,6 +149,7 @@ async def suggest_earlier_slots_after_removal(
             ),
             timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
         )
+        quorum_slots = quorum_result.slots
     except TimeoutError:
         logger.warning(
             "meeting.registry_earlier_slot_timeout",
@@ -280,7 +281,7 @@ async def suggest_common_slots_after_add(
     max_days = _max_search_days(window.lower_bound, window.upper_bound)
 
     try:
-        quorum_slots = await asyncio.wait_for(
+        quorum_result = await asyncio.wait_for(
             backend.find_quorum_slots(
                 memo=None,
                 participants=participants,
@@ -296,6 +297,7 @@ async def suggest_common_slots_after_add(
             ),
             timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
         )
+        quorum_slots = quorum_result.slots
     except TimeoutError:
         logger.warning(
             "meeting.registry_common_slot_timeout",

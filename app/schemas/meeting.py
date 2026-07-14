@@ -374,6 +374,10 @@ class MeetingAgentSlotDetailRequest(BaseModel):
         default=None,
         description="Длительность совещания; если не указана — из slot_end − slot_start",
     )
+    availability_cache_id: str | None = Field(
+        default=None,
+        description="Снимок занятости из slot-preview; избегает повторного freebusy при ручной проверке",
+    )
 
     @field_validator("duration_minutes", mode="before")
     @classmethod
@@ -457,6 +461,10 @@ class MeetingAgentSlotPreviewRead(BaseModel):
     conflicts: list[MeetingSlotConflictRead] = Field(default_factory=list)
     slot_candidates: list[MeetingQuorumSlotRead] = Field(default_factory=list)
     search_mode: Literal["all", "partial"] = "all"
+    availability_cache_id: str | None = Field(
+        default=None,
+        description="ID снимка занятости из подбора слота для быстрой ручной проверки",
+    )
     preview_note: str | None = Field(
         default=None,
         description="Пояснение для UI (например, когда нужен разбор УД с переносами)",

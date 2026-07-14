@@ -517,6 +517,12 @@ def find_quorum_slots(
                 "search_mode": "empty",
                 "partial_fallback": use_fallback,
                 "candidates": [],
+                **_availability_snapshot_fields(
+                    attendees=attendees,
+                    window_start=earliest_allowed,
+                    window_end=search_end,
+                    busy_by_attendee=busy_by_attendee,
+                ),
             }
         raise RuntimeError(
             f"Quorum-слот не найден: min_coverage={min_coverage_ratio:.0%}, "
@@ -539,6 +545,32 @@ def find_quorum_slots(
         ),
         "partial_fallback": use_fallback,
         "candidates": candidates,
+        **_availability_snapshot_fields(
+            attendees=attendees,
+            window_start=earliest_allowed,
+            window_end=search_end,
+            busy_by_attendee=busy_by_attendee,
+        ),
+    }
+
+
+def _availability_snapshot_fields(
+    *,
+    attendees: list[str],
+    window_start: datetime,
+    window_end: datetime,
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+) -> dict[str, Any]:
+    from app.services.slot_availability_cache import serialize_busy_snapshot
+
+    return {
+        "availability_snapshot": serialize_busy_snapshot(
+            memo_ref_key="",
+            attendee_emails=attendees,
+            window_start=window_start,
+            window_end=window_end,
+            busy_by_attendee=busy_by_attendee,
+        ),
     }
 
 def _slot_search_result(
@@ -551,9 +583,11 @@ def _slot_search_result(
     checked: int,
     search_end: datetime,
     source: AvailabilitySource,
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] | None = None,
+    memo_ref_key: str | None = None,
 ) -> dict[str, Any]:
     end = candidate + duration
-    return {
+    result: dict[str, Any] = {
         "preferred": requested.isoformat(),
         "earliest_allowed": earliest_allowed.isoformat(),
         "slot_start": candidate.isoformat(),
@@ -564,6 +598,18 @@ def _slot_search_result(
         "search_until": search_end.isoformat(),
         "availability_source": source,
     }
+    if busy_by_attendee is not None:
+        from app.services.slot_availability_cache import serialize_busy_snapshot
+
+        result["availability_snapshot"] = serialize_busy_snapshot(
+            memo_ref_key=memo_ref_key or "",
+            attendee_emails=attendees,
+            window_start=earliest_allowed,
+            window_end=search_end,
+            busy_by_attendee=busy_by_attendee,
+        )
+    return result
+
 
 def find_nearest_slot(
     *,
@@ -675,6 +721,7 @@ def find_nearest_slot(
                     checked=checked,
                     search_end=search_end,
                     source=source,
+                    busy_by_attendee=busy_by_attendee,
                 )
             calendar_ok, _calendar_busy = verify_slot_with_calendar(
                 config=config,
@@ -695,6 +742,7 @@ def find_nearest_slot(
                     checked=checked,
                     search_end=search_end,
                     source=source,
+                    busy_by_attendee=busy_by_attendee,
                 )
             logger.info(
                 "Слот %s свободен по merged, но занят по free/busy events — ищем следующий",

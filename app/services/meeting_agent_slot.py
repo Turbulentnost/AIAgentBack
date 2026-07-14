@@ -61,6 +61,7 @@ from app.services.meeting_constants import (
     QUORUM_MAX_CANDIDATES,
     QUORUM_MIN_COVERAGE_RATIO,
     QUORUM_VERIFY_TOP_N,
+    SLOT_DETAIL_TIMEOUT_SECONDS,
     SLOT_PREVIEW_MAX_DAYS,
     SLOT_PREVIEW_TIMEOUT_SECONDS,
 )
@@ -180,6 +181,27 @@ def participants_busy(
     """Занят ли хотя бы один участник (без переговорной)."""
     return any(
         item.status == "busy" for item in participants if item.role != "room"
+    )
+
+
+def _store_availability_cache_id(
+    memo_ref_key: str,
+    snapshot_payload: dict[str, Any] | None,
+) -> str | None:
+    if not snapshot_payload:
+        return None
+    from app.services.slot_availability_cache import (
+        store_availability_snapshot,
+        trim_snapshot_for_cache,
+    )
+
+    return store_availability_snapshot(
+        trim_snapshot_for_cache(
+            {
+                **snapshot_payload,
+                "memo_ref_key": memo_ref_key,
+            }
+        )
     )
 
 
@@ -382,7 +404,7 @@ class MeetingAgentSlotService:
             if not attendee.found or not attendee.email:
                 return attendee
             try:
-                slots = await backend.find_slots(
+                find_result = await backend.find_slots(
                     memo=memo,
                     participants=[
                         ResolvedParticipant(fio=attendee.fio, email=attendee.email, found=True),
@@ -394,6 +416,7 @@ class MeetingAgentSlotService:
                     verify_calendar=True,
                     quiet=True,
                 )
+                slots = find_result.slots
             except MeetingBackendError as exc:
                 logger.info(
                     "meeting.slot_preview.attendee_slot_failed",
@@ -524,7 +547,7 @@ class MeetingAgentSlotService:
             timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS,
         )
         try:
-            all_free_slots = await asyncio.wait_for(
+            find_result = await asyncio.wait_for(
                 backend.find_slots(
                     memo=memo,
                     participants=resolved,
@@ -538,6 +561,27 @@ class MeetingAgentSlotService:
                 ),
                 timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
             )
+            all_free_slots = find_result.slots
+            availability_cache_id: str | None = None
+            snapshot_payload = find_result.availability_snapshot
+            if snapshot_payload:
+                from app.services.slot_availability_cache import (
+                    store_availability_snapshot,
+                    trim_snapshot_for_cache,
+                )
+
+                snapshot_payload = trim_snapshot_for_cache(
+                    {
+                        **snapshot_payload,
+                        "memo_ref_key": normalized_ref,
+                    }
+                )
+                availability_cache_id = store_availability_snapshot(snapshot_payload)
+            else:
+                logger.info(
+                    "meeting.slot_preview.no_availability_snapshot",
+                    memo_ref_key=normalized_ref,
+                )
         except TimeoutError:
             return agent_slot_preview_error(
                 normalized_ref,
@@ -588,6 +632,7 @@ class MeetingAgentSlotService:
                     required_ok=True,
                 ),
                 search_mode="all",
+                availability_cache_id=availability_cache_id,
             )
 
         logger.info(
@@ -596,7 +641,7 @@ class MeetingAgentSlotService:
             all_slots_error=str(all_slots_error) if all_slots_error else None,
         )
         try:
-            quorum_slots = await asyncio.wait_for(
+            quorum_result = await asyncio.wait_for(
                 backend.find_quorum_slots(
                     memo=memo,
                     participants=resolved,
@@ -615,6 +660,11 @@ class MeetingAgentSlotService:
                     include_timing=True,
                 ),
                 timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
+            )
+            quorum_slots = quorum_result.slots
+            availability_cache_id = _store_availability_cache_id(
+                normalized_ref,
+                quorum_result.availability_snapshot,
             )
         except TimeoutError:
             return agent_slot_preview_error(
@@ -703,6 +753,7 @@ class MeetingAgentSlotService:
                 missing_emails=missing_emails,
                 coverage=coverage_read(recommended),
                 search_mode="all",
+                availability_cache_id=availability_cache_id,
             )
 
         logger.info(
@@ -727,6 +778,7 @@ class MeetingAgentSlotService:
             slot_candidates=slot_candidates,
             search_mode="partial",
             preview_note=format_partial_slot_preview_note(),
+            availability_cache_id=availability_cache_id,
         )
 
     async def _agent_slot_preview_no_slot(
@@ -899,13 +951,54 @@ class MeetingAgentSlotService:
             for attendee in attendees
         ]
 
+        cached_busy_by_attendee = None
+        if payload.availability_cache_id:
+            from app.services.slot_availability_cache import (
+                get_availability_snapshot,
+                slot_within_snapshot_window,
+            )
+
+            snapshot = get_availability_snapshot(payload.availability_cache_id)
+            if snapshot is None:
+                logger.info(
+                    "meeting.slot_detail.cache_miss",
+                    memo_ref_key=normalized_ref,
+                    cache_id=payload.availability_cache_id,
+                )
+            elif (
+                snapshot.memo_ref_key == normalized_ref
+                and slot_within_snapshot_window(
+                    snapshot,
+                    slot_start=slot_start_dt,
+                    slot_end=slot_end_dt,
+                )
+            ):
+                cached_busy_by_attendee = snapshot.busy_by_attendee
+                logger.info(
+                    "meeting.slot_detail.reuse_availability_cache",
+                    memo_ref_key=normalized_ref,
+                    cache_id=payload.availability_cache_id,
+                )
+            else:
+                logger.info(
+                    "meeting.slot_detail.cache_skip",
+                    memo_ref_key=normalized_ref,
+                    cache_id=payload.availability_cache_id,
+                    snapshot_memo_ref_key=snapshot.memo_ref_key,
+                    slot_start=payload.slot_start,
+                    slot_end=payload.slot_end,
+                    window_start=snapshot.window_start.isoformat(),
+                    window_end=snapshot.window_end.isoformat(),
+                )
+
         logger.info(
             "meeting.slot_detail.fetch",
             memo_ref_key=normalized_ref,
             slot_start=payload.slot_start,
             slot_end=payload.slot_end,
             attendees=len(attendee_payload),
-            timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS,
+            timeout_seconds=SLOT_DETAIL_TIMEOUT_SECONDS,
+            reused_cache=bool(cached_busy_by_attendee),
         )
         try:
             raw = await asyncio.wait_for(
@@ -916,8 +1009,11 @@ class MeetingAgentSlotService:
                     slot_start=slot_start_dt,
                     slot_end=slot_end_dt,
                     step_minutes=15,
+                    include_company_calendar=True,
+                    light_reschedule_hints=True,
+                    cached_busy_by_attendee=cached_busy_by_attendee,
                 ),
-                timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
+                timeout=SLOT_DETAIL_TIMEOUT_SECONDS,
             )
         except TimeoutError:
             return agent_slot_detail_error(
@@ -925,7 +1021,7 @@ class MeetingAgentSlotService:
                 slot_start=payload.slot_start,
                 slot_end=payload.slot_end,
                 message=format_slot_preview_timeout_error(
-                    timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS
+                    timeout_seconds=SLOT_DETAIL_TIMEOUT_SECONDS
                 ),
                 error_stage="calendar",
             )
@@ -965,19 +1061,9 @@ class MeetingAgentSlotService:
             participants,
             room=room,
         )
-        if participants_busy(participants):
-            company_recommendations = await self._company_calendar_reschedule_recommendations(
-                resolved=_resolved,
-                attendees=attendees,
-                backend=backend,
-                planned_start=format_planned_start_for_search(slot_start_dt) or payload.slot_start,
-                duration_minutes=duration,
-                current_user=current_user,
-            )
-            reschedule_recommendations = merge_reschedule_recommendations(
-                reschedule_recommendations,
-                company_recommendations,
-            )
+        # Детали слота: общий календарь уже в blocking_events (include_company_calendar).
+        # Полный 30-дневный скан find_company_calendar_reschedule_candidates здесь не нужен —
+        # он даёт ~180 EWS-запросов и таймаутится на медленном Exchange.
         return MeetingAgentSlotDetailRead(
             memo_ref_key=normalized_ref,
             slot_start=payload.slot_start,
@@ -1118,8 +1204,10 @@ class MeetingAgentSlotService:
                     slot_start=slot_start_dt,
                     slot_end=slot_end_dt,
                     step_minutes=15,
+                    include_company_calendar=True,
+                    light_reschedule_hints=True,
                 ),
-                timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
+                timeout=SLOT_DETAIL_TIMEOUT_SECONDS,
             )
         except TimeoutError:
             return agent_slot_detail_error(
@@ -1127,7 +1215,7 @@ class MeetingAgentSlotService:
                 slot_start=payload.slot_start,
                 slot_end=payload.slot_end,
                 message=format_slot_preview_timeout_error(
-                    timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS
+                    timeout_seconds=SLOT_DETAIL_TIMEOUT_SECONDS
                 ),
                 error_stage="calendar",
             )
@@ -1203,20 +1291,6 @@ class MeetingAgentSlotService:
             participants,
             room=room_status,
         )
-        if participants_busy(participants):
-            company_recommendations = await self._company_calendar_reschedule_recommendations(
-                resolved=resolved,
-                attendees=attendees,
-                backend=backend,
-                planned_start=format_planned_start_for_search(slot_start_dt) or payload.slot_start,
-                duration_minutes=duration,
-                current_user=current_user,
-            )
-            reschedule_recommendations = merge_reschedule_recommendations(
-                reschedule_recommendations,
-                company_recommendations,
-            )
-
         return MeetingAgentSlotDetailRead(
             memo_ref_key=normalized_ref,
             slot_start=payload.slot_start,
