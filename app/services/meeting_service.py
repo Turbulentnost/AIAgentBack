@@ -150,8 +150,6 @@ from app.services.meeting_registry_slot import (
     ADD_CURRENT_SLOT_MESSAGE,
     COMMON_SLOT_MESSAGE,
     resolve_registry_current_slot_availability,
-    suggest_common_slots_after_add,
-    suggest_earlier_slots_after_removal,
 )
 from app.tools.onec.exchange_gal_lookup import (
     dispatch_search_exchange_gal_users,
@@ -165,6 +163,7 @@ from app.services.meeting_invite_format import (
     resolve_invite_subject,
     resolve_room_for_location,
 )
+from app.services.meeting_slot_flow import MeetingSlotFlowService, SlotSchedulingMode
 from app.services.meeting_slot import (
     format_planned_start_for_search,
     format_search_start_after_registry_slot,
@@ -258,6 +257,9 @@ class MeetingService:
     def _slot_service(self) -> MeetingAgentSlotService:
         return MeetingAgentSlotService(self.db, backend_factory=self._backend)
 
+    def _slot_flow(self) -> MeetingSlotFlowService:
+        return MeetingSlotFlowService(self._slot_service())
+
     async def suggest_agent_slot(
         self,
         memo_ref_key: str,
@@ -266,8 +268,10 @@ class MeetingService:
         current_user: User,
     ) -> MeetingAgentSlotPreviewRead:
         await self._ensure_access(current_user)
-        return await self._slot_service().suggest_agent_slot(
-            memo_ref_key, payload, current_user=current_user
+        return await self._slot_flow().suggest_slot_for_sz_coordination(
+            memo_ref_key,
+            payload,
+            current_user=current_user,
         )
 
     async def suggest_agent_slot_safe(
@@ -289,8 +293,10 @@ class MeetingService:
         current_user: User,
     ) -> MeetingAgentSlotDetailRead:
         await self._ensure_access(current_user)
-        return await self._slot_service().get_agent_slot_detail(
-            memo_ref_key, payload, current_user=current_user
+        return await self._slot_flow().validate_manual_slot(
+            memo_ref_key,
+            payload,
+            current_user=current_user,
         )
 
     async def get_agent_slot_detail_safe(
@@ -1086,12 +1092,20 @@ class MeetingService:
                     fetched_at=fetched_at,
                 )
 
-            common_slot_suggestion = await suggest_common_slots_after_add(
+            common_slot_suggestion = await self._slot_flow().suggest_slot_after_participant_add(
                 entry=entry,
                 attendee_emails=new_attendees,
                 memo_detail=memo_detail,
                 current_user=current_user,
                 backend=backend,
+            )
+            reschedule_recommendations = (
+                self._slot_flow().build_add_reschedule_recommendations(
+                    availability_participants=availability.participants,
+                    added_fio=added,
+                )
+                if availability is not None
+                else []
             )
             await registry.save_pending_add(
                 normalized_ref,
@@ -1114,6 +1128,7 @@ class MeetingService:
                     else "Не удалось подобрать общий свободный слот для всех участников"
                 ),
                 common_slot_suggestion=common_slot_suggestion,
+                reschedule_recommendations=reschedule_recommendations,
                 confirmation_kind="add_reschedule",
                 pending_confirmation=True,
                 current_slot_availability=current_slot_availability,
@@ -1127,7 +1142,7 @@ class MeetingService:
                     memo_detail, _, _ = await MeetingMemoCacheService().get_memo_detail(normalized_ref)
                 except MemoCacheMissError:
                     pass
-                earlier_slot_suggestion = await suggest_earlier_slots_after_removal(
+                earlier_slot_suggestion = await self._slot_flow().suggest_slot_after_participant_removal(
                     entry=entry,
                     remaining_attendee_emails=new_attendees,
                     memo_detail=memo_detail,
@@ -1915,36 +1930,53 @@ class MeetingService:
                 int((entry.slot_end - entry.slot_start).total_seconds() // 60),
                 1,
             )
-
-        previous_start = entry.slot_start.isoformat() if entry.slot_start else None
-        previous_end = entry.slot_end.isoformat() if entry.slot_end else None
-        previous_label = (
-            format_slot_label(previous_start, previous_end)
-            if previous_start and previous_end
-            else None
-        )
+        if payload.duration_minutes is None and duration is not None:
+            payload = payload.model_copy(update={"duration_minutes": duration})
 
         attendee_specs = collect_attendees_from_registry_entry(entry)
 
-        slot_preview = await self._slot_service().suggest_agent_slot_safe(
-            normalized_ref,
-            MeetingAgentSlotPreviewRequest(
-                duration_minutes=duration,
-                planned_start=search_after,
-                search_start=search_after,
-            ),
-            current_user=current_user,
-            attendee_specs=attendee_specs,
-        )
+        if payload.mode == SlotSchedulingMode.MANUAL.value:
+            if not payload.slot_start or not payload.slot_end:
+                raise MeetingServiceError(
+                    "Для ручного переноса укажите slot_start и slot_end",
+                    status_code=400,
+                )
 
-        return MeetingRegistryRescheduleSlotPreviewRead(
-            ref_key=normalized_ref,
-            stage=MeetingRegistryStageRead(entry.stage.value),
-            previous_slot_start=previous_start,
-            previous_slot_end=previous_end,
-            previous_slot_label=previous_label,
-            search_after=search_after,
-            slot_preview=slot_preview,
+        try:
+            return await self._slot_flow().preview_registry_reschedule(
+                entry,
+                payload,
+                current_user=current_user,
+                attendee_specs=attendee_specs,
+                search_after=search_after,
+            )
+        except ValueError as exc:
+            raise MeetingServiceError(str(exc), status_code=400) from exc
+
+    async def get_registry_reschedule_slot_detail(
+        self,
+        memo_ref_key: str,
+        payload: MeetingAgentSlotDetailRequest,
+        *,
+        current_user: User,
+    ) -> MeetingAgentSlotDetailRead:
+        """П.3 (ручной): проверка выбранного слота при переносе в реестре."""
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+        if entry.stage not in RESCHEDULABLE_REGISTRY_STAGES:
+            raise MeetingServiceError(
+                "Перенос доступен только для совещаний с отправленными приглашениями "
+                "или отменённых записей",
+                status_code=400,
+            )
+        return await self._slot_service().get_registry_slot_detail_safe(
+            entry,
+            payload,
+            current_user=current_user,
         )
 
     async def approve_registry_reschedule(

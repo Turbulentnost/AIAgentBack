@@ -246,7 +246,7 @@ async def test_apply_registry_participants_removal_only_returns_earlier_slot_sug
             return_value={"status": "updated", "target_id": "AQMkAD-test"},
         ) as outlook_mock,
         patch(
-            "app.services.meeting_service.suggest_earlier_slots_after_removal",
+            "app.services.meeting_slot_flow.suggest_earlier_slots_after_removal",
             AsyncMock(return_value=suggestion),
         ),
     ):
@@ -312,7 +312,7 @@ async def test_apply_registry_participants_add_and_remove_skips_earlier_slot(use
             return_value={"status": "updated", "target_id": "AQMkAD-test"},
         ),
         patch(
-            "app.services.meeting_service.suggest_earlier_slots_after_removal",
+            "app.services.meeting_slot_flow.suggest_earlier_slots_after_removal",
             AsyncMock(return_value=None),
         ) as suggest_mock,
     ):
@@ -454,7 +454,7 @@ async def test_apply_registry_participants_add_only_suggests_common_slot_when_bu
             AsyncMock(return_value=MagicMock(all_free=False, free_count=1, total_count=2, participants=[])),
         ),
         patch(
-            "app.services.meeting_service.suggest_common_slots_after_add",
+            "app.services.meeting_slot_flow.suggest_common_slots_after_add",
             AsyncMock(return_value=suggestion),
         ),
     ):
@@ -595,7 +595,7 @@ async def test_apply_registry_participants_removal_only_without_candidates_defer
             return_value={"status": "updated", "target_id": "AQMkAD-test"},
         ) as outlook_mock,
         patch(
-            "app.services.meeting_service.suggest_earlier_slots_after_removal",
+            "app.services.meeting_slot_flow.suggest_earlier_slots_after_removal",
             AsyncMock(return_value=None),
         ),
     ):

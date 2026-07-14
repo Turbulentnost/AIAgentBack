@@ -422,6 +422,47 @@ async def get_meeting_agent_slot_details(
     )
 
 
+@router.post(
+    "/memos/{memo_ref_key}/manual/slot-details",
+    response_model=MeetingAgentSlotDetailRead,
+)
+async def validate_manual_meeting_slot(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingAgentSlotDetailRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingAgentSlotDetailRead:
+    """П.2: «Запланировать вручную» — проверка выбранного пользователем слота."""
+    await _require_agent_access(db, current_user)
+    return await MeetingService(db).get_agent_slot_detail_safe(
+        str(memo_ref_key),
+        payload,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/registry/{memo_ref_key}/reschedule/slot-details",
+    response_model=MeetingAgentSlotDetailRead,
+)
+async def get_registry_reschedule_slot_details(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingAgentSlotDetailRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingAgentSlotDetailRead:
+    """П.3 (ручной): проверка выбранного слота при переносе в реестре."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await MeetingService(db).get_registry_reschedule_slot_detail(
+            str(memo_ref_key),
+            payload,
+            current_user=current_user,
+        )
+    except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
 @router.post("/memos/{memo_ref_key}/agent/approve", response_model=MeetingAgentSlotApproveRead)
 async def approve_meeting_agent_slot(
     memo_ref_key: uuid.UUID,

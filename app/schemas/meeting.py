@@ -743,6 +743,10 @@ class MeetingRegistryParticipantsApplyRead(BaseModel):
     earlier_slot_suggestion: MeetingRegistryEarlierSlotSuggestionRead | None = None
     common_slot_suggestion: MeetingRegistryEarlierSlotSuggestionRead | None = None
     current_slot_availability: MeetingRegistryCurrentSlotAvailabilityRead | None = None
+    reschedule_recommendations: list[MeetingSlotRescheduleRecommendationRead] = Field(
+        default_factory=list,
+        description="Переносы для новых участников на текущем слоте (п.5)",
+    )
     confirmation_kind: str | None = Field(
         default=None,
         description="removal | add_current_slot | add_reschedule",
@@ -811,6 +815,18 @@ class MeetingRegistryParticipantsRemovalConfirmRead(BaseModel):
 
 class MeetingRegistryRescheduleSlotPreviewRequest(BaseModel):
     duration_minutes: int | None = None
+    mode: Literal["auto", "manual"] = Field(
+        default="auto",
+        description="auto — подбор слота (п.1); manual — проверка выбранного слота (п.2)",
+    )
+    slot_start: str | None = Field(
+        default=None,
+        description="Начало слота для ручного режима",
+    )
+    slot_end: str | None = Field(
+        default=None,
+        description="Конец слота для ручного режима",
+    )
 
     @field_validator("duration_minutes", mode="before")
     @classmethod
@@ -825,7 +841,9 @@ class MeetingRegistryRescheduleSlotPreviewRead(BaseModel):
     previous_slot_end: str | None = None
     previous_slot_label: str | None = None
     search_after: str | None = None
-    slot_preview: MeetingAgentSlotPreviewRead
+    mode: Literal["auto", "manual"] = "auto"
+    slot_preview: MeetingAgentSlotPreviewRead | None = None
+    slot_detail: MeetingAgentSlotDetailRead | None = None
 
 
 class MeetingRegistryRescheduleApproveRequest(BaseModel):

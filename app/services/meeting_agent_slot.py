@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.models.meeting_registry import MeetingRegistryEntry
 from app.models.user import User
 from app.schemas.meeting import (
     MeetingAgentSlotDetailRead,
@@ -41,6 +42,7 @@ from app.services.meeting_attendee_priority import (
 )
 from app.services.meeting_attendees import (
     collect_attendees_from_detail,
+    collect_attendees_from_registry_entry,
     emails_by_fio_from_detail,
     person_from_detail_by_fio,
 )
@@ -76,7 +78,10 @@ from app.services.meeting_mappers import (
     room_status_read,
     slot_read,
 )
-from app.services.meeting_invite_format import place_from_detail, resolve_room_for_location
+from app.services.meeting_invite_format import (
+    place_from_detail,
+    resolve_room_for_location,
+)
 from app.services.meeting_memo_cache import (
     MeetingMemoCacheService,
     MemoCacheMissError,
@@ -990,6 +995,247 @@ class MeetingAgentSlotService:
         except Exception as exc:
             return agent_slot_detail_error(
                 memo_ref_key.strip().lower(),
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=f"Не удалось загрузить детали слота: {exc}",
+                error_stage="unknown",
+            )
+
+    async def get_registry_slot_detail(
+        self,
+        entry: MeetingRegistryEntry,
+        payload: MeetingAgentSlotDetailRequest,
+        *,
+        current_user: User,
+    ) -> MeetingAgentSlotDetailRead:
+        """П.2/3 (ручной): проверка выбранного слота для состава из реестра."""
+        normalized_ref = entry.memo_ref_key.strip().lower()
+        slot_start_dt = parse_slot_datetime(payload.slot_start)
+        slot_end_dt = parse_slot_datetime(payload.slot_end)
+        if slot_start_dt is None or slot_end_dt is None:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message="Некорректный формат slot_start или slot_end",
+                error_stage="slot",
+            )
+        if slot_end_dt <= slot_start_dt:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message="slot_end должно быть позже slot_start",
+                error_stage="slot",
+            )
+
+        duration = payload.duration_minutes or slot_duration_minutes(
+            payload.slot_start,
+            payload.slot_end,
+        )
+        attendee_specs = collect_attendees_from_registry_entry(entry)
+        if not attendee_specs:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_participants_missing_error(),
+                error_stage="participants",
+            )
+
+        backend = self._backend()
+        detail: dict[str, Any] | None = None
+        try:
+            detail, _, _ = await MeetingMemoCacheService().get_memo_detail_for_agent(
+                normalized_ref
+            )
+        except MemoCacheMissError:
+            detail = {"application": {}}
+
+        try:
+            _memo, resolved, attendees, missing_emails = await self._resolve_memo_attendees(
+                detail,
+                backend=backend,
+                current_user=current_user,
+                attendee_specs=attendee_specs,
+            )
+        except MeetingServiceError:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_participants_missing_error(),
+                error_stage="participants",
+            )
+        except MeetingBackendError as exc:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_email_lookup_error(exc),
+                error_stage="email",
+            )
+
+        if missing_emails:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_missing_emails_error(missing_emails),
+                error_stage="email",
+            )
+
+        attendee_payload = [
+            {"fio": attendee.fio, "email": attendee.email, "role": attendee.role}
+            for attendee in attendees
+        ]
+
+        try:
+            raw = await asyncio.wait_for(
+                asyncio.to_thread(
+                    build_slot_participant_details,
+                    config=load_config(),
+                    attendees=attendee_payload,
+                    slot_start=slot_start_dt,
+                    slot_end=slot_end_dt,
+                    step_minutes=15,
+                ),
+                timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_slot_preview_timeout_error(
+                    timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS
+                ),
+                error_stage="calendar",
+            )
+        except ValueError as exc:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=str(exc),
+                error_stage="slot",
+            )
+        except Exception as exc:
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=format_calendar_error(exc),
+                error_stage="calendar",
+            )
+
+        participants = [
+            participant_status_read(item, attendees=attendees)
+            for item in raw.get("participants") or []
+        ]
+        outlook_config = load_config()
+        location = entry.location.strip() if isinstance(entry.location, str) else None
+        room = resolve_room_for_location(location)
+        if room is None:
+            room_raw = {
+                "name": location or "Не указана",
+                "email": None,
+                "status": "unknown",
+                "status_label": "не указана" if not location else "не найдена в справочнике",
+                "available": None,
+            }
+        else:
+            try:
+                rows = check_rooms_status(
+                    config=outlook_config,
+                    rooms=[room],
+                    slot_start=slot_start_dt,
+                    slot_end=slot_end_dt,
+                )
+                row = rows[0]
+                is_free = row.get("status") == "free"
+                room_raw = {
+                    "name": row.get("name") or room["name"],
+                    "email": row.get("email") or room.get("email"),
+                    "status": "free" if is_free else "busy",
+                    "status_label": row.get("status_label") or ("свободна" if is_free else "занята"),
+                    "available": is_free,
+                }
+            except Exception as exc:
+                logger.warning(
+                    "meeting.registry_slot_detail.room_check_failed",
+                    ref_key=normalized_ref,
+                    error=str(exc),
+                )
+                room_raw = {
+                    "name": room["name"],
+                    "email": room.get("email"),
+                    "status": "unknown",
+                    "status_label": "не удалось проверить",
+                    "available": None,
+                    "calendar_access_error": str(exc),
+                }
+
+        room_status = room_status_read(room_raw)
+        participants.append(
+            participant_status_read(_room_participant_payload(room_raw), attendees=[])
+        )
+        slot_available, reschedule_recommendations = build_slot_detail_availability(
+            participants,
+            room=room_status,
+        )
+        if not slot_available:
+            company_recommendations = await self._company_calendar_reschedule_recommendations(
+                resolved=resolved,
+                attendees=attendees,
+                backend=backend,
+                planned_start=format_planned_start_for_search(slot_start_dt) or payload.slot_start,
+                duration_minutes=duration,
+                current_user=current_user,
+            )
+            reschedule_recommendations = merge_reschedule_recommendations(
+                reschedule_recommendations,
+                company_recommendations,
+            )
+
+        return MeetingAgentSlotDetailRead(
+            memo_ref_key=normalized_ref,
+            slot_start=payload.slot_start,
+            slot_end=payload.slot_end,
+            slot_label=format_slot_label(payload.slot_start, payload.slot_end),
+            duration_minutes=duration,
+            participants=participants,
+            room=room_status,
+            slot_available=slot_available,
+            reschedule_recommendations=reschedule_recommendations,
+        )
+
+    async def get_registry_slot_detail_safe(
+        self,
+        entry: MeetingRegistryEntry,
+        payload: MeetingAgentSlotDetailRequest,
+        *,
+        current_user: User,
+    ) -> MeetingAgentSlotDetailRead:
+        try:
+            return await self.get_registry_slot_detail(
+                entry,
+                payload,
+                current_user=current_user,
+            )
+        except MeetingServiceError as exc:
+            normalized_ref = entry.memo_ref_key.strip().lower()
+            return agent_slot_detail_error(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                message=str(exc),
+                error_stage="unknown",
+            )
+        except Exception as exc:
+            normalized_ref = entry.memo_ref_key.strip().lower()
+            return agent_slot_detail_error(
+                normalized_ref,
                 slot_start=payload.slot_start,
                 slot_end=payload.slot_end,
                 message=f"Не удалось загрузить детали слота: {exc}",
