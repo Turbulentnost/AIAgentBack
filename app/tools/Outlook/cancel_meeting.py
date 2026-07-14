@@ -238,6 +238,9 @@ def cancel_meeting_item(
     *,
     message: str = "",
     cancel_scope: CancelScope = "occurrence",
+    config: OutlookConfig | None = None,
+    company_calendar_item_id: str | None = None,
+    company_calendar_changekey: str | None = None,
 ) -> dict[str, Any]:
     item = _ensure_calendar_item(item, context="некорректный ответ Exchange")
     if getattr(item, "is_cancelled", False):
@@ -251,11 +254,22 @@ def cancel_meeting_item(
     if message.strip():
         kwargs["body"] = plain_text_to_html(message.strip())
     target.cancel(**kwargs)
+    resolved_config = config or load_config()
+    from app.tools.Outlook.company_calendar_sync import cancel_meeting_in_company_calendar
+
+    company_meta = cancel_meeting_in_company_calendar(
+        config=resolved_config,
+        company_item_id=company_calendar_item_id,
+        company_changekey=company_calendar_changekey,
+        subject=str(getattr(target, "subject", "") or ""),
+        start=getattr(target, "start", None),
+    )
     return {
         "cancel_scope": applied_scope,
         "target_kind": target_kind,
         "target_id": getattr(target, "id", None),
         "target_subject": getattr(target, "subject", None),
+        **company_meta,
     }
 
 
@@ -321,6 +335,8 @@ def dispatch_cancel_meeting(
     cancel_scope: CancelScope = "occurrence",
     timezone: str | None = None,
     config: OutlookConfig | None = None,
+    company_calendar_item_id: str | None = None,
+    company_calendar_changekey: str | None = None,
 ) -> dict[str, Any]:
     """Списывает или отменяет совещание и возвращает JSON для API/агента."""
     config = config or load_config()
@@ -384,7 +400,14 @@ def dispatch_cancel_meeting(
             "message": message,
         }
 
-    cancel_result = cancel_meeting_item(item, message=message, cancel_scope=cancel_scope)
+    cancel_result = cancel_meeting_item(
+        item,
+        message=message,
+        cancel_scope=cancel_scope,
+        config=config,
+        company_calendar_item_id=company_calendar_item_id,
+        company_calendar_changekey=company_calendar_changekey,
+    )
     return {
         "action": "cancel",
         "status": "cancelled",

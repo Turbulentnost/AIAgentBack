@@ -186,6 +186,8 @@ def update_meeting_attendees_item(
     attendees_scope: AttendeesScope = "occurrence",
     stakeholder_emails: list[str] | None = None,
     config: OutlookConfig | None = None,
+    company_calendar_item_id: str | None = None,
+    company_calendar_changekey: str | None = None,
 ) -> dict[str, Any]:
     if getattr(item, "is_cancelled", False):
         raise RuntimeError(f"Совещание уже отменено: {getattr(item, 'subject', '')}")
@@ -269,6 +271,14 @@ def update_meeting_attendees_item(
         config=resolved_config,
         stakeholder_emails=stakeholder_emails,
     )
+    from app.tools.Outlook.company_calendar_sync import sync_meeting_to_company_calendar
+
+    company_meta = sync_meeting_to_company_calendar(
+        target,
+        config=resolved_config,
+        company_item_id=company_calendar_item_id,
+        company_changekey=company_calendar_changekey,
+    )
 
     return {
         "attendees_scope": applied_scope,
@@ -277,6 +287,7 @@ def update_meeting_attendees_item(
         "target_subject": getattr(target, "subject", None),
         **changes,
         **notification_result,
+        **company_meta,
     }
 
 
@@ -298,6 +309,8 @@ def dispatch_update_meeting_attendees(
     timezone: str | None = None,
     config: OutlookConfig | None = None,
     stakeholder_emails: list[str] | None = None,
+    company_calendar_item_id: str | None = None,
+    company_calendar_changekey: str | None = None,
 ) -> dict[str, Any]:
     config = config or load_config()
     calendar = primary_smtp_address(config)
@@ -372,6 +385,8 @@ def dispatch_update_meeting_attendees(
         attendees_scope=attendees_scope,
         stakeholder_emails=stakeholder_emails,
         config=config,
+        company_calendar_item_id=company_calendar_item_id,
+        company_calendar_changekey=company_calendar_changekey,
     )
     result["status"] = "updated"
     result.update(update_result)

@@ -1180,6 +1180,7 @@ class MeetingService:
                 "add": add_emails,
                 "remove": remove_emails,
                 "message": apply_message,
+                **self._company_calendar_kwargs(entry),
             }
             if add_emails or remove_emails:
                 kwargs["stakeholder_emails"] = await self._resolve_registry_stakeholder_emails(
@@ -1367,6 +1368,7 @@ class MeetingService:
             backend=backend,
             current_user=current_user,
         )
+        company_calendar_kwargs = self._company_calendar_kwargs(entry)
 
         if entry.outlook_item_id or (entry.subject and entry.slot_start):
             if remove_emails and entry.outlook_item_id:
@@ -1378,6 +1380,7 @@ class MeetingService:
                         remove=remove_emails,
                         message=composition_message,
                         stakeholder_emails=stakeholder_emails,
+                        **company_calendar_kwargs,
                     )
                 except Exception as exc:
                     raise MeetingServiceError(
@@ -1395,6 +1398,7 @@ class MeetingService:
                         duration_minutes=duration,
                         location=location,
                         message=reschedule_message,
+                        **company_calendar_kwargs,
                     )
                     outlook_updated = reschedule_outlook_payload.get("status") == "rescheduled"
                 except Exception as exc:
@@ -1411,6 +1415,7 @@ class MeetingService:
                         remove=remove_emails,
                         message=composition_message,
                         stakeholder_emails=stakeholder_emails,
+                        **company_calendar_kwargs,
                     )
                     outlook_updated = attendee_outlook_payload.get("status") == "updated"
                 except Exception as exc:
@@ -1589,6 +1594,7 @@ class MeetingService:
                 "add": add_emails,
                 "message": composition_message,
                 "stakeholder_emails": stakeholder_emails,
+                **self._company_calendar_kwargs(entry),
             }
             if entry.outlook_item_id:
                 kwargs["item_id"] = entry.outlook_item_id
@@ -1627,6 +1633,7 @@ class MeetingService:
                         duration_minutes=duration,
                         location=location,
                         message=reschedule_message,
+                        **self._company_calendar_kwargs(entry),
                     )
                     outlook_updated = reschedule_outlook_payload.get("status") == "rescheduled"
                 except Exception as exc:
@@ -1725,6 +1732,29 @@ class MeetingService:
             return slot_start.strftime("%Y-%m-%d %H:%M")
         return str(slot_start)
 
+    @staticmethod
+    def _company_calendar_kwargs(entry: Any) -> dict[str, str]:
+        item_id, changekey = MeetingService._company_calendar_ids_from_entry(entry)
+        kwargs: dict[str, str] = {}
+        if item_id:
+            kwargs["company_calendar_item_id"] = item_id
+        if changekey:
+            kwargs["company_calendar_changekey"] = changekey
+        return kwargs
+
+    @staticmethod
+    def _company_calendar_ids_from_entry(entry: Any) -> tuple[str | None, str | None]:
+        payload = getattr(entry, "payload", None) or {}
+        sent = payload.get("sent_payload") if isinstance(payload, dict) else {}
+        if not isinstance(sent, dict):
+            return None, None
+        item_id = sent.get("company_calendar_item_id")
+        changekey = sent.get("company_calendar_changekey")
+        return (
+            item_id.strip() if isinstance(item_id, str) and item_id.strip() else None,
+            changekey.strip() if isinstance(changekey, str) and changekey.strip() else None,
+        )
+
     async def _resolve_registry_stakeholder_emails(
         self,
         entry: Any,
@@ -1820,12 +1850,14 @@ class MeetingService:
         message: str,
     ) -> tuple[dict[str, Any] | None, bool, str | None]:
         attempts: list[dict[str, Any]] = []
+        company_calendar_kwargs = self._company_calendar_kwargs(entry)
         if entry.outlook_item_id:
             attempts.append(
                 {
                     "item_id": entry.outlook_item_id,
                     "changekey": entry.outlook_changekey or "",
                     "message": message,
+                    **company_calendar_kwargs,
                 }
             )
         if entry.subject and entry.slot_start:
@@ -2109,6 +2141,7 @@ class MeetingService:
                     duration_minutes=duration,
                     location=location,
                     message=reschedule_message,
+                    **self._company_calendar_kwargs(entry),
                 )
                 outlook_updated = sent_payload.get("status") == "rescheduled"
             except Exception as exc:

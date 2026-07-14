@@ -10,6 +10,7 @@ from exchangelib.properties import HTMLBody, Mailbox
 
 from app.services.meeting_invite_format import format_invite_body
 from app.services.meeting_slot import format_slot_label
+from app.tools.Outlook.company_calendar_sync import is_company_calendar_email
 from app.tools.Outlook.meeting_rooms import load_rooms
 from app.tools.Outlook.outlook_html_body import plain_text_to_html
 from app.tools.Outlook.outlook_config import OutlookConfig
@@ -122,6 +123,8 @@ def resolve_attendee_pairs(
 def is_notification_recipient(email: str) -> bool:
     normalized = normalize_calendar_email(email)
     if not normalized:
+        return False
+    if is_company_calendar_email(normalized):
         return False
     if _is_resource_calendar_email(normalized):
         return False

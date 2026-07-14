@@ -141,6 +141,8 @@ def _outlook_fields_from_sent_payload(sent_payload: dict[str, Any] | None) -> di
         "outlook_item_id": sent.get("outlook_item_id") or sent.get("id"),
         "outlook_changekey": sent.get("outlook_changekey") or sent.get("changekey"),
         "outlook_meeting_url": sent.get("outlook_meeting_url") or sent.get("meeting_url"),
+        "company_calendar_item_id": sent.get("company_calendar_item_id"),
+        "company_calendar_changekey": sent.get("company_calendar_changekey"),
     }
 
 
@@ -548,6 +550,16 @@ class MeetingRegistryService:
             target_id = outlook_payload.get("target_id")
             if isinstance(target_id, str) and target_id.strip():
                 entry.outlook_item_id = target_id.strip()
+            sent_payload = payload.get("sent_payload")
+            if isinstance(sent_payload, dict):
+                for key in (
+                    "company_calendar_item_id",
+                    "company_calendar_changekey",
+                    "company_calendar_synced",
+                    "company_calendar",
+                ):
+                    if key in outlook_payload:
+                        sent_payload[key] = outlook_payload[key]
 
         entry.participants = names
         entry.participants_count = len(names)

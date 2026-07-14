@@ -210,6 +210,9 @@ def dispatch_meeting_invite(
     )
     end_dt = start_dt + timedelta(minutes=duration_minutes)
     outlook_meta = calendar_item_outlook_meta(item, config)
+    from app.tools.Outlook.company_calendar_sync import sync_meeting_to_company_calendar
+
+    company_meta = sync_meeting_to_company_calendar(item, config=config)
     return {
         "status": "sent",
         "from": primary_smtp_address(config),
@@ -223,6 +226,7 @@ def dispatch_meeting_invite(
         "resources": room_resources,
         "timezone": tz_name,
         **outlook_meta,
+        **company_meta,
     }
 
 

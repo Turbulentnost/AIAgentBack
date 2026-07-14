@@ -91,6 +91,8 @@ def reschedule_meeting_item(
     location: str | None = None,
     message: str = "",
     reschedule_scope: RescheduleScope = "occurrence",
+    company_calendar_item_id: str | None = None,
+    company_calendar_changekey: str | None = None,
 ) -> dict[str, Any]:
     if item.is_cancelled:
         raise RuntimeError(f"Совещание уже отменено: {item.subject}")
@@ -127,11 +129,20 @@ def reschedule_meeting_item(
         update_fields.append("body")
 
     target.save(update_fields=update_fields, send_meeting_invitations=SEND_ONLY_TO_ALL)
+    from app.tools.Outlook.company_calendar_sync import sync_meeting_to_company_calendar
+
+    company_meta = sync_meeting_to_company_calendar(
+        target,
+        config=config,
+        company_item_id=company_calendar_item_id,
+        company_changekey=company_calendar_changekey,
+    )
     return {
         "reschedule_scope": applied_scope,
         "target_kind": target_kind,
         "target_id": getattr(target, "id", None),
         "target_subject": getattr(target, "subject", None),
+        **company_meta,
     }
 
 
@@ -154,6 +165,8 @@ def dispatch_reschedule_meeting(
     reschedule_scope: RescheduleScope = "occurrence",
     timezone: str | None = None,
     config: OutlookConfig | None = None,
+    company_calendar_item_id: str | None = None,
+    company_calendar_changekey: str | None = None,
 ) -> dict[str, Any]:
     """Переносит совещание или возвращает список встреч для API/агента."""
     config = config or load_config()
@@ -237,6 +250,8 @@ def dispatch_reschedule_meeting(
         location=location,
         message=message,
         reschedule_scope=reschedule_scope,
+        company_calendar_item_id=company_calendar_item_id,
+        company_calendar_changekey=company_calendar_changekey,
     )
     result["status"] = "rescheduled"
     result.update(reschedule_result)

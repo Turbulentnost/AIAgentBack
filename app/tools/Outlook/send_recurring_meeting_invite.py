@@ -294,6 +294,9 @@ def dispatch_recurring_meeting_invite(
     )
     end_dt = start_dt + timedelta(minutes=duration_minutes)
     outlook_meta = calendar_item_outlook_meta(item, config)
+    from app.tools.Outlook.company_calendar_sync import sync_meeting_to_company_calendar
+
+    company_meta = sync_meeting_to_company_calendar(item, config=config)
     room_resources = [email.strip() for email in (resources or []) if email.strip()]
     warning = weekday_mismatch_warning(
         start=start_dt,
@@ -333,6 +336,7 @@ def dispatch_recurring_meeting_invite(
         },
         "warning": warning,
         **outlook_meta,
+        **company_meta,
     }
 
 
