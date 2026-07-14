@@ -14,6 +14,7 @@ from app.tools.Outlook.attendee_update_notifications import (
     build_removed_attendees_notification_body,
     existing_attendee_recipients,
     resolve_attendee_pair,
+    stakeholder_notification_recipients,
 )
 
 
@@ -44,6 +45,28 @@ def test_build_existing_attendees_notification_body() -> None:
     assert INVITE_AGENT_FOOTER in body
 
 
+def test_build_existing_attendees_notification_body_for_removal() -> None:
+    body = build_existing_attendees_notification_body(
+        subject="Согласование ТЗ",
+        slot_label="14.07.2026, 09:30–10:30",
+        added_pairs=[],
+        removed_pairs=[("Петров Петр Петрович", "petrov@turbo-don.ru")],
+        roster_pairs=[
+            ("Иванов Иван Иванович", "ivanov@turbo-don.ru"),
+            ("Сидоров Сидор Сидорович", "sidorov@turbo-don.ru"),
+        ],
+    )
+    assert (
+        'Состав участников совещания 14.07.2026, 09:30–10:30 по теме "Согласование ТЗ" был изменен. '
+        "Обновленный состав:"
+    ) in body
+    assert "Иванов Иван Иванович <ivanov@turbo-don.ru>" in body
+    assert "Сидоров Сидор Сидорович <sidorov@turbo-don.ru>" in body
+    assert "Удаленные участники:" in body
+    assert "Петров Петр Петрович <petrov@turbo-don.ru>" in body
+    assert "Исключённые участники:" not in body
+
+
 def test_build_new_attendees_notification_body() -> None:
     body = build_new_attendees_notification_body(
         subject="Тестовая СЗ: проверка агента совещаний",
@@ -67,6 +90,16 @@ def test_existing_attendee_recipients_excludes_added_and_removed() -> None:
     assert recipients == ["a@co.ru"]
 
 
+def test_stakeholder_notification_recipients_prefers_stakeholders() -> None:
+    recipients = stakeholder_notification_recipients(
+        stakeholder_emails=["manager@turbo-don.ru", "initiator@turbo-don.ru"],
+        before=["a@co.ru", "b@co.ru"],
+        added=[],
+        removed=["b@co.ru"],
+    )
+    assert recipients == ["manager@turbo-don.ru", "initiator@turbo-don.ru"]
+
+
 def test_resolve_attendee_pair_uses_item_display_name() -> None:
     item = SimpleNamespace(
         required_attendees=[attendee("keep@co.ru", "Комарькова Анастасия Эдуардовна")],
@@ -81,16 +114,22 @@ def test_resolve_attendee_pair_uses_item_display_name() -> None:
 def test_build_removed_attendees_notification_body() -> None:
     body = build_removed_attendees_notification_body(
         subject="Тестовая СЗ: проверка агента совещаний",
+        slot_label="14.07.2026, 09:30–10:30",
     )
     assert (
-        'Вы были исключены из участников совещания по теме "Тестовая СЗ: проверка агента совещаний"'
+        'Вы были исключены из участников совещания 14.07.2026, 09:30–10:30 '
+        'по теме "Тестовая СЗ: проверка агента совещаний"'
         in body
     )
     assert INVITE_AGENT_FOOTER in body
 
 
 def test_build_removed_attendees_calendar_body_contains_exclusion_text() -> None:
-    item = SimpleNamespace(subject="Тестовая СЗ")
+    item = SimpleNamespace(
+        subject="Тестовая СЗ",
+        start=None,
+        end=None,
+    )
     body = build_removed_attendees_calendar_body(item=item)
     html = str(body)
     assert "Arial" in html

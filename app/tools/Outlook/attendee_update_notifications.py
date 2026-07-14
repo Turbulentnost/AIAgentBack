@@ -8,6 +8,7 @@ from exchangelib import Account, Message
 from exchangelib.items import SEND_ONLY_TO_CHANGED
 from exchangelib.properties import HTMLBody, Mailbox
 
+from app.services.meeting_slot import format_slot_label
 from app.tools.Outlook.meeting_rooms import load_rooms
 from app.tools.Outlook.outlook_html_body import plain_text_to_html
 from app.tools.Outlook.outlook_config import OutlookConfig
@@ -126,25 +127,61 @@ def is_notification_recipient(email: str) -> bool:
     return normalized not in _room_name_by_email()
 
 
+def format_meeting_datetime_label(item: Any, *, config: OutlookConfig | None = None) -> str:
+    """Метка даты и времени совещания для текстов уведомлений."""
+    from app.tools.Outlook.cancel_meeting import to_local
+    from app.tools.Outlook.send_meeting_invite import load_config
+
+    resolved_config = config or load_config()
+    start = getattr(item, "start", None)
+    end = getattr(item, "end", None)
+    if start and end:
+        start_iso = to_local(start, resolved_config).isoformat()
+        end_iso = to_local(end, resolved_config).isoformat()
+        return format_slot_label(start_iso, end_iso)
+    if start:
+        return to_local(start, resolved_config).strftime("%d.%m.%Y, %H:%M")
+    return ""
+
+
 def build_existing_attendees_notification_body(
     *,
+    subject: str = "",
+    slot_label: str = "",
     added_pairs: list[AttendeePair],
     removed_pairs: list[AttendeePair],
     roster_pairs: list[AttendeePair],
     extra_message: str = "",
     footer: str = INVITE_AGENT_FOOTER,
 ) -> str:
-    sections = ["Произошло обновление состава участников", ""]
-    if added_pairs:
-        sections.append("Новые участники:")
-        sections.extend(attendee_lines(added_pairs))
-        sections.append("")
-    if removed_pairs:
-        sections.append("Исключённые участники:")
-        sections.extend(attendee_lines(removed_pairs))
-        sections.append("")
-    sections.append("Обновленный состав:")
-    sections.extend(attendee_lines(roster_pairs))
+    topic = subject.strip() or "Совещание"
+    slot_text = slot_label.strip()
+    if slot_text:
+        sections = [
+            (
+                f'Состав участников совещания {slot_text} по теме "{topic}" был изменен. '
+                "Обновленный состав:"
+            ),
+        ]
+        sections.extend(attendee_lines(roster_pairs))
+        if added_pairs:
+            sections.append("Новые участники:")
+            sections.extend(attendee_lines(added_pairs))
+        if removed_pairs:
+            sections.append("Удаленные участники:")
+            sections.extend(attendee_lines(removed_pairs))
+    else:
+        sections = ["Произошло обновление состава участников", ""]
+        if added_pairs:
+            sections.append("Новые участники:")
+            sections.extend(attendee_lines(added_pairs))
+            sections.append("")
+        if removed_pairs:
+            sections.append("Удаленные участники:")
+            sections.extend(attendee_lines(removed_pairs))
+            sections.append("")
+        sections.append("Обновленный состав:")
+        sections.extend(attendee_lines(roster_pairs))
     if extra_message.strip():
         sections.extend(["", extra_message.strip()])
     if footer.strip():
@@ -175,12 +212,17 @@ def build_new_attendees_notification_body(
 def build_removed_attendees_notification_body(
     *,
     subject: str,
+    slot_label: str = "",
     extra_message: str = "",
     footer: str = INVITE_AGENT_FOOTER,
 ) -> str:
-    sections = [
-        f'Вы были исключены из участников совещания по теме "{subject.strip()}"',
-    ]
+    topic = subject.strip() or "Совещание"
+    slot_text = slot_label.strip()
+    if slot_text:
+        lead = f'Вы были исключены из участников совещания {slot_text} по теме "{topic}"'
+    else:
+        lead = f'Вы были исключены из участников совещания по теме "{topic}"'
+    sections = [lead]
     if extra_message.strip():
         sections.extend(["", extra_message.strip()])
     if footer.strip():
@@ -211,11 +253,13 @@ def build_removed_attendees_calendar_body(
     *,
     item: Any,
     message: str = "",
+    config: OutlookConfig | None = None,
 ) -> HTMLBody:
     """Тело уведомления об отмене участия (SendOnlyToChanged для удалённых)."""
     subject = str(getattr(item, "subject", "") or "Совещание").strip()
     text = build_removed_attendees_notification_body(
         subject=subject,
+        slot_label=format_meeting_datetime_label(item, config=config),
         extra_message=message,
     )
     return plain_text_to_html(text)
@@ -259,6 +303,26 @@ def existing_attendee_recipients(
     return recipients
 
 
+def stakeholder_notification_recipients(
+    *,
+    stakeholder_emails: list[str] | None,
+    before: list[str],
+    added: list[str],
+    removed: list[str],
+) -> list[str]:
+    if stakeholder_emails:
+        recipients: list[str] = []
+        seen: set[str] = set()
+        for email in stakeholder_emails:
+            key = email.strip().lower()
+            if not key or key in seen or not is_notification_recipient(email):
+                continue
+            seen.add(key)
+            recipients.append(email.strip())
+        return recipients
+    return existing_attendee_recipients(before=before, added=added, removed=removed)
+
+
 def send_attendee_update_notifications(
     *,
     account: Account,
@@ -266,13 +330,14 @@ def send_attendee_update_notifications(
     changes: dict[str, Any],
     message: str = "",
     config: OutlookConfig | None = None,
+    stakeholder_emails: list[str] | None = None,
 ) -> dict[str, Any]:
-    del config
     subject = str(getattr(item, "subject", "") or "Совещание").strip()
     added = list(changes.get("added") or [])
     removed = list(changes.get("removed") or [])
     before = list(changes.get("before") or [])
     after = list(changes.get("after") or [])
+    slot_label = format_meeting_datetime_label(item, config=config)
 
     roster_pairs = resolve_attendee_pairs(after, item=item, account=account)
     added_pairs = resolve_attendee_pairs(added, item=item, account=account)
@@ -284,10 +349,26 @@ def send_attendee_update_notifications(
     notified_removed: list[str] = []
     errors: list[str] = []
 
-    for email in existing_attendee_recipients(before=before, added=added, removed=removed):
+    if removed:
+        composition_recipients = stakeholder_notification_recipients(
+            stakeholder_emails=stakeholder_emails,
+            before=before,
+            added=added,
+            removed=removed,
+        )
+    else:
+        composition_recipients = existing_attendee_recipients(
+            before=before,
+            added=added,
+            removed=removed,
+        )
+
+    for email in composition_recipients:
         if email.lower() in protected:
             continue
         body = build_existing_attendees_notification_body(
+            subject=subject,
+            slot_label=slot_label if removed else "",
             added_pairs=added_pairs,
             removed_pairs=removed_pairs,
             roster_pairs=roster_pairs,
@@ -332,7 +413,7 @@ __all__ = [
     "build_new_attendees_calendar_invite_body",
     "build_removed_attendees_calendar_body",
     "build_removed_attendees_notification_body",
-    "plain_text_to_html",
+    "format_meeting_datetime_label",
     "resolve_attendee_pair",
     "resolve_attendee_pairs",
     "send_attendee_update_notifications",

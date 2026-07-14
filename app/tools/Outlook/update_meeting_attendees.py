@@ -184,6 +184,8 @@ def update_meeting_attendees_item(
     remove: list[str] | None = None,
     message: str = "",
     attendees_scope: AttendeesScope = "occurrence",
+    stakeholder_emails: list[str] | None = None,
+    config: OutlookConfig | None = None,
 ) -> dict[str, Any]:
     if getattr(item, "is_cancelled", False):
         raise RuntimeError(f"Совещание уже отменено: {getattr(item, 'subject', '')}")
@@ -198,12 +200,17 @@ def update_meeting_attendees_item(
     remove_emails = normalize_emails(remove or [])
     add_emails = normalize_emails(add or [])
     before_emails = all_attendee_emails(target)
-    account = getattr(target, "account", None) or connect_account(load_config())
+    resolved_config = config or load_config()
+    account = getattr(target, "account", None) or connect_account(resolved_config)
 
     if remove_emails and add_emails:
         removed_part = apply_attendee_changes(target, remove=remove_emails)
         if removed_part["removed"]:
-            target.body = build_removed_attendees_calendar_body(item=target, message=message)
+            target.body = build_removed_attendees_calendar_body(
+                item=target,
+                message=message,
+                config=resolved_config,
+            )
             target.save(
                 update_fields=["required_attendees", "optional_attendees", "body"],
                 send_meeting_invitations=SEND_ONLY_TO_CHANGED,
@@ -231,7 +238,11 @@ def update_meeting_attendees_item(
         changes = apply_attendee_changes(target, add=add_emails, remove=remove_emails)
         update_fields: list[str] = ["required_attendees", "optional_attendees"]
         if changes["removed"]:
-            target.body = build_removed_attendees_calendar_body(item=target, message=message)
+            target.body = build_removed_attendees_calendar_body(
+                item=target,
+                message=message,
+                config=resolved_config,
+            )
             update_fields.append("body")
         elif changes["added"]:
             target.body = build_new_attendees_calendar_invite_body(
@@ -255,6 +266,8 @@ def update_meeting_attendees_item(
         item=target,
         changes=changes,
         message=message,
+        config=resolved_config,
+        stakeholder_emails=stakeholder_emails,
     )
 
     return {
@@ -284,6 +297,7 @@ def dispatch_update_meeting_attendees(
     attendees_scope: AttendeesScope = "occurrence",
     timezone: str | None = None,
     config: OutlookConfig | None = None,
+    stakeholder_emails: list[str] | None = None,
 ) -> dict[str, Any]:
     config = config or load_config()
     calendar = primary_smtp_address(config)
@@ -356,6 +370,8 @@ def dispatch_update_meeting_attendees(
         remove=remove_emails,
         message=message,
         attendees_scope=attendees_scope,
+        stakeholder_emails=stakeholder_emails,
+        config=config,
     )
     result["status"] = "updated"
     result.update(update_result)

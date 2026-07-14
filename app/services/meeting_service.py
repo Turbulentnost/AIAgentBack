@@ -1181,6 +1181,12 @@ class MeetingService:
                 "remove": remove_emails,
                 "message": apply_message,
             }
+            if remove_emails:
+                kwargs["stakeholder_emails"] = await self._resolve_registry_stakeholder_emails(
+                    entry,
+                    backend=backend,
+                    current_user=current_user,
+                )
             if entry.outlook_item_id:
                 kwargs["item_id"] = entry.outlook_item_id
                 kwargs["changekey"] = entry.outlook_changekey or ""
@@ -1356,6 +1362,11 @@ class MeetingService:
         outlook_updated = False
         attendee_outlook_payload: dict[str, Any] | None = None
         reschedule_outlook_payload: dict[str, Any] | None = None
+        stakeholder_emails = await self._resolve_registry_stakeholder_emails(
+            entry,
+            backend=backend,
+            current_user=current_user,
+        )
 
         if entry.outlook_item_id or (entry.subject and entry.slot_start):
             if remove_emails and entry.outlook_item_id:
@@ -1366,6 +1377,7 @@ class MeetingService:
                         changekey=entry.outlook_changekey or "",
                         remove=remove_emails,
                         message=composition_message,
+                        stakeholder_emails=stakeholder_emails,
                     )
                 except Exception as exc:
                     raise MeetingServiceError(
@@ -1398,6 +1410,7 @@ class MeetingService:
                         start=start_label or entry.slot_start.isoformat(),
                         remove=remove_emails,
                         message=composition_message,
+                        stakeholder_emails=stakeholder_emails,
                     )
                     outlook_updated = attendee_outlook_payload.get("status") == "updated"
                 except Exception as exc:
@@ -1705,6 +1718,44 @@ class MeetingService:
         if hasattr(slot_start, "strftime"):
             return slot_start.strftime("%Y-%m-%d %H:%M")
         return str(slot_start)
+
+    async def _resolve_registry_stakeholder_emails(
+        self,
+        entry: Any,
+        *,
+        backend: MeetingBackend,
+        current_user: User,
+    ) -> list[str]:
+        """E-mail руководителя и инициатора для уведомлений об изменении состава."""
+        names: list[str] = []
+        seen_names: set[str] = set()
+        for field in ("initiator_name", "manager_name"):
+            raw = getattr(entry, field, None)
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            key = raw.strip().casefold()
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+            names.append(raw.strip())
+        if not names:
+            return []
+        try:
+            resolved = await backend.resolve_participants(names, current_user=current_user)
+        except MeetingBackendError:
+            return []
+        emails: list[str] = []
+        seen_emails: set[str] = set()
+        for item in resolved:
+            email = (item.email or "").strip()
+            if not email:
+                continue
+            email_key = email.lower()
+            if email_key in seen_emails:
+                continue
+            seen_emails.add(email_key)
+            emails.append(email)
+        return emails
 
     async def _resolve_registry_entry_recipients(
         self,
