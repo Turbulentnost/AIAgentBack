@@ -160,6 +160,12 @@ class ScheduledMeetingService:
             raise ScheduledMeetingServiceError("Не удалось обновить серию совещаний", status_code=500)
         return self.to_read(loaded)
 
+    async def get(self, meeting_id: uuid.UUID) -> ScheduledMeetingRead:
+        meeting = await self._load_meeting(meeting_id)
+        if meeting is None:
+            raise ScheduledMeetingServiceError("Серия совещаний не найдена", status_code=404)
+        return self.to_read(meeting)
+
     async def get_detail(self, meeting_id: uuid.UUID) -> ScheduledMeetingDetailRead:
         from app.services.meeting_mappers import registry_event_read, registry_item_read
         from app.services.meeting_registry_service import MeetingRegistryService

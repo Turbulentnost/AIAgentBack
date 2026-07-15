@@ -188,6 +188,20 @@ async def plan_scheduled_meeting(
         raise _scheduled_meeting_error(exc) from exc
 
 
+@router.get("/scheduled/{meeting_id}", response_model=ScheduledMeetingRead)
+async def get_scheduled_meeting(
+    db: DbSession,
+    current_user: CurrentUser,
+    meeting_id: uuid.UUID,
+) -> ScheduledMeetingRead:
+    """Карточка серии из БД без синхронизации Outlook."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await ScheduledMeetingService(db).get(meeting_id)
+    except ScheduledMeetingServiceError as exc:
+        raise _scheduled_meeting_error(exc) from exc
+
+
 @router.get("/scheduled/{meeting_id}/detail", response_model=ScheduledMeetingDetailRead)
 async def get_scheduled_meeting_detail(
     db: DbSession,

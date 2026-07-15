@@ -90,6 +90,39 @@ async def test_list_scheduled_meetings_returns_all_series() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_scheduled_meeting_returns_series_from_db() -> None:
+    db = AsyncMock()
+    position_id = uuid.uuid4()
+    meeting_id = uuid.uuid4()
+    meeting = _meeting_stub(meeting_id=meeting_id, title="Техсовет", position_id=position_id)
+
+    scalars = MagicMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = meeting
+    db.execute = AsyncMock(return_value=execute_result)
+
+    result = await ScheduledMeetingService(db).get(meeting_id)
+
+    assert result.id == meeting_id
+    assert result.title == "Техсовет"
+    assert result.participants[0].position_id == position_id
+
+
+@pytest.mark.asyncio
+async def test_get_scheduled_meeting_raises_404_when_missing() -> None:
+    db = AsyncMock()
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=execute_result)
+
+    with pytest.raises(ScheduledMeetingServiceError) as exc:
+        await ScheduledMeetingService(db).get(uuid.uuid4())
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_create_scheduled_meeting_persists_participants() -> None:
     db = AsyncMock()
     position_id = uuid.uuid4()
