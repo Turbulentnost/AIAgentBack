@@ -140,7 +140,7 @@ class ScheduledMeetingParticipant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint(
             "scheduled_meeting_id",
-            "department_id",
+            "position_id",
             name="uq_scheduled_meeting_participant",
         ),
     )
@@ -149,15 +149,15 @@ class ScheduledMeetingParticipant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("scheduled_meetings.id", ondelete="CASCADE"),
         index=True,
     )
-    department_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("departments.id", ondelete="RESTRICT"),
+    position_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("positions.id", ondelete="RESTRICT"),
         index=True,
     )
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_required: Mapped[bool] = mapped_column(Boolean, default=True)
 
     meeting: Mapped[ScheduledMeeting] = relationship(back_populates="participants")
-    department: Mapped["Department"] = relationship()
+    position: Mapped["Position"] = relationship()
 
 
-from app.models.user import Department  # noqa: E402
+from app.models.position import Position  # noqa: E402

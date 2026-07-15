@@ -462,6 +462,24 @@ def _registry_cancelled_at(entry: MeetingRegistryEntry) -> str | None:
     return None
 
 
+def _registry_series_fields(entry: MeetingRegistryEntry) -> dict[str, object]:
+    is_scheduled_series = entry.scheduled_meeting_id is not None
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    recurrence_label = payload.get("series_recurrence_label")
+    if isinstance(recurrence_label, str):
+        recurrence_label = recurrence_label.strip() or None
+    else:
+        recurrence_label = None
+    return {
+        "is_scheduled_series": is_scheduled_series,
+        "scheduled_meeting_id": (
+            str(entry.scheduled_meeting_id) if entry.scheduled_meeting_id is not None else None
+        ),
+        "scheduled_series_badge": "Серия" if is_scheduled_series else None,
+        "scheduled_series_recurrence_label": recurrence_label if is_scheduled_series else None,
+    }
+
+
 def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
     return MeetingRegistryItemRead(
         ref_key=entry.memo_ref_key,
@@ -487,6 +505,7 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
             if entry.updated_at
             else entry.invitations_sent_at.isoformat()
         ),
+        **_registry_series_fields(entry),
     )
 
 

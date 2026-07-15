@@ -285,12 +285,12 @@ async def resolve_attendees(
 
     for participant in sorted(meeting.participants, key=lambda item: item.sort_order):
         title = (
-            participant.department.name.strip()
-            if participant.department is not None and participant.department.name
+            participant.position.name.strip()
+            if participant.position is not None and participant.position.name
             else ""
         )
         if not title:
-            unresolved.append(str(participant.department_id))
+            unresolved.append(str(participant.position_id))
             continue
 
         normalized_title = normalize_position_title(title)

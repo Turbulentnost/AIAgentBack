@@ -72,7 +72,7 @@ class ScheduledMeetingRegistrySyncService:
             .where(ScheduledMeeting.id == series_id)
             .options(
                 selectinload(ScheduledMeeting.participants).selectinload(
-                    ScheduledMeetingParticipant.department
+                    ScheduledMeetingParticipant.position
                 )
             )
         )
@@ -82,10 +82,10 @@ class ScheduledMeetingRegistrySyncService:
         names: list[str] = []
         seen: set[str] = set()
         for participant in sorted(meeting.participants, key=lambda item: item.sort_order):
-            department = participant.department
-            if department is None:
+            position = participant.position
+            if position is None:
                 continue
-            name = department.name.strip()
+            name = position.name.strip()
             if not name:
                 continue
             key = name.casefold()
@@ -133,6 +133,7 @@ class ScheduledMeetingRegistrySyncService:
                 "source": "scheduled_series",
                 "sync_source": occurrence.source,
                 "scheduled_meeting_id": str(meeting.id),
+                "series_recurrence_label": meeting.recurrence_label,
             }
         )
         entry.payload = payload
@@ -164,6 +165,7 @@ class ScheduledMeetingRegistrySyncService:
                 "source": "scheduled_series",
                 "sync_source": occurrence.source,
                 "scheduled_meeting_id": str(meeting.id),
+                "series_recurrence_label": meeting.recurrence_label,
             },
         )
         self.db.add(entry)

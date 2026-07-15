@@ -53,14 +53,59 @@ def recurrence_input_from_meeting(meeting: ScheduledMeeting) -> RecurrenceInput:
 def _ews_datetime_to_aware(value: Any, *, timezone_name: str) -> datetime:
     if value is None:
         raise ValueError("datetime value is required")
+    tz = ZoneInfo(timezone_name)
     if hasattr(value, "astimezone"):
-        converted = value.astimezone(ZoneInfo(timezone_name))
-        return converted
+        converted = value.astimezone(tz)
+        # exchangelib.EWSDateTime.astimezone() возвращает EWSDateTime — в БД нужен std datetime.
+        return datetime(
+            converted.year,
+            converted.month,
+            converted.day,
+            converted.hour,
+            converted.minute,
+            converted.second,
+            converted.microsecond,
+            tzinfo=tz,
+        )
     normalized = str(value).strip().replace("Z", "+00:00")
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=ZoneInfo(timezone_name))
-    return parsed.astimezone(ZoneInfo(timezone_name))
+        parsed = parsed.replace(tzinfo=tz)
+    return parsed.astimezone(tz)
+
+
+def _resolved_series_master_id(item: Any, *, refreshed_master_ids: dict[str, str]) -> str | None:
+    """EWS возвращает для вхождения master.id в формате AAMk, а при plan() сохраняем AQMk.
+
+    После refresh() recurring_master id совпадает с outlook_series_id в БД.
+    """
+    master_id = series_master_id(item)
+    if not master_id:
+        return None
+    if master_id in refreshed_master_ids:
+        return refreshed_master_ids[master_id]
+    if meeting_kind(item) != "series_occurrence":
+        refreshed_master_ids[master_id] = master_id
+        return master_id
+    try:
+        master = item.recurring_master()
+        master.refresh()
+        resolved = str(getattr(master, "id", None) or "") or master_id
+    except Exception as exc:
+        logger.debug("scheduled_series_master_refresh_failed master_id=%s error=%s", master_id, exc)
+        resolved = master_id
+    refreshed_master_ids[master_id] = resolved
+    return resolved
+
+
+def _calendar_item_belongs_to_series(
+    item: Any,
+    outlook_series_id: str,
+    *,
+    refreshed_master_ids: dict[str, str],
+) -> bool:
+    resolved_master_id = _resolved_series_master_id(item, refreshed_master_ids=refreshed_master_ids)
+    return resolved_master_id == outlook_series_id
 
 
 def _calendar_item_to_occurrence(
@@ -75,7 +120,7 @@ def _calendar_item_to_occurrence(
     slot_start = _ews_datetime_to_aware(getattr(item, "start", None), timezone_name=timezone_name)
     slot_end = _ews_datetime_to_aware(getattr(item, "end", None), timezone_name=timezone_name)
     return SeriesOccurrence(
-        occurrence_date=slot_start.date(),
+        occurrence_date=date(slot_start.year, slot_start.month, slot_start.day),
         slot_start=slot_start,
         slot_end=slot_end,
         outlook_item_id=str(getattr(item, "id", None) or "") or None,
@@ -107,8 +152,13 @@ def fetch_series_occurrences_from_outlook(
     )
     occurrences: list[SeriesOccurrence] = []
     timezone_name = settings.OUTLOOK_TIMEZONE
+    refreshed_master_ids: dict[str, str] = {}
     for item in items:
-        if series_master_id(item) != outlook_series_id:
+        if not _calendar_item_belongs_to_series(
+            item,
+            outlook_series_id,
+            refreshed_master_ids=refreshed_master_ids,
+        ):
             continue
         occurrence = _calendar_item_to_occurrence(item, timezone_name=timezone_name)
         if occurrence is not None:
@@ -222,3 +272,21 @@ def find_occurrence_on_date(
         if occurrence.occurrence_date == occurrence_date:
             return occurrence
     return None
+
+
+def occurrence_to_read(
+    occurrence: SeriesOccurrence,
+    *,
+    outlook_meeting_url: str | None = None,
+    source: OccurrenceSource | Literal["none"] | None = None,
+) -> dict[str, object]:
+    resolved_source = source or occurrence.source
+    return {
+        "occurrence_date": occurrence.occurrence_date,
+        "slot_start": occurrence.slot_start.isoformat(),
+        "slot_end": occurrence.slot_end.isoformat(),
+        "subject": occurrence.subject,
+        "outlook_item_id": occurrence.outlook_item_id,
+        "outlook_meeting_url": outlook_meeting_url,
+        "source": resolved_source,
+    }

@@ -27,8 +27,16 @@ from app.services.scheduled_meeting_recurrence import (
 
 class ScheduledMeetingParticipantRead(ORMModel):
     id: uuid.UUID
-    department_id: uuid.UUID
-    department_name: str | None = None
+    position_id: uuid.UUID
+    position_name: str | None = None
+    department_id: uuid.UUID | None = Field(
+        default=None,
+        description="Устаревший alias position_id для совместимости с фронтом",
+    )
+    department_name: str | None = Field(
+        default=None,
+        description="Устаревший alias position_name для совместимости с фронтом",
+    )
     sort_order: int
     is_required: bool
 
@@ -36,6 +44,7 @@ class ScheduledMeetingParticipantRead(ORMModel):
 class ScheduledMeetingParticipantOptionRead(BaseModel):
     id: uuid.UUID
     name: str
+    slug: str | None = None
 
 
 class ScheduledMeetingRead(ORMModel):
@@ -92,9 +101,21 @@ class ScheduledMeetingRecurrencePayload(BaseModel):
 
 
 class ScheduledMeetingParticipantCreate(BaseModel):
-    department_id: uuid.UUID
+    position_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = Field(
+        default=None,
+        description="Устаревший alias position_id для совместимости с фронтом",
+    )
     sort_order: int = 0
     is_required: bool = True
+
+    @model_validator(mode="after")
+    def resolve_position_id(self) -> ScheduledMeetingParticipantCreate:
+        if self.position_id is not None:
+            return self
+        if self.department_id is not None:
+            return self.model_copy(update={"position_id": self.department_id})
+        raise ValueError("Укажите position_id участника серии")
 
 
 class ScheduledMeetingCreate(BaseModel):
@@ -166,10 +187,19 @@ class ScheduledMeetingUpdate(BaseModel):
         return self
 
 
+class ScheduledMeetingOccurrenceRead(BaseModel):
+    occurrence_date: date
+    slot_start: str
+    slot_end: str
+    subject: str
+    outlook_item_id: str | None = None
+    outlook_meeting_url: str | None = None
+    source: Literal["outlook", "rule", "none"] = "none"
+
+
 class ScheduledMeetingDetailRead(BaseModel):
     series: ScheduledMeetingRead
+    next_occurrence: ScheduledMeetingOccurrenceRead | None = None
+    past_occurrences: list[ScheduledMeetingOccurrenceRead] = Field(default_factory=list)
     current_card: MeetingRegistryItemRead | None = None
     history: list[MeetingRegistryEventRead] = Field(default_factory=list)
-    next_occurrence_date: date | None = None
-    sync_source: Literal["outlook", "rule", "none"] = "none"
-    sync_action: str | None = None

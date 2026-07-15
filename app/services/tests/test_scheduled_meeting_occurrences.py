@@ -121,6 +121,20 @@ def test_find_next_after_returns_following_occurrence() -> None:
     assert find_next_after(occurrences, after_date=date(2026, 7, 15)).occurrence_date == date(2026, 7, 16)
 
 
+def test_ews_datetime_to_aware_returns_std_datetime() -> None:
+    from exchangelib import EWSDateTime, EWSTimeZone
+
+    from app.services.scheduled_meeting_occurrences import _ews_datetime_to_aware
+
+    ews_dt = EWSDateTime(2026, 7, 16, 9, 0, tzinfo=EWSTimeZone(key="Europe/Moscow"))
+    result = _ews_datetime_to_aware(ews_dt, timezone_name="Europe/Moscow")
+    assert type(result) is datetime
+    assert result.year == 2026
+    assert result.month == 7
+    assert result.day == 16
+    assert result.hour == 9
+
+
 def test_calendar_item_to_occurrence_parses_series_occurrence() -> None:
     from app.services.scheduled_meeting_occurrences import _calendar_item_to_occurrence
 
@@ -138,3 +152,28 @@ def test_calendar_item_to_occurrence_parses_series_occurrence() -> None:
     assert occurrence is not None
     assert occurrence.outlook_item_id == "occ-1"
     assert occurrence.occurrence_date == date(2026, 7, 15)
+
+
+def test_calendar_item_belongs_to_series_refreshes_master_id() -> None:
+    from app.services.scheduled_meeting_occurrences import _calendar_item_belongs_to_series
+
+    stored_master_id = "AQMk-master"
+    view_master_id = "AAMk-view"
+    master = SimpleNamespace(id=view_master_id)
+
+    def refresh() -> None:
+        master.id = stored_master_id
+
+    master.refresh = refresh
+    item = SimpleNamespace(
+        type="Occurrence",
+        id="occ-1",
+        recurring_master=lambda: master,
+    )
+
+    assert _calendar_item_belongs_to_series(
+        item,
+        stored_master_id,
+        refreshed_master_ids={},
+    )
+    assert master.id == stored_master_id

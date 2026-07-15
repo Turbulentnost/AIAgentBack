@@ -35,13 +35,14 @@ def _series_stub(*, series_id: uuid.UUID) -> SimpleNamespace:
         weekday_position=None,
         series_start_date=date(2026, 7, 15),
         series_end_date=date(2026, 7, 17),
+        recurrence_label="ежедневно, 9:00",
         outlook_series_id="master-1",
         outlook_changekey="ck-master",
         outlook_meeting_url="https://example.test/meeting",
         participants=[
             SimpleNamespace(
                 sort_order=0,
-                department=department,
+                position=department,
             )
         ],
     )
@@ -170,3 +171,47 @@ async def test_sync_series_card_skips_unplanned_series() -> None:
 
     result = await ScheduledMeetingRegistrySyncService(db).sync_series_card(series_id)
     assert result.action == "skipped"
+
+
+def test_registry_item_read_marks_scheduled_series_card() -> None:
+    import uuid
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from app.models.enums import MeetingRegistryStage
+    from app.services.meeting_mappers import registry_item_read
+
+    series_id = uuid.uuid4()
+    item = registry_item_read(
+        SimpleNamespace(
+            memo_ref_key=str(uuid.uuid4()),
+            memo_number=None,
+            title="Технический совет",
+            subject="Технический совет",
+            location=None,
+            initiator_name=None,
+            manager_name=None,
+            participants_count=1,
+            slot_start=datetime(2026, 7, 16, 6, 0, tzinfo=timezone.utc),
+            slot_end=datetime(2026, 7, 16, 7, 0, tzinfo=timezone.utc),
+            stage=MeetingRegistryStage.SCHEDULED,
+            invitations_sent_at=datetime(2026, 7, 15, 8, 0, tzinfo=timezone.utc),
+            approved_at=None,
+            protocol_number=None,
+            outlook_item_id="occ-1",
+            outlook_changekey="ck-1",
+            outlook_meeting_url="https://example.test/meeting",
+            cancelled_at=None,
+            updated_at=datetime(2026, 7, 15, 8, 0, tzinfo=timezone.utc),
+            payload={
+                "source": "scheduled_series",
+                "series_recurrence_label": "ежедневно, 9:00",
+            },
+            scheduled_meeting_id=series_id,
+        )
+    )
+
+    assert item.is_scheduled_series is True
+    assert item.scheduled_meeting_id == str(series_id)
+    assert item.scheduled_series_badge == "Серия"
+    assert item.scheduled_series_recurrence_label == "ежедневно, 9:00"

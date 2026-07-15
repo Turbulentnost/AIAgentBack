@@ -611,6 +611,22 @@ class MeetingRegistryItemRead(BaseModel):
     outlook_meeting_url: str | None = None
     cancelled_at: str | None = None
     updated_at: str
+    is_scheduled_series: bool = Field(
+        default=False,
+        description="Карточка создана из серии запланированных совещаний",
+    )
+    scheduled_meeting_id: str | None = Field(
+        default=None,
+        description="ID серии для перехода к карточке серии",
+    )
+    scheduled_series_badge: str | None = Field(
+        default=None,
+        description="Текст бейджа на UI, например «Серия»",
+    )
+    scheduled_series_recurrence_label: str | None = Field(
+        default=None,
+        description="Периодичность серии для подписи бейджа, например «ежедневно, 9:00»",
+    )
 
 
 class MeetingRegistryCancelRequest(BaseModel):
