@@ -219,3 +219,34 @@ async def test_create_scheduled_meeting_rejects_unknown_department() -> None:
 
     with pytest.raises(ScheduledMeetingServiceError, match="Не найдены активные"):
         await ScheduledMeetingService(db).create(payload)
+
+
+@pytest.mark.asyncio
+async def test_archive_expired_series_returns_archived_ids() -> None:
+    db = AsyncMock()
+    archived_id = uuid.uuid4()
+
+    execute_result = MagicMock()
+    execute_result.scalars.return_value.all.return_value = [archived_id]
+    db.execute = AsyncMock(return_value=execute_result)
+
+    result = await ScheduledMeetingService(db).archive_expired_series(as_of_date=date(2026, 7, 18))
+
+    assert result["archived_count"] == 1
+    assert result["archived_ids"] == [str(archived_id)]
+    assert result["as_of_date"] == "2026-07-18"
+
+
+@pytest.mark.asyncio
+async def test_archive_expired_series_returns_zero_when_none_expired() -> None:
+    db = AsyncMock()
+
+    execute_result = MagicMock()
+    execute_result.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=execute_result)
+
+    result = await ScheduledMeetingService(db).archive_expired_series(as_of_date=date(2026, 7, 17))
+
+    assert result["archived_count"] == 0
+    assert result["archived_ids"] == []
+    assert result["as_of_date"] == "2026-07-17"

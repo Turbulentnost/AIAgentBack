@@ -159,6 +159,9 @@ class Settings(BaseSettings):
     MEETING_DASHBOARD_CACHE_WARMUP_HOURS: str = "10,15"
     MEETING_DASHBOARD_CACHE_WARMUP_MINUTE: int = 0
     MEETING_DASHBOARD_CACHE_WARMUP_TIMEZONE: str = "Europe/Moscow"
+    SCHEDULED_MEETINGS_ARCHIVE_ENABLED: bool = True
+    SCHEDULED_MEETINGS_ARCHIVE_HOUR: int = 1
+    SCHEDULED_MEETINGS_ARCHIVE_MINUTE: int = 0
 
     # Outlook / Exchange (COM-календарь, EWS, SMTP) — значения из .env.
     OUTLOOK_EMAIL: str = ""

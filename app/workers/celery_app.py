@@ -27,6 +27,15 @@ _beat_schedule["recover-stale-knowledge-base-indexing-jobs"] = {
     "schedule": settings.KB_INDEXING_RECOVERY_INTERVAL_SECONDS,
     "options": {"queue": "indexing"},
 }
+if settings.SCHEDULED_MEETINGS_ARCHIVE_ENABLED:
+    _beat_schedule["archive-expired-scheduled-meetings"] = {
+        "task": "archive_expired_scheduled_meetings",
+        "schedule": crontab(
+            hour=settings.SCHEDULED_MEETINGS_ARCHIVE_HOUR,
+            minute=settings.SCHEDULED_MEETINGS_ARCHIVE_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -43,6 +52,7 @@ celery_app.conf.update(
     task_routes={
         "debug_task": {"queue": "default"},
         "warm_meeting_dashboard_cache": {"queue": "default"},
+        "archive_expired_scheduled_meetings": {"queue": "default"},
         "process_document": {"queue": "documents"},
         "run_agent": {"queue": "agents"},
         "index_document": {"queue": "indexing"},

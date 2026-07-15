@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
+from app.models.enums import ScheduledMeetingStatus
 from app.models.scheduled_meeting import ScheduledMeeting, ScheduledMeetingParticipant
 from app.models.user import Department
 from app.schemas.scheduled_meeting import (
@@ -112,6 +115,26 @@ class ScheduledMeetingService:
         if loaded is None:
             raise ScheduledMeetingServiceError("Не удалось сохранить серию совещаний", status_code=500)
         return self.to_read(loaded)
+
+    async def archive_expired_series(self, *, as_of_date: date | None = None) -> dict[str, int | str | list[str]]:
+        if as_of_date is None:
+            as_of_date = datetime.now(ZoneInfo(settings.OUTLOOK_TIMEZONE)).date()
+
+        result = await self.db.execute(
+            update(ScheduledMeeting)
+            .where(
+                ScheduledMeeting.series_end_date < as_of_date,
+                ScheduledMeeting.status != ScheduledMeetingStatus.ARCHIVE,
+            )
+            .values(status=ScheduledMeetingStatus.ARCHIVE)
+            .returning(ScheduledMeeting.id)
+        )
+        archived_ids = [str(meeting_id) for meeting_id in result.scalars().all()]
+        return {
+            "archived_count": len(archived_ids),
+            "archived_ids": archived_ids,
+            "as_of_date": as_of_date.isoformat(),
+        }
 
     async def plan(self, meeting_id: uuid.UUID) -> ScheduledMeetingRead:
         meeting = await self._load_meeting(meeting_id)

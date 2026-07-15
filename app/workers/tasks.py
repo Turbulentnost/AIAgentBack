@@ -34,6 +34,31 @@ def debug_task(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+@celery_app.task(name="archive_expired_scheduled_meetings")
+def archive_expired_scheduled_meetings() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.scheduled_meeting_service import ScheduledMeetingService
+
+    if not settings.SCHEDULED_MEETINGS_ARCHIVE_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "archive_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _archive() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            result = await ScheduledMeetingService(db).archive_expired_series()
+            await db.commit()
+            return {
+                **result,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    return _run_async_task(_archive)
+
+
 @celery_app.task(name="warm_meeting_dashboard_cache")
 def warm_meeting_dashboard_cache() -> dict[str, Any]:
     from app.core.config import settings
