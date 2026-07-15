@@ -60,6 +60,8 @@ from app.schemas.scheduled_meeting import (
     ScheduledMeetingDetailRead,
     ScheduledMeetingParticipantOptionRead,
     ScheduledMeetingRead,
+    ScheduledMeetingUpdate,
+    ScheduledMeetingUpdateRead,
 )
 from app.services.scheduled_meeting_service import (
     ScheduledMeetingService,
@@ -199,6 +201,24 @@ async def get_scheduled_meeting(
     try:
         return await ScheduledMeetingService(db).get(meeting_id)
     except ScheduledMeetingServiceError as exc:
+        raise _scheduled_meeting_error(exc) from exc
+
+
+@router.patch("/scheduled/{meeting_id}", response_model=ScheduledMeetingUpdateRead)
+async def update_scheduled_meeting(
+    db: DbSession,
+    current_user: CurrentUser,
+    meeting_id: uuid.UUID,
+    payload: ScheduledMeetingUpdate,
+) -> ScheduledMeetingUpdateRead:
+    """Изменение серии: срок (сокращение/продление) и комментарий."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await ScheduledMeetingService(db).update(meeting_id, payload)
+        await db.commit()
+        return result
+    except ScheduledMeetingServiceError as exc:
+        await db.rollback()
         raise _scheduled_meeting_error(exc) from exc
 
 

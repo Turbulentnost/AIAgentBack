@@ -177,7 +177,16 @@ class ScheduledMeetingUpdate(BaseModel):
     meeting_type: ScheduledMeetingType | None = None
     status: ScheduledMeetingStatus | None = None
     recurrence: ScheduledMeetingRecurrencePayload | None = None
+    series_start_date: date | None = Field(
+        default=None,
+        description="Срок серии (с); изменение пока не поддерживается",
+    )
+    series_end_date: date | None = Field(
+        default=None,
+        description="Срок серии (по)",
+    )
     participants: list[ScheduledMeetingParticipantCreate] | None = None
+    comment: str | None = Field(default=None, max_length=4000)
     payload: dict | None = None
 
     @model_validator(mode="after")
@@ -185,6 +194,20 @@ class ScheduledMeetingUpdate(BaseModel):
         if self.recurrence is not None:
             validate_recurrence_input(self.recurrence.to_recurrence_input())
         return self
+
+
+class ScheduledMeetingAppliedChangesRead(BaseModel):
+    db_updated: bool
+    outlook_updated: bool
+    changes: list[str] = Field(default_factory=list)
+    outlook_actions: list[str] = Field(default_factory=list)
+    participants_added: list[str] = Field(default_factory=list)
+    participants_removed: list[str] = Field(default_factory=list)
+
+
+class ScheduledMeetingUpdateRead(BaseModel):
+    series: ScheduledMeetingRead
+    applied_changes: ScheduledMeetingAppliedChangesRead
 
 
 class ScheduledMeetingOccurrenceRead(BaseModel):

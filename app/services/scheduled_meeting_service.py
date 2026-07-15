@@ -15,20 +15,26 @@ from app.models.enums import ScheduledMeetingStatus
 from app.models.scheduled_meeting import ScheduledMeeting, ScheduledMeetingParticipant
 from app.models.position import Position
 from app.schemas.scheduled_meeting import (
+    ScheduledMeetingAppliedChangesRead,
     ScheduledMeetingCreate,
     ScheduledMeetingDetailRead,
     ScheduledMeetingOccurrenceRead,
     ScheduledMeetingParticipantOptionRead,
     ScheduledMeetingParticipantRead,
     ScheduledMeetingRead,
+    ScheduledMeetingUpdate,
+    ScheduledMeetingUpdateRead,
 )
-from app.services.scheduled_meeting_recurrence import (
-    build_recurrence_rule,
-    format_recurrence_label,
-)
+from app.services.scheduled_meeting_diff import build_series_update_change_set
+from app.services.scheduled_meeting_occurrences import recurrence_input_from_meeting
 from app.services.scheduled_meeting_outlook import (
     ScheduledMeetingOutlookError,
     plan_scheduled_meeting_in_outlook,
+)
+from app.services.scheduled_meeting_outlook_update import update_series_end_date_in_outlook
+from app.services.scheduled_meeting_recurrence import (
+    build_recurrence_rule,
+    format_recurrence_label,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,6 +171,118 @@ class ScheduledMeetingService:
         if meeting is None:
             raise ScheduledMeetingServiceError("Серия совещаний не найдена", status_code=404)
         return self.to_read(meeting)
+
+    async def update(
+        self,
+        meeting_id: uuid.UUID,
+        payload: ScheduledMeetingUpdate,
+    ) -> ScheduledMeetingUpdateRead:
+        meeting = await self._load_meeting(meeting_id)
+        if meeting is None:
+            raise ScheduledMeetingServiceError("Серия совещаний не найдена", status_code=404)
+        if meeting.status == ScheduledMeetingStatus.ARCHIVE:
+            raise ScheduledMeetingServiceError(
+                "Нельзя изменять архивную серию совещаний",
+                status_code=409,
+            )
+
+        change_set = build_series_update_change_set(meeting, payload)
+        if change_set.unsupported_fields:
+            fields = ", ".join(change_set.unsupported_fields)
+            raise ScheduledMeetingServiceError(
+                f"Пока поддерживается только изменение срока серии и комментария. "
+                f"Не поддерживается: {fields}",
+                status_code=400,
+            )
+
+        if change_set.new_series_end_date < meeting.series_start_date:
+            raise ScheduledMeetingServiceError(
+                "Дата окончания серии не может быть раньше даты начала",
+                status_code=400,
+            )
+
+        if not change_set.series_end_changed and not change_set.comment_changed:
+            return ScheduledMeetingUpdateRead(
+                series=self.to_read(meeting),
+                applied_changes=ScheduledMeetingAppliedChangesRead(
+                    db_updated=False,
+                    outlook_updated=False,
+                    changes=[],
+                    outlook_actions=[],
+                ),
+            )
+
+        outlook_updated = False
+        outlook_actions: list[str] = []
+        changes: list[str] = []
+
+        if change_set.series_end_changed:
+            if meeting.outlook_series_id and meeting.status == ScheduledMeetingStatus.PLANNED:
+                try:
+                    outlook_result = await update_series_end_date_in_outlook(
+                        self.db,
+                        meeting,
+                        new_end_date=change_set.new_series_end_date,
+                    )
+                except ScheduledMeetingOutlookError as exc:
+                    raise ScheduledMeetingServiceError(
+                        str(exc),
+                        status_code=exc.status_code,
+                    ) from exc
+                outlook_updated = True
+                action = outlook_result.get("action")
+                if isinstance(action, str) and action:
+                    outlook_actions.append(action)
+                meeting.outlook_changekey = outlook_result.get("outlook_changekey") or meeting.outlook_changekey
+                meeting.outlook_meeting_url = (
+                    outlook_result.get("outlook_meeting_url") or meeting.outlook_meeting_url
+                )
+
+            meeting.series_end_date = change_set.new_series_end_date
+            recurrence_input = recurrence_input_from_meeting(meeting)
+            meeting.recurrence_rule = build_recurrence_rule(recurrence_input)
+            meeting.recurrence_label = format_recurrence_label(recurrence_input)
+            changes.append("series_end_date")
+
+        if change_set.comment_changed:
+            stored_payload = dict(meeting.payload or {})
+            new_comment = (payload.comment or "").strip()
+            if new_comment:
+                stored_payload["comment"] = new_comment
+            else:
+                stored_payload.pop("comment", None)
+            meeting.payload = stored_payload or None
+            changes.append("comment")
+
+        await self.db.flush()
+
+        if change_set.series_end_changed and meeting.status == ScheduledMeetingStatus.PLANNED:
+            from app.services.scheduled_meeting_registry_sync import (
+                ScheduledMeetingRegistrySyncService,
+            )
+
+            try:
+                await ScheduledMeetingRegistrySyncService(self.db).sync_series_card(meeting.id)
+            except Exception:
+                logger.warning(
+                    "scheduled_series_registry_sync_after_end_update_failed meeting_id=%s",
+                    meeting.id,
+                    exc_info=True,
+                )
+
+        loaded = await self._load_meeting(meeting.id)
+        if loaded is None:
+            raise ScheduledMeetingServiceError("Не удалось обновить серию совещаний", status_code=500)
+
+        return ScheduledMeetingUpdateRead(
+            series=self.to_read(loaded),
+            applied_changes=ScheduledMeetingAppliedChangesRead(
+                db_updated=True,
+                outlook_updated=outlook_updated,
+                changes=changes,
+                outlook_actions=outlook_actions,
+            ),
+        )
 
     async def get_detail(self, meeting_id: uuid.UUID) -> ScheduledMeetingDetailRead:
         from app.services.meeting_mappers import registry_event_read, registry_item_read

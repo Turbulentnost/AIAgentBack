@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import date, time
+
+from app.models.scheduled_meeting import ScheduledMeeting
+from app.schemas.scheduled_meeting import (
+    ScheduledMeetingParticipantCreate,
+    ScheduledMeetingRecurrencePayload,
+    ScheduledMeetingUpdate,
+)
+
+
+@dataclass(frozen=True)
+class SeriesUpdateChangeSet:
+    new_series_end_date: date
+    series_end_changed: bool
+    comment_changed: bool
+    unsupported_fields: tuple[str, ...]
+
+
+def resolved_update_series_end_date(
+    meeting: ScheduledMeeting,
+    payload: ScheduledMeetingUpdate,
+) -> date:
+    if payload.series_end_date is not None:
+        return payload.series_end_date
+    if payload.recurrence is not None and payload.recurrence.series_end_date is not None:
+        return payload.recurrence.series_end_date
+    return meeting.series_end_date
+
+
+def _participant_position_ids(meeting: ScheduledMeeting) -> list[uuid.UUID]:
+    return [
+        participant.position_id
+        for participant in sorted(meeting.participants, key=lambda item: item.sort_order)
+    ]
+
+
+def _payload_participant_position_ids(
+    participants: list[ScheduledMeetingParticipantCreate],
+) -> list[uuid.UUID]:
+    return [item.position_id for item in participants if item.position_id is not None]
+
+
+def _normalize_time(value: time) -> time:
+    return value.replace(second=0, microsecond=0)
+
+
+def _recurrence_schedule_changed(
+    meeting: ScheduledMeeting,
+    recurrence: ScheduledMeetingRecurrencePayload,
+) -> bool:
+    if recurrence.frequency != meeting.frequency:
+        return True
+    if recurrence.interval != meeting.interval:
+        return True
+    if _normalize_time(recurrence.time_local) != _normalize_time(meeting.time_local):
+        return True
+    if recurrence.duration_minutes != meeting.duration_minutes:
+        return True
+    if recurrence.monthly_mode != meeting.monthly_mode:
+        return True
+    if recurrence.day_of_month != meeting.day_of_month:
+        return True
+    if recurrence.weekday != meeting.weekday:
+        return True
+    if recurrence.weekday_position != meeting.weekday_position:
+        return True
+    if recurrence.series_start_date is not None and recurrence.series_start_date != meeting.series_start_date:
+        return True
+    return False
+
+
+def _unsupported_update_fields(
+    meeting: ScheduledMeeting,
+    payload: ScheduledMeetingUpdate,
+) -> list[str]:
+    unsupported: list[str] = []
+
+    if payload.title is not None and payload.title.strip() != meeting.title.strip():
+        unsupported.append("название")
+    if payload.meeting_type is not None and payload.meeting_type != meeting.meeting_type:
+        unsupported.append("тип")
+    if payload.status is not None and payload.status != meeting.status:
+        unsupported.append("статус")
+    if payload.series_start_date is not None and payload.series_start_date != meeting.series_start_date:
+        unsupported.append("дата начала серии")
+    if payload.participants is not None:
+        if _participant_position_ids(meeting) != _payload_participant_position_ids(payload.participants):
+            unsupported.append("участники")
+    if payload.recurrence is not None and _recurrence_schedule_changed(meeting, payload.recurrence):
+        unsupported.append("периодичность")
+
+    return unsupported
+
+
+def _resolved_comment(payload: ScheduledMeetingUpdate) -> str | None:
+    if payload.comment is None:
+        return None
+    text = payload.comment.strip()
+    return text or None
+
+
+def build_series_update_change_set(
+    meeting: ScheduledMeeting,
+    payload: ScheduledMeetingUpdate,
+) -> SeriesUpdateChangeSet:
+    new_end = resolved_update_series_end_date(meeting, payload)
+    current_comment = (meeting.payload or {}).get("comment")
+    if isinstance(current_comment, str):
+        current_comment = current_comment.strip() or None
+    else:
+        current_comment = None
+
+    new_comment = _resolved_comment(payload)
+    comment_changed = payload.comment is not None and new_comment != current_comment
+
+    return SeriesUpdateChangeSet(
+        new_series_end_date=new_end,
+        series_end_changed=new_end != meeting.series_end_date,
+        comment_changed=comment_changed,
+        unsupported_fields=tuple(_unsupported_update_fields(meeting, payload)),
+    )

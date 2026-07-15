@@ -361,3 +361,108 @@ async def test_get_detail_reads_next_occurrence_from_outlook() -> None:
     assert detail.next_occurrence.source == "outlook"
     assert len(detail.past_occurrences) == 1
     assert detail.past_occurrences[0].occurrence_date == date(2026, 7, 15)
+
+
+@pytest.mark.asyncio
+async def test_update_series_end_shortens_db_for_created_series() -> None:
+    db = AsyncMock()
+    meeting_id = uuid.uuid4()
+    position_id = uuid.uuid4()
+    meeting = _meeting_stub(meeting_id=meeting_id, title="Серия", position_id=position_id)
+    meeting.status = ScheduledMeetingStatus.CREATED
+    meeting.series_start_date = date(2026, 7, 15)
+    meeting.series_end_date = date(2026, 7, 17)
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = meeting
+    db.execute = AsyncMock(return_value=execute_result)
+    db.flush = AsyncMock()
+
+    from app.schemas.scheduled_meeting import ScheduledMeetingUpdate
+
+    result = await ScheduledMeetingService(db).update(
+        meeting_id,
+        ScheduledMeetingUpdate(series_end_date=date(2026, 7, 16)),
+    )
+
+    assert result.applied_changes.db_updated is True
+    assert result.applied_changes.outlook_updated is False
+    assert result.applied_changes.changes == ["series_end_date"]
+    assert meeting.series_end_date == date(2026, 7, 16)
+
+
+@pytest.mark.asyncio
+async def test_update_series_end_calls_outlook_for_planned_series() -> None:
+    db = AsyncMock()
+    meeting_id = uuid.uuid4()
+    position_id = uuid.uuid4()
+    meeting = _meeting_stub(meeting_id=meeting_id, title="Серия", position_id=position_id)
+    meeting.status = ScheduledMeetingStatus.PLANNED
+    meeting.series_start_date = date(2026, 7, 15)
+    meeting.series_end_date = date(2026, 7, 17)
+    meeting.outlook_series_id = "series-1"
+    meeting.outlook_changekey = "ck-1"
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = meeting
+    db.execute = AsyncMock(return_value=execute_result)
+    db.flush = AsyncMock()
+
+    from app.schemas.scheduled_meeting import ScheduledMeetingUpdate
+
+    with (
+        patch(
+            "app.services.scheduled_meeting_service.update_series_end_date_in_outlook",
+            AsyncMock(
+                return_value={
+                    "action": "series_end_shortened",
+                    "outlook_changekey": "ck-2",
+                    "outlook_meeting_url": "https://outlook.example/series",
+                }
+            ),
+        ) as outlook_update,
+        patch(
+            "app.services.scheduled_meeting_registry_sync.ScheduledMeetingRegistrySyncService.sync_series_card",
+            AsyncMock(),
+        ) as sync_card,
+    ):
+        result = await ScheduledMeetingService(db).update(
+            meeting_id,
+            ScheduledMeetingUpdate(series_end_date=date(2026, 7, 16)),
+        )
+
+    outlook_update.assert_awaited_once()
+    sync_card.assert_awaited_once_with(meeting_id)
+    assert result.applied_changes.outlook_updated is True
+    assert result.applied_changes.outlook_actions == ["series_end_shortened"]
+    assert meeting.series_end_date == date(2026, 7, 16)
+    assert meeting.outlook_changekey == "ck-2"
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_participants_change() -> None:
+    db = AsyncMock()
+    meeting_id = uuid.uuid4()
+    position_id = uuid.uuid4()
+    meeting = _meeting_stub(meeting_id=meeting_id, title="Серия", position_id=position_id)
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = meeting
+    db.execute = AsyncMock(return_value=execute_result)
+
+    from app.schemas.scheduled_meeting import (
+        ScheduledMeetingParticipantCreate,
+        ScheduledMeetingUpdate,
+    )
+
+    with pytest.raises(ScheduledMeetingServiceError) as exc:
+        await ScheduledMeetingService(db).update(
+            meeting_id,
+            ScheduledMeetingUpdate(
+                series_end_date=date(2026, 7, 20),
+                participants=[ScheduledMeetingParticipantCreate(position_id=uuid.uuid4())],
+            ),
+        )
+
+    assert exc.value.status_code == 400
+    assert "участники" in str(exc.value)
