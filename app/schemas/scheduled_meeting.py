@@ -31,6 +31,11 @@ class ScheduledMeetingParticipantRead(ORMModel):
     is_required: bool
 
 
+class ScheduledMeetingParticipantOptionRead(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
 class ScheduledMeetingRead(ORMModel):
     id: uuid.UUID
     title: str
@@ -95,19 +100,53 @@ class ScheduledMeetingCreate(BaseModel):
     meeting_type: ScheduledMeetingType
     status: ScheduledMeetingStatus = ScheduledMeetingStatus.PLANNED
     recurrence: ScheduledMeetingRecurrencePayload
+    series_start_date: date | None = Field(
+        default=None,
+        description="Срок серии (с); если не задан — из recurrence или сегодня",
+    )
+    series_end_date: date | None = Field(
+        default=None,
+        description="Срок серии (по); по умолчанию 31.12 года начала",
+    )
     participants: list[ScheduledMeetingParticipantCreate] = Field(default_factory=list)
+    comment: str | None = Field(default=None, max_length=4000)
     payload: dict | None = None
 
     @model_validator(mode="after")
     def validate_recurrence(self) -> ScheduledMeetingCreate:
-        validate_recurrence_input(self.recurrence.to_recurrence_input())
+        validate_recurrence_input(self.resolved_recurrence_input())
         return self
 
+    def resolved_recurrence_input(self) -> RecurrenceInput:
+        recurrence = self.recurrence
+        start = self.series_start_date or recurrence.series_start_date or date.today()
+        end = self.series_end_date or recurrence.series_end_date or default_series_end_date(
+            year=start.year
+        )
+        return RecurrenceInput(
+            frequency=recurrence.frequency,
+            interval=recurrence.interval,
+            time_local=recurrence.time_local,
+            duration_minutes=recurrence.duration_minutes,
+            series_start_date=start,
+            series_end_date=end,
+            monthly_mode=recurrence.monthly_mode,
+            day_of_month=recurrence.day_of_month,
+            weekday=recurrence.weekday,
+            weekday_position=recurrence.weekday_position,
+        )
+
+    def resolved_payload(self) -> dict | None:
+        payload = dict(self.payload or {})
+        if self.comment and self.comment.strip():
+            payload["comment"] = self.comment.strip()
+        return payload or None
+
     def recurrence_label(self) -> str:
-        return format_recurrence_label(self.recurrence.to_recurrence_input())
+        return format_recurrence_label(self.resolved_recurrence_input())
 
     def recurrence_rule(self) -> dict:
-        return build_recurrence_rule(self.recurrence.to_recurrence_input())
+        return build_recurrence_rule(self.resolved_recurrence_input())
 
 
 class ScheduledMeetingUpdate(BaseModel):

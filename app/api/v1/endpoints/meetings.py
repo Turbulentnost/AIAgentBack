@@ -55,6 +55,15 @@ from app.services.meeting_permission import (
 )
 from app.services.meeting_exceptions import MeetingServiceError
 from app.services.meeting_service import MeetingService
+from app.schemas.scheduled_meeting import (
+    ScheduledMeetingCreate,
+    ScheduledMeetingParticipantOptionRead,
+    ScheduledMeetingRead,
+)
+from app.services.scheduled_meeting_service import (
+    ScheduledMeetingService,
+    ScheduledMeetingServiceError,
+)
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
@@ -106,6 +115,59 @@ async def get_meetings_dashboard(db: DbSession, current_user: CurrentUser) -> Me
 async def refresh_meetings_dashboard(db: DbSession, current_user: CurrentUser) -> MeetingLoginContext:
     """Принудительное обновление из 1С — только для кнопки «Обновить», не для F5/перезагрузки страницы."""
     return await _load_dashboard_context(db, current_user, force_refresh=True)
+
+
+def _scheduled_meeting_error(exc: ScheduledMeetingServiceError) -> HTTPException:
+    return HTTPException(exc.status_code, detail=str(exc))
+
+
+@router.get(
+    "/scheduled/participant-options",
+    response_model=list[ScheduledMeetingParticipantOptionRead],
+)
+async def list_scheduled_meeting_participant_options(
+    db: DbSession,
+    current_user: CurrentUser,
+    search: str | None = None,
+    limit: int = 100,
+) -> list[ScheduledMeetingParticipantOptionRead]:
+    """Должности для выбора участников графика совещаний."""
+    await _require_agent_access(db, current_user)
+    return await ScheduledMeetingService(db).list_participant_options(
+        search=search,
+        limit=limit,
+    )
+
+
+@router.get("/scheduled", response_model=list[ScheduledMeetingRead])
+async def list_scheduled_meetings(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[ScheduledMeetingRead]:
+    """Список серий совещаний из графика."""
+    await _require_agent_access(db, current_user)
+    return await ScheduledMeetingService(db).list()
+
+
+@router.post(
+    "/scheduled",
+    response_model=ScheduledMeetingRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_scheduled_meeting(
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: ScheduledMeetingCreate,
+) -> ScheduledMeetingRead:
+    """Добавление серии совещаний в график."""
+    await _require_agent_access(db, current_user)
+    try:
+        meeting = await ScheduledMeetingService(db).create(payload)
+        await db.commit()
+        return meeting
+    except ScheduledMeetingServiceError as exc:
+        await db.rollback()
+        raise _scheduled_meeting_error(exc) from exc
 
 
 @router.get("/registry", response_model=MeetingRegistryRead)

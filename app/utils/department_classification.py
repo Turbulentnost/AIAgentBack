@@ -76,6 +76,18 @@ def is_position_like_department_name(name: str | None) -> bool:
     return any(re.search(pattern, normalized) for pattern in _POSITION_TITLE_PATTERNS)
 
 
+def is_schedule_participant_department_name(name: str | None) -> bool:
+    """True when a department row can be used as a schedule participant role."""
+    if not name or is_liquidated_department_name(name):
+        return False
+
+    normalized = _normalized(name)
+    if not normalized:
+        return False
+
+    return not _has_org_unit_marker(name)
+
+
 def normalize_position_name(name: str) -> str:
     """Expand common abbreviations from 1C structure nodes into readable titles."""
     cleaned = re.sub(r"\s+", " ", (name or "").strip())
