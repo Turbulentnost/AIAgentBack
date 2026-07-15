@@ -152,6 +152,50 @@ def lookup_assignments_by_fio(
     return list(index.get(key, []))
 
 
+def build_position_title_index(
+    assignments: list[EnterprisePositionAssignment],
+) -> dict[str, list[EnterprisePositionAssignment]]:
+    index: dict[str, list[EnterprisePositionAssignment]] = {}
+    for item in assignments:
+        key = normalize_position_title(item.position)
+        if not key:
+            continue
+        bucket = index.setdefault(key, [])
+        if item not in bucket:
+            bucket.append(item)
+    return index
+
+
+@lru_cache(maxsize=1)
+def _load_position_title_index(report_path: str) -> dict[str, list[EnterprisePositionAssignment]]:
+    path = Path(report_path)
+    if not path.is_file():
+        return {}
+    text = path.read_text(encoding="utf-8-sig")
+    return build_position_title_index(parse_enterprise_positions_report(text))
+
+
+def lookup_fios_by_position_title(
+    position: str,
+    *,
+    report_path: str | Path | None = None,
+) -> list[str]:
+    key = normalize_position_title(position)
+    if not key:
+        return []
+    index = _load_position_title_index(str(resolve_report_path(report_path)))
+    assignments = index.get(key, [])
+    fios: list[str] = []
+    seen: set[str] = set()
+    for item in assignments:
+        normalized_fio = normalize_name(item.fio)
+        if not normalized_fio or normalized_fio in seen:
+            continue
+        seen.add(normalized_fio)
+        fios.append(item.fio.strip())
+    return fios
+
+
 def lookup_positions_by_fio(
     fio: str,
     *,

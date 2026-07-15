@@ -170,6 +170,23 @@ async def create_scheduled_meeting(
         raise _scheduled_meeting_error(exc) from exc
 
 
+@router.post("/scheduled/{meeting_id}/plan", response_model=ScheduledMeetingRead)
+async def plan_scheduled_meeting(
+    db: DbSession,
+    current_user: CurrentUser,
+    meeting_id: uuid.UUID,
+) -> ScheduledMeetingRead:
+    """Создание серии совещаний в Outlook по правилу из графика."""
+    await _require_agent_access(db, current_user)
+    try:
+        meeting = await ScheduledMeetingService(db).plan(meeting_id)
+        await db.commit()
+        return meeting
+    except ScheduledMeetingServiceError as exc:
+        await db.rollback()
+        raise _scheduled_meeting_error(exc) from exc
+
+
 @router.get("/registry", response_model=MeetingRegistryRead)
 async def get_meetings_registry(
     db: DbSession,

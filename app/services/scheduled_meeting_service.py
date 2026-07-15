@@ -17,6 +17,10 @@ from app.schemas.scheduled_meeting import (
 )
 from app.utils.department_classification import is_schedule_participant_department_name
 from app.utils.department_utils import is_liquidated_department_name
+from app.services.scheduled_meeting_outlook import (
+    ScheduledMeetingOutlookError,
+    plan_scheduled_meeting_in_outlook,
+)
 from app.services.scheduled_meeting_recurrence import (
     build_recurrence_rule,
     format_recurrence_label,
@@ -107,6 +111,19 @@ class ScheduledMeetingService:
         loaded = await self._load_meeting(meeting.id)
         if loaded is None:
             raise ScheduledMeetingServiceError("Не удалось сохранить серию совещаний", status_code=500)
+        return self.to_read(loaded)
+
+    async def plan(self, meeting_id: uuid.UUID) -> ScheduledMeetingRead:
+        meeting = await self._load_meeting(meeting_id)
+        if meeting is None:
+            raise ScheduledMeetingServiceError("Серия совещаний не найдена", status_code=404)
+        try:
+            await plan_scheduled_meeting_in_outlook(self.db, meeting)
+        except ScheduledMeetingOutlookError as exc:
+            raise ScheduledMeetingServiceError(str(exc), status_code=exc.status_code) from exc
+        loaded = await self._load_meeting(meeting.id)
+        if loaded is None:
+            raise ScheduledMeetingServiceError("Не удалось обновить серию совещаний", status_code=500)
         return self.to_read(loaded)
 
     async def _ensure_departments_exist(self, department_ids: list[uuid.UUID]) -> None:
