@@ -20,6 +20,7 @@ from app.services.meeting_invite_format import (
 from app.services.meeting_slot import format_slot_label, parse_slot_datetime
 
 STAGE_ORDER: tuple[MeetingRegistryStage, ...] = (
+    MeetingRegistryStage.SCHEDULED,
     MeetingRegistryStage.INVITATIONS_SENT,
     MeetingRegistryStage.PROTOCOL_CREATED,
     MeetingRegistryStage.PROTOCOL_CONDUCTED,
@@ -401,6 +402,17 @@ class MeetingRegistryService:
         normalized_ref = memo_ref_key.strip().lower()
         result = await self.db.execute(
             select(MeetingRegistryEntry).where(MeetingRegistryEntry.memo_ref_key == normalized_ref)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_entry_by_scheduled_meeting_id(
+        self,
+        scheduled_meeting_id: uuid.UUID,
+    ) -> MeetingRegistryEntry | None:
+        result = await self.db.execute(
+            select(MeetingRegistryEntry).where(
+                MeetingRegistryEntry.scheduled_meeting_id == scheduled_meeting_id
+            )
         )
         return result.scalar_one_or_none()
 

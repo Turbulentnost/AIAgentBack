@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, time
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -14,6 +15,7 @@ from app.models.enums import (
     ScheduledMeetingWeekdayPosition,
 )
 from app.schemas.common import ORMModel
+from app.schemas.meeting import MeetingRegistryEventRead, MeetingRegistryItemRead
 from app.services.scheduled_meeting_recurrence import (
     RecurrenceInput,
     build_recurrence_rule,
@@ -162,3 +164,12 @@ class ScheduledMeetingUpdate(BaseModel):
         if self.recurrence is not None:
             validate_recurrence_input(self.recurrence.to_recurrence_input())
         return self
+
+
+class ScheduledMeetingDetailRead(BaseModel):
+    series: ScheduledMeetingRead
+    current_card: MeetingRegistryItemRead | None = None
+    history: list[MeetingRegistryEventRead] = Field(default_factory=list)
+    next_occurrence_date: date | None = None
+    sync_source: Literal["outlook", "rule", "none"] = "none"
+    sync_action: str | None = None

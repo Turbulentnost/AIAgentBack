@@ -162,6 +162,9 @@ class Settings(BaseSettings):
     SCHEDULED_MEETINGS_ARCHIVE_ENABLED: bool = True
     SCHEDULED_MEETINGS_ARCHIVE_HOUR: int = 1
     SCHEDULED_MEETINGS_ARCHIVE_MINUTE: int = 0
+    SCHEDULED_MEETINGS_CARD_SYNC_ENABLED: bool = True
+    SCHEDULED_MEETINGS_CARD_SYNC_HOUR: int = 6
+    SCHEDULED_MEETINGS_CARD_SYNC_MINUTE: int = 0
 
     # Outlook / Exchange (COM-календарь, EWS, SMTP) — значения из .env.
     OUTLOOK_EMAIL: str = ""

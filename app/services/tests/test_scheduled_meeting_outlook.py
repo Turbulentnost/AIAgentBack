@@ -13,6 +13,7 @@ from app.models.enums import (
 )
 from app.services.scheduled_meeting_outlook import (
     ScheduledMeetingOutlookError,
+    _invite_body,
     dispatch_scheduled_meeting_invite,
 )
 
@@ -51,7 +52,7 @@ def test_dispatch_scheduled_meeting_invite_daily(mock_load_config, mock_dispatch
 
     result = dispatch_scheduled_meeting_invite(
         _meeting(),
-        attendees=["director@turbo-don.ru"],
+        attendees=[("Соломичева Светлана Викторовна", "director@turbo-don.ru")],
     )
 
     assert result["outlook_item_id"] == "series-1"
@@ -61,6 +62,25 @@ def test_dispatch_scheduled_meeting_invite_daily(mock_load_config, mock_dispatch
     assert kwargs["end_type"] == "end_date"
     assert kwargs["end"] == "2026-07-17"
     assert kwargs["attendees"] == ["director@turbo-don.ru"]
+    assert "Соломичева Светлана Викторовна <director@turbo-don.ru>" in kwargs["body"]
+    assert "Совещание запланировано ИИ-агентом" in kwargs["body"]
+
+
+def test_invite_body_lists_participants_without_comment() -> None:
+    meeting = _meeting(
+        payload={"comment": "это первый тест"},
+    )
+    body = _invite_body(
+        meeting,
+        [
+            ("Соломичева Светлана Викторовна", "sv@turbo-don.ru"),
+            ("Иванов Иван Иванович", "ii@turbo-don.ru"),
+        ],
+    )
+    assert "это первый тест" not in body
+    assert "Соломичева Светлана Викторовна <sv@turbo-don.ru>;" in body
+    assert "Иванов Иван Иванович <ii@turbo-don.ru>" in body
+    assert "Совещание запланировано ИИ-агентом" in body
 
 
 @patch("app.services.scheduled_meeting_outlook.dispatch_recurring_meeting_invite")

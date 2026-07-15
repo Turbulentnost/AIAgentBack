@@ -14,6 +14,7 @@ from app.models.scheduled_meeting import ScheduledMeeting, ScheduledMeetingParti
 from app.models.user import Department
 from app.schemas.scheduled_meeting import (
     ScheduledMeetingCreate,
+    ScheduledMeetingDetailRead,
     ScheduledMeetingParticipantOptionRead,
     ScheduledMeetingParticipantRead,
     ScheduledMeetingRead,
@@ -144,10 +145,43 @@ class ScheduledMeetingService:
             await plan_scheduled_meeting_in_outlook(self.db, meeting)
         except ScheduledMeetingOutlookError as exc:
             raise ScheduledMeetingServiceError(str(exc), status_code=exc.status_code) from exc
+
+        from app.services.scheduled_meeting_registry_sync import ScheduledMeetingRegistrySyncService
+
+        await ScheduledMeetingRegistrySyncService(self.db).sync_series_card(meeting.id)
+
         loaded = await self._load_meeting(meeting.id)
         if loaded is None:
             raise ScheduledMeetingServiceError("Не удалось обновить серию совещаний", status_code=500)
         return self.to_read(loaded)
+
+    async def get_detail(self, meeting_id: uuid.UUID) -> ScheduledMeetingDetailRead:
+        from app.services.meeting_mappers import registry_event_read, registry_item_read
+        from app.services.meeting_registry_service import MeetingRegistryService
+        from app.services.scheduled_meeting_registry_sync import ScheduledMeetingRegistrySyncService
+
+        meeting = await self._load_meeting(meeting_id)
+        if meeting is None:
+            raise ScheduledMeetingServiceError("Серия совещаний не найдена", status_code=404)
+
+        sync_result = await ScheduledMeetingRegistrySyncService(self.db).sync_series_card(meeting_id)
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry_by_scheduled_meeting_id(meeting_id)
+        history = []
+        current_card = None
+        if entry is not None:
+            current_card = registry_item_read(entry)
+            events = await registry.list_events(entry.memo_ref_key)
+            history = [registry_event_read(item) for item in events]
+
+        return ScheduledMeetingDetailRead(
+            series=self.to_read(meeting),
+            current_card=current_card,
+            history=history,
+            next_occurrence_date=sync_result.occurrence_date,
+            sync_source=sync_result.sync_source,
+            sync_action=sync_result.action,
+        )
 
     async def _ensure_departments_exist(self, department_ids: list[uuid.UUID]) -> None:
         if not department_ids:

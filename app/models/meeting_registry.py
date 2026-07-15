@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, Enum as SAEnum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,8 +48,15 @@ class MeetingRegistryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     outlook_changekey: Mapped[str | None] = mapped_column(String(512))
     outlook_meeting_url: Mapped[str | None] = mapped_column(Text)
     payload: Mapped[dict | None] = mapped_column(JSONB)
+    scheduled_meeting_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("scheduled_meetings.id", ondelete="SET NULL"),
+        unique=True,
+        index=True,
+    )
+    series_occurrence_date: Mapped[date | None] = mapped_column(Date)
 
     approved_by: Mapped["User | None"] = relationship()
+    scheduled_meeting: Mapped["ScheduledMeeting | None"] = relationship()
     events: Mapped[list["MeetingRegistryEvent"]] = relationship(
         back_populates="entry",
         order_by="MeetingRegistryEvent.occurred_at",
@@ -84,4 +91,5 @@ class MeetingRegistryEvent(UUIDPrimaryKeyMixin, Base):
     actor: Mapped["User | None"] = relationship()
 
 
+from app.models.scheduled_meeting import ScheduledMeeting  # noqa: E402
 from app.models.user import User  # noqa: E402

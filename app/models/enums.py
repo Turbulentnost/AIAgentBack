@@ -478,6 +478,7 @@ class DepartmentAnalysisRunStatus(str, enum.Enum):
 
 
 class MeetingRegistryStage(str, enum.Enum):
+    SCHEDULED = "scheduled"
     INVITATIONS_SENT = "invitations_sent"
     PROTOCOL_CREATED = "protocol_created"
     PROTOCOL_CONDUCTED = "protocol_conducted"
@@ -491,6 +492,7 @@ class MeetingRegistryEventType(str, enum.Enum):
     CANCELLED = "cancelled"
     PARTICIPANTS_UPDATED = "participants_updated"
     STAGE_CHANGED = "stage_changed"
+    OCCURRENCE_ROLLED = "occurrence_rolled"
 
 
 class ScheduledMeetingType(str, enum.Enum):

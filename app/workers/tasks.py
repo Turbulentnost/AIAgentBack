@@ -59,6 +59,37 @@ def archive_expired_scheduled_meetings() -> dict[str, Any]:
     return _run_async_task(_archive)
 
 
+@celery_app.task(name="sync_scheduled_meeting_registry_cards")
+def sync_scheduled_meeting_registry_cards() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.scheduled_meeting_registry_sync import ScheduledMeetingRegistrySyncService
+
+    if not settings.SCHEDULED_MEETINGS_CARD_SYNC_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "card_sync_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _sync() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            result = await ScheduledMeetingRegistrySyncService(db).sync_all_due_series()
+            await db.commit()
+            return {
+                "processed": result.processed,
+                "created": result.created,
+                "rolled": result.rolled,
+                "updated": result.updated,
+                "skipped": result.skipped,
+                "no_occurrences": result.no_occurrences,
+                "errors": result.errors,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    return _run_async_task(_sync)
+
+
 @celery_app.task(name="warm_meeting_dashboard_cache")
 def warm_meeting_dashboard_cache() -> dict[str, Any]:
     from app.core.config import settings

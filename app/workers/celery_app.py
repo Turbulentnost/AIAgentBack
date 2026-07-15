@@ -36,6 +36,15 @@ if settings.SCHEDULED_MEETINGS_ARCHIVE_ENABLED:
         ),
         "options": {"queue": "default"},
     }
+if settings.SCHEDULED_MEETINGS_CARD_SYNC_ENABLED:
+    _beat_schedule["sync-scheduled-meeting-registry-cards"] = {
+        "task": "sync_scheduled_meeting_registry_cards",
+        "schedule": crontab(
+            hour=settings.SCHEDULED_MEETINGS_CARD_SYNC_HOUR,
+            minute=settings.SCHEDULED_MEETINGS_CARD_SYNC_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -53,6 +62,7 @@ celery_app.conf.update(
         "debug_task": {"queue": "default"},
         "warm_meeting_dashboard_cache": {"queue": "default"},
         "archive_expired_scheduled_meetings": {"queue": "default"},
+        "sync_scheduled_meeting_registry_cards": {"queue": "default"},
         "process_document": {"queue": "documents"},
         "run_agent": {"queue": "agents"},
         "index_document": {"queue": "indexing"},

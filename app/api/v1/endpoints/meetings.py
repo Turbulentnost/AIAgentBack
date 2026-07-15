@@ -57,6 +57,7 @@ from app.services.meeting_exceptions import MeetingServiceError
 from app.services.meeting_service import MeetingService
 from app.schemas.scheduled_meeting import (
     ScheduledMeetingCreate,
+    ScheduledMeetingDetailRead,
     ScheduledMeetingParticipantOptionRead,
     ScheduledMeetingRead,
 )
@@ -182,6 +183,23 @@ async def plan_scheduled_meeting(
         meeting = await ScheduledMeetingService(db).plan(meeting_id)
         await db.commit()
         return meeting
+    except ScheduledMeetingServiceError as exc:
+        await db.rollback()
+        raise _scheduled_meeting_error(exc) from exc
+
+
+@router.get("/scheduled/{meeting_id}/detail", response_model=ScheduledMeetingDetailRead)
+async def get_scheduled_meeting_detail(
+    db: DbSession,
+    current_user: CurrentUser,
+    meeting_id: uuid.UUID,
+) -> ScheduledMeetingDetailRead:
+    """Детали серии: текущая карточка реестра и история событий."""
+    await _require_agent_access(db, current_user)
+    try:
+        detail = await ScheduledMeetingService(db).get_detail(meeting_id)
+        await db.commit()
+        return detail
     except ScheduledMeetingServiceError as exc:
         await db.rollback()
         raise _scheduled_meeting_error(exc) from exc

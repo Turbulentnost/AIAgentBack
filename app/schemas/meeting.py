@@ -583,6 +583,7 @@ class MeetingInviteSendRequest(BaseModel):
 
 
 class MeetingRegistryStageRead(str, Enum):
+    SCHEDULED = "scheduled"
     INVITATIONS_SENT = "invitations_sent"
     PROTOCOL_CREATED = "protocol_created"
     PROTOCOL_CONDUCTED = "protocol_conducted"
@@ -683,6 +684,7 @@ class MeetingRegistryEventTypeRead(str, Enum):
     CANCELLED = "cancelled"
     PARTICIPANTS_UPDATED = "participants_updated"
     STAGE_CHANGED = "stage_changed"
+    OCCURRENCE_ROLLED = "occurrence_rolled"
 
 
 class MeetingRegistryEventRead(BaseModel):

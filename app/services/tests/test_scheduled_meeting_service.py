@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -250,3 +250,37 @@ async def test_archive_expired_series_returns_zero_when_none_expired() -> None:
     assert result["archived_count"] == 0
     assert result["archived_ids"] == []
     assert result["as_of_date"] == "2026-07-17"
+
+
+@pytest.mark.asyncio
+async def test_plan_scheduled_meeting_triggers_registry_sync() -> None:
+    db = AsyncMock()
+    meeting_id = uuid.uuid4()
+    department_id = uuid.uuid4()
+    meeting = _meeting_stub(
+        meeting_id=meeting_id,
+        title="Технический совет",
+        department_id=department_id,
+    )
+    meeting.status = ScheduledMeetingStatus.CREATED
+    meeting.outlook_series_id = "master-1"
+
+    loaded_result = MagicMock()
+    loaded_result.scalar_one_or_none.return_value = meeting
+    db.execute = AsyncMock(return_value=loaded_result)
+
+    with (
+        patch(
+            "app.services.scheduled_meeting_service.plan_scheduled_meeting_in_outlook",
+            AsyncMock(),
+        ) as plan_outlook,
+        patch(
+            "app.services.scheduled_meeting_registry_sync.ScheduledMeetingRegistrySyncService.sync_series_card",
+            AsyncMock(),
+        ) as sync_card,
+    ):
+        result = await ScheduledMeetingService(db).plan(meeting_id)
+
+    plan_outlook.assert_awaited_once()
+    sync_card.assert_awaited_once_with(meeting_id)
+    assert result.id == meeting_id

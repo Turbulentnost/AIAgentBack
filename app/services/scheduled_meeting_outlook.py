@@ -28,6 +28,7 @@ from app.services.enterprise_positions_report import (
     lookup_fios_by_position_title,
     normalize_position_title,
 )
+from app.services.meeting_invite_format import INVITE_AGENT_FOOTER, format_invite_body
 from app.tools.Outlook.outlook_html_body import plain_text_to_html
 from app.tools.Outlook.outlook_meeting_link import calendar_item_outlook_meta
 from app.tools.Outlook.send_meeting_invite import (
@@ -75,12 +76,20 @@ def _combine_start(meeting: ScheduledMeeting, timezone: str) -> datetime:
     return parse_start(f"{start_date} {time_label}", timezone)
 
 
-def _invite_body(meeting: ScheduledMeeting) -> str:
-    payload = meeting.payload if isinstance(meeting.payload, dict) else {}
-    comment = payload.get("comment")
-    if isinstance(comment, str) and comment.strip():
-        return comment.strip()
-    return meeting.title.strip()
+def _invite_body(meeting: ScheduledMeeting, attendees: list[tuple[str, str]]) -> str:
+    return format_invite_body(attendees, footer=INVITE_AGENT_FOOTER)
+
+
+def _attendee_emails(attendees: list[tuple[str, str]]) -> list[str]:
+    emails: list[str] = []
+    seen: set[str] = set()
+    for _fio, address in attendees:
+        key = address.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        emails.append(address.strip())
+    return emails
 
 
 def _build_recurrence(meeting: ScheduledMeeting, start: datetime) -> Recurrence:
@@ -146,7 +155,7 @@ def _dispatch_relative_monthly_invite(
     account = connect_account(config)
     meeting_end = start + timedelta(minutes=meeting.duration_minutes)
     recurrence = _build_recurrence(meeting, start)
-    body = _invite_body(meeting)
+    body = _invite_body(meeting, attendees)
 
     item = CalendarItem(
         account=account,
@@ -157,7 +166,7 @@ def _dispatch_relative_monthly_invite(
         end=meeting_end,
         location="",
         recurrence=recurrence,
-        required_attendees=[resolve_attendee(person) for person in attendees],
+        required_attendees=[resolve_attendee(person) for person in _attendee_emails(attendees)],
         resources=[],
     )
     item.save(send_meeting_invitations=SEND_ONLY_TO_ALL)
@@ -166,7 +175,7 @@ def _dispatch_relative_monthly_invite(
     return {
         "status": "sent",
         "from": primary_smtp_address(config),
-        "attendees": attendees,
+        "attendees": _attendee_emails(attendees),
         "subject": meeting.title.strip(),
         "start": start.isoformat(),
         "end": meeting_end.isoformat(),
@@ -180,11 +189,12 @@ def _dispatch_relative_monthly_invite(
 def dispatch_scheduled_meeting_invite(
     meeting: ScheduledMeeting,
     *,
-    attendees: list[str],
+    attendees: list[tuple[str, str]],
 ) -> dict[str, Any]:
     config = load_config()
     start = _combine_start(meeting, config.timezone)
-    if not attendees:
+    attendee_emails = _attendee_emails(attendees)
+    if not attendee_emails:
         raise ScheduledMeetingOutlookError("Не удалось определить e-mail участников серии")
 
     if (
@@ -224,8 +234,8 @@ def dispatch_scheduled_meeting_invite(
         else None
     )
     result = dispatch_recurring_meeting_invite(
-        attendee=attendees[0],
-        attendees=attendees,
+        attendee=attendee_emails[0],
+        attendees=attendee_emails,
         subject=meeting.title.strip(),
         start=start.strftime("%Y-%m-%d %H:%M"),
         duration_minutes=meeting.duration_minutes,
@@ -235,7 +245,7 @@ def dispatch_scheduled_meeting_invite(
         day_of_month=day_of_month,
         end_type="end_date",
         end=meeting.series_end_date.isoformat(),
-        body=_invite_body(meeting),
+        body=_invite_body(meeting, attendees),
         timezone=config.timezone,
         config=config,
     )
@@ -244,10 +254,13 @@ def dispatch_scheduled_meeting_invite(
     return result
 
 
-async def resolve_attendee_emails(db: AsyncSession, meeting: ScheduledMeeting) -> list[str]:
+async def resolve_attendees(
+    db: AsyncSession,
+    meeting: ScheduledMeeting,
+) -> list[tuple[str, str]]:
     from app.tools.onec.lookup_email_by_fio import lookup_email_by_fio
 
-    emails: list[str] = []
+    attendees: list[tuple[str, str]] = []
     seen: set[str] = set()
     unresolved: list[str] = []
 
@@ -283,13 +296,13 @@ async def resolve_attendee_emails(db: AsyncSession, meeting: ScheduledMeeting) -
         normalized_title = normalize_position_title(title)
         found_for_role = False
 
-        for _fio, address in users_by_position.get(normalized_title, []):
+        for fio, address in users_by_position.get(normalized_title, []):
             key = address.lower()
             if key in seen:
                 found_for_role = True
                 continue
             seen.add(key)
-            emails.append(address)
+            attendees.append((fio or title, address))
             found_for_role = True
 
         for fio in lookup_fios_by_position_title(title):
@@ -303,7 +316,7 @@ async def resolve_attendee_emails(db: AsyncSession, meeting: ScheduledMeeting) -
                     found_for_role = True
                     continue
                 seen.add(key)
-                emails.append(address)
+                attendees.append((fio.strip() or title, address))
                 found_for_role = True
 
         if not found_for_role:
@@ -313,9 +326,13 @@ async def resolve_attendee_emails(db: AsyncSession, meeting: ScheduledMeeting) -
         raise ScheduledMeetingOutlookError(
             "Не удалось найти e-mail для должностей: " + ", ".join(unresolved)
         )
-    if not emails:
+    if not attendees:
         raise ScheduledMeetingOutlookError("Не удалось определить e-mail участников серии")
-    return emails
+    return attendees
+
+
+async def resolve_attendee_emails(db: AsyncSession, meeting: ScheduledMeeting) -> list[str]:
+    return _attendee_emails(await resolve_attendees(db, meeting))
 
 
 async def plan_scheduled_meeting_in_outlook(
@@ -330,11 +347,11 @@ async def plan_scheduled_meeting_in_outlook(
     if meeting.status == ScheduledMeetingStatus.ARCHIVE:
         raise ScheduledMeetingOutlookError("Нельзя распланировать архивную серию", status_code=409)
 
-    attendee_emails = await resolve_attendee_emails(db, meeting)
+    attendees = await resolve_attendees(db, meeting)
     result = await asyncio.to_thread(
         dispatch_scheduled_meeting_invite,
         meeting,
-        attendees=attendee_emails,
+        attendees=attendees,
     )
 
     meeting.outlook_series_id = result.get("outlook_item_id")
