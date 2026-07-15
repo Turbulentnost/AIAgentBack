@@ -23,6 +23,37 @@ from app.tools.Outlook.send_meeting_invite import load_config
 logger = logging.getLogger(__name__)
 
 
+def _company_calendar_ids_from_payload(meeting: ScheduledMeeting) -> tuple[str | None, str | None]:
+    payload = meeting.payload if isinstance(meeting.payload, dict) else {}
+    item_id = payload.get("company_calendar_item_id")
+    changekey = payload.get("company_calendar_changekey")
+    return (
+        item_id if isinstance(item_id, str) and item_id.strip() else None,
+        changekey if isinstance(changekey, str) else None,
+    )
+
+
+def _merge_company_calendar_payload(
+    meeting: ScheduledMeeting,
+    meta: dict[str, Any],
+) -> None:
+    stored = dict(meeting.payload or {})
+    for key in (
+        "company_calendar_synced",
+        "company_calendar",
+        "company_calendar_item_id",
+        "company_calendar_changekey",
+        "company_calendar_error",
+    ):
+        if key in meta:
+            value = meta[key]
+            if key == "company_calendar_error" and not value:
+                stored.pop(key, None)
+            elif value is not None:
+                stored[key] = value
+    meeting.payload = stored or None
+
+
 def _update_series_recurrence_end(
     meeting: ScheduledMeeting,
     *,
@@ -63,8 +94,15 @@ def _update_series_recurrence_end(
         start = _combine_start(meeting, config.timezone)
         item.recurrence = _build_recurrence(meeting, start)
         item.save(update_fields=["recurrence"], send_meeting_invitations=SEND_ONLY_TO_ALL)
-        company_meta = sync_meeting_to_company_calendar(item, config=config)
+        company_item_id, company_changekey = _company_calendar_ids_from_payload(meeting)
+        company_meta = sync_meeting_to_company_calendar(
+            item,
+            config=config,
+            company_item_id=company_item_id,
+            company_changekey=company_changekey,
+        )
         outlook_meta = calendar_item_outlook_meta(item, config)
+        _merge_company_calendar_payload(meeting, company_meta)
     finally:
         meeting.series_end_date = previous_end
 

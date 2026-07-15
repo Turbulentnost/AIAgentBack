@@ -81,6 +81,63 @@ def test_sync_meeting_to_company_calendar_creates_copy() -> None:
     assert result["company_calendar_item_id"] == "company-id"
 
 
+def test_sync_meeting_to_company_calendar_replaces_single_copy_with_series() -> None:
+    config = SimpleNamespace(
+        company_calendar="calendar@turbo-don.ru",
+        mailbox="postagent@turbo-don.ru",
+        email="postagent@turbo-don.ru",
+    )
+    recurrence = object()
+    source = SimpleNamespace(
+        subject="Совещание",
+        body="body",
+        start="2026-07-14 10:00",
+        end="2026-07-14 11:00",
+        location="Зал",
+        required_attendees=[],
+        optional_attendees=[],
+        resources=[],
+        recurrence=recurrence,
+    )
+    stale_copy = SimpleNamespace(
+        id="stale-id",
+        changekey="stale-ck",
+        recurrence=None,
+        delete=MagicMock(),
+    )
+    saved_item = SimpleNamespace(
+        id="company-series-id",
+        changekey="company-series-ck",
+        save=MagicMock(),
+    )
+
+    with (
+        patch(
+            "app.tools.Outlook.read_calendars.connect_as_owner",
+            return_value=SimpleNamespace(calendar=MagicMock()),
+        ),
+        patch(
+            "app.tools.Outlook.company_calendar_sync.get_company_calendar_item",
+            return_value=None,
+        ),
+        patch(
+            "app.tools.Outlook.company_calendar_sync.find_company_calendar_item",
+            return_value=stale_copy,
+        ),
+        patch(
+            "app.tools.Outlook.company_calendar_sync.CalendarItem",
+            return_value=saved_item,
+        ) as calendar_item_cls,
+    ):
+        result = sync_meeting_to_company_calendar(source, config=config)
+
+    stale_copy.delete.assert_called_once()
+    calendar_item_cls.assert_called_once()
+    saved_item.save.assert_called_once_with(send_meeting_invitations=SEND_TO_NONE)
+    assert result["company_calendar_synced"] is True
+    assert result["company_calendar_item_id"] == "company-series-id"
+
+
 def test_cancel_meeting_in_company_calendar_cancels_existing_copy() -> None:
     config = SimpleNamespace(
         company_calendar="calendar@turbo-don.ru",

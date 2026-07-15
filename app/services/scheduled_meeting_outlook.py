@@ -254,6 +254,18 @@ def dispatch_scheduled_meeting_invite(
     return result
 
 
+def _is_invitable_attendee_email(address: str) -> bool:
+    from app.services.employee_sync_service import SYNC_EMAIL_DOMAIN
+    from app.tools.onec.lookup_email_by_fio import is_corporate_email
+
+    normalized = address.strip().lower()
+    if not normalized:
+        return False
+    if normalized.endswith(f"@{SYNC_EMAIL_DOMAIN}"):
+        return False
+    return is_corporate_email(address)
+
+
 async def resolve_attendees(
     db: AsyncSession,
     meeting: ScheduledMeeting,
@@ -279,7 +291,7 @@ async def resolve_attendees(
             continue
         fio = (full_name or "").strip()
         address = (email or "").strip()
-        if not address:
+        if not address or not _is_invitable_attendee_email(address):
             continue
         users_by_position.setdefault(position_key, []).append((fio, address))
 
@@ -309,7 +321,7 @@ async def resolve_attendees(
             payload = await asyncio.to_thread(lookup_email_by_fio, fio)
             for entry in payload.get("emails") or []:
                 address = (entry.get("email") or "").strip()
-                if not address:
+                if not address or not _is_invitable_attendee_email(address):
                     continue
                 key = address.lower()
                 if key in seen:
@@ -358,5 +370,87 @@ async def plan_scheduled_meeting_in_outlook(
     meeting.outlook_changekey = result.get("outlook_changekey")
     meeting.outlook_meeting_url = result.get("outlook_meeting_url")
     meeting.status = ScheduledMeetingStatus.PLANNED
+    stored_payload = dict(meeting.payload or {})
+    for key in (
+        "company_calendar_synced",
+        "company_calendar",
+        "company_calendar_item_id",
+        "company_calendar_changekey",
+        "company_calendar_error",
+    ):
+        if key in result:
+            value = result[key]
+            if key == "company_calendar_error" and not value:
+                stored_payload.pop(key, None)
+            elif value is not None:
+                stored_payload[key] = value
+    meeting.payload = stored_payload or None
+    await db.flush()
+    return result
+
+
+def _company_calendar_ids_from_meeting_payload(meeting: ScheduledMeeting) -> tuple[str | None, str | None]:
+    payload = meeting.payload if isinstance(meeting.payload, dict) else {}
+    item_id = payload.get("company_calendar_item_id")
+    changekey = payload.get("company_calendar_changekey")
+    return (
+        item_id if isinstance(item_id, str) and item_id.strip() else None,
+        changekey if isinstance(changekey, str) else None,
+    )
+
+
+def _merge_company_calendar_into_meeting_payload(
+    meeting: ScheduledMeeting,
+    meta: dict[str, Any],
+) -> None:
+    stored = dict(meeting.payload or {})
+    for key in (
+        "company_calendar_synced",
+        "company_calendar",
+        "company_calendar_item_id",
+        "company_calendar_changekey",
+        "company_calendar_error",
+    ):
+        if key in meta:
+            value = meta[key]
+            if key == "company_calendar_error" and not value:
+                stored.pop(key, None)
+            elif value is not None:
+                stored[key] = value
+    meeting.payload = stored or None
+
+
+def resync_scheduled_meeting_company_calendar(meeting: ScheduledMeeting) -> dict[str, Any]:
+    if not meeting.outlook_series_id:
+        raise ScheduledMeetingOutlookError(
+            "Серия не связана с календарём Outlook",
+            status_code=409,
+        )
+
+    from app.tools.Outlook.cancel_meeting import get_meeting_by_id
+    from app.tools.Outlook.company_calendar_sync import sync_meeting_to_company_calendar
+
+    config = load_config()
+    item = get_meeting_by_id(
+        config=config,
+        item_id=meeting.outlook_series_id,
+        changekey=meeting.outlook_changekey or "",
+    )
+    company_item_id, company_changekey = _company_calendar_ids_from_meeting_payload(meeting)
+    company_meta = sync_meeting_to_company_calendar(
+        item,
+        config=config,
+        company_item_id=company_item_id,
+        company_changekey=company_changekey,
+    )
+    _merge_company_calendar_into_meeting_payload(meeting, company_meta)
+    return company_meta
+
+
+async def resync_scheduled_meeting_company_calendar_async(
+    db: AsyncSession,
+    meeting: ScheduledMeeting,
+) -> dict[str, Any]:
+    result = await asyncio.to_thread(resync_scheduled_meeting_company_calendar, meeting)
     await db.flush()
     return result

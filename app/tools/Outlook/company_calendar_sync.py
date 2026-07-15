@@ -69,6 +69,20 @@ def _copy_fields_from_source(item: CalendarItem, source: Any) -> None:
         item.recurrence = recurrence
 
 
+def _source_has_recurrence(source: Any) -> bool:
+    return getattr(source, "recurrence", None) is not None
+
+
+def _remove_company_calendar_item(item: Any) -> None:
+    delete = getattr(item, "delete", None)
+    if callable(delete):
+        delete()
+        return
+    cancel = getattr(item, "cancel", None)
+    if callable(cancel):
+        cancel()
+
+
 def get_company_calendar_item(
     config: OutlookConfig,
     *,
@@ -102,6 +116,7 @@ def find_company_calendar_item(
     subject: str,
     start: Any,
     tolerance_minutes: int = 5,
+    require_recurrence: bool = False,
 ) -> Any | None:
     from app.tools.Outlook.cancel_meeting import to_local
     from app.tools.Outlook.read_calendars import read_calendar_items_in_range
@@ -135,6 +150,8 @@ def find_company_calendar_item(
             continue
         delta = abs((to_local(item.start, config) - start_local).total_seconds())
         if delta <= max(tolerance_minutes, 0) * 60:
+            if require_recurrence and getattr(item, "recurrence", None) is None:
+                continue
             matches.append((delta, item))
     if not matches:
         return None
@@ -167,11 +184,29 @@ def sync_meeting_to_company_calendar(
                 changekey=company_changekey or "",
             )
         if existing is None:
-            existing = find_company_calendar_item(
-                resolved,
-                subject=str(getattr(source_item, "subject", "") or ""),
-                start=getattr(source_item, "start", None),
-            )
+            subject = str(getattr(source_item, "subject", "") or "")
+            start = getattr(source_item, "start", None)
+            if _source_has_recurrence(source_item):
+                existing = find_company_calendar_item(
+                    resolved,
+                    subject=subject,
+                    start=start,
+                    require_recurrence=True,
+                )
+            if existing is None:
+                existing = find_company_calendar_item(
+                    resolved,
+                    subject=subject,
+                    start=start,
+                )
+
+        if (
+            existing is not None
+            and _source_has_recurrence(source_item)
+            and getattr(existing, "recurrence", None) is None
+        ):
+            _remove_company_calendar_item(existing)
+            existing = None
 
         if existing is not None:
             _copy_fields_from_source(existing, source_item)
