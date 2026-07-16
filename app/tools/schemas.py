@@ -154,3 +154,37 @@ class GetKnowledgeFragmentOutput(BaseModel):
     neighbors: list[KnowledgeFragmentNeighbor] = Field(default_factory=list)
     source: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcurementNeedLinesInput(BaseModel):
+    correlation_id: str = Field(..., min_length=1, max_length=128)
+    source_type: Literal[
+        "internal_consumption_order",
+        "production_material_order",
+        "transfer_order",
+        "reorder_point",
+    ]
+    source_1c_ref: str = Field(..., min_length=1, max_length=512)
+
+
+class ProcurementSupplyReadInput(BaseModel):
+    correlation_id: str = Field(..., min_length=1, max_length=128)
+    nomenclature_ids: list[str] = Field(..., min_length=1, max_length=500)
+    warehouse_ids: list[str] = Field(default_factory=list, max_length=100)
+    required_at: datetime | None = None
+
+
+class ProcurementOneCReadOutput(BaseModel):
+    status: Literal["success", "capability_unavailable", "failed"]
+    source_system: str = "1C_ERP"
+    tool_name: str
+    object_type: str
+    object_id: str | None = None
+    row_ids: list[str] = Field(default_factory=list)
+    retrieved_at: datetime
+    business_effective_at: datetime | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    freshness_status: Literal["fresh", "stale", "unknown"] = "unknown"
+    correlation_id: str
+    error_code: str | None = None
+    error_message: str | None = None

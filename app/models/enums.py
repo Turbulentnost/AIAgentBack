@@ -498,6 +498,8 @@ class ProcurementCaseStatus(str, enum.Enum):
     NEW = "new"
     DATA_CHECK = "data_check"
     COVERAGE_CHECK = "coverage_check"
+    HUMAN_REQUIRED = "human_required"
+    BLOCKED = "blocked"
     PURCHASE_DRAFT = "purchase_draft"
     APPROVAL_REQUIRED = "approval_required"
     ORDERED = "ordered"

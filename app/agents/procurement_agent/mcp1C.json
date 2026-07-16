@@ -1,0 +1,17 @@
+{
+    "mcpServers": {
+      "1c-odata": {
+        "command": "C:\\Program Files\\nodejs\\node.exe",
+        "args": [
+          "C:/Users/userii1/Desktop/MCP/vendor/1c-odata-mcp/dist/index.js"
+        ],
+        "env": {
+          "ODATA_BASE_URL": "http://192.168.2.229:81/erp_pm/odata/standard.odata/",
+          "ODATA_USERNAME": "odata.user",
+          "ODATA_PASSWORD": "npo852456",
+          "ODATA_TIMEOUT_MS": "120000",
+          "READ_ONLY": "true"
+        }
+      }
+    }
+  }

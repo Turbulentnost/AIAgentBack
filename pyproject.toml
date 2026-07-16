@@ -60,3 +60,6 @@ select = ["E", "F", "I", "W", "UP", "B"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests", "app/agents"]
+markers = [
+  "integration: tests that use configured external infrastructure",
+]

@@ -1,42 +1,42 @@
 {
-  "generated_at": "2026-07-16T07:37:32Z",
+  "generated_at": "2026-07-16T08:07:32Z",
   "time_window": {
     "from_local": "2026-07-08 08:35:00",
-    "to_local": "2026-07-16 10:37:32",
+    "to_local": "2026-07-16 11:07:32",
     "timezone": "Europe/Moscow",
     "db_query_utc": {
       "from": "2026-07-08 05:35:00",
-      "to": "2026-07-16 07:37:32.865058"
+      "to": "2026-07-16 08:07:32.866147"
     },
     "note": "PostgreSQL хранит received_at/processed_at/change_events.created_at как naive UTC; входные даты задаются в Europe/Moscow"
   },
   "emails": {
-    "total_received_in_window": 3286,
-    "total_processed_in_window": 3515,
-    "attachments_total": 4240,
+    "total_received_in_window": 3306,
+    "total_processed_in_window": 3553,
+    "attachments_total": 4255,
     "by_status_received": {
-      "awaiting_human": 369,
+      "awaiting_human": 376,
       "done": 143,
-      "error": 594,
-      "spam": 2180
+      "error": 596,
+      "spam": 2191
     },
     "by_status_processed": {
-      "awaiting_human": 411,
-      "done": 152,
-      "error": 631,
-      "spam": 2321
+      "awaiting_human": 418,
+      "done": 157,
+      "error": 633,
+      "spam": 2345
     },
     "by_spam": {
-      "not_spam": 1106,
-      "spam": 2180
+      "not_spam": 1115,
+      "spam": 2191
     },
     "by_department": {
-      "(не назначен)": 2774,
-      "00-000065 — ОМТО": 149,
-      "00-000075 — ОДП": 75,
+      "(не назначен)": 2787,
+      "00-000065 — ОМТО": 150,
+      "00-000075 — ОДП": 77,
       "00-000076 — ОРКК / ПАО Газпром": 47,
       "00-000002 — Бухгалтерия": 43,
-      "00-000074 — ОПМУ": 35,
+      "00-000074 — ОПМУ": 39,
       "00-000054 — Отдел тендерных продаж": 25,
       "00-000065 — Начальник ОМТО": 20,
       "00-000015 — начальник отдела ВЭД": 19,
@@ -65,13 +65,13 @@
       "00-000099 — Начальник отдела технической поддержки": 1
     },
     "by_human_review": {
-      "auto": 2323,
-      "human_review": 963
+      "auto": 2334,
+      "human_review": 972
     },
     "by_priority": {
-      "(не указан)": 2774,
+      "(не указан)": 2787,
       "high": 146,
-      "normal": 366
+      "normal": 373
     }
   },
   "human_changes": {

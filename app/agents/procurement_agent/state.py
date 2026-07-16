@@ -31,6 +31,18 @@ class ProcurementCaseState(BaseAgentState, total=False):
     next_agent: str | None
     next_control_point: str | None
     warnings: list[str]
+    plan: dict[str, Any] | None
+    evidence: list[dict[str, Any]]
+    next_action: dict[str, Any] | None
+    current_tool_call: dict[str, Any] | None
+    current_observation: dict[str, Any] | None
+    iteration: int
+    identical_call_counts: dict[str, int]
+    successful_call_hashes: dict[str, str]
+    coverage_result: dict[str, Any] | None
+    human_action: dict[str, Any] | None
+    stop_reason: str | None
+    runtime: Any
 
 
 __all__ = ["ProcurementCaseState"]

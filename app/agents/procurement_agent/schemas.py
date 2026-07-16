@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -37,6 +38,145 @@ class ProcurementArtifact(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProcurementPlanStep(BaseModel):
+    step_id: str
+    objective: str
+    status: Literal["pending", "running", "completed", "blocked", "skipped"] = "pending"
+    allowed_tool_categories: list[str] = Field(default_factory=lambda: ["onec_read"])
+    required_evidence: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    result_summary: str | None = None
+    blocking_reason: str | None = None
+
+
+class ProcurementPlan(BaseModel):
+    plan_id: str
+    case_id: str
+    agent_id: str
+    goal: str
+    version: int = 1
+    status: Literal["active", "completed", "blocked", "superseded"] = "active"
+    steps: list[ProcurementPlanStep]
+    dependencies: list[str] = Field(default_factory=list)
+    expected_evidence: list[str] = Field(default_factory=list)
+    completed_at: datetime | None = None
+    replan_reason: str | None = None
+
+
+class ProcurementEvidence(BaseModel):
+    evidence_id: str
+    source_system: str
+    tool_name: str
+    object_type: str
+    object_id: str | None = None
+    row_ids: list[str] = Field(default_factory=list)
+    retrieved_at: datetime
+    business_effective_at: datetime | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    freshness_status: Literal["fresh", "stale", "unknown"]
+    correlation_id: str
+    args_hash: str
+    content_hash: str
+    status: Literal["success", "capability_unavailable", "failed"] = "success"
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class ProcurementNeedPosition(BaseModel):
+    line_id: str
+    nomenclature_id: str | None = None
+    nomenclature_name: str
+    unit: str
+    required_date: datetime | None = None
+    gross_quantity: Decimal | None = Field(default=None, ge=0)
+    product_quantity: Decimal | None = Field(default=None, ge=0)
+    consumption_rate: Decimal | None = Field(default=None, ge=0)
+    loss_factor: Decimal = Field(default=Decimal("1"), ge=0)
+    calculation_source: Literal["direct_material_quantity", "production_norm"] | None = None
+    match_status: Literal["exact", "ambiguous", "unmatched"] = "exact"
+    possible_units: list[str] = Field(default_factory=list)
+
+
+class ProcurementSupplyItem(BaseModel):
+    supply_id: str
+    source_type: Literal[
+        "warehouse",
+        "store_room",
+        "semifinished",
+        "in_transit",
+        "supplier_order",
+        "internal_transfer",
+        "semifinished_production",
+    ]
+    nomenclature_id: str
+    unit: str
+    quantity: Decimal = Field(ge=0)
+    confirmed: bool = True
+    suitable: bool = True
+    reserved_for_other: bool = False
+    quarantine: bool = False
+    defective: bool = False
+    incoming_control_passed: bool = True
+    expired: bool = False
+    illiquid: bool = False
+    exact_match: bool = True
+    evidence_id: str
+
+
+class ProcurementSupplyBreakdown(BaseModel):
+    source_type: str
+    quantity: Decimal
+    supply_ids: list[str] = Field(default_factory=list)
+
+
+class ProcurementExcludedSupply(BaseModel):
+    supply_id: str
+    source_type: str
+    quantity: Decimal
+    reason: str
+    evidence_id: str
+
+
+class ProcurementPositionCoverage(BaseModel):
+    line_id: str
+    nomenclature_id: str | None
+    nomenclature_name: str
+    unit: str
+    required_date: datetime | None
+    gross_requirement: Decimal
+    gross_calculation_source: str
+    available_supply: Decimal
+    supply_breakdown: list[ProcurementSupplyBreakdown] = Field(default_factory=list)
+    excluded_supply: list[ProcurementExcludedSupply] = Field(default_factory=list)
+    net_requirement: Decimal
+    status: Literal["covered", "partially_covered", "uncovered", "data_insufficient"]
+    warnings: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class ProcurementHumanActionCard(BaseModel):
+    stopped_by: str
+    obtained_data: list[str] = Field(default_factory=list)
+    requested_from_human: list[str] = Field(default_factory=list)
+    options: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class ProcurementKT1Result(BaseModel):
+    case_id: str
+    status: Literal["covered", "partially_covered", "uncovered", "data_insufficient"]
+    source_basis: dict[str, Any]
+    positions: list[ProcurementPositionCoverage]
+    critical_positions: list[str] = Field(default_factory=list)
+    missing_data: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    recommended_next_step: str
+    human_action_required: ProcurementHumanActionCard | None = None
+    completed_at: datetime
+
+
 class ProcurementAgentResult(AgentResult):
     correlation_id: str
     case_id: str | None = None
@@ -53,6 +193,10 @@ class ProcurementAgentResult(AgentResult):
     next_control_point: str | None = None
     audit_event_id: str | None = None
     missing_fields: list[str] = Field(default_factory=list)
+    plan: ProcurementPlan | None = None
+    evidence: list[ProcurementEvidence] = Field(default_factory=list)
+    coverage_result: ProcurementKT1Result | None = None
+    human_action: ProcurementHumanActionCard | None = None
 
 
 class ProcurementApprovalToken(BaseModel):
@@ -73,4 +217,12 @@ __all__ = [
     "ProcurementApprovalRequirement",
     "ProcurementApprovalToken",
     "ProcurementArtifact",
+    "ProcurementEvidence",
+    "ProcurementHumanActionCard",
+    "ProcurementKT1Result",
+    "ProcurementNeedPosition",
+    "ProcurementPlan",
+    "ProcurementPlanStep",
+    "ProcurementPositionCoverage",
+    "ProcurementSupplyItem",
 ]

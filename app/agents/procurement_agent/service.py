@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
@@ -11,7 +14,13 @@ from app.agents.common.base import BaseAgent
 from app.agents.common.registry import agent_registry
 from app.agents.procurement_agent import config
 from app.agents.procurement_agent.graph import build_graph
-from app.agents.procurement_agent.schemas import ProcurementAgentRequest, ProcurementAgentResult
+from app.agents.procurement_agent.runtime import ProcurementRuntime
+from app.agents.procurement_agent.schemas import (
+    ProcurementAgentRequest,
+    ProcurementAgentResult,
+    ProcurementEvidence,
+    ProcurementPlan,
+)
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
 from app.models.enums import ConfidenceLevel, ProcurementCaseStatus
@@ -35,7 +44,7 @@ class ProcurementAgent(BaseAgent):
     name = config.AGENT_NAME
     purpose = config.AGENT_PURPOSE
     version = config.AGENT_VERSION
-    allowed_tools: list[str] = []
+    allowed_tools = config.READ_ONLY_TOOL_NAMES
 
     def __init__(self) -> None:
         self._graph = build_graph()
@@ -51,17 +60,29 @@ class ProcurementAgent(BaseAgent):
                 summary="Запрос закупочного агента не соответствует обязательному контракту.",
                 data_confidence=ConfidenceLevel.LOW,
                 requires_human_review=True,
-                correlation_id=str(payload.get("correlation_id") or payload.get("task_id") or "unknown"),
+                correlation_id=str(
+                    payload.get("correlation_id") or payload.get("task_id") or "unknown"
+                ),
                 case_status=ProcurementCaseStatus.FAILED,
                 risks=[{"kind": "validation_error", "details": exc.errors()}],
             )
 
         external_db = payload.get("db")
         if isinstance(external_db, AsyncSession):
-            return await self._run_with_session(request, external_db, commit=False)
+            return await self._run_with_session(
+                request,
+                external_db,
+                commit=False,
+                runtime_options=payload,
+            )
 
         async with AsyncSessionLocal() as db:
-            result = await self._run_with_session(request, db, commit=True)
+            result = await self._run_with_session(
+                request,
+                db,
+                commit=True,
+                runtime_options=payload,
+            )
             return result
 
     async def _run_with_session(
@@ -70,7 +91,9 @@ class ProcurementAgent(BaseAgent):
         db: AsyncSession,
         *,
         commit: bool,
+        runtime_options: dict[str, Any] | None = None,
     ) -> ProcurementAgentResult:
+        runtime_options = runtime_options or {}
         case, replay = await self._get_or_create_case(db, request)
         if replay and case.latest_result:
             return ProcurementAgentResult.model_validate(case.latest_result)
@@ -91,6 +114,39 @@ class ProcurementAgent(BaseAgent):
             },
         )
 
+        async def write_event(event_type: str, event_payload: dict[str, Any]) -> None:
+            event_hash = hashlib.sha256(
+                json.dumps(
+                    event_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ).encode()
+            ).hexdigest()[:24]
+            await self._append_event(
+                db,
+                case=case,
+                event_type=event_type,
+                idempotency_key=(
+                    f"{request.idempotency_key[:180]}:{event_type[:40]}:{event_hash}"
+                ),
+                previous_status=case.status,
+                new_status=case.status,
+                actor_user_id=_as_uuid(request.user_id),
+                actor_role=request.human_role,
+                payload=event_payload,
+            )
+            await db.flush()
+
+        runtime = ProcurementRuntime(
+            db=db,
+            case=case,
+            event_writer=write_event,
+            planner=runtime_options.get("planner"),
+            tool_executor=runtime_options.get("tool_executor"),
+            current_user=runtime_options.get("current_user"),
+            task_id=request.task_id,
+        )
         final_state = await self._graph.ainvoke(
             {
                 **request.model_dump(mode="json"),
@@ -103,17 +159,31 @@ class ProcurementAgent(BaseAgent):
                 "artifacts": [],
                 "alternatives": [],
                 "risks": [],
+                "evidence": [],
+                "iteration": 0,
+                "identical_call_counts": {},
+                "successful_call_hashes": {},
+                "runtime": runtime,
             }
         )
-        missing_fields = final_state.get("missing_fields") or []
         case_status = ProcurementCaseStatus(final_state["case_status"])
-        failed = case_status is ProcurementCaseStatus.FAILED
+        failed = case_status in {ProcurementCaseStatus.FAILED, ProcurementCaseStatus.BLOCKED}
+        raw_plan = (case.case_metadata or {}).get("active_plan") or final_state.get("plan")
+        plan = ProcurementPlan.model_validate(raw_plan) if raw_plan else None
+        evidence = [
+            ProcurementEvidence.model_validate(item)
+            for item in final_state.get("evidence") or []
+        ]
         result = ProcurementAgentResult(
             agent_id=self.agent_id,
-            status="failed" if failed else ("completed_with_issues" if missing_fields else "completed"),
+            status=final_state.get("status", "failed" if failed else "completed"),
             summary=final_state.get("summary"),
-            data_confidence=ConfidenceLevel.LOW if failed or missing_fields else ConfidenceLevel.HIGH,
-            requires_human_review=bool(missing_fields or final_state.get("required_approval")),
+            data_confidence=(
+                ConfidenceLevel.HIGH
+                if case_status is ProcurementCaseStatus.CLOSED
+                else ConfidenceLevel.LOW
+            ),
+            requires_human_review=bool(final_state.get("requires_human_review")),
             correlation_id=request.correlation_id,
             case_id=str(case.id),
             case_status=case_status,
@@ -127,7 +197,11 @@ class ProcurementAgent(BaseAgent):
             required_approval=final_state.get("required_approval"),
             next_agent=final_state.get("next_agent"),
             next_control_point=final_state.get("next_control_point"),
-            missing_fields=missing_fields,
+            missing_fields=final_state.get("missing_fields") or [],
+            plan=plan,
+            evidence=evidence,
+            coverage_result=final_state.get("coverage_result"),
+            human_action=final_state.get("human_action"),
         )
 
         case.status = case_status.value
@@ -135,18 +209,8 @@ class ProcurementAgent(BaseAgent):
         case.current_agent_id = final_state.get("next_agent") or self.agent_id
         case.latest_result = result.model_dump(mode="json")
         case.error_message = result.summary if failed else None
-        await self._append_event(
-            db,
-            case=case,
-            event_type="level_zero_assessment_completed",
-            idempotency_key=f"{request.idempotency_key[:247]}:result",
-            previous_status=ProcurementCaseStatus.NEW.value,
-            new_status=case_status.value,
-            actor_user_id=_as_uuid(request.user_id),
-            actor_role=request.human_role,
-            rule_refs=result.rule_refs,
-            payload=result.model_dump(mode="json"),
-        )
+        case.closed_at = datetime.now(UTC) if case_status is ProcurementCaseStatus.CLOSED else None
+        await runtime.save_checkpoint(final_state, plan=plan)
         if commit:
             await db.commit()
         else:
@@ -159,7 +223,9 @@ class ProcurementAgent(BaseAgent):
         request: ProcurementAgentRequest,
     ) -> tuple[ProcurementCase, bool]:
         by_key = await db.scalar(
-            select(ProcurementCase).where(ProcurementCase.idempotency_key == request.idempotency_key)
+            select(ProcurementCase).where(
+                ProcurementCase.idempotency_key == request.idempotency_key
+            )
         )
         if by_key is not None:
             if by_key.correlation_id != request.correlation_id:

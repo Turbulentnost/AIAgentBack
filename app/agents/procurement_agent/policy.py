@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.agents.procurement_agent.config import READ_ONLY_TOOL_NAMES
 from app.models.enums import ProcurementActionClass
 
 
@@ -11,6 +12,7 @@ _READ_OPERATIONS = {
     "check_coverage",
     "read_case",
     "read_onec",
+    *READ_ONLY_TOOL_NAMES,
 }
 _DRAFT_OPERATIONS = {
     "prepare_purchase_draft",
@@ -97,8 +99,20 @@ def evaluate_procurement_action(operation: str, autonomy_level: int) -> Procurem
     return ProcurementPolicyDecision(action_class, True, False, "Действие разрешено политикой.")
 
 
+def evaluate_procurement_tool(tool_name: str, autonomy_level: int) -> ProcurementPolicyDecision:
+    if tool_name not in READ_ONLY_TOOL_NAMES:
+        return ProcurementPolicyDecision(
+            ProcurementActionClass.FORBIDDEN,
+            False,
+            False,
+            "Инструмент отсутствует в закрытом read-only allowlist закупочного агента.",
+        )
+    return evaluate_procurement_action(tool_name, autonomy_level)
+
+
 __all__ = [
     "ProcurementPolicyDecision",
     "classify_procurement_action",
     "evaluate_procurement_action",
+    "evaluate_procurement_tool",
 ]
