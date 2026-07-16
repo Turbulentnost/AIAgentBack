@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from agent_pochta.config import get_settings
 from agent_pochta.demo_filter import is_demo_message
@@ -201,10 +202,32 @@ def health() -> dict[str, str]:
 def list_routing_departments() -> list[dict[str, str]]:
     factory = get_session_factory()
     with factory() as session:
-        items = DepartmentRepository(session).list_for_ui()
-        if items:
-            return items
-    return list_active_departments_for_ui()
+        try:
+            items = DepartmentRepository(session).list_for_ui()
+            if items:
+                return items
+        except Exception:
+            session.rollback()
+        try:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT id::text AS id, name
+                    FROM departments
+                    WHERE COALESCE(is_active, true) = true
+                    ORDER BY name
+                    """
+                )
+            ).mappings()
+            items = [{"id": row["id"], "name": row["name"]} for row in rows if row["name"]]
+            if items:
+                return items
+        except Exception:
+            session.rollback()
+    try:
+        return list_active_departments_for_ui()
+    except Exception:
+        return []
 
 
 @app.get("/api/v1/organizations")
@@ -282,12 +305,14 @@ def email_messages_stats(
     q: str | None = Query(default=None, min_length=1, max_length=200),
 ) -> dict[str, Any]:
     parsed_from, parsed_to = _message_list_filters(date_from=date_from, date_to=date_to)
+    mailboxes = get_settings().mailbox_list
     with get_session_factory()() as session:
         repo = EmailRepository(session)
         by_status = repo.count_by_status(
             date_from=parsed_from,
             date_to=parsed_to,
             search=q,
+            mailboxes=mailboxes,
         )
         return {
             "total": sum(by_status.values()),
@@ -305,6 +330,7 @@ def list_email_messages(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     parsed_from, parsed_to = _message_list_filters(date_from=date_from, date_to=date_to)
+    mailboxes = get_settings().mailbox_list
     with get_session_factory()() as session:
         repo = EmailRepository(session)
         rows = repo.list_messages(
@@ -312,6 +338,7 @@ def list_email_messages(
             date_from=parsed_from,
             date_to=parsed_to,
             search=q,
+            mailboxes=mailboxes,
             limit=limit,
             offset=offset,
         )
@@ -320,6 +347,7 @@ def list_email_messages(
             date_from=parsed_from,
             date_to=parsed_to,
             search=q,
+            mailboxes=mailboxes,
         )
         return {
             "items": [_row_to_list_dict(row) for row in rows],

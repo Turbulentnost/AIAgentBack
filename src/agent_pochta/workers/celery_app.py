@@ -13,7 +13,7 @@ celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-    result_backend="rpc://",
+    result_backend=settings.celery_result_backend or settings.celery_broker_url,
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,

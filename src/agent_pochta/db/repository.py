@@ -40,7 +40,10 @@ class EmailRepository:
         date_from: date | None = None,
         date_to: date | None = None,
         search: str | None = None,
+        mailboxes: list[str] | None = None,
     ):
+        if mailboxes:
+            query = query.filter(EmailMessageRow.mailbox.in_(mailboxes))
         if status:
             query = query.filter(EmailMessageRow.status == status)
         if date_from is not None:
@@ -66,6 +69,7 @@ class EmailRepository:
         date_from: date | None = None,
         date_to: date | None = None,
         search: str | None = None,
+        mailboxes: list[str] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[EmailMessageRow]:
@@ -76,6 +80,7 @@ class EmailRepository:
             date_from=date_from,
             date_to=date_to,
             search=search,
+            mailboxes=mailboxes,
         )
         return query.offset(offset).limit(limit).all()
 
@@ -86,6 +91,7 @@ class EmailRepository:
         date_from: date | None = None,
         date_to: date | None = None,
         search: str | None = None,
+        mailboxes: list[str] | None = None,
     ) -> int:
         query = self._session.query(func.count(EmailMessageRow.id))
         query = self._apply_message_filters(
@@ -94,6 +100,7 @@ class EmailRepository:
             date_from=date_from,
             date_to=date_to,
             search=search,
+            mailboxes=mailboxes,
         )
         return int(query.scalar() or 0)
 
@@ -110,6 +117,7 @@ class EmailRepository:
         date_from: date | None = None,
         date_to: date | None = None,
         search: str | None = None,
+        mailboxes: list[str] | None = None,
     ) -> dict[str, int]:
         query = self._session.query(EmailMessageRow.status, func.count(EmailMessageRow.id))
         query = self._apply_message_filters(
@@ -117,6 +125,7 @@ class EmailRepository:
             date_from=date_from,
             date_to=date_to,
             search=search,
+            mailboxes=mailboxes,
         )
         rows = query.group_by(EmailMessageRow.status).all()
         return {status: int(count) for status, count in rows}

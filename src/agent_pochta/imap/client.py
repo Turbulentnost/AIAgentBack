@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import ssl
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from imapclient import IMAPClient
+if TYPE_CHECKING:
+    from imapclient import IMAPClient
 
 from agent_pochta.config import Settings, get_settings
 from agent_pochta.imap.parser import parse_raw_email
@@ -72,7 +74,15 @@ class ImapMailboxClient:
         self.credentials = credentials
         self.settings = settings or get_settings()
 
-    def _connect(self) -> IMAPClient:
+    def _connect(self) -> "IMAPClient":
+        try:
+            from imapclient import IMAPClient
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "IMAP support requires the optional dependency 'imapclient'. "
+                "Install it before polling mailboxes or fetching message bodies."
+            ) from exc
+
         context = ssl.create_default_context()
         client = IMAPClient(
             self.settings.imap_host,

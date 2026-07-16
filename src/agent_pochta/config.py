@@ -98,11 +98,13 @@ class Settings(BaseSettings):
     celery_broker_url: str = Field(
         default="amqp://guest:guest@localhost:5672//", alias="CELERY_BROKER_URL"
     )
+    celery_result_backend: str = Field(default="", alias="CELERY_RESULT_BACKEND")
 
     # Внешние сервисы платформы (при use_stubs=false)
     llm_gateway_url: str = Field(default="", alias="LLM_GATEWAY_URL")
     llm_gateway_api_key: str = Field(default="", alias="LLM_GATEWAY_API_KEY")
     llm_default_model: str = Field(default="qwen/qwen3.5-9b", alias="LLM_DEFAULT_MODEL")
+    llm_gateway_timeout_sec: float = Field(default=120.0, alias="LLM_GATEWAY_TIMEOUT_SEC")
     document_service_url: str = Field(default="", alias="DOCUMENT_SERVICE_URL")
     integration_service_url: str = Field(default="", alias="INTEGRATION_SERVICE_URL")
     vault_addr: str = Field(default="", alias="VAULT_ADDR")

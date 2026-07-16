@@ -18,6 +18,7 @@ dependencies = [
   "celery[redis]>=5.4.0",
   "redis>=5.0.0",
   "flower>=2.0.0",
+  "imapclient>=3.0",
   "python-jose[cryptography]>=3.3.0",
   "passlib[bcrypt]>=1.7.4",
   "langchain>=0.3.0",

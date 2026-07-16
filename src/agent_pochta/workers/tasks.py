@@ -9,7 +9,7 @@ import structlog
 
 from agent_pochta.config import get_settings
 from agent_pochta.db.models import EmailMessageRow
-from agent_pochta.db.repository import EmailRepository
+from agent_pochta.db.repository import EmailRepository, persist_processing_result
 from agent_pochta.db.session import get_session_factory
 from agent_pochta.demo_filter import is_demo_email
 from agent_pochta.email_payload import email_from_task_payload
@@ -55,6 +55,31 @@ def _schedule_erp_retry(message_id: str) -> None:
     retry_erp_task.apply_async(args=[message_id], countdown=settings.erp_retry_delay_sec)
 
 
+def _error_message(exc: Exception) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    return message[:500]
+
+
+def _persist_processing_error(email: EmailMessage, exc: Exception) -> str | None:
+    error = _error_message(exc)
+    row_id = persist_processing_result(
+        {
+            "email": email,
+            "status": ProcessingStatus.ERROR,
+            "human_review": True,
+            "summary_ru": f"Автоматическая обработка прервана: {error}",
+            "escalation_reason": f"Ошибка автоматической обработки: {error}",
+            "errors": [error],
+            "trace": ["imap_listener", "processing_error", "finalize"],
+            "meta": {
+                "error_type": exc.__class__.__name__,
+                "error": error,
+            },
+        }
+    )
+    return str(row_id) if row_id is not None else None
+
+
 @celery_app.task(name="agent_pochta.process_email", bind=True, max_retries=3, default_retry_delay=60)
 def process_email_task(self, email_payload: dict) -> dict:
     email = email_from_task_payload(email_payload)
@@ -80,8 +105,27 @@ def process_email_task(self, email_payload: dict) -> dict:
             )
             continue
 
-        graph = get_worker_graph()
-        result = graph.invoke({"email": attempt_email})
+        try:
+            graph = get_worker_graph()
+            result = graph.invoke({"email": attempt_email})
+        except Exception as exc:
+            logger.exception(
+                "email_processing_failed",
+                message_id=attempt_id,
+                recipient=recipient,
+            )
+            results.append(
+                {
+                    "skipped": False,
+                    "message_id": attempt_id,
+                    "recipient": recipient,
+                    "status": ProcessingStatus.ERROR.value,
+                    "db_record_id": _persist_processing_error(attempt_email, exc),
+                    "error": _error_message(exc),
+                    "trace": ["imap_listener", "processing_error"],
+                }
+            )
+            continue
 
         status = result.get("status")
         erp = result.get("erp")
