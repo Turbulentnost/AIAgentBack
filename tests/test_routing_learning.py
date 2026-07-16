@@ -11,6 +11,7 @@ import pytest
 from agent_pochta.routing.learning import (
     collect_department_learning_keywords,
     enrich_department_in_qdrant,
+    enrich_hitl_contractor_in_qdrant,
     learn_from_not_spam,
     learn_from_routing_correction,
     learn_from_spam_mark,
@@ -136,6 +137,20 @@ def test_learn_from_routing_correction_enriches_qdrant(
     assert result["keywords_added"] == 2
     append_mock.assert_called_once()
     assert append_mock.call_args.args[1] == "00-000002"
+
+
+def test_enrich_hitl_contractor_stub_skips(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("RAG_BACKEND", "stub")
+    from agent_pochta.config import reset_settings
+
+    reset_settings()
+    result = enrich_hitl_contractor_in_qdrant(
+        contractor_id="email:a@b.ru",
+        name="Partner",
+        email="a@b.ru",
+    )
+    assert result["upserted"] == 0
+    assert result["reason"] == "stub_backend"
 
 
 def test_enrich_department_in_qdrant_stub_backend(monkeypatch: pytest.MonkeyPatch):

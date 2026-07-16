@@ -23,6 +23,8 @@ _INTERNAL_KEYWORD_SOURCES = frozenset(
         "sales_odp",
         "reserve",
         "human_correction",
+        "info_strict",
+        "info_strict_unclear",
     }
 )
 
@@ -132,7 +134,7 @@ def infer_theme_action(
 
 
 def format_action_theme(action: str, subject: str) -> str:
-    """Формат «Действие: тема письма» без тела и LLM-описания."""
+    """Формат «Действие требуемое в письме: краткая тема» без тела и LLM-описания."""
     cleaned = sanitize_theme(subject)
     if cleaned == "Без темы":
         return cleaned
@@ -153,7 +155,7 @@ def build_action_xml_theme(
     claim: bool = False,
     key_phrase: str = "",
 ) -> str:
-    """Theme для XML/1С: префикс действия + subject, без тела письма."""
+    """Theme для XML/1С: префикс требуемого действия + subject, без тела письма."""
     action = infer_theme_action(
         subject,
         combined_text,
@@ -325,7 +327,7 @@ def normalize_xml_theme(
     process_type: str = "",
     claim: bool = False,
 ) -> str:
-    """Нормализует xml_theme от LLM в формат «Действие: subject» без тела письма."""
+    """Нормализует xml_theme от LLM в формат «Действие требуемое: subject» без тела письма."""
     theme = sanitize_theme(raw)
     if theme == "Без темы":
         return build_action_xml_theme(

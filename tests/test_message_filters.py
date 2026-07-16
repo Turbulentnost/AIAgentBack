@@ -179,8 +179,11 @@ def test_email_messages_stats_endpoint():
     client = TestClient(app)
 
     with _mock_repo(rows=[], total=3, by_status={"done": 2, "spam": 1}):
-
-        response = client.get("/api/v1/email-messages/stats")
+        with patch(
+            "agent_pochta.api.app.collect_operator_approvals",
+            return_value={"saved": 4, "changed": 1, "rate": 0.8},
+        ):
+            response = client.get("/api/v1/email-messages/stats")
 
     assert response.status_code == 200
 
@@ -191,6 +194,8 @@ def test_email_messages_stats_endpoint():
     assert payload["by_status"]["done"] == 2
 
     assert payload["by_status"]["spam"] == 1
+
+    assert payload["operator_approvals"] == {"saved": 4, "changed": 1, "rate": 0.8}
 
 
 

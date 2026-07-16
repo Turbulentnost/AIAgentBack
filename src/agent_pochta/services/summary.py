@@ -180,11 +180,62 @@ def build_summary_context(
     return ctx
 
 
+# Ответ модели «как чат-бот отправителю», а не обзор для офис-менеджера.
+_CHAT_REPLY_START_RE = re.compile(
+    r"^\s*(?:"
+    r"здравствуйте|добр(?:ый|ое)\s+(?:день|утро|вечер)|привет(?:ствую)?|"
+    r"hello|hi\b|dear\b"
+    r")\b",
+    re.IGNORECASE,
+)
+_CHAT_REPLY_MARKERS_RE = re.compile(
+    r"(?:"
+    r"спасибо\s+за\s+(?:ваше\s+|Ваше\s+)?сообщение|"
+    r"благодар(?:ю|им)\s+за\s+(?:ваше\s+|обращение|письмо)|"
+    r"вам\s+может\s+потребоваться|"
+    r"вам\s+следует|"
+    r"рекомендую\s+обратиться|"
+    r"обратитесь\s+к\s+(?:руководителю|отделу|сотруднику)|"
+    r"если\s+у\s+вас\s+есть\s+вопросы|"
+    r"буду\s+рад(?:а)?\s+помочь|"
+    r"чем\s+могу\s+помочь"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def looks_like_chat_reply(text: str) -> bool:
+    """True, если текст похож на ответ отправителю, а не на деловой обзор."""
+    cleaned = " ".join((text or "").split()).strip()
+    if not cleaned:
+        return False
+    if _CHAT_REPLY_START_RE.search(cleaned) and _CHAT_REPLY_MARKERS_RE.search(cleaned):
+        return True
+    if _CHAT_REPLY_START_RE.search(cleaned) and re.search(
+        r"\bвам\b|\bвас\b|\bваши?\b", cleaned, flags=re.IGNORECASE
+    ):
+        return True
+    # Без приветствия, но явный «ассистентский» ответ адресату
+    marker_hits = len(_CHAT_REPLY_MARKERS_RE.findall(cleaned))
+    return marker_hits >= 2
+
+
+def sanitize_summary_ru(text: str) -> str:
+    """Отбрасывает chat-style ответы; иначе возвращает текст без изменений."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    if looks_like_chat_reply(cleaned):
+        return ""
+    return cleaned
+
+
 def clamp_summary(text: str, *, max_sentences: int = 5, max_chars: int = 800) -> str:
     """Ограничивает обзор 3–5 предложениями (по ТЗ) и максимальной длиной."""
-    cleaned = " ".join(text.split()).strip()
+    cleaned = sanitize_summary_ru(text)
     if not cleaned:
         return cleaned
+    cleaned = " ".join(cleaned.split()).strip()
 
     parts = re.split(r"(?<=[.!?…])\s+", cleaned)
     sentences = [s.strip() for s in parts if s.strip()]
@@ -198,3 +249,25 @@ def clamp_summary(text: str, *, max_sentences: int = 5, max_chars: int = 800) ->
             truncated = truncated.rsplit(" ", 1)[0]
         result = f"{truncated}…"
     return result
+
+
+def summary_ru_system_rules(*, min_sent: int, max_sent: int) -> str:
+    """Общие правила поля summary_ru для analyze_incoming и summarize_ru."""
+    return (
+        f"Обзор summary_ru на русском ({min_sent}–{max_sent} предложений) — "
+        "ТОЛЬКО официальная справка для офис-менеджера НПО «Турбулентность-ДОН» "
+        "(третье лицо / канцелярский стиль).\n"
+        "Обязательно: кто написал; суть обращения; что нужно сделать внутри компании; "
+        "важные вложения и их содержание; срок — только если явно указан.\n"
+        "ЗАПРЕЩЕНО в summary_ru:\n"
+        "• писать ответ отправителю письма (чат-бот, консультант, HR-помощник);\n"
+        "• приветствия и обращения по имени («Здравствуйте», «Добрый день», «Роман!»);\n"
+        "• благодарности («Спасибо за ваше сообщение»);\n"
+        "• советы адресату («вам может потребоваться обратиться…», «рекомендую»);\n"
+        "• подписи и фразы «чем могу помочь».\n"
+        "Плохо: «Здравствуйте, Роман! Спасибо за сообщение. В «Турбулентность Дон» "
+        "вам может потребоваться обратиться к руководителю отдела персонала…»\n"
+        "Хорошо: «Роман (внешний отправитель) спрашивает о порядке обращения в отдел "
+        "персонала. Требуется маршрутизировать письмо в профильный отдел и подготовить "
+        "ответ по регламенту.»"
+    )

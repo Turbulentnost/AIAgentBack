@@ -23,6 +23,8 @@ def node_spam_filter(state: AgentState, container: ServiceContainer) -> AgentSta
 
     if meta.get("restored_from_spam"):
         return {"trace": trace + ["restored_from_spam_skip"]}
+    if meta.get("reanalyze"):
+        return {"trace": trace + ["reanalyze_skip"]}
 
     rule_result = check_rule_spam(state["email"])
     if rule_result is not None:

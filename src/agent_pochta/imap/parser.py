@@ -65,7 +65,11 @@ def _extract_bodies(message) -> tuple[str, str | None]:
     return body_text, body_html
 
 
-def _extract_attachments(message) -> list[Attachment]:
+def _extract_attachments(
+    message,
+    *,
+    load_oversized: bool = False,
+) -> list[Attachment]:
     max_bytes = get_settings().max_attachment_mb * 1024 * 1024
     attachments: list[Attachment] = []
 
@@ -78,9 +82,9 @@ def _extract_attachments(message) -> list[Attachment]:
         mime_type = part.get_content_type()
         raw = part.get_payload(decode=True) or b""
         size_bytes = len(raw)
-        content = raw if size_bytes <= max_bytes else None
-        if size_bytes > max_bytes:
-            size_bytes = len(raw)
+        # При скачивании пользователем не отбрасываем content из‑за MAX_ATTACHMENT_MB
+        # (лимит остаётся только для pipeline извлечения текста на poll).
+        content = raw if (load_oversized or size_bytes <= max_bytes) else None
         attachments.append(
             Attachment(
                 filename=filename,
@@ -92,7 +96,12 @@ def _extract_attachments(message) -> list[Attachment]:
     return attachments
 
 
-def parse_raw_email(raw: bytes, mailbox: str) -> EmailMessage:
+def parse_raw_email(
+    raw: bytes,
+    mailbox: str,
+    *,
+    load_oversized_attachments: bool = False,
+) -> EmailMessage:
     """Преобразует сырое IMAP-сообщение в доменную модель."""
     message = BytesParser(policy=policy.default).parsebytes(raw)
 
@@ -121,7 +130,10 @@ def parse_raw_email(raw: bytes, mailbox: str) -> EmailMessage:
     list_unsubscribe = message.get("List-Unsubscribe")
 
     body_text, body_html = _extract_bodies(message)
-    attachments = _extract_attachments(message)
+    attachments = _extract_attachments(
+        message,
+        load_oversized=load_oversized_attachments,
+    )
 
     return EmailMessage(
         message_id=message_id,

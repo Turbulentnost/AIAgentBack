@@ -11,6 +11,7 @@ from agent_pochta.stats.change_log import (
 )
 from agent_pochta.stats.classification_log import (
     collect_classification_summary_for_period,
+    collect_operator_approvals,
     log_agent_classification_from_row,
     log_classification_event,
     log_operator_department_event,
@@ -22,6 +23,7 @@ __all__ = [
     "EVENT_TYPES",
     "build_statistics_report",
     "collect_classification_summary_for_period",
+    "collect_operator_approvals",
     "export_statistics_files",
     "log_agent_classification_from_row",
     "log_classification_event",

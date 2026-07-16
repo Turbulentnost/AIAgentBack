@@ -28,8 +28,42 @@ from agent_pochta.schemas import EmailMessage, ProcessingStatus
 def test_is_routing_escalation_reason_detects_route_review():
     assert is_routing_escalation_reason("Низкая уверенность маршрута (НИЗКАЯ, score=45)")
     assert is_routing_escalation_reason("Конфликт нескольких правил маршрутизации")
+
+
+def test_api_dept_confidence_recovers_score_from_hitl_reason():
+    from agent_pochta.api.app import _dept_confidence_for_api
+
+    row = _email_row(
+        status=ProcessingStatus.AWAITING_HUMAN.value,
+        spam_reason=None,
+        payload={"hitl_reason": "Низкая уверенность маршрута (НИЗКАЯ, score=45)"},
+    )
+    row.dept_confidence = 0.0
+    assert _dept_confidence_for_api(
+        row, {"hitl_reason": "Низкая уверенность маршрута (НИЗКАЯ, score=45)"}
+    ) == 0.45
     assert not is_routing_escalation_reason("Спам в серой зоне (confidence=0.55)")
     assert not is_routing_escalation_reason("Рекламная рассылка")
+
+
+def test_api_dept_confidence_recovers_score_from_routing_decision():
+    from agent_pochta.api.app import _dept_confidence_for_api
+
+    row = _email_row(
+        status=ProcessingStatus.AWAITING_HUMAN.value,
+        spam_reason=None,
+        payload={},
+    )
+    row.dept_confidence = 0.0
+    assert _dept_confidence_for_api(
+        row,
+        {
+            "routing_decision": {
+                "confidence_score": 45,
+                "confidence_level": "НИЗКАЯ",
+            }
+        },
+    ) == 0.45
 
 
 def test_extract_correction_keywords_strips_subject_prefix_and_adds_recipient():

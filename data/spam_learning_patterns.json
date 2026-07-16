@@ -1057,6 +1057,607 @@
       ],
       "label": "spam",
       "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "fbe0ec25-65f1-427f-859e-aaa29045446d",
+      "created_at": "2026-07-14T07:06:55.213796+00:00",
+      "message_id": "<20260714065540.c2cbd48470c3c9cf@doculite.online>#info@turbo-don.ru",
+      "sender_email": "noreply@doculite.online",
+      "keywords": [
+        "республиканское государственное предприятие на праве хозяйственного ведения «казахстанский институт стандартизации и метрологии» комитета технического регулирования и метрологии министерства торговли и интеграции республики казахстан отправил(а) вам процедура испытаний",
+        "а вам процедура",
+        "ведения казахстанский институт"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "0e5d2b52-e61e-4ff2-8566-dcab20fe994c",
+      "created_at": "2026-07-14T07:48:14.874917+00:00",
+      "message_id": "<QensnicahDxku6OMtbjZW5kfhKqeKZRq4vV9IiHbxs@www.turbo-don.ru>#info@turbo-don.ru",
+      "sender_email": "info@turbo-don.ru",
+      "keywords": [
+        "консультация",
+        "e-mail help",
+        "ffscamwough отчество",
+        "ffscamwough телефон",
+        "ffscamwough фамилия",
+        "fixedfloat.com сообщение",
+        "help fixedfloat.com"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель, правила спама пройдены"
+    },
+    {
+      "id": "a69a0a13-bcc1-4ee4-91b8-fdf4effb70cf",
+      "created_at": "2026-07-14T07:51:33.075986+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#shestakova_n.34@mail.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "26-14-96 также",
+        "в письме",
+        "вам нужно",
+        "вложение файл",
+        "вложением пожалуйста",
+        "волгодонска содержится"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "3077de76-c69c-43e8-9345-bf4493bd1e03",
+      "created_at": "2026-07-14T07:51:34.975777+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#ooo-es21@mail.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "26-14-96 если",
+        "в письме",
+        "вам нужно",
+        "вас есть",
+        "вложение файл",
+        "волгодонска в"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "7e4feadd-584a-46c3-ba2f-7c1bf1b3784b",
+      "created_at": "2026-07-14T07:51:36.753098+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#sales@impuls-valves.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "в письме",
+        "вложение файл",
+        "волгодонска в",
+        "вы получили",
+        "города волгодонска",
+        "для связи"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "b9904047-b8a1-4507-bc3a-9ffe2f029619",
+      "created_at": "2026-07-14T07:51:38.482609+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#ale-ale@inbox.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "в письме",
+        "вложение файл",
+        "волгодонска в",
+        "вы получили",
+        "города волгодонска",
+        "для связи"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "6508b2d6-d6c9-4e7c-b4a1-a9147ba45cb7",
+      "created_at": "2026-07-14T07:51:40.053350+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#ooobk@mail.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "в письме",
+        "вам нужно",
+        "ваш запрос",
+        "вложениями пожалуйста",
+        "волгодонска в",
+        "города волгодонска"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "dd1e647d-6cba-40f1-b4da-8b1eb5e07193",
+      "created_at": "2026-07-14T07:51:43.801309+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#pskgost01@mail.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "email obuch.cznvl",
+        "obuch.cznvl yandex.ru",
+        "yandex.ru телефон",
+        "в письме",
+        "вложение файл",
+        "волгодонска email"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "ecf7164a-7931-4c00-a1ac-f8dd24128056",
+      "created_at": "2026-07-14T07:51:45.849812+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#gk_vytyaz1@mail.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "в письме",
+        "вложение файл",
+        "волгодонска в",
+        "вы получили",
+        "города волгодонска",
+        "для связи"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "f5c108e0-c28a-491a-9c76-3130a253cc27",
+      "created_at": "2026-07-14T07:51:49.524350+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#aleks_oper@mail.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "26-14-96 если",
+        "pdf под",
+        "было отправлено",
+        "в данном",
+        "в письме",
+        "в формате"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "ec12a4e2-1843-42fe-974a-9a63d3a04c7f",
+      "created_at": "2026-07-14T07:51:51.651931+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#volgodonsk@gk-rsb.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "в письме",
+        "вложение файл",
+        "волгодонска в",
+        "вы получили",
+        "города волгодонска",
+        "для связи"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "0f6bfa9b-c34c-4035-858e-c22235208bc3",
+      "created_at": "2026-07-14T07:52:08.331019+00:00",
+      "message_id": "<8f9325bc-d92c-4efc-ae27-6163f77c9ced@dellin.ru>#info@turbo-don.ru",
+      "sender_email": "info@dellin.ru",
+      "keywords": [
+        "группа компаний \"деловые линии\" подтверждение получения груза",
+        "группа компаний деловые",
+        "деловые линии подтверждение",
+        "компаний деловые линии"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "8b114d2a-9a7e-4d66-9a64-9b8dafbd8b9c",
+      "created_at": "2026-07-14T07:52:21.073650+00:00",
+      "message_id": "<ADR510000192528951000050569CD2CF1FE19EACDE7C53FB01FB@GAZPROM-NEFT.RU>#info@turbo-don.ru",
+      "sender_email": "no_reply_sap_gpn@gazprom-neft.ru",
+      "keywords": [
+        "*** spam *** напоминание о необходимости рассмотреть документ",
+        "spam напоминание о"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "62d7395c-667e-4d74-a172-f5d73b07fa87",
+      "created_at": "2026-07-14T07:52:37.254447+00:00",
+      "message_id": "<ADR510000192524521000050569C908C1FE19EAD1D9B800974C8@GAZPROM-NEFT.RU>#info@turbo-don.ru",
+      "sender_email": "no_reply_sap_gpn@gazprom-neft.ru",
+      "keywords": [
+        "напоминание о необходимости рассмотреть документ"
+      ],
+      "label": "spam",
+      "reason": "Деловое письмо от контрагента по договору поставки"
+    },
+    {
+      "id": "2f12fcac-a468-4880-a989-0b773752ca6d",
+      "created_at": "2026-07-14T07:56:05.712291+00:00",
+      "message_id": "<1783356700.488663.561587735.45694352.1861@ru>#info@turbo-don.ru",
+      "sender_email": "support@nic.ru",
+      "keywords": [
+        "ticket#2026070610050687] отсутствует подключение к сайту",
+        "ticket 2026070610050687 отсутствует"
+      ],
+      "label": "spam",
+      "reason": "Деловое техническое письмо от регистратора домена (NIC) по вопросу доступности сайта. Не является рекламой или фишингом."
+    },
+    {
+      "id": "4e7fbe07-e44c-45e3-a286-d2715bd95d48",
+      "created_at": "2026-07-14T08:54:19.553779+00:00",
+      "message_id": "<89779c896fd24d8fa80a7a31da26abc5@culture.mos.ru>#info@distributor-online.ru",
+      "sender_email": "muchleryi@culture.mos.ru",
+      "keywords": [
+        "запрос коммерческого предложения на поставку многофункциональных устройств для нужд гбук г. москвы \"московский продюсерский центр",
+        "г москвы московский",
+        "гбук г москвы"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "2f524214-9cc9-459d-adb9-9a042ea42f1e",
+      "created_at": "2026-07-14T08:54:25.123379+00:00",
+      "message_id": "<89779c896fd24d8fa80a7a31da26abc5@culture.mos.ru>#info@raspletin.com",
+      "sender_email": "muchleryi@culture.mos.ru",
+      "keywords": [
+        "запрос коммерческого предложения на поставку многофункциональных устройств для нужд гбук г. москвы \"московский продюсерский центр",
+        "г москвы московский",
+        "гбук г москвы"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "ee365de1-da1c-42b4-b7bc-fa683ee8f589",
+      "created_at": "2026-07-14T08:54:31.609152+00:00",
+      "message_id": "<89779c896fd24d8fa80a7a31da26abc5@culture.mos.ru>#info@comintech.pro",
+      "sender_email": "muchleryi@culture.mos.ru",
+      "keywords": [
+        "запрос коммерческого предложения на поставку многофункциональных устройств для нужд гбук г. москвы \"московский продюсерский центр",
+        "г москвы московский",
+        "гбук г москвы"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "1e63c9b0-3565-441a-9658-a8e8595cf717",
+      "created_at": "2026-07-14T08:54:36.781298+00:00",
+      "message_id": "<89779c896fd24d8fa80a7a31da26abc5@culture.mos.ru>#info@raspletin.ru",
+      "sender_email": "muchleryi@culture.mos.ru",
+      "keywords": [
+        "запрос коммерческого предложения на поставку многофункциональных устройств для нужд гбук г. москвы \"московский продюсерский центр",
+        "г москвы московский",
+        "гбук г москвы"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "6a4f3505-1a4b-4080-be57-f069d2b3afa2",
+      "created_at": "2026-07-14T08:54:42.536085+00:00",
+      "message_id": "<89779c896fd24d8fa80a7a31da26abc5@culture.mos.ru>#info@norsi-trans.ru",
+      "sender_email": "muchleryi@culture.mos.ru",
+      "keywords": [
+        "запрос коммерческого предложения на поставку многофункциональных устройств для нужд гбук г. москвы \"московский продюсерский центр",
+        "г москвы московский",
+        "гбук г москвы"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "99cd1bac-9376-4747-bd28-30c565b3bb62",
+      "created_at": "2026-07-14T08:54:49.301441+00:00",
+      "message_id": "<89779c896fd24d8fa80a7a31da26abc5@culture.mos.ru>#info@megapolis-telecom.ru",
+      "sender_email": "muchleryi@culture.mos.ru",
+      "keywords": [
+        "запрос коммерческого предложения на поставку многофункциональных устройств для нужд гбук г. москвы \"московский продюсерский центр",
+        "г москвы московский",
+        "гбук г москвы"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "ab2c5771-e04d-4400-906c-9e160111903d",
+      "created_at": "2026-07-14T08:56:34.376239+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#empinfo@yandex.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "email obuch.cznvl",
+        "obuch.cznvl yandex.ru",
+        "yandex.ru телефон",
+        "в письме",
+        "вложение файл",
+        "вложения не"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "db976afb-ffc8-4a4a-ac33-fbb12f8671d3",
+      "created_at": "2026-07-14T08:59:33.538265+00:00",
+      "message_id": "<CABmz9SY8ctLQ-NxPuyc=yN_Pd8HdrTd35f607rueEC16geKntA@mail.gmail.com>#info@turbo-don.ru",
+      "sender_email": "dobrobf9@gmail.com",
+      "keywords": [
+        "*** spam *** директору ооо нпо \"турбулентность-дон\" а.е.донцовой",
+        "spam директору ооо",
+        "нпо турбулентность-дон а.е.донцовой"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "4b639017-eacb-4cd1-862f-d965edc08f3d",
+      "created_at": "2026-07-14T09:02:29.950423+00:00",
+      "message_id": "<260714021853.DOMAIN_CANCEL_DELEGATION_REMIND.163071@message-service>#info@turbo-don.ru",
+      "sender_email": "ru-bill@nic.ru",
+      "keywords": [
+        "домен schetchik-grand.ru: прекращение делегирования",
+        "schetchik-grand.ru прекращение делегирования",
+        "домен schetchik-grand.ru прекращение"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "432b2696-daab-4119-b70a-ab2246b40f19",
+      "created_at": "2026-07-14T10:09:29.476057+00:00",
+      "message_id": "<E1wjZfO-0000000068t-49AJ@exim-mx-5b66cdb57c-4zw8c>#ts_jurist2@turbo-don.ru",
+      "sender_email": "mailer-daemon@corp.mail.ru",
+      "keywords": [
+        "delivery status notification",
+        "mail.ru письмо"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "6d519a78-b6a4-454b-9917-3a4715631139",
+      "created_at": "2026-07-14T10:10:49.121442+00:00",
+      "message_id": "<8026be7fa87c4311addf8c1ba5870a2a@transitllc.ru>#lcl_eu@transitllc.ru",
+      "sender_email": "i.eremeev@transitllc.ru",
+      "keywords": [
+        "*** spam *** из китая в санкт-петербург через северный морской путь: прямой рейс без перевалок",
+        "spam из китая"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "3271df90-b4c2-4b30-ac9b-7077b309dcf5",
+      "created_at": "2026-07-14T10:22:17.946382+00:00",
+      "message_id": "<258149.4.2253885728418160427@smtp.sweb.ru>#info@turbo-don.ru",
+      "sender_email": "ceo@smart-route.ru",
+      "keywords": [
+        "*** spam *** компания теряет сильных кандидатов тихо — они просто не перезванивают",
+        "spam компания теряет",
+        "кандидатов тихо они"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "b08418e0-9fa4-4423-9d49-f561fc541a16",
+      "created_at": "2026-07-14T10:22:30.881491+00:00",
+      "message_id": "<1784008435.215861945@f348.i.mail.ru>#info@turbo-don.ru",
+      "sender_email": "dynamics.engineering@mail.ru",
+      "keywords": [
+        "dynamics engineering",
+        "email dynamics",
+        "engineering из",
+        "llc dynamics",
+        "ufg-f к",
+        "автор письма"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "11961135-ccb1-43ab-aab0-efa9cd468d24",
+      "created_at": "2026-07-14T10:22:35.126988+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#info@etk-rir.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "26-14-96 если",
+        "email obuch.cznvl",
+        "obuch.cznvl yandex.ru",
+        "pdf под",
+        "yandex.ru в",
+        "в данном"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "1eabca3c-eac4-4d34-9172-f0ba3d01d66d",
+      "created_at": "2026-07-14T10:22:37.056353+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#info@ugramash.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "email obuch.cznvl",
+        "obuch.cznvl yandex.ru",
+        "yandex.ru в",
+        "в данном",
+        "в письме",
+        "в формате"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "54310e44-1b3f-445e-805b-19613c717486",
+      "created_at": "2026-07-14T10:22:39.211444+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#info@niipav.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "26-14-96 также",
+        "в письме",
+        "вам нужно",
+        "вас есть",
+        "вложение письмо",
+        "вложением или"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "e86a0b8d-8b28-48de-8e33-b0c2b7e24907",
+      "created_at": "2026-07-14T10:22:41.130665+00:00",
+      "message_id": "<AAYAawAMKrh9*Q72jTILAKpi.1.1784021696846.8804413.siyihu@irishsolarenergy.com>#info@turbo-don.ru",
+      "sender_email": "siyihu@irishsolarenergy.com",
+      "keywords": [
+        "do you want to buy solar panels"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "eea43090-8266-4c09-9e53-ba73c11a3bab",
+      "created_at": "2026-07-14T10:22:44.125328+00:00",
+      "message_id": "<361231784014656@mail.yandex.ru>#info@o-stin.ru",
+      "sender_email": "obuch.cznvl@yandex.ru",
+      "keywords": [
+        "26-14-96 также",
+        "в письме",
+        "вам нужно",
+        "вложение письмо",
+        "вложением пожалуйста",
+        "волгодонска содержится"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "b9b1723f-dc2d-4641-9fba-3335d2a48e2b",
+      "created_at": "2026-07-14T10:28:22.587639+00:00",
+      "message_id": "<C749FF1D-CF8D-48D0-828C-1C50916E3FCE@icloud.com>#info@turbo-don.ru",
+      "sender_email": "magomegg12@icloud.com",
+      "keywords": [
+        "добрый день. прошу предоставить дубликат моего газового счётчика. все данные есть на фото. прошу направить дубликат в ответ на мое эл. письмо и почтой по адресу: республика дагестан 368000 г.каспийск,ул.каспийская 6, кв.181 на имя (генджаева магомеда курбановича",
+        "адресу республика дагестан"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "179f640f-feeb-4f56-9fd4-b7ea3f0aa22e",
+      "created_at": "2026-07-15T05:09:05.075622+00:00",
+      "message_id": "<a8f69d1c-0bda-4099-9959-0212f97aa804@dellin.ru>#opmu@turbo-don.ru",
+      "sender_email": "tatyana.petrova@dellin.ru",
+      "keywords": [
+        "автоматическое уведомление.предварительное оповещение об отправлении груза"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "f4096be6-a4b6-4f5a-8b54-3f7550a6d2c0",
+      "created_at": "2026-07-15T05:09:08.927913+00:00",
+      "message_id": "<daad2caa-28f7-4ae0-8d89-21cd58e08df6@dellin.ru>#opmu@turbo-don.ru",
+      "sender_email": "tatyana.petrova@dellin.ru",
+      "keywords": [
+        "автоматическое уведомление.предварительное оповещение об отправлении груза"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "8515c390-1534-44ca-9050-57eaea368da6",
+      "created_at": "2026-07-15T05:09:11.391966+00:00",
+      "message_id": "<6c314612-c69d-4133-9a1a-b2a8347410fc@dellin.ru>#opmu@turbo-don.ru",
+      "sender_email": "tatyana.petrova@dellin.ru",
+      "keywords": [
+        "автоматическое уведомление.предварительное оповещение об отправлении груза"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "3d026382-32cc-47fb-9720-206298cdff58",
+      "created_at": "2026-07-15T05:39:49.124941+00:00",
+      "message_id": "<a2a80ba7-1c8f-48c9-b255-fe0c58bfc683@dellin.ru>#td_sales2.3@turbo-don.ru",
+      "sender_email": "tatyana.petrova@dellin.ru",
+      "keywords": [
+        "автоматическое уведомление.предварительное оповещение об отправлении груза"
+      ],
+      "label": "spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "d8bced73-9ab3-4bc1-b00d-f122b16faa07",
+      "created_at": "2026-07-15T09:59:57.597460+00:00",
+      "message_id": "<ee4d83dc-d63d-4869-817d-64a8d30aaa64@greenatom.ru>#tender@turbo-don.ru",
+      "sender_email": "noreplybrif@greenatom.ru",
+      "keywords": [
+        "примите участие в закупке №1117519",
+        "в закупке 1117519"
+      ],
+      "label": "spam",
+      "reason": "Сбой интеграции с 1С: Client error '403 Forbidden' for url 'http://192.168.2.229:81/erp_pm/odata/standard.odata/Document_%D0%A2%D0%94_%D0%92%D1%85%D0%BE%D0%B4%D1%8F%D1%89%D0%B0%D1%8F%D0%9A%D0%BE%D1%80%D1%80%D0%B5%D1%81%D0%BF%D0%BE%D0%BD%D0%B4%D0%B5%D0%BD%D1%86%D0%B8%D1%8F?$format=json'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "d23a995e-09a1-43b2-85cc-8d48df21fb09",
+      "created_at": "2026-07-15T10:00:59.737753+00:00",
+      "message_id": "<528682945.714236.1784107634106@etp.metal-it.ru>#tender@turbo-don.ru",
+      "sender_email": "etp-info@etp.metal-it.ru",
+      "keywords": [
+        "приглашение к участию в закупке ао \"богословское рудоуправление\" №132391-тт \"выполнение монтажных и пусконаладочных работ системы пожарной безопасности в перегрузочном узле №5 дробильно-обоготительной фабрики шахты \"северопесчанская",
+        "132391-тт выполнение монтажных",
+        "ао богословское рудоуправление"
+      ],
+      "label": "spam",
+      "reason": "Сбой интеграции с 1С: Client error '403 Forbidden' for url 'http://192.168.2.229:81/erp_pm/odata/standard.odata/Document_%D0%A2%D0%94_%D0%92%D1%85%D0%BE%D0%B4%D1%8F%D1%89%D0%B0%D1%8F%D0%9A%D0%BE%D1%80%D1%80%D0%B5%D1%81%D0%BF%D0%BE%D0%BD%D0%B4%D0%B5%D0%BD%D1%86%D0%B8%D1%8F?$format=json'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "69348754-fb1a-48c3-b141-827feb7fa4e8",
+      "created_at": "2026-07-15T11:33:18.774142+00:00",
+      "message_id": "<em7c179f70-8f24-46d7-93ea-fdf24186c9e9@desktop-cbo2rvs>#info@turbo-don.ru",
+      "sender_email": "info@nobigaz.ru",
+      "keywords": [
+        "обязательная регистрация негосударственной экспертизы"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "eda90594-9eea-4933-a4d8-b91c4a5b997c",
+      "created_at": "2026-07-15T11:39:35.423493+00:00",
+      "message_id": "<019f6464-f8c4-71c8-a460-b6b57f3f1ead@cert-pionner.ru>#info@turbo-don.ru",
+      "sender_email": "artem.sokolov@cert-pionner.ru",
+      "keywords": [
+        "*** spam *** re: сертификация оборудования для компании: ooo нпо \"турбулентность-дон\", огрн: 1036141003865",
+        "ooo нпо турбулентность-дон",
+        "re сертификация оборудования",
+        "spam re сертификация"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "6212b221-5e6a-47c8-acae-c3038415ce9c",
+      "created_at": "2026-07-15T11:39:45.300248+00:00",
+      "message_id": "<f74ac8f35d3d44029353867c2b067d2b@MAIL.turbo-don.ru>#info@turbo-don.ru",
+      "sender_email": "no_reply@fcod.nalog.ru",
+      "keywords": [
+        "сообщение о внесении записи в егрюл"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "70a45a09-6f92-46de-968e-8da709852324",
+      "created_at": "2026-07-15T11:40:01.375339+00:00",
+      "message_id": "<20260715082048.121315689955B646@yamamurakokusai.ed.jp>#info@turbo-don.ru",
+      "sender_email": "vaishak.p@yamamurakokusai.ed.jp",
+      "keywords": [
+        "*** spam *** you have a new buyer ;- 1 new notice to check 7/15/2026 8:20:48 a.m",
+        "7/15/2026 8 20",
+        "buyer 1 new"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
     }
   ]
 }

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from agent_pochta.schemas import EmailMessage
 from agent_pochta.services.llm_analyze import (
+    build_analyze_messages,
     infer_partner_from_domain,
     infer_partner_from_email,
     looks_like_person_name,
@@ -27,6 +28,43 @@ def _email(**kw) -> EmailMessage:
     )
     base.update(kw)
     return EmailMessage(**base)
+
+
+def test_analyze_system_prompt_forbids_chat_replies():
+    system, _user = build_analyze_messages(
+        _email(),
+        "Просим выставить счёт.",
+        [{"department_id": "SALES", "department_name": "Продажи"}],
+    )
+    assert "внутренний классификатор" in system
+    assert "ЗАПРЕЩЕНО" in system
+    assert "Здравствуйте" in system
+    assert "Спасибо за ваше сообщение" in system
+    assert "не веди диалог" in system.lower() or "Не веди диалог" in system
+    assert "действие, требуемое в письме" in system
+    assert "Действие требуемое в письме: краткая тема" in system
+    assert "не ставь шаблонное «Действие»" in system
+
+
+def test_parse_rejects_chat_style_summary_ru():
+    analysis = parse_analyze_response(
+        {
+            "is_spam": False,
+            "spam_confidence": 0.1,
+            "department_id": "SALES",
+            "department_name": "Продажи",
+            "dept_confidence": 0.9,
+            "reasoning": "тест",
+            "summary_ru": (
+                "Здравствуйте, Роман! Спасибо за ваше сообщение. "
+                "Вам может потребоваться обратиться к руководителю отдела персонала."
+            ),
+        },
+        candidates=[{"department_id": "SALES", "department_name": "Продажи"}],
+        subject="Вопрос",
+        combined_text="Вопрос по кадрам.",
+    )
+    assert analysis.summary_ru == ""
 
 
 def test_parse_full_analyze_response():
@@ -57,6 +95,25 @@ def test_parse_full_analyze_response():
     assert analysis.xml_theme.startswith("Запрос:")
     assert "Счёт" in analysis.xml_theme
     assert analysis.process_type == "исполнение"
+
+
+def test_parse_missing_spam_confidence_defaults_not_spam():
+    analysis = parse_analyze_response(
+        {
+            "is_spam": False,
+            "spam_reason": "Деловой запрос",
+            "department_id": "SALES",
+            "department_name": "Продажи",
+            "dept_confidence": 0.0,
+            "summary_ru": "Клиент просит акт сверки.",
+        },
+        candidates=[{"department_id": "SALES", "department_name": "Продажи"}],
+        subject="Акт",
+        combined_text="Просим акт сверки.",
+    )
+    assert analysis.spam.is_spam is False
+    assert analysis.spam.confidence == 0.05
+    assert analysis.routing.confidence == 0.0
 
 
 def test_parse_analyze_process_type_oznakomleniye():

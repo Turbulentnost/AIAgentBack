@@ -55,6 +55,35 @@ def _normalize_text(value: Any) -> str | None:
     return text or None
 
 
+def operator_approval_fields_changed(
+    *,
+    old_department_id: str | None,
+    new_department_id: str | None,
+    old_partner: str | None = None,
+    new_partner: str | None = None,
+    old_organization: str | None = None,
+    new_organization: str | None = None,
+    compare_partner: bool = True,
+    compare_organization: bool = True,
+) -> bool:
+    """True, если оператор изменил хотя бы одно ключевое поле перед сохранением."""
+    if _normalize_text(old_department_id) != _normalize_text(new_department_id):
+        return True
+    if compare_partner and _normalize_text(old_partner) != _normalize_text(new_partner):
+        return True
+    if compare_organization and _normalize_text(old_organization) != _normalize_text(new_organization):
+        return True
+    return False
+
+
+def operator_approval_rate(saved: int, changed: int) -> float | None:
+    """Saved / (Saved + Changed); None, если одобрений оператора ещё не было."""
+    total = int(saved) + int(changed)
+    if total <= 0:
+        return None
+    return round(int(saved) / total, 4)
+
+
 def snapshot_from_row(row: EmailMessageRow | None) -> ClassificationSnapshot | None:
     if row is None:
         return None
@@ -92,9 +121,11 @@ def log_classification_event(
     old_dept = _normalize_text(old_department_id)
     new_dept = _normalize_text(new_department_id)
     if category == "department":
-        if old_dept == new_dept and event_type != "operator_approve":
+        # operator_approve / operator_change пишем даже при том же отделе
+        # (partner/organization могли измениться → force_changed).
+        if old_dept == new_dept and event_type not in {"operator_approve", "operator_change"}:
             return None
-        if new_dept is None and event_type != "operator_approve":
+        if new_dept is None and event_type not in {"operator_approve", "operator_change"}:
             return None
     else:
         if old_is_spam is not None and new_is_spam is not None and old_is_spam == new_is_spam:
@@ -190,10 +221,12 @@ def log_operator_department_event(
     department_id: str,
     department_name: str | None,
     source: str = "api:resolve-human",
+    force_changed: bool = False,
 ) -> ClassificationEventRow | None:
     old_dept = _normalize_text(original_department_id)
     new_dept = _normalize_text(department_id)
-    if old_dept and new_dept and old_dept != new_dept:
+    dept_changed = bool(old_dept and new_dept and old_dept != new_dept)
+    if dept_changed or force_changed:
         event_type = "operator_change"
     else:
         event_type = "operator_approve"
@@ -299,6 +332,8 @@ def collect_classification_summary(
     operator_department_corrections = 0
     agent_spam_assigns = 0
     operator_spam_corrections = 0
+    operator_saved = 0
+    operator_changed = 0
 
     for row in rows:
         by_category[row.category] = by_category.get(row.category, 0) + 1
@@ -308,7 +343,11 @@ def collect_classification_summary(
         if row.category == "department" and row.event_type == "agent_assign":
             agent_department_assigns += 1
         elif row.category == "department" and row.event_type == "operator_change":
-            operator_department_corrections += 1
+            operator_changed += 1
+            if _normalize_text(row.old_department_id) != _normalize_text(row.new_department_id):
+                operator_department_corrections += 1
+        elif row.category == "department" and row.event_type == "operator_approve":
+            operator_saved += 1
         elif row.category == "spam" and row.event_type == "agent_assign":
             agent_spam_assigns += 1
         elif row.category == "spam" and row.event_type in {
@@ -363,8 +402,45 @@ def collect_classification_summary(
             "operator_spam_corrections": operator_spam_corrections,
             "spam_accuracy": spam_accuracy,
         },
+        "operator_approvals": build_operator_approvals(operator_saved, operator_changed),
         "events": entries,
     }
+
+
+def build_operator_approvals(saved: int, changed: int) -> dict[str, Any]:
+    """Счётчики сохранений оператора: saved без правок, changed с правками, rate."""
+    return {
+        "saved": int(saved),
+        "changed": int(changed),
+        "rate": operator_approval_rate(saved, changed),
+    }
+
+
+def collect_operator_approvals(
+    session: Session,
+    *,
+    start_utc: datetime | None = None,
+    end_utc: datetime | None = None,
+) -> dict[str, Any]:
+    """Агрегат operator_approve / operator_change из classification_events."""
+    query = session.query(ClassificationEventRow).filter(
+        ClassificationEventRow.category == "department",
+        ClassificationEventRow.event_type.in_(("operator_approve", "operator_change")),
+        ClassificationEventRow.actor == "operator",
+    )
+    if start_utc is not None:
+        query = query.filter(ClassificationEventRow.created_at >= start_utc)
+    if end_utc is not None:
+        query = query.filter(ClassificationEventRow.created_at <= end_utc)
+
+    saved = 0
+    changed = 0
+    for (event_type,) in query.with_entities(ClassificationEventRow.event_type).all():
+        if event_type == "operator_approve":
+            saved += 1
+        elif event_type == "operator_change":
+            changed += 1
+    return build_operator_approvals(saved, changed)
 
 
 def collect_classification_summary_for_period(

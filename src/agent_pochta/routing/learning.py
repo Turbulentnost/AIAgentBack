@@ -2,6 +2,8 @@
 
 Маршрутизация: routing_corrections.json (RuleRouter) + keywords отдела в Qdrant (RAG fallback).
 Спам: spam_learning_patterns.json + коллекция spam_learning в Qdrant.
+Партнёр/организация: onec_corrections в routing_rules.json + коллекция onec_corrections.
+HITL-контрагент: PostgreSQL + коллекция contractors.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from agent_pochta.rules.spam_learning import (
     save_spam_learning,
     save_spam_pattern,
 )
+from agent_pochta.schemas import Contractor
 
 
 def collect_department_learning_keywords(correction_entry: dict) -> list[str]:
@@ -86,6 +89,39 @@ def enrich_department_in_qdrant(department_id: str, keywords: list[str]) -> dict
         }
 
 
+def enrich_hitl_contractor_in_qdrant(
+    *,
+    contractor_id: str,
+    name: str,
+    email: str,
+    department_code: str | None = None,
+    contractor_type: str = "клиент",
+) -> dict:
+    """Upsert HITL-контрагента в коллекцию contractors (только при RAG_BACKEND=qdrant)."""
+    from agent_pochta.config import get_settings
+
+    settings = get_settings()
+    if settings.rag_backend != "qdrant":
+        return {"upserted": 0, "reason": "stub_backend"}
+    email_norm = (email or "").lower().strip()
+    if not email_norm or not name:
+        return {"upserted": 0, "reason": "missing_email_or_name"}
+    try:
+        from agent_pochta.services.rag_qdrant import upsert_contractors_merge
+
+        contractor = Contractor(
+            contractor_id=contractor_id,
+            name=name,
+            emails=[email_norm],
+            department_codes=[department_code] if department_code else [],
+            contractor_type=contractor_type or "клиент",
+        )
+        upserted = upsert_contractors_merge(settings.qdrant_url, [contractor])
+        return {"upserted": upserted, "email": email_norm, "contractor_id": contractor_id}
+    except Exception as exc:
+        return {"upserted": 0, "reason": f"qdrant_error: {exc}"}
+
+
 def learn_from_routing_correction(
     *,
     message_id: str,
@@ -97,10 +133,13 @@ def learn_from_routing_correction(
     department_name: str,
     original_department_id: str | None = None,
     original_department_name: str | None = None,
+    partner: str | None = None,
+    organization: str | None = None,
     path=None,
     session: Session | None = None,
+    routing_rules_path=None,
 ) -> dict:
-    """Сохраняет коррекцию и обогащает keywords отдела в Qdrant."""
+    """Сохраняет коррекцию отдела и (при наличии) полей 1С партнёр/организация."""
     entry = save_routing_correction(
         sender_email=sender_email,
         recipient=recipient,
@@ -114,6 +153,23 @@ def learn_from_routing_correction(
     )
     learning_keywords = collect_department_learning_keywords(entry)
     qdrant = enrich_department_in_qdrant(department_id, learning_keywords)
+
+    onec_entry = None
+    if partner or organization:
+        from agent_pochta.routing.onec_corrections import save_onec_correction
+
+        onec_entry = save_onec_correction(
+            partner=partner,
+            organization=organization,
+            sender_email=sender_email,
+            recipient=recipient,
+            subject=subject,
+            body=body,
+            department_id=department_id,
+            department_name=department_name,
+            path=routing_rules_path,
+        )
+
     if session is None:
         from agent_pochta.stats.change_log import log_routing_correction
 
@@ -126,13 +182,20 @@ def learn_from_routing_correction(
             department_name=department_name,
             source="learning:routing",
         )
-    return {
+    result = {
         "correction_saved": True,
         "correction_id": entry["id"],
         "keywords_added": qdrant["keywords_added"],
         "qdrant_updated": qdrant["updated"],
         "learning_keywords": qdrant.get("added_keywords") or [],
     }
+    if onec_entry is not None:
+        result["onec_correction_saved"] = True
+        result["onec_correction_id"] = onec_entry["id"]
+        result["onec_partner"] = onec_entry.get("partner")
+        result["onec_organization"] = onec_entry.get("organization")
+        result["onec_qdrant_synced"] = bool(onec_entry.get("qdrant_synced"))
+    return result
 
 
 def learn_from_not_spam(

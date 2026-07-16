@@ -20,6 +20,19 @@ def node_create_erp_task(state: AgentState, container: ServiceContainer) -> Agen
     meta = dict(state.get("meta") or {})
     xml_document = meta.get("xml_document")
 
+    if meta.get("skip_erp") or not routing.register_erp:
+        erp = ErpTaskResult(
+            success=True,
+            erp_document_number="SKIP-ERP",
+            erp_task_id=None,
+        )
+        meta["erp_skipped"] = True
+        meta["erp_skip_reason"] = (
+            "G.1: документ 2-й очереди / без поручения·срока·обязательства — "
+            "регистрация входящей в 1С ERP не требуется"
+        )
+        return {"erp": erp, "trace": trace, "meta": meta}
+
     if settings.agent_mode == "dry_run":
         erp = ErpTaskResult(
             success=True,

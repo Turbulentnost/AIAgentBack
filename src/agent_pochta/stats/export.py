@@ -237,6 +237,9 @@ def _build_markdown(report: dict[str, Any]) -> str:
             )
 
     accuracy = classification.get("accuracy") or {}
+    approvals = classification.get("operator_approvals") or {}
+    rate = approvals.get("rate")
+    rate_label = f"{round(rate * 100, 1)}%" if isinstance(rate, (int, float)) else "—"
     lines.extend(
         [
             "",
@@ -250,6 +253,9 @@ def _build_markdown(report: dict[str, Any]) -> str:
             f"- Назначений спама агентом: **{accuracy.get('agent_spam_assigns', 0)}**",
             f"- Коррекций спама оператором: **{accuracy.get('operator_spam_corrections', 0)}**",
             f"- Точность спама: **{accuracy.get('spam_accuracy', '—')}**",
+            f"- Сохранений без изменений (saved): **{approvals.get('saved', 0)}**",
+            f"- Сохранений с правками (changed): **{approvals.get('changed', 0)}**",
+            f"- Доля без изменений (saved/(saved+changed)): **{rate_label}**",
             "",
         ]
     )

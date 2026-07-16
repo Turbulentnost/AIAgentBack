@@ -3,12 +3,13 @@
 Примеры:
   python scripts/sync_rag_to_qdrant.py
   python scripts/sync_rag_to_qdrant.py --spam-learning
+  python scripts/sync_rag_to_qdrant.py --onec-corrections
   python scripts/sync_rag_to_qdrant.py --contractors --from-db
   python scripts/sync_rag_to_qdrant.py --departments --from-routing-rules --replace-departments
   python scripts/sync_rag_to_qdrant.py --keywords --routing-keywords
 
-По умолчанию (--all): spam_learning из JSON, contractors merge из PostgreSQL,
-дополнительные keywords из rag_department_keywords.json и routing_corrections.json.
+По умолчанию (--all): spam_learning из JSON, onec_corrections из routing_rules.json,
+contractors merge из PostgreSQL, keywords из rag_department_keywords.json и routing_corrections.json.
 """
 
 from __future__ import annotations
@@ -35,10 +36,18 @@ from agent_pochta.routing.learning import (  # noqa: E402
     collect_department_learning_keywords,
     enrich_department_in_qdrant,
 )
+from agent_pochta.routing.onec_corrections import (  # noqa: E402
+    ONEC_CORRECTIONS_COLLECTION,
+    load_onec_corrections,
+    resync_onec_corrections_to_qdrant,
+)
 from agent_pochta.rules.spam_learning import (  # noqa: E402
     SPAM_LEARNING_COLLECTION,
     load_spam_learning,
     resync_spam_learning_to_qdrant,
+)
+from agent_pochta.services.onec_corrections_rag_qdrant import (  # noqa: E402
+    ensure_onec_corrections_indexes,
 )
 from agent_pochta.services.rag_import import (  # noqa: E402
     load_department_keywords,
@@ -95,6 +104,7 @@ def print_collection_stats(url: str, *, prefix: str = "") -> dict[str, int]:
         CONTRACTORS_COLLECTION: collection_points(url, CONTRACTORS_COLLECTION),
         DEPARTMENTS_COLLECTION: collection_points(url, DEPARTMENTS_COLLECTION),
         SPAM_LEARNING_COLLECTION: collection_points(url, SPAM_LEARNING_COLLECTION),
+        ONEC_CORRECTIONS_COLLECTION: collection_points(url, ONEC_CORRECTIONS_COLLECTION),
     }
     line = ", ".join(f"{name}={count}" for name, count in stats.items())
     print(f"{prefix}{line}")
@@ -110,6 +120,18 @@ def sync_spam_learning_from_json() -> dict:
     result = resync_spam_learning_to_qdrant()
     result["json_entries"] = json_entries
     result["qdrant_points"] = collection_points(settings.qdrant_url, SPAM_LEARNING_COLLECTION)
+    return result
+
+
+def sync_onec_corrections_from_json() -> dict:
+    settings = get_settings()
+    if settings.rag_backend != "qdrant":
+        return {"synced": 0, "reason": "stub_backend"}
+    ensure_onec_corrections_indexes(settings.qdrant_url)
+    json_entries = len(load_onec_corrections().get("entries") or [])
+    result = resync_onec_corrections_to_qdrant()
+    result["json_entries"] = json_entries
+    result["qdrant_points"] = collection_points(settings.qdrant_url, ONEC_CORRECTIONS_COLLECTION)
     return result
 
 
@@ -203,6 +225,11 @@ def main() -> None:
     )
     parser.add_argument("--spam-learning", action="store_true", help="JSON spam_learning → Qdrant")
     parser.add_argument(
+        "--onec-corrections",
+        action="store_true",
+        help="JSON onec_corrections (routing_rules) → Qdrant",
+    )
+    parser.add_argument(
         "--contractors",
         action="store_true",
         help="Контрагенты merge из PostgreSQL (erp_contractors)",
@@ -247,6 +274,7 @@ def main() -> None:
     selected = any(
         (
             args.spam_learning,
+            args.onec_corrections,
             args.contractors,
             args.departments,
             args.keywords,
@@ -268,6 +296,7 @@ def main() -> None:
     qdrant_selected = run_all or any(
         (
             args.spam_learning,
+            args.onec_corrections,
             args.contractors,
             args.departments,
             args.keywords,
@@ -292,6 +321,14 @@ def main() -> None:
         result = sync_spam_learning_from_json()
         print(
             f"[sync_rag_to_qdrant] spam_learning: synced={result.get('synced')}/"
+            f"{result.get('total')} (json={result.get('json_entries')}, "
+            f"qdrant={result.get('qdrant_points')}, pruned={result.get('pruned', 0)})"
+        )
+
+    if run_all or args.onec_corrections:
+        result = sync_onec_corrections_from_json()
+        print(
+            f"[sync_rag_to_qdrant] onec_corrections: synced={result.get('synced')}/"
             f"{result.get('total')} (json={result.get('json_entries')}, "
             f"qdrant={result.get('qdrant_points')}, pruned={result.get('pruned', 0)})"
         )

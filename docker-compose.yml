@@ -8,7 +8,8 @@ x-app: &app
     QDRANT_URL: http://qdrant:6333
     RAG_BACKEND: qdrant
     CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
-    CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-8}
+    # Локальный GPU/LM Studio: 2-4; выше — LLM-шторм и зависания пула.
+    CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-3}
   volumes:
     - ./data:/app/data
   restart: unless-stopped
@@ -120,7 +121,29 @@ services:
       [
         "sh",
         "-c",
-        "exec celery -A agent_pochta.workers.celery_app:celery_app worker --loglevel=info -Q celery --concurrency=$${CELERY_WORKER_CONCURRENCY:-8}",
+        "exec celery -A agent_pochta.workers.celery_app:celery_app worker --loglevel=info -Q celery --concurrency=$${CELERY_WORKER_CONCURRENCY:-3}",
+      ]
+
+  # ETA/countdown от retry_erp иначе держат unacks на той же очереди, что process_email.
+  celery-erp-worker:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command:
+      [
+        "celery",
+        "-A",
+        "agent_pochta.workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=info",
+        "-Q",
+        "erp",
+        "--concurrency=1",
       ]
 
   celery-imap-worker:
@@ -159,7 +182,8 @@ services:
       QDRANT_URL: http://qdrant:6333
       RAG_BACKEND: qdrant
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
-      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-8}
+      # Локальный GPU/LM Studio: 2-4; выше — LLM-шторм и зависания пула.
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-3}
       STATS_EXPORT_DIR: data/stats
       STATS_REPO_ROOT: /app/repo_root
       STATS_START_TIME: "2026-07-08 08:35:00"

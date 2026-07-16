@@ -46,3 +46,28 @@ def test_parse_list_unsubscribe_header():
     msg.set_content("Body")
     parsed = parse_raw_email(msg.as_bytes(), "info@turbo-don.ru")
     assert parsed.list_unsubscribe is not None
+
+
+def test_parse_load_oversized_attachments_keeps_content(monkeypatch):
+    from agent_pochta.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "max_attachment_mb", 0)  # любой файл > лимита
+
+    msg = StdEmailMessage()
+    msg["From"] = "client@example.com"
+    msg["Subject"] = "Big"
+    msg["Message-ID"] = "<big@example.com>"
+    msg.set_content("Body")
+    msg.add_attachment(b"ABCDEFGH", maintype="application", subtype="pdf", filename="big.pdf")
+
+    limited = parse_raw_email(msg.as_bytes(), "info@turbo-don.ru")
+    assert limited.attachments[0].content is None
+    assert limited.attachments[0].size_bytes == 8
+
+    full = parse_raw_email(
+        msg.as_bytes(),
+        "info@turbo-don.ru",
+        load_oversized_attachments=True,
+    )
+    assert full.attachments[0].content == b"ABCDEFGH"

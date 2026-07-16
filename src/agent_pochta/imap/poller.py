@@ -70,13 +70,33 @@ def poll_mailboxes(container: ServiceContainer | None = None) -> dict:
                 )
                 since = catchup_since_date(last_received_at, settings=settings)
                 unseen_emails = fetch_unseen_messages(mailbox, container.vault, settings=settings)
-                catchup_emails = fetch_since_messages(
-                    mailbox,
-                    container.vault,
-                    since,
-                    settings=settings,
-                    mark_seen=True,
-                )
+                known_bases = {
+                    (mid or "").split("#", 1)[0]
+                    for (mid,) in (
+                        session.query(EmailMessageRow.message_id)
+                        .filter(EmailMessageRow.mailbox == mailbox)
+                        .all()
+                    )
+                    if mid
+                }
+                catchup_emails: list[EmailMessage] = []
+                try:
+                    catchup_emails = fetch_since_messages(
+                        mailbox,
+                        container.vault,
+                        since,
+                        settings=settings,
+                        mark_seen=False,
+                        exclude_message_id_bases=known_bases,
+                    )
+                except Exception as catchup_exc:
+                    # Do not block new UNSEEN mail if catch-up FETCH fails server-side.
+                    errors.append(f"{mailbox}: catchup {catchup_exc}")
+                    logger.exception(
+                        "imap_catchup_failed",
+                        mailbox=mailbox,
+                        catchup_since=since.isoformat(),
+                    )
                 emails = merge_emails_by_message_id(unseen_emails, catchup_emails)
                 mailbox_fetched = len(emails)
                 for email in emails:

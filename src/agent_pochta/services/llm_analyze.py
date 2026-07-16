@@ -13,6 +13,7 @@ from agent_pochta.services.summary import (
     build_summary_context,
     clamp_summary,
     extract_partner_from_signature,
+    summary_ru_system_rules,
 )
 
 _PARTNER_MAX_LEN = 200
@@ -206,8 +207,13 @@ def resolve_partner_name(
     body_text: str | None = None,
     summary_ru: str | None = None,
     qdrant_url: str | None = None,
+    learned_partner: str | None = None,
 ) -> str | None:
-    """Подпись → LLM (org) → домен → обзор → RAG → From (org, last resort)."""
+    """HITL-обучение → Подпись → LLM (org) → домен → обзор → RAG → From (org)."""
+    learned = normalize_partner_name(learned_partner)
+    if learned:
+        return _canonicalize_partner(learned, qdrant_url=qdrant_url)
+
     text = body_text if body_text is not None else (email.body_text if email else "")
 
     signature_partner = extract_partner_from_signature(text or "")
@@ -268,8 +274,9 @@ def build_analyze_messages(
         )
 
     system = (
-        "Ты помощник офис-менеджера НПО «Турбулентность-ДОН». "
-        "Проанализируй входящее письмо за один ответ.\n\n"
+        "Ты внутренний классификатор входящей почты ООО НПО «Турбулентность-ДОН». "
+        "Твоя аудитория — офис-менеджер и 1С, НЕ отправитель письма. "
+        "Проанализируй входящее письмо за один ответ. Не веди диалог с автором письма.\n\n"
         "Контекст включает тему, тело письма и извлечённый текст вложений "
         "(поля body_and_attachments, attachments_text). "
         "ОБЯЗАТЕЛЬНО проанализируй attachments_text: партнёр, отдел, summary_ru и xml_theme "
@@ -278,18 +285,21 @@ def build_analyze_messages(
         f"{spam_block}"
         "2) Отдел: выбери РОВНО один department_id из candidates; "
         "dept_confidence 0..1, reasoning.\n"
-        f"3) Обзор summary_ru на русском ({min_sent}–{settings.summary_max_sentences} предложений): "
-        "кто написал, суть, что сделать, важные вложения и их содержание, срок если указан.\n"
+        f"3) {summary_ru_system_rules(min_sent=min_sent, max_sent=settings.summary_max_sentences)}\n"
         "4) Тема xml_theme для XML-документа 1С (до 200 символов, русский язык). "
-        "Опирайся на subject письма и тип запроса, не копируй тело письма. "
-        "Формат: «Действие: очищенная тема письма». Действие — одно из: "
+        "xml_theme = действие, требуемое в письме, + краткая тема "
+        "(Запрос / Проверить / Решить / Согласовать / Оплатить / … и суть). "
+        "Опирайся на subject, тело и вложения: какое действие нужно выполнить; "
+        "не копируй тело письма и не ставь шаблонное «Действие» вместо глагола. "
+        "Формат: «Действие: краткая тема», где Действие — требуемое действие "
+        "(не заглушка), одно из: "
         "Запрос, Проверить, Решить, Согласовать, Оплатить, Ознакомиться, Рассмотреть. "
         "Убери Re:/Fw:/Fwd:. Примеры: "
         "«Запрос: ОЛ 31222, 31240 в работу», "
         "«Проверить: неподписанные УПД в ЭДО», "
         "«Оплатить: счёт №123 от 01.07.2026».\n"
         "5) Партнёр partner_name: полное юридическое наименование организации-контрагента "
-        "для поля «Партнёр» в 1С (до 200 символов, с префиксом ООО/АО/ПАО/ИП).\n"
+        "для поля «Партнёр» в 1С (до 200 символов, с префиксом ООО/АО/ПАО/ИП), если есть или можно восстановить. Твой партнёр не может быть ООО «Турбулентность-ДОН» или просто абривеатура ООО, ИП и т.д.\n"
         "   Порядок поиска (строго по приоритету):\n"
         "   а) поле email_signature — подпись в КОНЦЕ письма после «С уважением», "
         "«Best regards» и т.п.; ищи строки с ООО/АО/ПАО/ИП;\n"
@@ -299,8 +309,8 @@ def build_analyze_messages(
         "если в подписи или вложениях есть организация.\n"
         "   contractor_name из справочника — только подсказка, не заменяй ею подпись.\n"
         "   Примеры:\n"
-        "   • подпись «ООО ЛАН-Сервис» при From «sales@lan-service.ru» → partner_name: "
-        "«ООО ЛАН-Сервис» (не «Lan Service» и не домен);\n"
+        "   • подпись «ЛАН-Сервис» при From «sales@lan-service.ru» → partner_name: "
+        "«ЛАН-Сервис» (не «Lan Service» и не домен);\n"
         "   • подпись «ООО «Карбин»» → partner_name: «ООО «Карбин»»;\n"
         "   • организация только во вложении-счёте → возьми наименование из вложения.\n"
         "   Если организация не определена — пустая строка \"\".\n"
@@ -308,13 +318,19 @@ def build_analyze_messages(
         "   • «рассмотрение» — требуется решение/согласование (претензии, согласования, запросы решения);\n"
         "   • «исполнение» — требуется действие (выставить счёт, подготовить документ, выполнить заказ);\n"
         "   • «ознакомление» — только информация (уведомления, сроки отгрузки, статус, FYI).\n"
-        "   Пример: «Информация о сроках отгрузки», «Уведомление о поставке» → «ознакомление».\n\n"
+        "   Пример: «Информация о сроках отгрузки», «Уведомление о поставке» → «ознакомление».\n"
+        "7) Ориентиры приоритета (таблица G.1; приоритет выставляет агент по правилам, учти при выборе отдела):\n"
+        "   • госорганы/суды/надзор (ГИТ, прокуратура, Ростехнадзор) → директор (00-000034), копия юристу;\n"
+        "   • претензии/требования → юрист (00-000044);\n"
+        "   • УПД/счета/акты сверки без срока/поручения/обязательства → бухгалтерия, низкий приоритет;\n"
+        "   • при сроке ответа, требовании, поручении или обязательстве — всегда 1-я очередь "
+        "(даже для учётных документов).\n\n"
         "Ответь строго JSON:\n"
         "{"
         f'{spam_json_fields}'
         '"department_id": "...", "department_name": "...", '
         '"dept_confidence": float, "reasoning": "...", "summary_ru": "...", '
-        '"xml_theme": "Действие: тема письма", '
+        '"xml_theme": "Действие требуемое в письме: краткая тема", '
         '"partner_name": "ООО ... или \"\"", '
         '"process_type": "рассмотрение|исполнение|ознакомление"'
         "}"
@@ -365,17 +381,29 @@ def parse_analyze_response(
             rule_hit="trusted_sender",
         )
     else:
+        is_spam = bool(data.get("is_spam"))
+        if "spam_confidence" in data:
+            spam_conf = float(data.get("spam_confidence") or 0)
+        elif "dept_confidence" in data:
+            # Ответ analyze_incoming без spam_confidence → дефолт по is_spam.
+            spam_conf = 0.9 if is_spam else 0.05
+        else:
+            spam_conf = float(data.get("confidence", 0.9 if is_spam else 0.05) or 0)
         spam = SpamResult(
-            is_spam=bool(data.get("is_spam")),
-            confidence=float(
-                data.get("spam_confidence", data.get("confidence", 0))
-            ),
+            is_spam=is_spam,
+            confidence=spam_conf,
             reason=str(data.get("spam_reason") or data.get("reason") or ""),
         )
 
     dept_id = str(data.get("department_id") or "")
     dept_name = str(data.get("department_name") or "")
-    dept_conf = float(data.get("dept_confidence", data.get("confidence", 0)))
+    if "dept_confidence" in data:
+        dept_conf = float(data.get("dept_confidence") or 0)
+    elif "spam_confidence" in data:
+        # Не подставлять spam_confidence/общий confidence в уверенность отдела.
+        dept_conf = 0.0
+    else:
+        dept_conf = float(data.get("confidence", 0) or 0)
 
     if not dept_id and candidates:
         top = candidates[0]

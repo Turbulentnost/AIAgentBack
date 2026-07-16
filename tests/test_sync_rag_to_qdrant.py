@@ -119,3 +119,43 @@ def test_apply_routing_correction_keywords(monkeypatch: pytest.MonkeyPatch):
     assert result["corrections"] == 1
     assert result["departments_updated"] == 1
     assert result["keywords_added"] == 2
+
+
+def test_sync_onec_corrections_from_json(monkeypatch: pytest.MonkeyPatch):
+    mod = _import_sync_module()
+    monkeypatch.setenv("RAG_BACKEND", "qdrant")
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
+    from agent_pochta.config import reset_settings
+
+    reset_settings()
+
+    with patch.object(mod, "ensure_onec_corrections_indexes") as ensure_mock:
+        with patch.object(
+            mod,
+            "resync_onec_corrections_to_qdrant",
+            return_value={"synced": 2, "total": 2, "pruned": 0},
+        ) as resync_mock:
+            with patch.object(
+                mod,
+                "load_onec_corrections",
+                return_value={"entries": [{}, {}]},
+            ):
+                with patch.object(mod, "collection_points", return_value=2):
+                    result = mod.sync_onec_corrections_from_json()
+
+    ensure_mock.assert_called_once_with("http://qdrant:6333")
+    resync_mock.assert_called_once()
+    assert result["synced"] == 2
+    assert result["json_entries"] == 2
+    assert result["qdrant_points"] == 2
+
+
+def test_sync_onec_corrections_stub_backend(monkeypatch: pytest.MonkeyPatch):
+    mod = _import_sync_module()
+    monkeypatch.setenv("RAG_BACKEND", "stub")
+    from agent_pochta.config import reset_settings
+
+    reset_settings()
+    result = mod.sync_onec_corrections_from_json()
+    assert result["synced"] == 0
+    assert result["reason"] == "stub_backend"

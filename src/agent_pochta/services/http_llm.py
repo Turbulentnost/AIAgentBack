@@ -16,7 +16,11 @@ from agent_pochta.services.llm_analyze import (
     parse_analyze_response,
 )
 from agent_pochta.services.llm_gateway import LLMGateway
-from agent_pochta.services.summary import build_summary_context, clamp_summary
+from agent_pochta.services.summary import (
+    build_summary_context,
+    clamp_summary,
+    summary_ru_system_rules,
+)
 
 
 def parse_json_object(text: str) -> dict:
@@ -139,24 +143,22 @@ class ChatCompletionsLLMGateway(LLMGateway):
             settings=settings,
         )
         min_sent = min(3, settings.summary_max_sentences)
+        rules = summary_ru_system_rules(
+            min_sent=min_sent, max_sent=settings.summary_max_sentences
+        )
         system = (
-            "Ты помощник офис-менеджера НПО «Турбулентность-ДОН». "
-            f"Сделай краткий деловой обзор входящего письма на русском ({min_sent}–"
-            f"{settings.summary_max_sentences} предложений). "
-            "Обязательно укажи: кто написал; суть обращения; что нужно сделать; "
-            "важные вложения и их содержание (поле attachments_text / body_and_attachments); "
-            "срок (только если явно указан в письме или вложениях). "
-            "Без приветствий, подписей и служебных фраз. "
-            'JSON: {"summary_ru": "текст обзора"}'
+            "Ты внутренний классификатор входящей почты НПО «Турбулентность-ДОН». "
+            "Аудитория — офис-менеджер, не отправитель письма.\n"
+            f"{rules}\n"
+            'Ответь строго JSON: {"summary_ru": "текст обзора"}'
         )
         user = json.dumps(ctx, ensure_ascii=False)
         data = self._chat_json(system, user)
         summary = str(data.get("summary_ru") or data.get("text") or "").strip()
         if not summary:
             summary = self._chat_plain(
-                f"Краткий обзор письма на русском ({min_sent}–"
-                f"{settings.summary_max_sentences} предложений). Контекст:\n{user}",
-                "Сформируй обзор.",
+                f"{rules}\nКонтекст письма (JSON) ниже. Верни только текст обзора, без JSON.",
+                user,
             )
         return clamp_summary(
             summary,
@@ -205,8 +207,11 @@ class ChatCompletionsLLMGateway(LLMGateway):
                 settings=settings,
             )
             min_sent = min(3, settings.summary_max_sentences)
+            rules = summary_ru_system_rules(
+                min_sent=min_sent, max_sent=settings.summary_max_sentences
+            )
             fallback = self._chat_plain(
-                "Сформируй краткий деловой обзор письма на русском.",
+                f"{rules}\nВерни только текст обзора, без JSON и без ответа отправителю.",
                 json.dumps(ctx, ensure_ascii=False),
             )
             analysis = IncomingEmailAnalysis(

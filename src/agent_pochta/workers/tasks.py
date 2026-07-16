@@ -25,12 +25,37 @@ _SKIP_IMAP_REQUEUE_STATUSES = {
     ProcessingStatus.DONE.value,
     ProcessingStatus.SPAM.value,
     ProcessingStatus.AWAITING_HUMAN.value,
-    ProcessingStatus.PROCESSING.value,
     ProcessingStatus.ERROR.value,
 }
 
+# Lease for in-flight rows: stale PROCESSING (worker crash) may be re-enqueued.
+_STALE_PROCESSING_AFTER_SEC = 900
+
+
+def _processing_started_at(row: EmailMessageRow):
+    """UTC-naive datetime when processing lease was taken, or None for legacy orphans."""
+    from datetime import datetime
+
+    if not row.raw_payload_json:
+        return None
+    try:
+        payload = json.loads(row.raw_payload_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("processing_started_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
 
 def _is_already_processed(message_id: str) -> bool:
+    from datetime import datetime, timedelta
+
     factory = get_session_factory()
     try:
         with factory() as session:
@@ -39,7 +64,17 @@ def _is_already_processed(message_id: str) -> bool:
         return False
     if row is None:
         return False
-    return row.status in _SKIP_IMAP_REQUEUE_STATUSES
+    if row.status in _SKIP_IMAP_REQUEUE_STATUSES:
+        return True
+    if row.status != ProcessingStatus.PROCESSING.value:
+        return False
+    started = _processing_started_at(row)
+    if started is None:
+        # Legacy orphan without lease — allow IMAP/reprocess recovery.
+        return False
+    age = datetime.utcnow() - started
+    return age < timedelta(seconds=_STALE_PROCESSING_AFTER_SEC)
+
 
 
 def should_enqueue_email(email: EmailMessage) -> bool:
@@ -54,7 +89,11 @@ def should_enqueue_email(email: EmailMessage) -> bool:
 
 def _schedule_erp_retry(message_id: str) -> None:
     settings = get_settings()
-    retry_erp_task.apply_async(args=[message_id], countdown=settings.erp_retry_delay_sec)
+    retry_erp_task.apply_async(
+        args=[message_id],
+        countdown=settings.erp_retry_delay_sec,
+        queue="erp",
+    )
 
 
 @celery_app.task(name="agent_pochta.process_email", bind=True, max_retries=3, default_retry_delay=60)
@@ -122,7 +161,15 @@ def poll_imap_task() -> dict:
     return poll_mailboxes()
 
 
-@celery_app.task(name="agent_pochta.retry_erp", bind=True)
+@celery_app.task(
+    name="agent_pochta.retry_erp",
+    bind=True,
+    queue="erp",
+    # Не дать волне ERP 403/500 занять пул process_email (отдельная очередь erp).
+    rate_limit="6/m",
+    soft_time_limit=90,
+    time_limit=120,
+)
 def retry_erp_task(self, message_id: str) -> dict:
     """Повтор создания документа в 1С (ТЗ §5.2: 10 мин, max 5 попыток)."""
     settings = get_settings()
@@ -198,7 +245,11 @@ def retry_erp_task(self, message_id: str) -> dict:
             row = EmailRepository(session).get_by_message_id(message_id)
             if row and row.erp_retry_count < settings.erp_retry_max:
                 session.commit()
-                retry_erp_task.apply_async(args=[message_id], countdown=settings.erp_retry_delay_sec)
+                retry_erp_task.apply_async(
+                    args=[message_id],
+                    countdown=settings.erp_retry_delay_sec,
+                    queue="erp",
+                )
             elif row:
                 row.status = ProcessingStatus.ERROR.value
                 row.human_review = True
@@ -403,14 +454,53 @@ def export_statistics_task() -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+@celery_app.task(name="agent_pochta.sync_rag_to_qdrant")
+def sync_rag_to_qdrant_task() -> dict:
+    """Резервная hourly-синхронизация HITL JSON / PostgreSQL → Qdrant."""
+    from agent_pochta.config import PROJECT_ROOT, get_settings
+
+    settings = get_settings()
+    if settings.rag_backend != "qdrant":
+        return {"ok": True, "skipped": True, "reason": "stub_backend"}
+
+    try:
+        import importlib.util
+
+        script = PROJECT_ROOT / "scripts" / "sync_rag_to_qdrant.py"
+        spec = importlib.util.spec_from_file_location("sync_rag_to_qdrant", script)
+        if spec is None or spec.loader is None:
+            return {"ok": False, "error": f"cannot load {script}"}
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        result = {
+            "spam_learning": mod.sync_spam_learning_from_json(),
+            "onec_corrections": mod.sync_onec_corrections_from_json(),
+            "contractors": mod.sync_contractors_from_db(),
+            "rag_keywords": mod.apply_rag_department_keywords(),
+            "routing_keywords": mod.apply_routing_correction_keywords(),
+        }
+        logger.info("sync_rag_to_qdrant_done", **{k: bool(v) for k, v in result.items()})
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.exception("sync_rag_to_qdrant_failed")
+        return {"ok": False, "error": str(exc)}
+
+
 @celery_app.task(
     name="agent_pochta.reprocess_message",
     bind=True,
     max_retries=2,
     default_retry_delay=120,
 )
-def reprocess_message_task(self, row_id: str, *, restored_from_spam: bool = False) -> dict:
-    """Повторный прогон графа (восстановление из спама / ручной перезапуск)."""
+def reprocess_message_task(
+    self,
+    row_id: str,
+    *,
+    restored_from_spam: bool = False,
+    reanalyze: bool = False,
+) -> dict:
+    """Повторный прогон графа (восстановление из спама / повторный LLM-анализ / ручной перезапуск)."""
     factory = get_session_factory()
     row_uuid = uuid.UUID(row_id)
     with factory() as session:
@@ -432,7 +522,11 @@ def reprocess_message_task(self, row_id: str, *, restored_from_spam: bool = Fals
             repo.mark_restored_from_spam(row.id)
         session.commit()
 
-    meta = {"restored_from_spam": restored_from_spam} if restored_from_spam else {}
+    meta: dict = {}
+    if restored_from_spam:
+        meta["restored_from_spam"] = True
+    if reanalyze:
+        meta["reanalyze"] = True
     persist_processing_start(email)
     graph = get_worker_graph()
     try:

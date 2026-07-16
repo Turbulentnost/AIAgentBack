@@ -14,30 +14,75 @@ from agent_pochta.routing.engine import rebuild_decision_xml
 from agent_pochta.routing.recipients import build_routing_search_text
 from agent_pochta.routing.models import ConfidenceLevel
 from agent_pochta.routing.xml_builder import build_subject_xml_theme, sanitize_theme
-from agent_pochta.schemas import Priority, ProcessingStatus, RoutingResult, SenderIdentity, SpamResult
+from agent_pochta.schemas import ProcessingStatus, RoutingResult, SenderIdentity, SpamResult
 from agent_pochta.services import ServiceContainer
+from agent_pochta.routing.priority import PriorityDecision, select_priority
 from agent_pochta.routing.process_type import infer_process_type_heuristic
 from agent_pochta.services.llm_analyze import resolve_partner_name
 from agent_pochta.state import AgentState
 
-_URGENT_SENDER_TYPES = {"госорган"}
-_HIGH_KEYWORDS = {"претензия", "иск", "требование"}
+
+def _determine_priority_decision(state: AgentState, claim: bool) -> PriorityDecision:
+    email = state["email"]
+    text = state.get("combined_text") or email.body_text or ""
+    return select_priority(
+        subject=email.subject or "",
+        body=text,
+        claim=claim,
+        sender=state.get("sender"),
+    )
 
 
-def _determine_priority(state: AgentState, claim: bool) -> Priority:
-    sender = state.get("sender")
-    if sender and sender.contractor and sender.contractor.contractor_type in _URGENT_SENDER_TYPES:
-        return Priority.URGENT
-    if claim:
-        return Priority.HIGH
-    text = state.get("combined_text", "").lower()
-    if any(kw in text for kw in _HIGH_KEYWORDS):
-        return Priority.HIGH
-    return Priority.NORMAL
+def _apply_kind_department_hint(
+    routing: RoutingResult,
+    decision,
+    priority_decision: PriorityDecision,
+    *,
+    reserve_code: str,
+) -> RoutingResult:
+    """Если RuleRouter ушёл в резерв — подсказать первичный отдел из G.1."""
+    codes = priority_decision.primary_department_codes
+    if not codes:
+        return routing
+    if decision.match_source != "reserve" and routing.department_id != reserve_code:
+        return routing
+    hint = codes[0]
+    if hint == routing.department_id:
+        return routing
+    from agent_pochta.services.routing_departments import resolve_department_display_name
+
+    return routing.model_copy(
+        update={
+            "department_id": hint,
+            "department_name": resolve_department_display_name(hint, hint),
+            "reasoning": (
+                f"{routing.reasoning}; hint G.1 {priority_decision.document_kind}→{hint}"
+            ),
+        }
+    )
 
 
 def _confidence_to_float(level: ConfidenceLevel, score: int) -> float:
     return min(1.0, max(0.0, score / 100.0))
+
+
+def _with_fallback_confidence(
+    routing: RoutingResult,
+    *,
+    fallback: RoutingResult | None = None,
+    decision_score: int = 0,
+    decision_level: ConfidenceLevel = ConfidenceLevel.LOW,
+) -> RoutingResult:
+    """Если LLM/RAG вернул dept_confidence=0, берём score правил (иначе UI показывает 0%)."""
+    if routing.confidence > 0:
+        return routing
+    if fallback is not None and fallback.confidence > 0:
+        return routing.model_copy(update={"confidence": fallback.confidence})
+    if decision_score > 0:
+        return routing.model_copy(
+            update={"confidence": _confidence_to_float(decision_level, decision_score)}
+        )
+    return routing
 
 
 def _get_engine() -> RouteEngine:
@@ -84,7 +129,6 @@ def _rag_department_candidates(
         {
             "department_id": d.department_id,
             "department_name": d.department_name,
-            "head_name": d.head_name,
             "responsibility": d.responsibility,
         }
         for d in departments
@@ -150,7 +194,8 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
     skip_spam = existing_spam is not None and existing_spam.rule_hit == "trusted_sender"
     meta = dict(state.get("meta") or {})
     restored_from_spam = bool(meta.get("restored_from_spam"))
-    if restored_from_spam:
+    reanalyze = bool(meta.get("reanalyze"))
+    if restored_from_spam or reanalyze:
         skip_spam = True
 
     engine = _get_engine()
@@ -183,7 +228,8 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
 
     rag_used = False
     llm_candidates = [{"department_id": primary_code, "department_name": dept_name}]
-    if settings.rag_department_enabled and _needs_rag_fallback(decision):
+    need_rag = _needs_rag_fallback(decision) or reanalyze
+    if settings.rag_department_enabled and need_rag:
         rag_candidates = _rag_department_candidates(
             container,
             text,
@@ -201,8 +247,10 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
     xml_theme: str | None = None
     llm_partner: str | None = None
     resolved_process: str | None = None
+    spam = existing_spam
+    apply_llm_routing = rag_used or reanalyze or restored_from_spam
 
-    if not skip_spam and use_llm_analyze:
+    if use_llm_analyze:
         analysis = container.llm.analyze_incoming(
             email,
             text,
@@ -212,20 +260,33 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             attachments_text=attachments_text,
             claim=decision.claim,
         )
-        spam = analysis.spam
-        spam_patch = _apply_spam_decision(spam, settings, trace)
-        if spam_patch:
-            return spam_patch
+        if not skip_spam:
+            spam = analysis.spam
+            spam_patch = _apply_spam_decision(spam, settings, trace)
+            if spam_patch:
+                return spam_patch
+        elif analysis.spam is not None:
+            spam = analysis.spam
         summary_ru = analysis.summary_ru
         xml_theme = analysis.xml_theme
         llm_partner = analysis.partner_name
         resolved_process = analysis.process_type
-        if rag_used:
-            routing = analysis.routing
+        if apply_llm_routing:
+            routing = _with_fallback_confidence(
+                analysis.routing,
+                fallback=rule_routing,
+                decision_score=decision.confidence_score,
+                decision_level=decision.confidence_level,
+            )
     elif rag_used:
         spam = existing_spam
         choice = container.llm.choose_department(text, llm_candidates)
-        routing = _routing_from_choice(choice)
+        routing = _with_fallback_confidence(
+            _routing_from_choice(choice),
+            fallback=rule_routing,
+            decision_score=decision.confidence_score,
+            decision_level=decision.confidence_level,
+        )
         summary_ru = container.llm.summarize_ru(
             email,
             text,
@@ -270,6 +331,27 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
         }
     )
 
+    from agent_pochta.routing.onec_corrections import find_onec_correction_match
+    from agent_pochta.routing.organizations import normalize_organization_code
+
+    onec_match = find_onec_correction_match(
+        recipient=recipient or "",
+        sender_email=email.sender_email or "",
+        subject=email.subject or "",
+        body=text or email.body_text or "",
+    )
+    learned_partner = (onec_match or {}).get("partner") if onec_match else None
+    org_from_onec = normalize_organization_code(
+        (onec_match or {}).get("organization") if onec_match else None
+    )
+    if org_from_onec and org_from_onec != decision.organization:
+        decision = decision.model_copy(update={"organization": org_from_onec})
+        decision = decision.model_copy(
+            update={
+                "direction": engine.detect_direction(org_from_onec, decision.direction),
+            }
+        )
+
     resolved_partner = resolve_partner_name(
         llm_partner=llm_partner,
         rag_partner=decision.partner,
@@ -277,13 +359,28 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
         body_text=text or email.body_text,
         summary_ru=summary_ru,
         qdrant_url=settings.qdrant_url if settings.rag_department_enabled else None,
+        learned_partner=learned_partner,
     )
     initial_partner = decision.partner
     if resolved_partner != decision.partner:
         decision = decision.model_copy(update={"partner": resolved_partner})
 
-    priority = _determine_priority(state, decision.claim)
-    routing = routing.model_copy(update={"priority": priority})
+    priority_decision = _determine_priority_decision(state, decision.claim)
+    reserve_code = str(engine.rules.get("reserve_code", "00-000066"))
+    routing = _apply_kind_department_hint(
+        routing,
+        decision,
+        priority_decision,
+        reserve_code=reserve_code,
+    )
+    routing = routing.model_copy(
+        update={
+            "priority": priority_decision.priority,
+            "document_kind": priority_decision.document_kind,
+            "queue_tier": priority_decision.queue_tier,
+            "register_erp": priority_decision.register_erp,
+        }
+    )
 
     if xml_theme:
         decision = decision.model_copy(update={"theme": sanitize_theme(xml_theme)})
@@ -317,20 +414,29 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
                 "has_conflict": decision.has_conflict,
                 "partner": decision.partner,
                 "claim": decision.claim,
+                "document_kind": priority_decision.document_kind,
+                "queue_tier": priority_decision.queue_tier,
+                "register_erp": priority_decision.register_erp,
+                "has_obligation": priority_decision.has_obligation,
+                "priority_reasoning": priority_decision.reasoning,
             },
             "xml_document": decision.xml_document,
             "routing_recipient": recipient,
             "rag_fallback": rag_used,
+            "skip_erp": not priority_decision.register_erp,
         }
     )
     if rag_used:
         meta["rag_candidates"] = llm_candidates
 
-    if human or meta.get("restored_from_spam"):
+    if human or restored_from_spam or reanalyze:
         escalation = reason
-        if meta.get("restored_from_spam"):
+        if restored_from_spam:
             escalation = "Восстановлено из спама: требуется подтверждение оператора"
             trace = trace + ["restored_from_spam_hitl"]
+        elif reanalyze:
+            escalation = "Повторный анализ LLM: проверьте партнёра, отдел и организацию"
+            trace = trace + ["reanalyze_hitl"]
         return {
             "spam": spam,
             "routing": routing,

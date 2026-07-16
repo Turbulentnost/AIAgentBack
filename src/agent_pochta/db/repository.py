@@ -190,7 +190,11 @@ class EmailRepository:
     def ensure_processing_row(self, email: EmailMessage) -> uuid.UUID:
         """Создаёт или обновляет запись со status=processing до завершения графа."""
         row = self.get_by_message_id(email.message_id)
-        payload_json = json.dumps(email_to_task_payload(email, for_storage=True), ensure_ascii=False)
+        payload = email_to_task_payload(email, for_storage=True)
+        from datetime import datetime
+
+        payload["processing_started_at"] = datetime.utcnow().isoformat()
+        payload_json = json.dumps(payload, ensure_ascii=False)
 
         if row is None:
             row = EmailMessageRow(
@@ -249,8 +253,15 @@ class EmailRepository:
         row.attachments_count = len(email.attachments)
         row.agent_version = get_settings().agent_version
         payload = email_to_task_payload(email, for_storage=True)
-        if xml := (state.get("meta") or {}).get("xml_document"):
+        meta = state.get("meta") or {}
+        if xml := meta.get("xml_document"):
             payload["xml_document"] = xml
+        if routing_decision := meta.get("routing_decision"):
+            payload["routing_decision"] = routing_decision
+        if "rag_fallback" in meta:
+            payload["rag_fallback"] = bool(meta.get("rag_fallback"))
+        if routing_recipient := meta.get("routing_recipient"):
+            payload["routing_recipient"] = routing_recipient
         row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
 
         spam = state.get("spam")
@@ -390,6 +401,21 @@ class EmailRepository:
     def set_xml_document(self, row: EmailMessageRow, xml: str) -> None:
         payload = self._payload_dict(row)
         payload["xml_document"] = xml
+        row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+
+    def set_operator_verified(self, row: EmailMessageRow, verified: bool = True) -> None:
+        """Флаг «Проверено оператором» в raw_payload_json (done/error)."""
+        from datetime import datetime, timezone
+
+        payload = self._payload_dict(row)
+        if verified:
+            payload["operator_verified"] = True
+            payload["operator_verified_at"] = (
+                datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            )
+        else:
+            payload.pop("operator_verified", None)
+            payload.pop("operator_verified_at", None)
         row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
 
     def rebuild_xml_after_human_correction(

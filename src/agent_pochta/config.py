@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     spam_skip_llm_for_trusted: bool = Field(default=True, alias="SPAM_SKIP_LLM_FOR_TRUSTED")
     dept_confidence_min: float = Field(default=0.70, alias="DEPT_CONFIDENCE_MIN")
     max_attachment_mb: int = Field(default=25, alias="MAX_ATTACHMENT_MB")
+    # Таймаут IMAP при on-demand скачивании вложений (полный RFC822 может быть большим).
+    imap_download_timeout_sec: int = Field(default=120, alias="IMAP_DOWNLOAD_TIMEOUT_SEC")
     document_extract_max_chars: int = Field(default=12_000, alias="DOCUMENT_EXTRACT_MAX_CHARS")
     document_extract_total_max_chars: int = Field(
         default=40_000, alias="DOCUMENT_EXTRACT_TOTAL_MAX_CHARS"
@@ -63,6 +65,8 @@ class Settings(BaseSettings):
     imap_max_connect_retries: int = Field(default=3, alias="IMAP_MAX_CONNECT_RETRIES")
     imap_connect_retry_delay_sec: int = Field(default=300, alias="IMAP_CONNECT_RETRY_DELAY_SEC")
     imap_catchup_days: int = Field(default=7, alias="IMAP_CATCHUP_DAYS")
+    imap_fetch_batch_size: int = Field(default=20, alias="IMAP_FETCH_BATCH_SIZE")
+    imap_catchup_max_uids: int = Field(default=400, alias="IMAP_CATCHUP_MAX_UIDS")
 
     # Повторы 1С (раздел 5.2)
     erp_retry_max: int = Field(default=5, alias="ERP_RETRY_MAX")
@@ -124,6 +128,9 @@ class Settings(BaseSettings):
     stats_start_time: str = Field(default="2026-07-08 08:35:00", alias="STATS_START_TIME")
     stats_timezone: str = Field(default="Europe/Moscow", alias="STATS_TIMEZONE")
     stats_export_interval_sec: int = Field(default=600, alias="STATS_EXPORT_INTERVAL_SEC")
+
+    # Резервная синхронизация JSON / PG → Qdrant (celery-beat)
+    rag_sync_interval_sec: int = Field(default=3600, alias="RAG_SYNC_INTERVAL_SEC")
 
     @property
     def mailbox_list(self) -> list[str]:

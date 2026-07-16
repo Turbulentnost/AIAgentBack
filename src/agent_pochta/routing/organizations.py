@@ -13,7 +13,7 @@ ORG_FULL_NAMES: dict[str, str] = {
 
 ORG_ORDER = ("НП", "АЛ", "МГ", "АМ", "МИ", "БМ")
 
-_ORG_DIRECTION_CODES = frozenset({"АЛ", "МГ", "АМ", "МИ"})
+_ORG_DIRECTION_CODES = frozenset({"АЛ", "МГ", "АМ", "МИ", "БМ"})
 
 
 def list_organizations_for_ui() -> list[dict[str, str]]:

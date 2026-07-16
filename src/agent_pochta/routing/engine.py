@@ -16,6 +16,8 @@ from agent_pochta.routing.normalize import (
     normalize_email_address,
     normalize_text,
 )
+from agent_pochta.routing.onec_corrections import find_onec_correction_match
+from agent_pochta.routing.organizations import normalize_organization_code
 from agent_pochta.routing.process_type import infer_process_type_heuristic
 from agent_pochta.routing.recipients import build_routing_search_text
 from agent_pochta.routing.xml_builder import (
@@ -26,14 +28,17 @@ from agent_pochta.routing.xml_builder import (
 )
 from agent_pochta.schemas import EmailMessage, SenderIdentity
 
-_DEFAULT_RULES_PATH = Path(__file__).resolve().parent / "data" / "routing_rules.json"
-_FALLBACK_RULES_PATH = PROJECT_ROOT / "data" / "routing_rules.json"
+_PACKAGE_RULES_PATH = Path(__file__).resolve().parent / "data" / "routing_rules.json"
+_PROJECT_RULES_PATH = PROJECT_ROOT / "data" / "routing_rules.json"
 
 _ORG_FROM_RECIPIENT = (
     ("almaz", "АЛ"),
     ("mgs_", "МГ"),
     ("mgs@", "МГ"),
 )
+
+# Коды org, для которых direction = код организации (как в detect_direction).
+_ORG_AS_DIRECTION = frozenset({"АЛ", "МГ", "АМ", "МИ", "БМ"})
 
 
 @dataclass
@@ -55,9 +60,13 @@ class RouteEngine:
 
     @classmethod
     def load(cls, path: Path | None = None) -> RouteEngine:
-        rules_path = path or _DEFAULT_RULES_PATH
-        if not rules_path.is_file():
-            rules_path = _FALLBACK_RULES_PATH
+        if path is not None:
+            rules_path = path
+        elif _PROJECT_RULES_PATH.is_file():
+            # Канонический файл проекта (монтируется в Docker) важнее bundled-копии.
+            rules_path = _PROJECT_RULES_PATH
+        else:
+            rules_path = _PACKAGE_RULES_PATH
         with rules_path.open(encoding="utf-8") as fh:
             return cls(rules=json.load(fh))
 
@@ -73,14 +82,22 @@ class RouteEngine:
 
         normalized = normalize_text(text)
         org_keywords = self.rules.get("organization_keywords", {})
-        for org in sorted(org_keywords, key=lambda key: -max(len(kw) for kw in org_keywords[key])):
-            keywords = org_keywords[org]
-            if any(kw in normalized for kw in sorted(keywords, key=len, reverse=True)):
-                return org
+        scored: list[tuple[int, str]] = []
+        for org, keywords in org_keywords.items():
+            active = [str(kw).strip() for kw in (keywords or []) if str(kw).strip()]
+            if not active:
+                continue
+            hits = [kw for kw in active if keyword_in_text(kw, normalized)]
+            if hits:
+                # Предпочитаем более длинные (специфичные) совпадения.
+                scored.append((max(len(h) for h in hits), org))
+        if scored:
+            scored.sort(key=lambda item: (-item[0], item[1]))
+            return scored[0][1]
         return "НП"
 
     def detect_direction(self, organization: str, candidate_direction: str | None = None) -> str:
-        if organization in {"АЛ", "МГ", "АМ", "МИ"}:
+        if organization in _ORG_AS_DIRECTION:
             return organization
         return candidate_direction or "КС"
 
@@ -208,6 +225,107 @@ class RouteEngine:
             reasoning="Резервный маршрут при отсутствии однозначного правила",
         )
 
+    def _info_strict_mailbox(self) -> str:
+        cfg = self.rules.get("info_strict_rules") or {}
+        mailbox = str(cfg.get("mailbox") or "info@turbo-don.ru")
+        return normalize_email_address(mailbox, self.rules.get("email_aliases"))
+
+    def _info_strict_candidate(
+        self,
+        *,
+        rule: dict,
+        source: str,
+        hits: list[str],
+        reasoning: str,
+    ) -> _Candidate:
+        code = str(rule["code"])
+        return _Candidate(
+            code=code,
+            name=rule.get("name") or self._dept_name(code),
+            direction=rule.get("direction", "КС"),
+            source=source,
+            reasoning=reasoning,
+            topic_hits=max(2, len(hits)),
+            content_hits=max(1, len(hits)),
+            matched_keywords=hits,
+        )
+
+    def _info_strict_match(
+        self,
+        recipient: str,
+        subject: str,
+        body: str,
+        sender_email: str = "",
+    ) -> _Candidate | None:
+        """Жёсткие правила только для info@turbo-don.ru (до keyword/RAG)."""
+        cfg = self.rules.get("info_strict_rules")
+        if not cfg:
+            return None
+        recipient = normalize_email_address(recipient, self.rules.get("email_aliases"))
+        if recipient != self._info_strict_mailbox():
+            return None
+
+        text = normalize_text(f"{subject} {body}")
+        sender_norm = (sender_email or "").lower().strip()
+
+        rule1 = cfg.get("ilchenko_ud") or {}
+        hits: list[str] = []
+        for pattern in rule1.get("name_patterns") or []:
+            if keyword_in_text(str(pattern), text):
+                hits.append(str(pattern))
+        for pattern in rule1.get("org_patterns") or []:
+            if keyword_in_text(str(pattern), text):
+                hits.append(str(pattern))
+        for domain in rule1.get("sender_domain_patterns") or []:
+            marker = str(domain).lower().strip()
+            if marker and marker in sender_norm:
+                hits.append(marker)
+        if hits and rule1.get("code"):
+            rule_code = rule1.get("rule_code", "INFO_STRICT_ILCHENKO")
+            return self._info_strict_candidate(
+                rule=rule1,
+                source="info_strict",
+                hits=hits,
+                reasoning=(
+                    f"info@ strict {rule_code}: Амураль/Газпром/Водоканал → "
+                    f"УД (Ильченко); {', '.join(hits[:5])}"
+                ),
+            )
+
+        rule2 = cfg.get("ministry_od") or {}
+        ministry_hits = [
+            str(pattern)
+            for pattern in (rule2.get("content_patterns") or [])
+            if keyword_in_text(str(pattern), text)
+        ]
+        if ministry_hits and rule2.get("code"):
+            rule_code = rule2.get("rule_code", "INFO_STRICT_MINISTRY")
+            return self._info_strict_candidate(
+                rule=rule2,
+                source="info_strict",
+                hits=ministry_hits,
+                reasoning=(
+                    f"info@ strict {rule_code}: министерство → "
+                    f"Операционный директор; {', '.join(ministry_hits[:5])}"
+                ),
+            )
+        return None
+
+    def _info_unclear_route(self) -> _Candidate:
+        cfg = (self.rules.get("info_strict_rules") or {}).get("unclear") or {}
+        code = str(cfg.get("code") or self.rules.get("reserve_code", "00-000066"))
+        rule_code = cfg.get("rule_code", "INFO_STRICT_UNCLEAR")
+        return _Candidate(
+            code=code,
+            name=cfg.get("name") or self._dept_name(code),
+            direction=cfg.get("direction", "КС"),
+            source="info_strict_unclear",
+            reasoning=f"info@ strict {rule_code}: неясное письмо → УД / КС",
+            topic_hits=1,
+            content_hits=1,
+            matched_keywords=[rule_code],
+        )
+
     def _correction_match(
         self,
         recipient: str,
@@ -248,6 +366,9 @@ class RouteEngine:
         correction = self._correction_match(recipient, sender_email, subject, body)
         if correction is not None:
             return [correction]
+        info_strict = self._info_strict_match(recipient, subject, body, sender_email)
+        if info_strict is not None:
+            return [info_strict]
         routes = self._exact_email_match(recipient, subject, body)
         if not routes:
             routes = self._email_keyword_match(recipient)
@@ -260,7 +381,10 @@ class RouteEngine:
             if sales:
                 routes = sales + routes
         if not routes:
-            routes = [self._reserve_route()]
+            if recipient == self._info_strict_mailbox() and self.rules.get("info_strict_rules"):
+                routes = [self._info_unclear_route()]
+            else:
+                routes = [self._reserve_route()]
         return routes
 
     def _collect_matching_keywords(self, candidates: list[_Candidate]) -> list[str]:
@@ -319,6 +443,20 @@ class RouteEngine:
         if primary.organization:
             organization = primary.organization
 
+        onec_match = find_onec_correction_match(
+            recipient=recipient,
+            sender_email=email.sender_email or "",
+            subject=subject,
+            body=body,
+        )
+        if onec_match:
+            org_from_onec = normalize_organization_code(onec_match.get("organization"))
+            if org_from_onec:
+                organization = org_from_onec
+            partner_from_onec = (onec_match.get("partner") or "").strip()
+            if partner_from_onec:
+                partner = partner_from_onec
+
         direction = self.detect_direction(organization, primary.direction)
         claim = contains_claim_marker(f"{subject} {body}")
 
@@ -329,9 +467,13 @@ class RouteEngine:
         )
 
         score, level = calculate_confidence(
-            exact_email=primary.source in {"exact_email", "human_correction"},
+            exact_email=primary.source in {
+                "exact_email",
+                "human_correction",
+                "info_strict",
+            },
             topic_matches=primary.topic_hits,
-            email_keyword=primary.source == "email_keyword",
+            email_keyword=primary.source in {"email_keyword", "info_strict_unclear"},
             content_keyword_hits=primary.content_hits,
             org_confirmed=organization != "НП",
             holding_found=primary.source.startswith("sales"),

@@ -58,6 +58,22 @@ def test_log_routing_approve_when_department_unchanged(session: MagicMock) -> No
     assert row.event_type == "routing_approve"
 
 
+def test_log_routing_correction_force_changed_skips_routing_approve(session: MagicMock) -> None:
+    row = log_routing_correction(
+        session,
+        message_id="<m2b>",
+        original_department_id="00-000044",
+        original_department_name="Юридический",
+        department_id="00-000044",
+        department_name="Юридический",
+        force_changed=True,
+        source="test",
+    )
+    assert row is None
+    classified = session.add.call_args.args[0]
+    assert classified.event_type == "operator_change"
+
+
 def test_log_spam_mark(session: MagicMock) -> None:
     row = log_spam_decision(
         session,

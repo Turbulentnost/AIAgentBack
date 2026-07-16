@@ -75,6 +75,18 @@ def _mock_repo(row: EmailMessageRow):
     repo.clear_xml_document = MagicMock()
     repo.rebuild_xml_after_human_correction = MagicMock(return_value="<document></document>")
 
+    def _set_operator_verified(email_row: EmailMessageRow, verified: bool = True) -> None:
+        payload = json.loads(email_row.raw_payload_json or "{}")
+        if verified:
+            payload["operator_verified"] = True
+            payload["operator_verified_at"] = "2026-07-15T00:00:00"
+        else:
+            payload.pop("operator_verified", None)
+            payload.pop("operator_verified_at", None)
+        email_row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+
+    repo.set_operator_verified.side_effect = _set_operator_verified
+
     session = MagicMock()
     session_factory = MagicMock()
     session_factory.return_value.__enter__.return_value = session
@@ -116,6 +128,94 @@ def test_approve_routing_on_error_sets_done_and_skips_pipeline():
     assert row.department_id == "00-000002"
     continue_task.delay.assert_not_called()
     repo.rebuild_xml_after_human_correction.assert_called_once()
+
+
+def test_mark_verified_on_done_keeps_status_and_sets_flag():
+    row = _email_row(status=ProcessingStatus.DONE.value)
+    client = TestClient(app)
+
+    with _mock_repo(row) as (repo, _session):
+        with patch("agent_pochta.api.app.continue_after_human_task") as continue_task:
+            with patch(
+                "agent_pochta.api.app.learn_from_routing_correction",
+                return_value={
+                    "correction_saved": False,
+                    "correction_id": None,
+                    "keywords_added": 0,
+                    "qdrant_updated": False,
+                    "learning_keywords": [],
+                },
+            ):
+                with patch("agent_pochta.api.app.log_department_resolution") as log_dept:
+                    response = client.post(
+                        f"/api/v1/email-messages/{row.id}/resolve-human",
+                        json={
+                            "decision": "mark_verified",
+                            "department_id": "00-000044",
+                            "department_name": "Юридический отдел",
+                        },
+                    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "verified"
+    assert payload["operator_verified"] is True
+    assert row.status == ProcessingStatus.DONE.value
+    stored = json.loads(row.raw_payload_json)
+    assert stored["operator_verified"] is True
+    continue_task.delay.assert_not_called()
+    repo.set_operator_verified.assert_called_once_with(row, True)
+    log_dept.assert_called_once()
+
+
+def test_mark_verified_on_error_keeps_error_status():
+    row = _email_row(status=ProcessingStatus.ERROR.value)
+    client = TestClient(app)
+
+    with _mock_repo(row) as (repo, _session):
+        with patch("agent_pochta.api.app.continue_after_human_task") as continue_task:
+            with patch(
+                "agent_pochta.api.app.learn_from_routing_correction",
+                return_value={
+                    "correction_saved": False,
+                    "correction_id": None,
+                    "keywords_added": 0,
+                    "qdrant_updated": False,
+                    "learning_keywords": [],
+                },
+            ):
+                response = client.post(
+                    f"/api/v1/email-messages/{row.id}/resolve-human",
+                    json={
+                        "decision": "mark_verified",
+                        "department_id": "00-000044",
+                        "department_name": "Юридический отдел",
+                    },
+                )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "verified"
+    assert row.status == ProcessingStatus.ERROR.value
+    continue_task.delay.assert_not_called()
+    repo.set_operator_verified.assert_called_once_with(row, True)
+
+
+def test_mark_verified_rejected_for_awaiting_human():
+    row = _email_row(status=ProcessingStatus.AWAITING_HUMAN.value)
+    client = TestClient(app)
+
+    with _mock_repo(row) as (_repo, _session):
+        response = client.post(
+            f"/api/v1/email-messages/{row.id}/resolve-human",
+            json={
+                "decision": "mark_verified",
+                "department_id": "00-000044",
+                "department_name": "Юридический отдел",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "done or error" in response.json()["detail"]
 
 
 def test_approve_routing_on_done_keeps_status_and_skips_pipeline():
