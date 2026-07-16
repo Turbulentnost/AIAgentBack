@@ -17,7 +17,14 @@ class Orchestrator:
             return ["nd_control_agent"]
         if task_type == "meeting":
             return ["meeting_agent"]
-        return agent_registry.list_ids()
+        if task_type in {"procurement", "procurement_logistics"}:
+            return ["procurement_logistics_agent"]
+        # Procurement has a strict event contract and must only run explicitly.
+        return [
+            agent_id
+            for agent_id in agent_registry.list_ids()
+            if agent_id != "procurement_logistics_agent"
+        ]
     async def run(self, task_type: str | None, input_payload: dict) -> dict[str, Any]:
         selected = self.select_agents(task_type)
         results: list[dict] = []

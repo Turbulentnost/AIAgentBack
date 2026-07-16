@@ -485,3 +485,44 @@ class DepartmentAnalysisStep(str, enum.Enum):
     BUILDING_RELATIONS = "building_relations"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class ProcurementSourceType(str, enum.Enum):
+    INTERNAL_CONSUMPTION_ORDER = "internal_consumption_order"
+    PRODUCTION_MATERIAL_ORDER = "production_material_order"
+    TRANSFER_ORDER = "transfer_order"
+    REORDER_POINT = "reorder_point"
+
+
+class ProcurementCaseStatus(str, enum.Enum):
+    NEW = "new"
+    DATA_CHECK = "data_check"
+    COVERAGE_CHECK = "coverage_check"
+    PURCHASE_DRAFT = "purchase_draft"
+    APPROVAL_REQUIRED = "approval_required"
+    ORDERED = "ordered"
+    PAYMENT_PENDING = "payment_pending"
+    IN_TRANSIT = "in_transit"
+    RECEIVING = "receiving"
+    QUALITY_QUEUED = "quality_queued"
+    QUALITY_ASSIGNED = "quality_assigned"
+    QUALITY_DOC_CHECK = "quality_doc_check"
+    QUALITY_INSPECTION = "quality_inspection"
+    QUALITY_DECISION = "quality_decision"
+    ISOLATED = "isolated"
+    NONCONFORMITY = "nonconformity"
+    REWORK = "rework"
+    REINSPECTION = "reinspection"
+    QUALITY_RELEASED = "quality_released"
+    POSTING_REQUIRED = "posting_required"
+    POSTED = "posted"
+    CLOSED = "closed"
+    FAILED = "failed"
+
+
+class ProcurementActionClass(str, enum.Enum):
+    READ = "R"
+    DRAFT = "D"
+    NOTIFY = "N"
+    HUMAN = "H"
+    FORBIDDEN = "X"
