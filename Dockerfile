@@ -1,3 +1,5 @@
+FROM node:20-slim AS node_runtime
+
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -11,6 +13,7 @@ RUN python -m venv "$VIRTUAL_ENV" \
     && python -m pip install --upgrade pip \
     && python -m pip install torch --index-url https://download.pytorch.org/whl/cpu \
     && python -m pip install -e "."
+COPY --from=node_runtime /usr/local/bin/node /usr/local/bin/node
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 EXPOSE 8000

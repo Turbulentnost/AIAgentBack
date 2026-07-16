@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +93,7 @@ class OneCMCPClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 env=env,
+                limit=8 * 1024 * 1024,
             )
         except OSError as exc:
             raise MCPUnavailableError("Unable to start configured 1C MCP server") from exc
@@ -145,7 +147,17 @@ class OneCMCPClient:
             raise MCPUnavailableError("1C MCP configuration cannot be loaded") from exc
         if not isinstance(config, dict):
             raise MCPUnavailableError(f"1C MCP server '{self.server_name}' is not configured")
-        return config
+        resolved = dict(config)
+        resolved["command"] = _resolve_env_reference(str(config.get("command") or ""))
+        resolved["args"] = [
+            _resolve_env_reference(str(value))
+            for value in config.get("args") or []
+        ]
+        resolved["env"] = {
+            str(key): _resolve_env_reference(str(value))
+            for key, value in (config.get("env") or {}).items()
+        }
+        return resolved
 
     @staticmethod
     async def _send(process: asyncio.subprocess.Process, payload: dict[str, Any]) -> None:
@@ -202,6 +214,17 @@ def _safe_mcp_error(error: Any) -> str:
         code = error.get("code")
         return f"1C MCP request failed (code={code})"
     return "1C MCP request failed"
+
+
+_ENV_REFERENCE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}$")
+
+
+def _resolve_env_reference(value: str) -> str:
+    match = _ENV_REFERENCE.fullmatch(value)
+    if match is None:
+        return value
+    variable, default = match.groups()
+    return os.environ.get(variable, default or "")
 
 
 __all__ = ["MCPCallError", "MCPUnavailableError", "OneCMCPClient"]
