@@ -108,6 +108,7 @@ class ProcurementRuntime:
         decision: ProcurementNextAction,
     ) -> tuple[bool, str, str]:
         tool_name = decision.tool_name or ""
+        decision.arguments = _bind_trusted_tool_arguments(state, tool_name, decision.arguments)
         args_hash = _stable_hash(decision.arguments)
         await self.write_event(
             "tool_call_requested",
@@ -443,6 +444,36 @@ def _uuid_or_none(value: str | None) -> uuid.UUID | None:
         return uuid.UUID(value)
     except ValueError:
         return None
+
+
+def _bind_trusted_tool_arguments(
+    state: ProcurementCaseState,
+    tool_name: str,
+    proposed: dict[str, Any],
+) -> dict[str, Any]:
+    arguments = dict(proposed)
+    arguments["correlation_id"] = state["correlation_id"]
+    source_data = state.get("source_data") or {}
+    if tool_name == "onec_get_procurement_need_lines":
+        arguments["source_type"] = state["source_type"]
+        arguments["source_1c_ref"] = state["source_1c_ref"]
+        return arguments
+    if tool_name in config.READ_ONLY_TOOL_NAMES:
+        positions = source_data.get("positions") or []
+        nomenclature_ids = [
+            str(position.get("nomenclature_id"))
+            for position in positions
+            if isinstance(position, dict) and position.get("nomenclature_id")
+        ]
+        if nomenclature_ids:
+            arguments["nomenclature_ids"] = list(dict.fromkeys(nomenclature_ids))
+        warehouse_ids = source_data.get("warehouse_ids")
+        if isinstance(warehouse_ids, list):
+            arguments["warehouse_ids"] = [str(value) for value in warehouse_ids]
+        organization_id = source_data.get("organization_id")
+        if organization_id:
+            arguments["organization_id"] = str(organization_id)
+    return arguments
 
 
 __all__ = ["ProcurementRuntime"]

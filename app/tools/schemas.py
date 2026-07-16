@@ -171,7 +171,10 @@ class ProcurementSupplyReadInput(BaseModel):
     correlation_id: str = Field(..., min_length=1, max_length=128)
     nomenclature_ids: list[str] = Field(..., min_length=1, max_length=500)
     warehouse_ids: list[str] = Field(default_factory=list, max_length=100)
+    database: str | None = Field(default=None, max_length=128)
+    organization_id: str | None = Field(default=None, max_length=255)
     required_at: datetime | None = None
+    limit: int = Field(default=1000, ge=1, le=1000)
 
 
 class ProcurementOneCReadOutput(BaseModel):

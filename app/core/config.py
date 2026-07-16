@@ -105,6 +105,7 @@ class Settings(BaseSettings):
     # Общий LLM-шлюз (прочие задачи платформы).
     LLM_GATEWAY_BASE_URL: str = ""
     LLM_GATEWAY_API_KEY: str | None = None
+    CLAUDE_API_KEY: str | None = None
     OPENAI_API_KEY_CLAUDE: str | None = None
     OPENAI_API_KEY: str | None = None
     LLM_DEFAULT_MODEL: str = ""
@@ -113,6 +114,13 @@ class Settings(BaseSettings):
     AGENT_BUILDER_CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
     AGENT_BUILDER_FALLBACK_BASE_URL: str = ""
     AGENT_BUILDER_FALLBACK_MODEL: str = "openai/gpt-oss-120b"
+    # Procurement agent: Anthropic-compatible Claude endpoint.
+    PROCUREMENT_LLM_BASE_URL: str = "https://api.claudehub.fun"
+    PROCUREMENT_LLM_MODEL: str = "claude-sonnet-4-6"
+    PROCUREMENT_LLM_MODELS: str = "claude-sonnet-4-6,claude-opus-4-1"
+    PROCUREMENT_LLM_STYLE: str = "anthropic"
+    PROCUREMENT_LLM_SUPPORTS_REASONING: bool = True
+    PROCUREMENT_LLM_DISCOVER_MODELS: bool = True
     # Структурное извлечение nd_control (DocumentCard, анализ отдела).
     ND_CONTROL_EXTRACTION_MODEL: str = "openai/gpt-oss-120b"
     ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS: int = 1200

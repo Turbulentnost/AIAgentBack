@@ -82,6 +82,27 @@ class ProcurementEvidence(BaseModel):
     error_message: str | None = None
 
 
+class ProcurementNormalizedMCPRecord(BaseModel):
+    source_system: str = "1C_ERP"
+    source_tool: str
+    source_object_type: str
+    source_object_id: str
+    nomenclature_id: str
+    nomenclature_name: str
+    characteristic_id: str | None = None
+    warehouse_id: str | None = None
+    organization_id: str | None = None
+    quantity: Decimal
+    unit: str | None = None
+    status: str
+    effective_at: datetime | None = None
+    retrieved_at: datetime
+    confirmation_status: str
+    eligibility_status: Literal["eligible", "excluded", "data_insufficient"]
+    exclusion_reason: str | None = None
+    correlation_id: str
+
+
 class ProcurementNeedPosition(BaseModel):
     line_id: str
     nomenclature_id: str | None = None
@@ -221,6 +242,7 @@ __all__ = [
     "ProcurementHumanActionCard",
     "ProcurementKT1Result",
     "ProcurementNeedPosition",
+    "ProcurementNormalizedMCPRecord",
     "ProcurementPlan",
     "ProcurementPlanStep",
     "ProcurementPositionCoverage",

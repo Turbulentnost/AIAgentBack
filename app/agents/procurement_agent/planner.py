@@ -7,12 +7,12 @@ from pydantic import BaseModel, Field
 
 import app.tools  # noqa: F401
 from app.agents.procurement_agent.config import READ_ONLY_TOOL_NAMES
+from app.agents.procurement_agent.llm_client import procurement_llm_client
 from app.agents.procurement_agent.schemas import (
     ProcurementEvidence,
     ProcurementPlan,
     ProcurementPlanStep,
 )
-from app.llm.gateway import llm_gateway
 from app.tools.registry import tool_registry
 
 
@@ -64,7 +64,7 @@ class LLMProcurementPlanner:
         source_1c_ref: str,
         source_data: dict[str, Any],
     ) -> tuple[str, list[ProcurementPlanStep], list[str]]:
-        response = await llm_gateway.chat(
+        response = await _chat_json(
             [
                 {"role": "system", "content": _planning_system_prompt()},
                 {
@@ -77,13 +77,29 @@ class LLMProcurementPlanner:
                             "source_type": source_type,
                             "source_1c_ref": source_1c_ref,
                             "available_source_fields": sorted(source_data.keys()),
+                            "source_summary": _safe_source_summary(source_data),
                             "allowed_tools": _tool_catalog(),
+                            "output_contract": {
+                                "goal": "string",
+                                "steps": [
+                                    {
+                                        "step_id": "string",
+                                        "objective": "string",
+                                        "status": "pending",
+                                        "allowed_tool_categories": ["onec_read"],
+                                        "required_evidence": ["string"],
+                                        "dependencies": ["step_id"],
+                                        "result_summary": None,
+                                        "blocking_reason": None,
+                                    }
+                                ],
+                                "expected_evidence": ["string"],
+                            },
                         },
                         ensure_ascii=False,
                     ),
                 },
             ],
-            response_format={"type": "json_object"},
         )
         payload = _response_json(response)
         try:
@@ -104,7 +120,7 @@ class LLMProcurementPlanner:
         evidence: list[ProcurementEvidence],
         iteration: int,
     ) -> ProcurementNextAction:
-        response = await llm_gateway.chat(
+        response = await _chat_json(
             [
                 {"role": "system", "content": _planning_system_prompt()},
                 {
@@ -115,15 +131,25 @@ class LLMProcurementPlanner:
                             "iteration": iteration,
                             "plan": plan.model_dump(mode="json"),
                             "available_source_fields": sorted(source_data.keys()),
+                            "source_summary": _safe_source_summary(source_data),
                             "evidence": [_compact_evidence(item) for item in evidence[-20:]],
                             "allowed_tools": _tool_catalog(),
+                            "output_contract": {
+                                "action": "tool|complete|replan|human_required",
+                                "step_id": "string|null",
+                                "tool_name": "allowed tool name|null",
+                                "arguments": {},
+                                "short_reason": "short string",
+                                "replan_steps": [],
+                                "expected_evidence": [],
+                                "human_request": [],
+                            },
                         },
                         ensure_ascii=False,
                         default=str,
                     ),
                 },
             ],
-            response_format={"type": "json_object"},
         )
         try:
             decision = ProcurementNextAction.model_validate(_response_json(response))
@@ -142,7 +168,9 @@ def _planning_system_prompt() -> str:
         "отправлять сообщения. Не раскрывай цепочку рассуждений: возвращай только "
         "JSON с планом либо выбранным действием и кратким основанием short_reason. "
         "Для tool action используй строго входную схему инструмента. Если "
-        "обязательная возможность недоступна, выбери human_required."
+        "обязательная возможность недоступна, выбери human_required. Если во входе "
+        "уже есть positions, не запрашивай строки потребности повторно. Для проверки "
+        "остатка сначала используй onec_get_free_stock."
     )
 
 
@@ -181,18 +209,47 @@ def _compact_evidence(evidence: ProcurementEvidence) -> dict[str, Any]:
     }
 
 
+def _safe_source_summary(source_data: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = {
+        "positions",
+        "warehouse_ids",
+        "organization_id",
+        "requested_date",
+        "nomenclature_ref",
+        "quantity",
+        "unit",
+    }
+    return {
+        key: value
+        for key, value in source_data.items()
+        if key in allowed_keys
+    }
+
+
 def _response_json(response: dict[str, Any]) -> dict[str, Any]:
     message = (response.get("choices") or [{}])[0].get("message") or {}
     content = (message.get("content") or "").strip()
+    if "</think>" in content:
+        content = content.rsplit("</think>", 1)[-1].strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
     try:
         payload = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise PlannerUnavailableError("LLM response is not valid JSON") from exc
+        start = content.find("{")
+        if start < 0:
+            raise PlannerUnavailableError("LLM response is not valid JSON") from exc
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(content[start:])
+        except json.JSONDecodeError as nested_exc:
+            raise PlannerUnavailableError("LLM response is not valid JSON") from nested_exc
     if not isinstance(payload, dict):
         raise PlannerUnavailableError("LLM response must be a JSON object")
     return payload
+
+
+async def _chat_json(messages: list[dict[str, str]]) -> dict[str, Any]:
+    return await procurement_llm_client.chat(messages)
 
 
 __all__ = [

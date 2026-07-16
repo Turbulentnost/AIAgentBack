@@ -36,13 +36,16 @@ class OneCMCPClient:
         self._config = self._load_server_config()
         configured_timeout = int((self._config.get("env") or {}).get("ODATA_TIMEOUT_MS", "120000"))
         self.timeout_seconds = timeout_seconds or max(1.0, configured_timeout / 1000)
+        self._tools_cache: list[dict[str, Any]] | None = None
 
     def configured_capabilities(self) -> dict[str, str]:
         raw = self._config.get("capabilityMap") or {}
         return {str(key): str(value) for key, value in raw.items()}
 
     async def list_tools(self) -> list[dict[str, Any]]:
-        return await self._with_retry("tools/list", {})
+        if self._tools_cache is None:
+            self._tools_cache = await self._with_retry("tools/list", {})
+        return self._tools_cache
 
     async def call_capability(self, capability: str, arguments: dict[str, Any]) -> Any:
         tools = await self.list_tools()

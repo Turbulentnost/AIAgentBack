@@ -5,6 +5,9 @@
         "args": [
           "${ONEC_MCP_ENTRYPOINT:-/app/MCP/vendor/1c-odata-mcp/dist/index.js}"
         ],
+        "capabilityMap": {
+          "onec_get_free_stock": "read_analytics_get_inventory"
+        },
         "env": {
           "ODATA_BASE_URL": "${ODATA_BASE_URL}",
           "ODATA_USERNAME": "${ODATA_USERNAME}",

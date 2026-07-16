@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.agents.procurement_agent.mcp_client import MCPCallError, MCPUnavailableError, OneCMCPClient
+from app.agents.procurement_agent.mcp_normalizers import normalize_inventory_response
 from app.tools.base import Tool
 from app.tools.registry import register_tool
 from app.tools.schemas import (
@@ -101,6 +102,77 @@ class GetProcurementNeedLinesTool(_ProcurementOneCReadTool):
     object_type = "procurement_need"
 
 
+class GetFreeStockTool(_ProcurementOneCReadTool):
+    name = "onec_get_free_stock"
+    description = (
+        "Проверить доступный в MCP бухгалтерский остаток. "
+        "Без резервов, склада, единицы и контроля качества свободным остатком не считается."
+    )
+    agent_description = description
+    input_model = ProcurementSupplyReadInput
+    output_model = ProcurementOneCReadOutput
+    object_type = "accounting_inventory_snapshot"
+
+    async def execute(
+        self,
+        payload: BaseModel,
+        context: ToolContext,
+    ) -> ProcurementOneCReadOutput:
+        request = ProcurementSupplyReadInput.model_validate(payload)
+        retrieved_at = datetime.now(UTC)
+        arguments: dict[str, Any] = {"limit": request.limit}
+        if request.database:
+            arguments["database"] = request.database
+        if request.organization_id:
+            arguments["organization"] = request.organization_id
+        try:
+            raw = await MCP_CLIENT_FACTORY().call_capability(self.name, arguments)
+        except (MCPUnavailableError, MCPCallError):
+            return ProcurementOneCReadOutput(
+                status="capability_unavailable",
+                tool_name=self.name,
+                object_type=self.object_type,
+                retrieved_at=retrieved_at,
+                freshness_status="unknown",
+                correlation_id=request.correlation_id,
+                error_code="capability_unavailable",
+                error_message="Бухгалтерский остаток MCP недоступен.",
+            )
+
+        normalized = normalize_inventory_response(
+            raw,
+            correlation_id=request.correlation_id,
+            retrieved_at=retrieved_at,
+            requested_nomenclature_ids=request.nomenclature_ids,
+            requested_warehouse_ids=request.warehouse_ids,
+            requested_organization_id=request.organization_id,
+            limit=request.limit,
+        )
+        return ProcurementOneCReadOutput(
+            status="capability_unavailable",
+            tool_name=self.name,
+            object_type=self.object_type,
+            retrieved_at=retrieved_at,
+            business_effective_at=retrieved_at,
+            data={
+                "normalized_items": [
+                    item.model_dump(mode="json")
+                    for item in normalized.records
+                ],
+                "normalization_errors": normalized.errors,
+                "normalization_warnings": normalized.warnings,
+                "pagination_complete": normalized.pagination_complete,
+            },
+            freshness_status="fresh",
+            correlation_id=request.correlation_id,
+            error_code="free_stock_semantics_unavailable",
+            error_message=(
+                "Получен реальный бухгалтерский остаток, но MCP не предоставляет "
+                "резервы, склад, единицу и статусы качества; свободный остаток не подтверждён."
+            ),
+        )
+
+
 def _supply_tool(
     *,
     name: str,
@@ -118,13 +190,7 @@ def _supply_tool(
 
 
 register_tool(GetProcurementNeedLinesTool())
-register_tool(
-    _supply_tool(
-        name="onec_get_free_stock",
-        description="Получить свободные складские остатки из 1С (только чтение).",
-        object_type="warehouse_stock",
-    )
-)
+register_tool(GetFreeStockTool())
 register_tool(
     _supply_tool(
         name="onec_get_reservations",
