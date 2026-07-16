@@ -27,6 +27,12 @@ _beat_schedule["recover-stale-knowledge-base-indexing-jobs"] = {
     "schedule": settings.KB_INDEXING_RECOVERY_INTERVAL_SECONDS,
     "options": {"queue": "indexing"},
 }
+if settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
+    _beat_schedule["poll-procurement-sources"] = {
+        "task": "poll_procurement_sources",
+        "schedule": float(settings.PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS),
+        "options": {"queue": "procurement_poll"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -54,6 +60,8 @@ celery_app.conf.update(
         "generate_report": {"queue": "reports"},
         "update_task_status": {"queue": "default"},
         "run_department_analysis": {"queue": "default"},
+        "poll_procurement_sources": {"queue": "procurement_poll"},
+        "run_procurement_case_task": {"queue": "agents"},
     },
     task_serializer="json",
     task_track_started=True,

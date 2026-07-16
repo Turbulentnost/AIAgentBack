@@ -21,7 +21,11 @@ PROCUREMENT_LLM_PROVIDER = {
 }
 
 
-class ProcurementLLMConfigurationError(RuntimeError):
+class ProcurementLLMError(RuntimeError):
+    pass
+
+
+class ProcurementLLMConfigurationError(ProcurementLLMError):
     pass
 
 
@@ -118,15 +122,22 @@ class ProcurementClaudeClient:
                         headers=self._headers(),
                         json=json,
                     )
-            except (httpx.ConnectError, httpx.TimeoutException):
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
                 if attempt == 2:
-                    raise
+                    raise ProcurementLLMError(
+                        "ClaudeHub request failed after retries"
+                    ) from exc
                 await asyncio.sleep(0.5 * (2**attempt))
                 continue
             if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
                 await asyncio.sleep(0.5 * (2**attempt))
                 continue
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise ProcurementLLMError(
+                    f"ClaudeHub returned HTTP {response.status_code}"
+                ) from exc
             return response
         raise RuntimeError("unreachable")
 
@@ -138,5 +149,6 @@ __all__ = [
     "STYLE_ANTHROPIC",
     "ProcurementClaudeClient",
     "ProcurementLLMConfigurationError",
+    "ProcurementLLMError",
     "procurement_llm_client",
 ]

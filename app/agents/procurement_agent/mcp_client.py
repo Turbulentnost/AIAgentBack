@@ -192,7 +192,18 @@ def _decode_tool_result(result: Any) -> Any:
     if not isinstance(result, dict):
         return result
     if result.get("isError"):
-        raise MCPCallError("1C MCP business tool returned an error")
+        content = result.get("content")
+        message = next(
+            (
+                str(item.get("text"))
+                for item in content or []
+                if isinstance(item, dict)
+                and item.get("type") == "text"
+                and item.get("text")
+            ),
+            "1C MCP business tool returned an error",
+        )
+        raise MCPCallError(message[:1000])
     content = result.get("content")
     if not isinstance(content, list):
         return result

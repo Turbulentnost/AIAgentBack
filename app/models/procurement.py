@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +31,31 @@ class ProcurementCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     correlation_id: Mapped[str] = mapped_column(String(128), index=True)
     source_type: Mapped[str] = mapped_column(String(64), index=True)
     source_1c_ref: Mapped[str] = mapped_column(String(512), index=True)
+    source_entity_set: Mapped[str | None] = mapped_column(String(255), index=True)
+    source_database: Mapped[str | None] = mapped_column(String(128), index=True)
+    source_number: Mapped[str | None] = mapped_column(String(128), index=True)
+    source_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_status: Mapped[str | None] = mapped_column(String(128), index=True)
+    source_data_version: Mapped[str | None] = mapped_column(String(128))
+    source_content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    initiator_1c_ref: Mapped[str | None] = mapped_column(String(64))
+    initiator_name: Mapped[str | None] = mapped_column(String(255))
+    department_1c_ref: Mapped[str | None] = mapped_column(String(64), index=True)
+    department_name: Mapped[str | None] = mapped_column(String(255))
+    warehouse_1c_ref: Mapped[str | None] = mapped_column(String(64), index=True)
+    warehouse_name: Mapped[str | None] = mapped_column(String(255))
+    warehouse_from_1c_ref: Mapped[str | None] = mapped_column(String(64))
+    warehouse_to_1c_ref: Mapped[str | None] = mapped_column(String(64))
+    organization_1c_ref: Mapped[str | None] = mapped_column(String(64), index=True)
+    priority_1c_ref: Mapped[str | None] = mapped_column(String(64))
+    required_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    assigned_agents: Mapped[list | None] = mapped_column(JSONB)
+    current_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"),
+        index=True,
+    )
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    deviation_summary: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
         String(64),
         default=ProcurementCaseStatus.NEW.value,
@@ -48,6 +83,39 @@ class ProcurementCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         order_by="ProcurementCaseEvent.created_at",
     )
+    positions: Mapped[list["ProcurementCasePosition"]] = relationship(
+        back_populates="case",
+        cascade="all, delete-orphan",
+        order_by="ProcurementCasePosition.line_number",
+    )
+
+
+class ProcurementCasePosition(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "procurement_case_positions"
+    __table_args__ = (
+        UniqueConstraint(
+            "case_id",
+            "line_id",
+            name="uq_procurement_case_positions_case_id_line_id",
+        ),
+    )
+
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("procurement_cases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    line_id: Mapped[str] = mapped_column(String(128))
+    line_number: Mapped[int] = mapped_column(Integer, default=0)
+    nomenclature_id: Mapped[str] = mapped_column(String(64), index=True)
+    nomenclature_name: Mapped[str | None] = mapped_column(String(512))
+    characteristic_id: Mapped[str | None] = mapped_column(String(64))
+    unit: Mapped[str | None] = mapped_column(String(64))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=0)
+    required_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
+    raw_payload: Mapped[dict | None] = mapped_column(JSONB)
+
+    case: Mapped[ProcurementCase] = relationship(back_populates="positions")
 
 
 class ProcurementCaseEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -81,4 +149,39 @@ class ProcurementCaseEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     case: Mapped[ProcurementCase] = relationship(back_populates="events")
 
 
-__all__ = ["ProcurementCase", "ProcurementCaseEvent"]
+class ProcurementSourceSyncState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "procurement_source_sync_state"
+    __table_args__ = (
+        UniqueConstraint(
+            "database_name",
+            "source_type",
+            name="uq_procurement_source_sync_state_db_source",
+        ),
+    )
+
+    database_name: Mapped[str] = mapped_column(String(128), index=True)
+    source_type: Mapped[str] = mapped_column(String(64), index=True)
+    entity_set: Mapped[str | None] = mapped_column(String(255))
+    capability_status: Mapped[str] = mapped_column(
+        String(64),
+        default="unknown",
+        index=True,
+    )
+    capability_message: Mapped[str | None] = mapped_column(Text)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    watermark_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    watermark_refs: Mapped[list | None] = mapped_column(JSONB)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    documents_seen: Mapped[int] = mapped_column(Integer, default=0)
+    cases_created: Mapped[int] = mapped_column(Integer, default=0)
+    cases_updated: Mapped[int] = mapped_column(Integer, default=0)
+    cases_skipped: Mapped[int] = mapped_column(Integer, default=0)
+
+
+__all__ = [
+    "ProcurementCase",
+    "ProcurementCaseEvent",
+    "ProcurementCasePosition",
+    "ProcurementSourceSyncState",
+]

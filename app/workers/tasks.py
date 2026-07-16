@@ -939,14 +939,125 @@ def classify_template_document(self, document_link_id: str) -> dict[str, Any]:
     return _run_async_task(_run)
 
 
-@celery_app.task(name="generate_report", bind=True, max_retries=3)
-def generate_report(self, task_id: str, report_type: str = "default") -> dict[str, Any]:
-    return _placeholder_result(self.request.id, "generate_report", task_id=task_id, report_type=report_type)
+@celery_app.task(name="poll_procurement_sources", bind=True, max_retries=0)
+def poll_procurement_sources(self) -> dict[str, Any]:
+    from redis import Redis
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.procurement_orchestrator_service import (
+        ProcurementOrchestratorService,
+        build_poll_lock_key,
+    )
+
+    if not settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "poll_procurement_sources",
+            "status": "disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    lock_key = build_poll_lock_key()
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    acquired = bool(
+        redis_client.set(
+            lock_key,
+            self.request.id or "poll",
+            nx=True,
+            ex=settings.PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS,
+        )
+    )
+    if not acquired:
+        redis_client.close()
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "poll_procurement_sources",
+            "status": "skipped_locked",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = ProcurementOrchestratorService(db, enqueue_case=True)
+            try:
+                summary = await service.poll_once()
+                pending = list(service.pending_dispatches)
+                await db.commit()
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "poll_procurement_sources",
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+        for case_id, task_id in pending:
+            async_result = run_procurement_case_task.apply_async(
+                args=[case_id, task_id],
+                queue="agents",
+            )
+            async with AsyncSessionLocal() as db:
+                from uuid import UUID
+
+                from app.models.task import Task
+
+                task = await db.get(Task, UUID(task_id))
+                if task is not None:
+                    task.celery_task_id = async_result.id
+                    await db.commit()
+
+        summary["celery_task_id"] = self.request.id
+        summary["task_name"] = "poll_procurement_sources"
+        summary["status"] = "completed"
+        return summary
+
+    try:
+        return _run_async_task(_run)
+    finally:
+        redis_client.delete(lock_key)
+        redis_client.close()
 
 
-@celery_app.task(name="update_task_status", bind=True, max_retries=3)
-def update_task_status(self, task_id: str, status: str) -> dict[str, Any]:
-    return _placeholder_result(self.request.id, "update_task_status", task_id=task_id, status=status)
+@celery_app.task(name="run_procurement_case_task", bind=True, max_retries=2)
+def run_procurement_case_task(self, case_id: str, task_id: str) -> dict[str, Any]:
+    from uuid import UUID
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = ProcurementOrchestratorService(db, enqueue_case=False)
+            try:
+                result = await service.execute_case_task(UUID(case_id), UUID(task_id))
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "run_procurement_case_task",
+                    "case_id": case_id,
+                    "task_id": task_id,
+                    "status": "completed",
+                    "result_status": result.get("status") or result.get("case_status"),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                if self.request.retries < self.max_retries:
+                    raise self.retry(exc=exc, countdown=30)
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "run_procurement_case_task",
+                    "case_id": case_id,
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_run)
 
 
 def _placeholder_result(celery_task_id: str, task_name: str, **payload: Any) -> dict[str, Any]:

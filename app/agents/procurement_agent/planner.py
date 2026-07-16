@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 import app.tools  # noqa: F401
 from app.agents.procurement_agent.config import READ_ONLY_TOOL_NAMES
-from app.agents.procurement_agent.llm_client import procurement_llm_client
+from app.agents.procurement_agent.llm_client import ProcurementLLMError, procurement_llm_client
 from app.agents.procurement_agent.schemas import (
     ProcurementEvidence,
     ProcurementPlan,
@@ -249,7 +249,10 @@ def _response_json(response: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _chat_json(messages: list[dict[str, str]]) -> dict[str, Any]:
-    return await procurement_llm_client.chat(messages)
+    try:
+        return await procurement_llm_client.chat(messages)
+    except ProcurementLLMError as exc:
+        raise PlannerUnavailableError("Procurement LLM is unavailable") from exc
 
 
 __all__ = [
