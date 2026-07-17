@@ -389,3 +389,47 @@ def test_build_slot_participant_details_cached_busy_treated_free_when_only_perso
     participant = result["participants"][0]
     assert participant["status"] == "free"
     assert participant["blocking_events"] == []
+
+
+def test_build_slot_participant_details_verify_personal_calendar_marks_busy() -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    slot_start = datetime(2026, 7, 17, 15, 20, tzinfo=tz)
+    slot_end = datetime(2026, 7, 17, 16, 20, tzinfo=tz)
+    personal_meeting = _company_item(
+        subject="Тема 1",
+        start=datetime(2026, 7, 17, 15, 19, tzinfo=tz),
+        end=datetime(2026, 7, 17, 16, 19, tzinfo=tz),
+        attendees=["sktb_razvitie2@turbo-don.ru"],
+        attendee_names=["Соломичева Светлана Викторовна"],
+    )
+
+    def _read_calendar(_config, mailbox, *, range_start, range_end, **_kwargs):
+        if mailbox == "sktb_razvitie2@turbo-don.ru":
+            return [personal_meeting]
+        if mailbox == config.company_calendar:
+            return []
+        return []
+
+    with patch(
+        "app.tools.Outlook.slot_search.api.read_calendar_items_in_range",
+        _read_calendar,
+    ):
+        result = build_slot_participant_details(
+            config=config,
+            attendees=[
+                {
+                    "fio": "Соломичева Светлана Викторовна",
+                    "email": "sktb_razvitie2@turbo-don.ru",
+                    "role": "manager",
+                }
+            ],
+            slot_start=slot_start,
+            slot_end=slot_end,
+            include_company_calendar=True,
+            verify_personal_calendars=True,
+        )
+
+    participant = result["participants"][0]
+    assert participant["status"] == "busy"
+    assert participant["blocking_events"][0]["event_subject"] == "Тема 1"

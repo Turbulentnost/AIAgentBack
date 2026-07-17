@@ -710,8 +710,11 @@ def find_nearest_slot(
                 if verification_attempts >= max_calendar_verifications:
                     break
                 continue
-            if not verify_calendar:
-                logger.info("Слот найден после %d проверок (free/busy, по промежуткам)", checked)
+            if not verify_calendar or source == "calendar":
+                if not verify_calendar:
+                    logger.info("Слот найден после %d проверок (free/busy, по промежуткам)", checked)
+                else:
+                    logger.info("Слот найден после %d проверок (calendar)", checked)
                 return _slot_search_result(
                     requested=requested,
                     earliest_allowed=earliest_allowed,

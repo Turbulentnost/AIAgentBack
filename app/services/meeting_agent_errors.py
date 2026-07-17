@@ -46,6 +46,20 @@ def format_email_lookup_error(exc: BaseException) -> str:
     return "Не удалось получить e-mail участников из Exchange. Проверьте OUTLOOK_* и GAL."
 
 
+def is_personal_calendar_access_error(exc: BaseException) -> bool:
+    """True, если EWS не может открыть личный Calendar участника (нет Delegate/Reviewer)."""
+    raw = _compact(str(exc)).lower()
+    return any(
+        token in raw
+        for token in (
+            "не удалось прочитать календарь",
+            "no usable default",
+            "errorfoldernotfound",
+            "папка календаря не найдена",
+        )
+    )
+
+
 def format_calendar_error(exc: BaseException) -> str:
     network_error = _format_exchange_network_error(exc)
     if network_error:

@@ -113,6 +113,84 @@ def _company_calendar_query_range(
     return slot_start - pad, slot_end + pad
 
 
+def _personal_calendar_conflicts_at_slot(
+    *,
+    config: OutlookConfig,
+    email: str,
+    slot_start: datetime,
+    duration: timedelta,
+    max_calendar_items: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    calendar_range_start, calendar_range_end = _company_calendar_query_range(
+        slot_start=slot_start,
+        slot_end=slot_start + duration,
+    )
+    try:
+        calendar_items = read_calendar_items_in_range(
+            config,
+            email,
+            range_start=calendar_range_start,
+            range_end=calendar_range_end,
+            max_items=max_calendar_items,
+        )
+        return (
+            conflicting_calendar_items_at_slot(
+                calendar_items,
+                slot_start,
+                duration,
+                config,
+            ),
+            None,
+        )
+    except Exception as exc:
+        return [], str(exc).strip() or "Не удалось прочитать календарь участника"
+
+
+def _append_busy_participant(
+    *,
+    participants: list[dict[str, Any]],
+    fio: str,
+    email: str,
+    role: str,
+    merged_records: list[dict[str, Any]],
+    busy_intervals: list[tuple[datetime, datetime]],
+    config: OutlookConfig,
+    slot_start: datetime,
+    slot_end: datetime,
+    step: timedelta,
+    hint_search_end: datetime,
+    light_reschedule_hints: bool,
+    use_cached_busy_only: bool,
+    calendar_access_error: str | None = None,
+) -> None:
+    duration = slot_end - slot_start
+    if use_cached_busy_only or not light_reschedule_hints:
+        blocking_events = _cached_blocking_events(merged_records, email=email)
+    else:
+        blocking_events = attach_reschedule_hints(
+            merged_records,
+            owner_email=email,
+            busy_intervals=busy_intervals,
+            config=config,
+            step=step,
+            search_end=hint_search_end,
+            reserved_slot=(slot_start, slot_end),
+            light_hints=False,
+        )
+        for event in blocking_events:
+            event["email"] = email
+    participants.append(
+        {
+            "fio": fio,
+            "email": email,
+            "role": role,
+            "status": "busy",
+            "blocking_events": blocking_events,
+            "calendar_access_error": calendar_access_error,
+        }
+    )
+
+
 def build_slot_participant_details(
     *,
     config: OutlookConfig,
@@ -126,11 +204,17 @@ def build_slot_participant_details(
     workers: int = 4,
     include_company_calendar: bool = False,
     light_reschedule_hints: bool = False,
+    verify_personal_calendars: bool = False,
     cached_busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] | None = None,
 ) -> dict[str, Any]:
     """Статус каждого участника в выбранном слоте: свободен/занят и мешающие встречи.
 
-    Ручное планирование (cached_busy_by_attendee задан):
+    Ручное планирование (verify_personal_calendars=True):
+    1. Для каждого участника читаем личный календарь на выбранный слот.
+    2. При необходимости дополняем деталями из общего календаря компании.
+    3. Free/busy-кэш не используется для итогового статуса свободен/занят.
+
+    Ручное планирование (cached_busy_by_attendee задан, verify_personal_calendars=False):
     1. Кэш free/busy — источник занят/свободен на слоте.
     2. Все свободны по кэшу — без запросов в Exchange.
     3. Занятые по кэшу — общий календарь на слот ±15 мин для деталей встречи.
@@ -156,7 +240,7 @@ def build_slot_participant_details(
 
     busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] = {}
     conflict_events: dict[str, list[Any]] = {}
-    if attendee_emails:
+    if attendee_emails and not verify_personal_calendars:
         if cached_busy_by_attendee is not None:
             busy_by_attendee = cached_busy_by_attendee
             logger.info(
@@ -171,6 +255,11 @@ def build_slot_participant_details(
                 window_end,
                 max_items=max_items,
             )
+    elif verify_personal_calendars:
+        logger.info(
+            "slot_details.verify_personal_calendars attendees=%d",
+            len(attendee_emails),
+        )
 
     use_cached_busy_only = cached_busy_by_attendee is not None
     busy_attendee_emails = _busy_attendee_emails(
@@ -183,7 +272,7 @@ def build_slot_participant_details(
 
     company_calendar_items: list[Any] = []
     company_calendar_loaded = False
-    if include_company_calendar and busy_attendee_emails:
+    if include_company_calendar and (busy_attendee_emails or verify_personal_calendars):
         company_calendar = (config.company_calendar or "").strip()
         if company_calendar:
             calendar_range_start, calendar_range_end = _company_calendar_query_range(
@@ -257,6 +346,65 @@ def build_slot_participant_details(
             continue
 
         busy_intervals = _busy_intervals_for_email(email, busy_by_attendee)
+        if verify_personal_calendars:
+            personal_records, calendar_error = _personal_calendar_conflicts_at_slot(
+                config=config,
+                email=email,
+                slot_start=slot_start,
+                duration=duration,
+                max_calendar_items=max_calendar_items,
+            )
+            company_records: list[dict[str, Any]] = []
+            if company_calendar_items:
+                company_records = conflicting_company_calendar_items_at_slot(
+                    company_calendar_items,
+                    slot_start,
+                    duration,
+                    config,
+                    attendee_email=email,
+                    attendee_fio=fio,
+                )
+            merged_records = dedupe_conflict_records(personal_records + company_records)
+            if merged_records:
+                _append_busy_participant(
+                    participants=participants,
+                    fio=fio,
+                    email=email,
+                    role=role,
+                    merged_records=merged_records,
+                    busy_intervals=busy_intervals,
+                    config=config,
+                    slot_start=slot_start,
+                    slot_end=slot_end,
+                    step=step,
+                    hint_search_end=hint_search_end,
+                    light_reschedule_hints=light_reschedule_hints,
+                    use_cached_busy_only=use_cached_busy_only,
+                )
+            elif calendar_error:
+                participants.append(
+                    {
+                        "fio": fio,
+                        "email": email,
+                        "role": role,
+                        "status": "unknown",
+                        "blocking_events": [],
+                        "calendar_access_error": calendar_error,
+                    }
+                )
+            else:
+                participants.append(
+                    {
+                        "fio": fio,
+                        "email": email,
+                        "role": role,
+                        "status": "free",
+                        "blocking_events": [],
+                        "calendar_access_error": None,
+                    }
+                )
+            continue
+
         if is_free_for_attendee(slot_start, duration, busy_intervals, config):
             participants.append(
                 {

@@ -3,6 +3,8 @@
 DEFAULT_DURATION_MINUTES = 60
 SLOT_PREVIEW_MAX_DAYS = 30
 SLOT_PREVIEW_TIMEOUT_SECONDS = 180
+# Персональный «ближайший слот» в preview: один участник, без записи ToolCall в БД.
+ATTENDEE_NEAREST_SLOT_TIMEOUT_SECONDS = 120
 # Ручная проверка слота: общий календарь + hydrate участников могут занять >3 мин.
 SLOT_DETAIL_TIMEOUT_SECONDS = 300
 # Кэш занятости для ручного планирования после подбора слота (тот же сеанс, шаги 1–3).

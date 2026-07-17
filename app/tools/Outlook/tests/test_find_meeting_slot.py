@@ -393,6 +393,64 @@ def test_find_nearest_slot_retries_when_calendar_rejects_freebusy_slot(monkeypat
     assert slot_start >= accepted_slot
 
 
+def test_find_nearest_slot_calendar_source_finds_midday_gap(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    attendee = "manager@turbo-don.ru"
+    requested = datetime(2026, 7, 28, 8, 0, tzinfo=tz)
+    fixed_now = datetime(2026, 7, 17, 8, 0, tzinfo=tz)
+    busy_blocks = [
+        (datetime(2026, 7, 28, 8, 0, tzinfo=tz), datetime(2026, 7, 28, 11, 0, tzinfo=tz)),
+        (datetime(2026, 7, 28, 13, 0, tzinfo=tz), datetime(2026, 7, 28, 17, 0, tzinfo=tz)),
+    ]
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.rules.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda *_args, **_kwargs: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.search.fetch_all_busy_intervals",
+        lambda *_args, **_kwargs: {attendee: busy_blocks},
+    )
+
+    verify_called = False
+
+    def _unexpected_verify(**_kwargs):
+        nonlocal verify_called
+        verify_called = True
+        return False, {attendee: busy_blocks}
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.search.verify_slot_with_calendar",
+        _unexpected_verify,
+    )
+
+    result = find_nearest_slot(
+        config=config,
+        attendees=[attendee],
+        preferred=requested,
+        duration=timedelta(minutes=60),
+        max_days=14,
+        step=timedelta(minutes=15),
+        max_items=50,
+        source="calendar",
+        workers=1,
+        verify_calendar=True,
+    )
+
+    slot_start = datetime.fromisoformat(result["slot_start"])
+    assert slot_start.date().isoformat() == "2026-07-28"
+    assert slot_start.hour == 11
+    assert verify_called is False
+
+
 def test_movability_score_marks_committee_as_low() -> None:
     assert movability_score(busy_type="Busy", subject="Заседание комитета") == "low"
     assert movability_score(busy_type="Tentative", subject="Sync") == "high"

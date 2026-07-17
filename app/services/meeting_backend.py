@@ -247,6 +247,7 @@ class MeetingBackend:
         current_user: User,
         max_days: int = 30,
         verify_calendar: bool = True,
+        source: str = "freebusy",
         quiet: bool = True,
         include_timing: bool = False,
     ) -> FindSlotsResult:
@@ -266,6 +267,7 @@ class MeetingBackend:
                     "duration_minutes": duration,
                     "max_days": max_days,
                     "verify_calendar": verify_calendar,
+                    "source": source,
                     "skip_rooms": True,
                     "quiet": quiet,
                     "include_timing": include_timing,

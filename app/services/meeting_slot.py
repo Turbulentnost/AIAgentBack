@@ -116,9 +116,32 @@ def format_search_start_from_meeting_date(
     if day is None:
         return None
     day_start = day.replace(hour=8, minute=0, second=0, microsecond=0)
-    if day_start.tzinfo is not None:
-        day_start = day_start.replace(tzinfo=None)
-    return day_start.strftime("%Y-%m-%d %H:%M")
+    if day_start.tzinfo is None:
+        day_start = day_start.replace(tzinfo=display_timezone())
+    else:
+        day_start = day_start.astimezone(display_timezone())
+    return format_datetime_for_search(day_start)
+
+
+def format_attendee_nearest_slot_search_start(
+    meeting_start: str | None,
+    queue: dict[str, Any] | None = None,
+) -> str:
+    """Точка отсчёта персонального «ближайшего слота»: с сегодня, не только с даты СЗ."""
+    from app.tools.Outlook.outlook_config import build_outlook_config
+    from app.tools.Outlook.slot_search.rules import not_before_now
+
+    config = build_outlook_config()
+    today_start = format_datetime_for_search(not_before_now(config))
+    meeting_day_start = format_search_start_from_meeting_date(meeting_start, queue)
+    if not meeting_day_start:
+        return today_start
+
+    today_dt = parse_slot_datetime(today_start)
+    meeting_dt = parse_slot_datetime(meeting_day_start)
+    if today_dt is None or meeting_dt is None:
+        return today_start
+    return today_start if today_dt <= meeting_dt else meeting_day_start
 
 
 def format_search_start_after_registry_slot(

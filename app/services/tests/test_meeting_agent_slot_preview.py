@@ -20,6 +20,8 @@ from app.schemas.meeting import (
     MeetingAgentSlotPreviewRequest,
     MeetingAttendeeRead,
 )
+from app.services.meeting_agent_errors import is_personal_calendar_access_error
+from app.services.meeting_agent_slot import MeetingAgentSlotService
 from app.services.meeting_exceptions import MeetingServiceError
 from app.services.meeting_service import MeetingService
 
@@ -188,6 +190,52 @@ async def test_suggest_agent_slot_returns_nearest_slot(user) -> None:
     ]
     assert len(group_calls) == 1
     backend.find_quorum_slots.assert_not_called()
+
+
+def test_is_personal_calendar_access_error_detects_delegate_failure() -> None:
+    exc = MeetingBackendError(
+        "Не удалось прочитать календарь user@turbo-don.ru: "
+        "No usable default <class 'exchangelib.folders.known_folders.Calendar'> folders"
+    )
+    assert is_personal_calendar_access_error(exc) is True
+    assert is_personal_calendar_access_error(MeetingBackendError("Свободный слот не найден")) is False
+
+
+@pytest.mark.asyncio
+async def test_enrich_attendees_uses_freebusy_for_nearest_slot(user) -> None:
+    service = MeetingAgentSlotService(AsyncMock())
+    attendees = [
+        MeetingAttendeeRead(
+            fio="Komarkova",
+            email="user@turbo-don.ru",
+            found=True,
+            role="participant",
+            role_label="Participant",
+        )
+    ]
+
+    with patch(
+        "app.services.meeting_agent_slot._find_attendee_nearest_slot",
+        AsyncMock(
+            return_value=MeetingSlot(
+                start="2026-07-28T11:00:00+03:00",
+                end="2026-07-28T12:00:00+03:00",
+                confidence=0.7,
+            )
+        ),
+    ) as find_slot:
+        result = await service._enrich_attendees_with_nearest_slots(
+            attendees,
+            backend=AsyncMock(),
+            memo=None,
+            search_start="2026-07-17T09:00:00+03:00",
+            duration_minutes=60,
+            current_user=user,
+        )
+
+    assert result[0].nearest_slot_start == "2026-07-28T11:00:00+03:00"
+    assert result[0].nearest_slot_label == "28.07.2026, 11:00–12:00"
+    find_slot.assert_awaited_once()
 
 
 @pytest.mark.asyncio

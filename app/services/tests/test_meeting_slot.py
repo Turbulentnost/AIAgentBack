@@ -4,8 +4,10 @@ from zoneinfo import ZoneInfo
 from app.models.meeting_registry import MeetingRegistryEntry
 from app.models.enums import MeetingRegistryStage
 from app.services.meeting_slot import (
+    format_attendee_nearest_slot_search_start,
     format_planned_start_for_search,
     format_search_start_after_registry_slot,
+    format_search_start_from_meeting_date,
     format_slot_label,
     resolve_registry_earlier_slot_window,
     slot_duration_minutes,
@@ -55,6 +57,28 @@ def test_format_planned_start_combines_date_and_time_from_queue() -> None:
     )
 
     assert planned == "2026-06-19 11:00"
+
+
+def test_format_search_start_from_meeting_date_uses_eight_am() -> None:
+    search_start = format_search_start_from_meeting_date(
+        "2026-07-28T15:00:00+03:00",
+        None,
+    )
+
+    assert search_start == "2026-07-28 08:00"
+
+
+def test_format_attendee_nearest_slot_search_start_uses_today_before_meeting_day() -> None:
+    from unittest.mock import patch
+
+    fixed_now = datetime(2026, 7, 17, 10, 30, tzinfo=ZoneInfo("Europe/Moscow"))
+    with patch("app.tools.Outlook.slot_search.rules.not_before_now", return_value=fixed_now):
+        search_start = format_attendee_nearest_slot_search_start(
+            "2026-07-31T15:00:00+03:00",
+            None,
+        )
+
+    assert search_start == "2026-07-17 10:30"
 
 
 def test_format_search_start_after_registry_slot_uses_slot_end() -> None:
