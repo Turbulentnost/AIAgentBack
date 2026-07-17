@@ -125,7 +125,7 @@ def normalize_inventory_response(
 
     if not raw_items:
         warnings.append("empty_inventory_response")
-    if len(raw_items) >= limit:
+    if len(raw_items) >= limit and raw.get("paginationComplete") is not True:
         warnings.append("pagination_or_truncation_unknown")
     characteristic_counts: dict[str, set[str | None]] = {}
     for record in records:
@@ -134,11 +134,17 @@ def normalize_inventory_response(
         )
     if any(len(values) > 1 for values in characteristic_counts.values()):
         warnings.append("multiple_characteristics")
+    if raw.get("paginationComplete") is True:
+        pagination_complete = True
+    elif requested_ids and {item.nomenclature_id for item in records} >= requested_ids:
+        pagination_complete = True
+    else:
+        pagination_complete = len(raw_items) < limit
     return ProcurementNormalizationResult(
         records=records,
         errors=errors,
         warnings=warnings,
-        pagination_complete=len(raw_items) < limit,
+        pagination_complete=pagination_complete,
     )
 
 

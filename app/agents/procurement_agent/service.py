@@ -38,6 +38,52 @@ def _as_uuid(value: str | None) -> uuid.UUID | None:
         return None
 
 
+_RETRYABLE_FAILURE_MARKERS = (
+    "PlannerUnavailableError",
+    "ConnectError",
+    "Procurement LLM is unavailable",
+    "Не удалось сформировать план",
+    "Планировщик не может выбрать безопасное действие",
+    "ClaudeHub request failed",
+    "Обязательная возможность MCP недоступна: onec_get_free_stock",
+    "free_stock_semantics_unavailable",
+    "Превышено допустимое количество одинаковых вызовов",
+    "identical_call_limit",
+)
+
+
+def _is_retryable_planner_failure(case: ProcurementCase) -> bool:
+    if case.status not in {
+        ProcurementCaseStatus.HUMAN_REQUIRED.value,
+        ProcurementCaseStatus.BLOCKED.value,
+        ProcurementCaseStatus.FAILED.value,
+    }:
+        return False
+    summary = " ".join(
+        part
+        for part in (
+            case.deviation_summary,
+            case.error_message,
+            str((case.latest_result or {}).get("summary") or ""),
+        )
+        if part
+    )
+    return any(marker in summary for marker in _RETRYABLE_FAILURE_MARKERS)
+
+
+def _reset_retryable_case(case: ProcurementCase) -> None:
+    case.status = ProcurementCaseStatus.NEW.value
+    case.deviation_summary = None
+    case.error_message = None
+    case.latest_result = None
+    case.closed_at = None
+    metadata = dict(case.case_metadata or {})
+    metadata.pop("checkpoint", None)
+    metadata.pop("evidence", None)
+    metadata.pop("active_plan", None)
+    case.case_metadata = metadata
+
+
 @agent_registry.register
 class ProcurementAgent(BaseAgent):
     agent_id = config.AGENT_ID
@@ -95,8 +141,15 @@ class ProcurementAgent(BaseAgent):
     ) -> ProcurementAgentResult:
         runtime_options = runtime_options or {}
         case, replay = await self._get_or_create_case(db, request)
-        if replay and case.latest_result:
+        if (
+            replay
+            and case.latest_result
+            and not _is_retryable_planner_failure(case)
+        ):
             return ProcurementAgentResult.model_validate(case.latest_result)
+        if replay and _is_retryable_planner_failure(case):
+            _reset_retryable_case(case)
+            await db.flush()
 
         await self._append_event(
             db,

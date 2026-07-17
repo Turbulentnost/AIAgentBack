@@ -5,12 +5,14 @@ import json
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
 from app.models.enums import ProcurementSourceType
 
 ZERO_DATE_PREFIXES = ("0001-01-01", "0001-01-01T00:00:00")
+ONEC_TIMEZONE = ZoneInfo("Europe/Moscow")
 TERMINAL_STATUSES = frozenset(
     {
         "закрыт",
@@ -57,6 +59,7 @@ class NormalizedSourceDocument(BaseModel):
     date: datetime | None = None
     posted: bool | None = None
     deletion_mark: bool = False
+    cancelled: bool = False
     status: str | None = None
     initiator_1c_ref: str | None = None
     initiator_name: str | None = None
@@ -125,21 +128,38 @@ def list_source_capabilities() -> list[SourceCapability]:
 
 
 def parse_1c_datetime(value: Any) -> datetime | None:
+    """Parse 1C OData datetimes.
+
+    1C returns local wall-clock values without timezone. For this installation
+    they are Europe/Moscow. Naive values are interpreted as Moscow and stored
+    as UTC. Explicit offsets (including Z) are respected as-is.
+    """
     if value in (None, ""):
         return None
     if isinstance(value, datetime):
-        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=ONEC_TIMEZONE).astimezone(UTC)
+        return value.astimezone(UTC)
     text = str(value).strip()
     if not text or any(text.startswith(prefix) for prefix in ZERO_DATE_PREFIXES):
         return None
-    normalized = text.replace("Z", "+00:00")
-    if len(normalized) == 10:
-        normalized = f"{normalized}T00:00:00+00:00"
+    # 1C never sends real UTC via trailing Z for document Date; treat Z-less
+    # and date-only values as Moscow local time.
+    if text.endswith("Z") and "T" in text:
+        normalized = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(normalized).astimezone(UTC)
+        except ValueError:
+            return None
+    if len(text) == 10:
+        text = f"{text}T00:00:00"
     try:
-        parsed = datetime.fromisoformat(normalized)
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ONEC_TIMEZONE)
+    return parsed.astimezone(UTC)
 
 
 def _optional_str(value: Any) -> str | None:
@@ -222,23 +242,36 @@ def normalize_need_lines(raw_lines: Any) -> list[NormalizedNeedLine]:
                     or item.get("МетодОбеспеченияПотребностей")
                 ),
                 raw_payload={
-                    key: item.get(key)
-                    for key in (
-                        "LineNumber",
-                        "КодСтроки",
-                        "Номенклатура_Key",
-                        "Характеристика_Key",
-                        "Количество",
-                        "МинимальноеКоличествоЗапаса_До",
-                        "МаксимальноеКоличествоЗапаса_До",
-                        "МинимальноеКоличествоЗапаса_После",
-                        "МаксимальноеКоличествоЗапаса_После",
-                        "МетодОбеспеченияПотребностей",
-                        "ОбеспечениеЗаказовПриПоддержанииЗапаса",
-                        "Отменено",
-                        "ВариантОбеспечения",
-                    )
-                    if key in item
+                    **{
+                        key: item.get(key)
+                        for key in (
+                            "LineNumber",
+                            "КодСтроки",
+                            "Номенклатура_Key",
+                            "Характеристика_Key",
+                            "Количество",
+                            "МинимальноеКоличествоЗапаса_До",
+                            "МаксимальноеКоличествоЗапаса_До",
+                            "МинимальноеКоличествоЗапаса_После",
+                            "МаксимальноеКоличествоЗапаса_После",
+                            "МетодОбеспеченияПотребностей",
+                            "ОбеспечениеЗаказовПриПоддержанииЗапаса",
+                            "Отменено",
+                            "ВариантОбеспечения",
+                            "Действие",
+                            "ДатаОтгрузки",
+                            "НачалоОтгрузки",
+                            "ОкончаниеПоступления",
+                            "ДатаПоступления",
+                        )
+                        if key in item
+                    },
+                    "supply_action": _optional_str(
+                        item.get("ВариантОбеспечения")
+                        or item.get("Действие")
+                        or item.get("ОбеспечениеЗаказовПриПоддержанииЗапаса")
+                        or item.get("МетодОбеспеченияПотребностей")
+                    ),
                 },
             )
         )
@@ -263,14 +296,20 @@ def normalize_source_document(
 
     status = _optional_str(raw.get("Статус"))
     deletion_mark = bool(raw.get("DeletionMark"))
+    cancelled = bool(
+        raw.get("Отменен")
+        or raw.get("Отменён")
+        or raw.get("Отменено")
+    )
     positions = normalize_need_lines(raw.get("Товары") or [])
     active_positions = [line for line in positions if not line.cancelled]
-    required_date = (
+    header_required_date = (
         parse_1c_datetime(raw.get("ЖелаемаяДатаПоступления"))
         or parse_1c_datetime(raw.get("ДатаОтгрузки"))
-        or parse_1c_datetime(raw.get("ДатаУтверждения"))
-        or next((line.required_date for line in positions if line.required_date), None)
     )
+    if header_required_date:
+        for line in active_positions:
+            line.required_date = header_required_date
     warehouse_1c_ref = _optional_str(raw.get("Склад_Key") or raw.get("ЦеховаяКладовая_Key"))
     warehouse_from = _optional_str(raw.get("СкладОтправитель_Key"))
     warehouse_to = _optional_str(raw.get("СкладПолучатель_Key"))
@@ -287,6 +326,7 @@ def normalize_source_document(
         date=parse_1c_datetime(raw.get("Date")),
         posted=raw.get("Posted") if isinstance(raw.get("Posted"), bool) else None,
         deletion_mark=deletion_mark,
+        cancelled=cancelled,
         status=status,
         initiator_1c_ref=_optional_str(raw.get("Автор_Key") or raw.get("Ответственный_Key")),
         department_1c_ref=_optional_str(raw.get("Подразделение_Key")),
@@ -295,7 +335,7 @@ def normalize_source_document(
         warehouse_to_1c_ref=warehouse_to,
         organization_1c_ref=_optional_str(raw.get("Организация_Key")),
         priority_1c_ref=_optional_str(raw.get("Приоритет_Key")),
-        required_date=required_date,
+        required_date=header_required_date,
         positions=active_positions,
         content_hash="",
     )
@@ -304,6 +344,8 @@ def normalize_source_document(
 
     if deletion_mark:
         document.skip_reason = "deletion_mark"
+    elif cancelled:
+        document.skip_reason = "cancelled"
     elif is_terminal_status(status):
         document.skip_reason = f"terminal_status:{status}"
     elif not active_positions:
@@ -333,6 +375,7 @@ def positions_to_agent_source_data(document: NormalizedSourceDocument) -> dict[s
                 "gross_quantity": str(line.quantity),
                 "required_date": line.required_date.isoformat() if line.required_date else None,
                 "characteristic_id": line.characteristic_id,
+                "supply_action": line.supply_action,
             }
             for line in document.positions
         ],

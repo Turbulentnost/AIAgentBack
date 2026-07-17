@@ -979,10 +979,9 @@ def poll_procurement_sources(self) -> dict[str, Any]:
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
-            service = ProcurementOrchestratorService(db, enqueue_case=True)
+            service = ProcurementOrchestratorService(db, enqueue_case=False)
             try:
                 summary = await service.poll_once()
-                pending = list(service.pending_dispatches)
                 await db.commit()
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
@@ -993,21 +992,6 @@ def poll_procurement_sources(self) -> dict[str, Any]:
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
-
-        for case_id, task_id in pending:
-            async_result = run_procurement_case_task.apply_async(
-                args=[case_id, task_id],
-                queue="agents",
-            )
-            async with AsyncSessionLocal() as db:
-                from uuid import UUID
-
-                from app.models.task import Task
-
-                task = await db.get(Task, UUID(task_id))
-                if task is not None:
-                    task.celery_task_id = async_result.id
-                    await db.commit()
 
         summary["celery_task_id"] = self.request.id
         summary["task_name"] = "poll_procurement_sources"
@@ -1025,11 +1009,42 @@ def poll_procurement_sources(self) -> dict[str, Any]:
 def run_procurement_case_task(self, case_id: str, task_id: str) -> dict[str, Any]:
     from uuid import UUID
 
+    from app.core.config import settings
     from app.db.session import AsyncSessionLocal
+    from app.models.enums import ProcurementCaseStatus, TaskStatus
+    from app.models.procurement import ProcurementCase
+    from app.models.task import Task
     from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
+            if not settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED:
+                task = await db.get(Task, UUID(task_id))
+                case = await db.get(ProcurementCase, UUID(case_id))
+                if task is not None:
+                    task.status = TaskStatus.CANCELLED
+                    task.finished_at = datetime.now(timezone.utc)
+                    task.error_message = "Планирование оркестратора отключено."
+                if case is not None and case.current_task_id == UUID(task_id):
+                    case.current_task_id = None
+                    case.current_agent_id = None
+                    case.assigned_agents = []
+                    case.control_point = None
+                    if case.status != ProcurementCaseStatus.CLOSED.value:
+                        case.status = ProcurementCaseStatus.NEW.value
+                        case.deviation_summary = None
+                        case.error_message = None
+                        case.latest_result = None
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "run_procurement_case_task",
+                    "case_id": case_id,
+                    "task_id": task_id,
+                    "status": "skipped",
+                    "reason": "planning_disabled",
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
             service = ProcurementOrchestratorService(db, enqueue_case=False)
             try:
                 result = await service.execute_case_task(UUID(case_id), UUID(task_id))

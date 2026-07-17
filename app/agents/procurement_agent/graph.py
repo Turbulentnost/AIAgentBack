@@ -99,9 +99,10 @@ async def ensure_plan(state: ProcurementCaseState) -> dict[str, Any]:
         plan = await state["runtime"].ensure_plan(state)
         return {"plan": plan.model_dump(mode="json")}
     except Exception as exc:
+        detail = str(exc).strip() or type(exc).__name__
         return {
             "case_status": ProcurementCaseStatus.HUMAN_REQUIRED.value,
-            "stop_reason": f"Не удалось сформировать план: {type(exc).__name__}.",
+            "stop_reason": f"Не удалось сформировать план: {type(exc).__name__}: {detail}",
         }
 
 
@@ -121,11 +122,12 @@ async def select_next_action(state: ProcurementCaseState) -> dict[str, Any]:
         )
         return {"next_action": decision.model_dump(mode="json")}
     except (PlannerUnavailableError, ValueError, KeyError) as exc:
+        detail = str(exc).strip() or type(exc).__name__
         return {
             "case_status": ProcurementCaseStatus.HUMAN_REQUIRED.value,
             "stop_reason": (
                 "Планировщик не может выбрать безопасное действие: "
-                f"{type(exc).__name__}."
+                f"{type(exc).__name__}: {detail}"
             ),
         }
 
@@ -140,23 +142,32 @@ async def policy_gate(state: ProcurementCaseState) -> dict[str, Any]:
             "current_tool_call": None,
         }
     call_key = f"{decision.tool_name}:{args_hash}"
+    successful_hashes = dict(state.get("successful_call_hashes") or {})
+    has_fresh_success = any(
+        item.get("tool_name") == decision.tool_name
+        and item.get("args_hash") == args_hash
+        and item.get("status") == "success"
+        and item.get("freshness_status") == "fresh"
+        for item in (state.get("evidence") or [])
+    )
     counts = dict(state.get("identical_call_counts") or {})
-    counts[call_key] = counts.get(call_key, 0) + 1
-    if counts[call_key] > config.MAX_IDENTICAL_TOOL_CALLS:
-        await state["runtime"].write_event(
-            "tool_call_blocked",
-            {
-                "tool_name": decision.tool_name,
-                "args_hash": args_hash,
-                "reason": "identical_call_limit",
-                "count": counts[call_key],
-            },
-        )
-        return {
-            "identical_call_counts": counts,
-            "case_status": ProcurementCaseStatus.BLOCKED.value,
-            "stop_reason": "Превышено допустимое количество одинаковых вызовов.",
-        }
+    if not has_fresh_success and call_key not in successful_hashes:
+        counts[call_key] = counts.get(call_key, 0) + 1
+        if counts[call_key] > config.MAX_IDENTICAL_TOOL_CALLS:
+            await state["runtime"].write_event(
+                "tool_call_blocked",
+                {
+                    "tool_name": decision.tool_name,
+                    "args_hash": args_hash,
+                    "reason": "identical_call_limit",
+                    "count": counts[call_key],
+                },
+            )
+            return {
+                "identical_call_counts": counts,
+                "case_status": ProcurementCaseStatus.BLOCKED.value,
+                "stop_reason": "Превышено допустимое количество одинаковых вызовов.",
+            }
     if decision.step_id:
         try:
             await state["runtime"].planning.update_step(
@@ -233,6 +244,12 @@ async def save_observation(state: ProcurementCaseState) -> dict[str, Any]:
         "evidence": [item.model_dump(mode="json") for item in items],
         "current_observation": evidence.model_dump(mode="json"),
     }
+    if evidence.status == "success" and evidence.freshness_status == "fresh":
+        call = state.get("current_tool_call") or {}
+        args_hash = call.get("args_hash") or evidence.args_hash
+        hashes = dict(state.get("successful_call_hashes") or {})
+        hashes[f"{evidence.tool_name}:{args_hash}"] = evidence.evidence_id
+        result["successful_call_hashes"] = hashes
     if evidence.status == "capability_unavailable":
         result.update(
             case_status=ProcurementCaseStatus.HUMAN_REQUIRED.value,

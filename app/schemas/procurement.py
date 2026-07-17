@@ -22,6 +22,7 @@ class ProcurementCasePositionRead(BaseModel):
     unit: str | None = None
     quantity: str
     required_date: datetime | None = None
+    supply_action: str | None = None
     cancelled: bool = False
 
 

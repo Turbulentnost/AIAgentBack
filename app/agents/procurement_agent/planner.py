@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Literal, Protocol
 
@@ -249,10 +250,18 @@ def _response_json(response: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _chat_json(messages: list[dict[str, str]]) -> dict[str, Any]:
-    try:
-        return await procurement_llm_client.chat(messages)
-    except ProcurementLLMError as exc:
-        raise PlannerUnavailableError("Procurement LLM is unavailable") from exc
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            return await procurement_llm_client.chat(messages)
+        except ProcurementLLMError as exc:
+            last_error = exc
+            if attempt < 2:
+                await asyncio.sleep(0.5 * (2**attempt))
+                continue
+    raise PlannerUnavailableError(
+        f"Procurement LLM is unavailable: {last_error}"
+    ) from last_error
 
 
 __all__ = [

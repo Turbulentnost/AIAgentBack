@@ -15,7 +15,18 @@ from app.models.enums import ProcurementSourceType
 def test_parse_zero_dates_as_missing() -> None:
     assert parse_1c_datetime("0001-01-01T00:00:00") is None
     assert parse_1c_datetime("0001-01-01") is None
-    assert isinstance(parse_1c_datetime("2026-07-16T13:25:27"), datetime)
+    parsed = parse_1c_datetime("2026-07-16T13:25:27")
+    assert isinstance(parsed, datetime)
+    assert parsed.isoformat() == "2026-07-16T10:25:27+00:00"
+
+
+def test_parse_1c_naive_datetime_as_moscow() -> None:
+    parsed = parse_1c_datetime(datetime(2026, 7, 17, 8, 26, 43))
+    assert parsed is not None
+    assert parsed.isoformat() == "2026-07-17T05:26:43+00:00"
+    date_only = parse_1c_datetime("2026-07-17")
+    assert date_only is not None
+    assert date_only.isoformat() == "2026-07-16T21:00:00+00:00"
 
 
 def test_normalize_need_lines_skips_cancelled_and_invalid() -> None:
@@ -86,6 +97,76 @@ def test_normalize_internal_consumption_document() -> None:
     assert document.correlation_id.startswith("proc:erp_pm:internal_consumption_order:")
 
 
+def test_header_delivery_date_is_applied_to_every_position() -> None:
+    document = normalize_source_document(
+        source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
+        database="erp_pm",
+        entity_set="Document_ЗаказНаВнутреннееПотребление",
+        raw={
+            "Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "Number": "НП-HEADER-DATE",
+            "Date": "2026-07-16T10:00:00",
+            "DeletionMark": False,
+            "Статус": "КВыполнению",
+            "ЖелаемаяДатаПоступления": "2026-07-25T00:00:00",
+            "Товары": [
+                {
+                    "LineNumber": 1,
+                    "Номенклатура_Key": "item-1",
+                    "Количество": 2,
+                    "ВариантОбеспечения": "КОбеспечению",
+                    "ДатаПоступления": "2026-07-21T00:00:00",
+                },
+                {
+                    "LineNumber": 2,
+                    "Номенклатура_Key": "item-2",
+                    "Количество": 3,
+                    "ВариантОбеспечения": "КОбеспечению",
+                    "ДатаПоступления": "2026-07-22T00:00:00",
+                },
+            ],
+        },
+    )
+    assert document.required_date is not None
+    assert all(
+        line.required_date == document.required_date
+        for line in document.positions
+    )
+
+
+def test_line_delivery_dates_are_used_without_header_date() -> None:
+    document = normalize_source_document(
+        source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
+        database="erp_pm",
+        entity_set="Document_ЗаказНаВнутреннееПотребление",
+        raw={
+            "Ref_Key": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+            "Number": "НП-LINE-DATES",
+            "Date": "2026-07-16T10:00:00",
+            "DeletionMark": False,
+            "Статус": "КВыполнению",
+            "Товары": [
+                {
+                    "LineNumber": 1,
+                    "Номенклатура_Key": "item-1",
+                    "Количество": 2,
+                    "ВариантОбеспечения": "КОбеспечению",
+                    "ДатаПоступления": "2026-07-21T00:00:00",
+                },
+                {
+                    "LineNumber": 2,
+                    "Номенклатура_Key": "item-2",
+                    "Количество": 3,
+                    "ВариантОбеспечения": "КОбеспечению",
+                    "ДатаПоступления": "2026-07-22T00:00:00",
+                },
+            ],
+        },
+    )
+    assert document.required_date is None
+    assert document.positions[0].required_date != document.positions[1].required_date
+
+
 def test_terminal_and_deleted_documents_are_skipped() -> None:
     closed = normalize_source_document(
         source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
@@ -127,6 +208,34 @@ def test_terminal_and_deleted_documents_are_skipped() -> None:
     )
     assert deleted.skip_reason == "deletion_mark"
     assert deleted.warehouse_1c_ref == "to-1"
+
+
+def test_cancelled_document_is_skipped_even_with_active_lines() -> None:
+    cancelled = normalize_source_document(
+        source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
+        database="erp_pm",
+        entity_set="Document_ЗаказНаВнутреннееПотребление",
+        raw={
+            "Ref_Key": "cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa",
+            "DataVersion": "v-cancelled",
+            "Number": "НП-CANCELLED",
+            "Date": "2026-07-16T10:00:00",
+            "DeletionMark": False,
+            "Отменен": True,
+            "Статус": "КВыполнению",
+            "Товары": [
+                {
+                    "LineNumber": 1,
+                    "Номенклатура_Key": "item-active",
+                    "Количество": 2,
+                    "Отменено": False,
+                    "ВариантОбеспечения": "КОбеспечению",
+                }
+            ],
+        },
+    )
+    assert cancelled.cancelled is True
+    assert cancelled.skip_reason == "cancelled"
 
 
 def test_document_requires_all_non_cancelled_lines_to_be_for_supply() -> None:
@@ -211,4 +320,5 @@ def test_normalize_reorder_point_uses_new_maximum_stock() -> None:
     )
     assert document.skip_reason is None
     assert document.positions[0].quantity == 12
-    assert document.required_date is not None
+    assert document.required_date is None
+    assert document.positions[0].supply_action == "КОбеспечению"

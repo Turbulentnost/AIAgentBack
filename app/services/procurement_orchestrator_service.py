@@ -19,6 +19,7 @@ from app.agents.procurement_agent.source_discovery import (
     normalize_source_document,
     positions_to_agent_source_data,
 )
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
 from app.models.procurement import (
@@ -46,6 +47,9 @@ PROCUREMENT_DOCUMENT_FIELDS = [
     "Date",
     "Posted",
     "DeletionMark",
+    "Отменен",
+    "Отменён",
+    "Отменено",
     "Статус",
     "Автор_Key",
     "Ответственный_Key",
@@ -235,58 +239,6 @@ class ProcurementOrchestratorService:
             source_type=source_type,
             active_refs=candidate_refs,
         )
-        active_versions = {
-            str(item.get("ref")).lower(): (
-                str(item.get("dataVersion"))
-                if item.get("dataVersion") not in (None, "")
-                else None
-            )
-            for item in (selection.get("activeDocuments") or [])
-            if isinstance(item, dict) and item.get("ref")
-        }
-        skipped_versions = {
-            parts[1].lower(): parts[2]
-            for value in (state.watermark_refs or [])
-            if isinstance(value, str)
-            and len(parts := value.split(":", 2)) == 3
-            and parts[0] == "skip"
-        }
-        skipped_versions = {
-            ref: version
-            for ref, version in skipped_versions.items()
-            if ref in candidate_refs
-        }
-        existing_rows = (
-            await self.db.execute(
-                select(
-                    ProcurementCase.source_1c_ref,
-                    ProcurementCase.source_data_version,
-                ).where(
-                    ProcurementCase.source_database == database,
-                    ProcurementCase.source_type == source_type.value,
-                    ProcurementCase.source_1c_ref.in_(candidate_refs),
-                )
-            )
-        ).all()
-        existing = {
-            str(ref).lower(): version
-            for ref, version in existing_rows
-        }
-        candidate_refs = {
-            ref
-            for ref in candidate_refs
-            if (
-                (
-                    ref not in existing
-                    and skipped_versions.get(ref) != active_versions.get(ref)
-                )
-                or (
-                    ref in existing
-                    and existing[ref] != active_versions.get(ref)
-                )
-            )
-        }
-
         selected_documents = {
             str(raw.get("Ref_Key") or raw.get("ref")).lower(): raw
             for raw in (selection.get("documents") or [])
@@ -332,20 +284,30 @@ class ProcurementOrchestratorService:
             for batch in [raw_documents, *batches]
             for raw in batch
         ]
-        for document in documents:
-            if document.skip_reason:
-                skipped_versions[document.ref_key.lower()] = (
-                    document.data_version or document.content_hash
+        existing_hashes = {
+            str(ref).lower(): content_hash
+            for ref, content_hash in (
+                await self.db.execute(
+                    select(
+                        ProcurementCase.source_1c_ref,
+                        ProcurementCase.source_content_hash,
+                    ).where(
+                        ProcurementCase.source_database == database,
+                        ProcurementCase.source_type == source_type.value,
+                        ProcurementCase.source_1c_ref.in_(candidate_refs),
+                    )
                 )
-            else:
-                skipped_versions.pop(document.ref_key.lower(), None)
-        state.watermark_refs = [
-            f"skip:{ref}:{version}"
-            for ref, version in sorted(skipped_versions.items())
-        ]
+            ).all()
+        }
+        state.watermark_refs = []
         await self._enrich_document_presentations(
             database,
-            [document for document in documents if not document.skip_reason],
+            [
+                document
+                for document in documents
+                if not document.skip_reason
+                and existing_hashes.get(document.ref_key.lower()) != document.content_hash
+            ],
         )
         return documents
 
@@ -361,12 +323,28 @@ class ProcurementOrchestratorService:
                 select(ProcurementCase).where(
                     ProcurementCase.source_database == database,
                     ProcurementCase.source_type == source_type.value,
-                    ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES)),
                 )
             )
         ).scalars().all()
         for case in cases:
-            if case.source_1c_ref.lower() in active_refs:
+            is_active = case.source_1c_ref.lower() in active_refs
+            if is_active:
+                if not settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED:
+                    case.status = ProcurementCaseStatus.NEW.value
+                    case.closed_at = None
+                    case.current_task_id = None
+                    case.current_agent_id = None
+                    case.assigned_agents = []
+                    case.deviation_summary = None
+                    case.error_message = None
+                    case.latest_result = None
+                    case.control_point = None
+                    metadata = dict(case.case_metadata or {})
+                    for key in ("checkpoint", "evidence", "active_plan", "initial_route"):
+                        metadata.pop(key, None)
+                    case.case_metadata = metadata
+                continue
+            if case.status not in ACTIVE_CASE_STATUSES:
                 continue
             previous = case.status
             case.status = ProcurementCaseStatus.CLOSED.value
@@ -677,10 +655,12 @@ class ProcurementOrchestratorService:
             },
         )
         if case.status in TERMINAL_CASE_STATUSES or case.status == ProcurementCaseStatus.HUMAN_REQUIRED.value:
-            # Re-open for a new KT1 check when source changed.
+            # Re-open the source card when the 1C document becomes relevant again.
             case.status = ProcurementCaseStatus.NEW.value
             case.closed_at = None
-            case.control_point = "KT1"
+            case.control_point = (
+                "KT1" if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED else None
+            )
         enqueued = await self._enqueue_kt1(case, document)
         return "enqueued" if enqueued else "updated"
 
@@ -707,19 +687,37 @@ class ProcurementOrchestratorService:
             organization_1c_ref=document.organization_1c_ref,
             priority_1c_ref=document.priority_1c_ref,
             required_date=document.required_date,
-            assigned_agents=[procurement_config.AGENT_ID],
-            current_agent_id=procurement_config.AGENT_ID,
+            assigned_agents=(
+                [procurement_config.AGENT_ID]
+                if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
+                else []
+            ),
+            current_agent_id=(
+                procurement_config.AGENT_ID
+                if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
+                else None
+            ),
             current_human_role="procurement_orchestrator",
             autonomy_level=0,
-            control_point="KT1",
-            requested_operation="assess_need",
+            control_point=(
+                "KT1" if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED else None
+            ),
+            requested_operation=(
+                "assess_need"
+                if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
+                else "monitor_source"
+            ),
             status=ProcurementCaseStatus.NEW.value,
             idempotency_key=document.poll_idempotency_key,
             graph_version=procurement_config.GRAPH_VERSION,
             deadline_at=document.required_date,
             case_metadata={
                 "source_label": get_source_capability(document.source_type).label_ru,
-                "initial_route": [procurement_config.AGENT_ID],
+                "initial_route": (
+                    [procurement_config.AGENT_ID]
+                    if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
+                    else []
+                ),
                 "deadline": document.required_date.isoformat() if document.required_date else None,
             },
         )
@@ -836,7 +834,10 @@ class ProcurementOrchestratorService:
         case: ProcurementCase,
         document: NormalizedSourceDocument,
     ) -> bool:
-        if not self.enqueue_case:
+        if (
+            not self.enqueue_case
+            or not settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
+        ):
             return False
         if case.current_task_id is not None:
             current_task = await self.db.get(Task, case.current_task_id)
@@ -962,7 +963,10 @@ class ProcurementOrchestratorService:
                 select(ProcurementCase)
                 .options(selectinload(ProcurementCase.positions))
                 .where(ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES)))
-                .order_by(ProcurementCase.updated_at.desc())
+                .order_by(
+                    ProcurementCase.source_date.desc().nullslast(),
+                    ProcurementCase.source_number.desc().nullslast(),
+                )
             )
         ).scalars().all()
         sync_states = (
@@ -1161,6 +1165,17 @@ class ProcurementOrchestratorService:
                             position.required_date.isoformat()
                             if position.required_date
                             else None
+                        ),
+                        "supply_action": (
+                            (position.raw_payload or {}).get("supply_action")
+                            or (position.raw_payload or {}).get("ВариантОбеспечения")
+                            or (position.raw_payload or {}).get("Действие")
+                            or (position.raw_payload or {}).get(
+                                "ОбеспечениеЗаказовПриПоддержанииЗапаса"
+                            )
+                            or (position.raw_payload or {}).get(
+                                "МетодОбеспеченияПотребностей"
+                            )
                         ),
                         "cancelled": position.cancelled,
                     }

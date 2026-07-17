@@ -120,14 +120,18 @@ class GetFreeStockTool(_ProcurementOneCReadTool):
     ) -> ProcurementOneCReadOutput:
         request = ProcurementSupplyReadInput.model_validate(payload)
         retrieved_at = datetime.now(UTC)
-        arguments: dict[str, Any] = {"limit": request.limit}
+        arguments: dict[str, Any] = {
+            "limit": min(1000, max(request.limit, len(request.nomenclature_ids))),
+            "nomenclatureRefs": list(request.nomenclature_ids),
+        }
         if request.database:
             arguments["database"] = request.database
+        # MCP accepts organization name or Ref_Key GUID.
         if request.organization_id:
             arguments["organization"] = request.organization_id
         try:
             raw = await MCP_CLIENT_FACTORY().call_capability(self.name, arguments)
-        except (MCPUnavailableError, MCPCallError):
+        except MCPUnavailableError:
             return ProcurementOneCReadOutput(
                 status="capability_unavailable",
                 tool_name=self.name,
@@ -137,6 +141,17 @@ class GetFreeStockTool(_ProcurementOneCReadTool):
                 correlation_id=request.correlation_id,
                 error_code="capability_unavailable",
                 error_message="Бухгалтерский остаток MCP недоступен.",
+            )
+        except MCPCallError as exc:
+            return ProcurementOneCReadOutput(
+                status="failed",
+                tool_name=self.name,
+                object_type=self.object_type,
+                retrieved_at=retrieved_at,
+                freshness_status="unknown",
+                correlation_id=request.correlation_id,
+                error_code="mcp_call_failed",
+                error_message=str(exc)[:1000],
             )
 
         normalized = normalize_inventory_response(
@@ -148,8 +163,13 @@ class GetFreeStockTool(_ProcurementOneCReadTool):
             requested_organization_id=request.organization_id,
             limit=request.limit,
         )
+        warnings = list(normalized.warnings)
+        warnings.append(
+            "accounting_balance_only: резервы/качество/свободный остаток "
+            "не подтверждены MCP; позиции исключаются из покрытия"
+        )
         return ProcurementOneCReadOutput(
-            status="capability_unavailable",
+            status="success",
             tool_name=self.name,
             object_type=self.object_type,
             retrieved_at=retrieved_at,
@@ -160,16 +180,16 @@ class GetFreeStockTool(_ProcurementOneCReadTool):
                     for item in normalized.records
                 ],
                 "normalization_errors": normalized.errors,
-                "normalization_warnings": normalized.warnings,
+                "normalization_warnings": warnings,
                 "pagination_complete": normalized.pagination_complete,
+                "semantic_limitations": [
+                    "reservations_not_applied",
+                    "quality_status_unavailable",
+                    "free_stock_not_confirmed",
+                ],
             },
             freshness_status="fresh",
             correlation_id=request.correlation_id,
-            error_code="free_stock_semantics_unavailable",
-            error_message=(
-                "Получен реальный бухгалтерский остаток, но MCP не предоставляет "
-                "резервы, склад, единицу и статусы качества; свободный остаток не подтверждён."
-            ),
         )
 
 
