@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,40 @@ class ProcurementCaseEventRead(BaseModel):
     created_at: datetime | None = None
 
 
+class ProcurementRouteStageRead(BaseModel):
+    stage_id: str
+    label: str
+    order: int
+    status: Literal["pending", "running", "completed", "blocked", "skipped"] = "pending"
+    summary: str | None = None
+
+
+class ProcurementTimelineEntryRead(BaseModel):
+    id: str | None = None
+    at: datetime | str | None = None
+    kind: str
+    title: str
+    detail: str | None = None
+    actor_id: str | None = None
+    actor_label: str | None = None
+    stage_id: str | None = None
+    status: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcurementCurrentStateRead(BaseModel):
+    status: str
+    control_point: str | None = None
+    current_agent_id: str | None = None
+    current_agent_label: str | None = None
+    requires_human_review: bool = False
+    summary: str | None = None
+    task_id: str | None = None
+    closed_reason: str | None = None
+    closed_reason_label: str | None = None
+    source_active: bool = False
+
+
 class ProcurementCaseSummary(BaseModel):
     id: str
     correlation_id: str
@@ -56,6 +90,11 @@ class ProcurementCaseSummary(BaseModel):
     updated_at: datetime | None = None
     summary: str | None = None
     requires_human_review: bool = False
+    closed_at: datetime | None = None
+    closed_reason: str | None = None
+    closed_reason_label: str | None = None
+    reactivated_at: datetime | None = None
+    source_active: bool = False
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):
@@ -78,6 +117,9 @@ class ProcurementCaseDetail(ProcurementCaseSummary):
     case_metadata: dict[str, Any] | None = None
     positions: list[ProcurementCasePositionRead] = Field(default_factory=list)
     events: list[ProcurementCaseEventRead] = Field(default_factory=list)
+    route_stages: list[ProcurementRouteStageRead] = Field(default_factory=list)
+    timeline: list[ProcurementTimelineEntryRead] = Field(default_factory=list)
+    current_state: ProcurementCurrentStateRead | None = None
 
 
 class ProcurementSyncStatusRead(BaseModel):
@@ -110,10 +152,18 @@ class ProcurementSourceGroupRead(BaseModel):
     sync: ProcurementSyncStatusRead
 
 
+class ProcurementDashboardCounts(BaseModel):
+    active: int = 0
+    processing: int = 0
+    archive: int = 0
+
+
 class ProcurementDashboardRead(BaseModel):
     generated_at: datetime | str
+    view: Literal["active", "processing", "archive"] = "active"
     groups: list[ProcurementSourceGroupRead] = Field(default_factory=list)
     total_cases: int = 0
+    counts: ProcurementDashboardCounts = Field(default_factory=ProcurementDashboardCounts)
 
 
 class ProcurementRefreshResult(BaseModel):
@@ -126,9 +176,13 @@ __all__ = [
     "ProcurementCaseEventRead",
     "ProcurementCasePositionRead",
     "ProcurementCaseSummary",
+    "ProcurementCurrentStateRead",
+    "ProcurementDashboardCounts",
     "ProcurementDashboardRead",
     "ProcurementPermissionsRead",
     "ProcurementRefreshResult",
+    "ProcurementRouteStageRead",
     "ProcurementSourceGroupRead",
     "ProcurementSyncStatusRead",
+    "ProcurementTimelineEntryRead",
 ]

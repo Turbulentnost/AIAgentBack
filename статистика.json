@@ -1,18 +1,18 @@
 {
-  "generated_at": "2026-07-17T07:47:32Z",
+  "generated_at": "2026-07-17T08:27:41Z",
   "time_window": {
     "from_local": "2026-07-08 08:35:00",
-    "to_local": "2026-07-17 10:47:32",
+    "to_local": "2026-07-17 11:27:41",
     "timezone": "Europe/Moscow",
     "db_query_utc": {
       "from": "2026-07-08 05:35:00",
-      "to": "2026-07-17 07:47:32.869861"
+      "to": "2026-07-17 08:27:41.485735"
     },
     "note": "PostgreSQL хранит received_at/processed_at/change_events.created_at как naive UTC; входные даты задаются в Europe/Moscow"
   },
   "emails": {
     "total_received_in_window": 4312,
-    "total_processed_in_window": 4524,
+    "total_processed_in_window": 4574,
     "attachments_total": 5851,
     "by_status_received": {
       "awaiting_human": 689,
@@ -21,10 +21,10 @@
       "spam": 2766
     },
     "by_status_processed": {
-      "awaiting_human": 769,
-      "done": 257,
-      "error": 639,
-      "spam": 2859
+      "awaiting_human": 786,
+      "done": 258,
+      "error": 641,
+      "spam": 2889
     },
     "by_spam": {
       "not_spam": 1546,

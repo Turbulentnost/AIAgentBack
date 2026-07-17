@@ -91,7 +91,8 @@ def test_normalize_internal_consumption_document() -> None:
         },
     )
     assert document.skip_reason is None
-    assert document.required_date is not None
+    assert document.required_date is None
+    assert document.positions[0].required_date is not None
     assert document.warehouse_1c_ref == "wh-1"
     assert len(document.positions) == 1
     assert document.correlation_id.startswith("proc:erp_pm:internal_consumption_order:")

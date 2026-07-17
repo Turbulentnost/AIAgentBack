@@ -303,10 +303,8 @@ def normalize_source_document(
     )
     positions = normalize_need_lines(raw.get("Товары") or [])
     active_positions = [line for line in positions if not line.cancelled]
-    header_required_date = (
-        parse_1c_datetime(raw.get("ЖелаемаяДатаПоступления"))
-        or parse_1c_datetime(raw.get("ДатаОтгрузки"))
-    )
+    # Header desired-receipt date applies to every line; otherwise keep per-line dates.
+    header_required_date = parse_1c_datetime(raw.get("ЖелаемаяДатаПоступления"))
     if header_required_date:
         for line in active_positions:
             line.required_date = header_required_date

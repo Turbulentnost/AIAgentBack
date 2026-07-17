@@ -26,6 +26,12 @@ class ProcurementCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("correlation_id", name="uq_procurement_cases_correlation_id"),
         UniqueConstraint("idempotency_key", name="uq_procurement_cases_idempotency_key"),
+        UniqueConstraint(
+            "source_database",
+            "source_type",
+            "source_1c_ref",
+            name="uq_procurement_cases_source_identity",
+        ),
     )
 
     correlation_id: Mapped[str] = mapped_column(String(128), index=True)
@@ -76,7 +82,9 @@ class ProcurementCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
     )
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    closed_reason: Mapped[str | None] = mapped_column(String(128), index=True)
+    reactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     events: Mapped[list["ProcurementCaseEvent"]] = relationship(
         back_populates="case",

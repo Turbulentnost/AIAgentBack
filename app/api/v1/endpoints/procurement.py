@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.models.user import User
@@ -48,10 +49,11 @@ async def get_procurement_permissions(
 async def get_procurement_dashboard(
     db: DbSession,
     current_user: CurrentUser,
+    view: Literal["active", "processing", "archive"] = Query(default="active"),
 ) -> ProcurementDashboardRead:
     await _require_superuser(db, current_user)
     service = ProcurementOrchestratorService(db, enqueue_case=False)
-    payload = await service.list_dashboard()
+    payload = await service.list_dashboard(view=view)
     return ProcurementDashboardRead.model_validate(payload)
 
 
@@ -59,8 +61,9 @@ async def get_procurement_dashboard(
 async def list_procurement_cases(
     db: DbSession,
     current_user: CurrentUser,
+    view: Literal["active", "processing", "archive"] = Query(default="processing"),
 ) -> ProcurementDashboardRead:
-    return await get_procurement_dashboard(db=db, current_user=current_user)
+    return await get_procurement_dashboard(db=db, current_user=current_user, view=view)
 
 
 @router.get("/cases/{case_id}", response_model=ProcurementCaseDetail)
@@ -114,7 +117,7 @@ async def refresh_procurement_sources(
 
     from app.workers.tasks import poll_procurement_sources
 
-    async_result = poll_procurement_sources.apply_async(queue="agents")
+    async_result = poll_procurement_sources.apply_async(queue="procurement_poll")
     return ProcurementRefreshResult(
         status="accepted",
         summary={"celery_task_id": async_result.id},
