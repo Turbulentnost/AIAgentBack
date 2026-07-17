@@ -179,6 +179,12 @@ class Settings(BaseSettings):
     OUTLOOK_SMTP_FROM: str = ""
     OUTLOOK_COMPANY_CALENDAR: str = "calendar@turbo-don.ru"
 
+    # TurboProject (MS Project + 1С) — значения из .env.
+    TURBO_PROJECT_API_BASE_URL: str = ""
+    TURBO_PROJECT_EMAIL: str = ""
+    TURBO_PROJECT_PASSWORD: str = ""
+    TURBO_PROJECT_TIMEOUT: int = 60
+
     @property
     def cors_origins(self) -> list[str]:
         return self._parse_csv(self.BACKEND_CORS_ORIGINS)

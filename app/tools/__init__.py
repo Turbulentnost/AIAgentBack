@@ -11,6 +11,7 @@ from app.tools import outlook_tools as _outlook_tools  # noqa: F401
 from app.tools import report_tools as _report_tools  # noqa: F401
 from app.tools import system_tools as _system_tools  # noqa: F401
 from app.tools import task_tools as _task_tools  # noqa: F401
+from app.tools import turbo_project_tools as _turbo_project_tools  # noqa: F401
 from app.tools.base import StubTool, Tool
 from app.tools.executor import ToolExecutionError, ToolExecutor
 from app.tools.registry import ToolRegistry, register_tool, tool_registry
