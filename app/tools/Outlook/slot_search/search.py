@@ -68,6 +68,91 @@ from .scoring import (
 from .timing import logger, log_timing_summary, reset_timing_report, setup_logging, timed_step
 
 
+def search_bounds_for_preferred(
+    config: OutlookConfig,
+    preferred: datetime,
+    max_days: int,
+) -> tuple[datetime, datetime, datetime]:
+    """Границы поиска: (requested, earliest_allowed, search_end)."""
+    requested = to_local(preferred, config).replace(second=0, microsecond=0)
+    search_start = align_preferred(requested, config)
+    earliest_allowed = max(requested, search_start, not_before_now(config))
+    search_end = earliest_allowed + timedelta(days=max_days)
+    return requested, earliest_allowed, search_end
+
+
+def unify_search_bounds(
+    config: OutlookConfig,
+    preferred_list: list[datetime],
+    max_days: int,
+) -> tuple[datetime, datetime]:
+    if not preferred_list:
+        raise ValueError("preferred_list is empty")
+    earliest_list: list[datetime] = []
+    end_list: list[datetime] = []
+    for preferred in preferred_list:
+        _, earliest_allowed, search_end = search_bounds_for_preferred(
+            config,
+            preferred,
+            max_days,
+        )
+        earliest_list.append(earliest_allowed)
+        end_list.append(search_end)
+    return min(earliest_list), max(end_list)
+
+
+def preview_freebusy_window(
+    config: OutlookConfig,
+    *,
+    planned_start: datetime | None,
+    attendee_search_start: datetime | None,
+    max_days: int,
+) -> tuple[datetime, datetime]:
+    """Объединённое окно Free/Busy для preview (nearest + all-free + quorum)."""
+    bounds: list[tuple[datetime, datetime]] = []
+    if attendee_search_start is not None:
+        _, earliest, search_end = search_bounds_for_preferred(
+            config,
+            attendee_search_start,
+            max_days,
+        )
+        bounds.append((earliest, search_end))
+    if planned_start is not None:
+        _, earliest, search_end = search_bounds_for_preferred(
+            config,
+            planned_start,
+            max_days,
+        )
+        bounds.append((earliest, search_end))
+        quorum_start = quorum_search_start(planned_start, config)
+        bounds.append((quorum_start, quorum_start + timedelta(days=max_days)))
+    if not bounds:
+        _, earliest, search_end = search_bounds_for_preferred(
+            config,
+            not_before_now(config),
+            max_days,
+        )
+        return earliest, search_end
+    return min(item[0] for item in bounds), max(item[1] for item in bounds)
+
+
+def clip_busy_by_attendee_for_window(
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    config: OutlookConfig,
+    range_start: datetime,
+    range_end: datetime,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    return {
+        email: coalesce_intervals(
+            intervals,
+            config,
+            clip_start=range_start,
+            clip_end=range_end,
+        )
+        for email, intervals in busy_by_attendee.items()
+    }
+
+
 def _iter_company_calendar_windows(
     search_start: datetime,
     search_end: datetime,
@@ -335,6 +420,7 @@ def find_quorum_slots(
     verify_calendar: bool = True,
     latest_allowed: datetime | None = None,
     raise_if_empty: bool = True,
+    prefetched_busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] | None = None,
 ) -> dict[str, Any]:
     if not attendees:
         raise ValueError("Укажите хотя бы одного участника (--attendee).")
@@ -356,15 +442,23 @@ def find_quorum_slots(
         latest_local = to_local(latest_allowed, config).replace(second=0, microsecond=0)
         search_end = min(search_end, latest_local)
 
-    busy_by_attendee = fetch_all_busy_intervals(
-        config,
-        attendees,
-        earliest_allowed,
-        search_end,
-        source=source,
-        max_items=max_items,
-        workers=workers,
-    )
+    if prefetched_busy_by_attendee is not None and source == "freebusy":
+        busy_by_attendee = clip_busy_by_attendee_for_window(
+            prefetched_busy_by_attendee,
+            config,
+            earliest_allowed,
+            search_end,
+        )
+    else:
+        busy_by_attendee = fetch_all_busy_intervals(
+            config,
+            attendees,
+            earliest_allowed,
+            search_end,
+            source=source,
+            max_items=max_items,
+            workers=workers,
+        )
 
     checked = 0
     scored: list[dict[str, Any]] = []
@@ -619,6 +713,7 @@ def find_nearest_slots_per_attendee(
     duration: timedelta,
     max_days: int,
     step: timedelta,
+    prefetched_busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] | None = None,
 ) -> dict[str, dict[str, str] | None]:
     """Справочные ближайшие слоты: один GetUserAvailability, затем локальный gap-scan."""
     attendee_list = [email.strip() for email in attendees if email.strip()]
@@ -629,17 +724,26 @@ def find_nearest_slots_per_attendee(
     if max_days < 1:
         raise ValueError("max_days должно быть >= 1.")
 
-    requested = to_local(preferred, config).replace(second=0, microsecond=0)
-    search_start = align_preferred(requested, config)
-    earliest_allowed = max(requested, search_start, not_before_now(config))
-    search_end = earliest_allowed + timedelta(days=max_days)
-
-    busy_by_attendee = fetch_busy_intervals_freebusy(
+    _requested, earliest_allowed, search_end = search_bounds_for_preferred(
         config,
-        attendee_list,
-        earliest_allowed,
-        search_end,
+        preferred,
+        max_days,
     )
+
+    if prefetched_busy_by_attendee is not None:
+        busy_by_attendee = clip_busy_by_attendee_for_window(
+            prefetched_busy_by_attendee,
+            config,
+            earliest_allowed,
+            search_end,
+        )
+    else:
+        busy_by_attendee = fetch_busy_intervals_freebusy(
+            config,
+            attendee_list,
+            earliest_allowed,
+            search_end,
+        )
 
     nearest_by_email: dict[str, dict[str, str] | None] = {}
     for email in attendee_list:
@@ -680,6 +784,7 @@ def find_nearest_slot(
     source: AvailabilitySource = "freebusy",
     workers: int = 4,
     verify_calendar: bool = True,
+    prefetched_busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] | None = None,
 ) -> dict[str, Any]:
     if not attendees:
         raise ValueError("Укажите хотя бы одного участника (--attendee).")
@@ -689,10 +794,11 @@ def find_nearest_slot(
         raise ValueError("--max-days должно быть >= 1.")
 
     with timed_step("align.preferred"):
-        requested = to_local(preferred, config).replace(second=0, microsecond=0)
-        search_start = align_preferred(requested, config)
-        earliest_allowed = max(requested, search_start, not_before_now(config))
-    search_end = earliest_allowed + timedelta(days=max_days)
+        requested, earliest_allowed, search_end = search_bounds_for_preferred(
+            config,
+            preferred,
+            max_days,
+        )
     logger.info(
         "Поиск: requested=%s, earliest=%s, until=%s, attendees=%d, step=%s, duration=%s, source=%s",
         requested.isoformat(),
@@ -710,15 +816,23 @@ def find_nearest_slot(
         max_days,
         source,
     )
-    busy_by_attendee = fetch_all_busy_intervals(
-        config,
-        attendees,
-        earliest_allowed,
-        search_end,
-        source=source,
-        max_items=max_items,
-        workers=workers,
-    )
+    if prefetched_busy_by_attendee is not None and source == "freebusy":
+        busy_by_attendee = clip_busy_by_attendee_for_window(
+            prefetched_busy_by_attendee,
+            config,
+            earliest_allowed,
+            search_end,
+        )
+    else:
+        busy_by_attendee = fetch_all_busy_intervals(
+            config,
+            attendees,
+            earliest_allowed,
+            search_end,
+            source=source,
+            max_items=max_items,
+            workers=workers,
+        )
 
     union_busy = union_busy_for_all(
         busy_by_attendee,

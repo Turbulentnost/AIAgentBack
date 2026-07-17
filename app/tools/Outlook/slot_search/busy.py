@@ -191,17 +191,11 @@ def fetch_busy_intervals_freebusy(
                 )
             except RuntimeError as exc:
                 logger.warning(
-                    "Free/busy недоступен для %s, пробуем calendar.view: %s",
+                    "Free/busy недоступен для %s: %s",
                     email,
                     exc,
                 )
-                intervals = fetch_busy_intervals_calendar(
-                    config,
-                    email,
-                    range_start,
-                    range_end,
-                    max_items=500,
-                )
+                intervals = []
         busy_by_attendee[email] = intervals
         merged = getattr(view, "merged", None)
         merged_len = len(merged) if isinstance(merged, str) else 0
@@ -374,17 +368,11 @@ def busy_intervals_and_events_from_freebusy(
                 )
             except RuntimeError as exc:
                 logger.warning(
-                    "Free/busy недоступен для %s, пробуем calendar.view: %s",
+                    "Free/busy недоступен для %s: %s",
                     email,
                     exc,
                 )
-                intervals = fetch_busy_intervals_calendar(
-                    config,
-                    email,
-                    range_start,
-                    range_end,
-                    max_items=max_items,
-                )
+                intervals = []
         busy_by_attendee[email] = intervals
         events_by_attendee[email] = list(getattr(view, "calendar_events", None) or [])
         merged = getattr(view, "merged", None)

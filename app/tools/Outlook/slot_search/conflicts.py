@@ -308,30 +308,13 @@ def build_conflict_records(
     search_end: datetime,
     max_calendar_items: int = 50,
 ) -> list[dict[str, Any]]:
-    calendar_records: list[dict[str, Any]] = []
-    try:
-        calendar_items = read_calendar_items_in_range(
-            config,
-            email,
-            range_start=slot_start - timedelta(hours=1),
-            range_end=slot_start + duration + timedelta(hours=1),
-            max_items=max_calendar_items,
-        )
-        calendar_records = conflicting_calendar_items_at_slot(
-            calendar_items,
-            slot_start,
-            duration,
-            config,
-        )
-    except Exception:
-        calendar_records = []
-
+    del max_calendar_items
     freebusy_records = conflicting_events_at_slot(calendar_events, slot_start, duration, config)
     for record in freebusy_records:
         record["source"] = "freebusy"
 
     interval_records: list[dict[str, Any]] = []
-    if not calendar_records and not freebusy_records:
+    if not freebusy_records:
         interval_records = conflicting_intervals_at_slot(
             busy_intervals,
             slot_start,
@@ -341,9 +324,7 @@ def build_conflict_records(
         for record in interval_records:
             record["source"] = "interval"
 
-    merged_records = dedupe_conflict_records(
-        calendar_records + freebusy_records + interval_records
-    )
+    merged_records = dedupe_conflict_records(freebusy_records + interval_records)
     reserved_slot = (slot_start, slot_start + duration)
     conflicts: list[dict[str, Any]] = []
     assigned_hints: list[tuple[datetime, datetime]] = []

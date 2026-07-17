@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -74,6 +78,105 @@ def _find_quorum_slots_result(
             },
         }
     return FindQuorumSlotsResult(slots=payload_slots, availability_snapshot=snapshot)
+
+
+def _dispatch_find_payload(result: FindSlotsResult) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "availability_snapshot": result.availability_snapshot,
+    }
+    if result.slots:
+        slot = result.slots[0]
+        payload["slot_start"] = slot.start
+        payload["slot_end"] = slot.end
+    return payload
+
+
+def _conflict_to_dispatch_payload(conflict: MeetingSlotConflict) -> dict[str, object]:
+    return {
+        "email": conflict.email,
+        "fio": conflict.fio,
+        "role": conflict.role,
+        "event_start": conflict.event_start,
+        "event_end": conflict.event_end,
+        "event_subject": conflict.event_subject,
+        "busy_type": conflict.busy_type,
+        "movability": conflict.movability,
+        "movability_reason": conflict.movability_reason,
+        "source": conflict.source,
+        "can_auto_reschedule": conflict.can_auto_reschedule,
+        "reschedule_hint_start": conflict.reschedule_hint_start,
+        "reschedule_hint_end": conflict.reschedule_hint_end,
+        "event_attendees": list(conflict.event_attendees or []),
+        "event_attendee_names": list(conflict.event_attendee_names or []),
+    }
+
+
+def _dispatch_quorum_payload(result: FindQuorumSlotsResult) -> dict[str, object]:
+    candidates: list[dict[str, object]] = []
+    for item in result.slots:
+        candidates.append(
+            {
+                "slot_start": item.start,
+                "slot_end": item.end,
+                "confidence": item.confidence,
+                "coverage": {
+                    "free": item.free_count,
+                    "total": item.total_count,
+                    "ratio": item.coverage_ratio,
+                    "weighted_ratio": item.weighted_coverage_ratio,
+                    "required_ok": item.required_ok,
+                },
+                "conflicts": [
+                    _conflict_to_dispatch_payload(conflict)
+                    for conflict in item.conflicts
+                ],
+                "free_attendees": list(item.free_attendees),
+                "busy_attendees": list(item.busy_attendees),
+                "verified": item.verified,
+            }
+        )
+    return {
+        "candidates": candidates,
+        "availability_snapshot": result.availability_snapshot,
+    }
+
+
+@contextmanager
+def _patch_preview_ews(
+    *,
+    find_result: FindSlotsResult | None = None,
+    quorum_result: FindQuorumSlotsResult | None = None,
+    find_side_effect=None,
+    quorum_side_effect=None,
+):
+    find_payload = _dispatch_find_payload(find_result or FindSlotsResult(slots=[]))
+    quorum_payload = _dispatch_quorum_payload(
+        quorum_result or FindQuorumSlotsResult(slots=[])
+    )
+    find_kwargs = (
+        {"side_effect": find_side_effect}
+        if find_side_effect is not None
+        else {"return_value": find_payload}
+    )
+    quorum_kwargs = (
+        {"side_effect": quorum_side_effect}
+        if quorum_side_effect is not None
+        else {"return_value": quorum_payload}
+    )
+    with patch(
+        "app.services.meeting_agent_slot._fetch_preview_busy_by_attendee",
+        AsyncMock(return_value={}),
+    ):
+        with patch(
+            "app.services.meeting_agent_slot.dispatch_find_meeting_slot",
+            MagicMock(**find_kwargs),
+        ) as find_mock:
+            with patch(
+                "app.services.meeting_agent_slot.dispatch_find_quorum_meeting_slots",
+                MagicMock(**quorum_kwargs),
+            ) as quorum_mock:
+                yield find_mock, quorum_mock
+
 
 @pytest.fixture
 def user():
@@ -150,17 +253,7 @@ async def test_suggest_agent_slot_returns_nearest_slot(user) -> None:
             ResolvedParticipant(fio="Петров Петр Петрович", email="petrov@turbo-don.ru", found=True),
         ]
     )
-    backend.find_slots = AsyncMock(
-        return_value=_find_slots_result(
-            [
-                MeetingSlot(
-                    start="2026-06-19T11:00:00+03:00",
-                    end="2026-06-19T11:20:00+03:00",
-                    confidence=0.95,
-                )
-            ]
-        )
-    )
+    backend.find_slots = AsyncMock()
     backend.find_quorum_slots = AsyncMock()
     service._backend = lambda: backend
 
@@ -168,11 +261,22 @@ async def test_suggest_agent_slot_returns_nearest_slot(user) -> None:
         "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
-        result = await service.suggest_agent_slot(
-            "37da8ed8-6b19-11f1-9825-6cb31113810e",
-            MeetingAgentSlotPreviewRequest(),
-            current_user=user,
-        )
+        with _patch_preview_ews(
+            find_result=_find_slots_result(
+                [
+                    MeetingSlot(
+                        start="2026-06-19T11:00:00+03:00",
+                        end="2026-06-19T11:20:00+03:00",
+                        confidence=0.95,
+                    )
+                ]
+            )
+        ) as (find_mock, quorum_mock):
+            result = await service.suggest_agent_slot(
+                "37da8ed8-6b19-11f1-9825-6cb31113810e",
+                MeetingAgentSlotPreviewRequest(),
+                current_user=user,
+            )
 
     assert result.slot is not None
     assert result.slot.start == "2026-06-19T11:00:00+03:00"
@@ -185,11 +289,8 @@ async def test_suggest_agent_slot_returns_nearest_slot(user) -> None:
     assert len(result.slot_candidates) == 0
     assert len(result.attendees) == 3
     assert {item.role for item in result.attendees} == {"initiator", "manager", "participant"}
-    group_calls = [
-        call for call in backend.find_slots.await_args_list if len(call.kwargs["participants"]) == 3
-    ]
-    assert len(group_calls) == 1
-    backend.find_quorum_slots.assert_not_called()
+    find_mock.assert_called_once()
+    quorum_mock.assert_not_called()
 
 
 def test_is_personal_calendar_access_error_detects_delegate_failure() -> None:
@@ -266,18 +367,7 @@ async def test_suggest_agent_slot_returns_availability_cache_id(user) -> None:
             ResolvedParticipant(fio="C", email="c@turbo-don.ru", found=True),
         ]
     )
-    backend.find_slots = AsyncMock(
-        return_value=_find_slots_result(
-            [
-                MeetingSlot(
-                    start="2026-06-19T11:00:00+03:00",
-                    end="2026-06-19T11:20:00+03:00",
-                    confidence=0.95,
-                )
-            ],
-            with_snapshot=True,
-        )
-    )
+    backend.find_slots = AsyncMock()
     backend.find_quorum_slots = AsyncMock()
     service._backend = lambda: backend
 
@@ -285,11 +375,23 @@ async def test_suggest_agent_slot_returns_availability_cache_id(user) -> None:
         "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
-        result = await service.suggest_agent_slot(
-            "abc",
-            MeetingAgentSlotPreviewRequest(),
-            current_user=user,
-        )
+        with _patch_preview_ews(
+            find_result=_find_slots_result(
+                [
+                    MeetingSlot(
+                        start="2026-06-19T11:00:00+03:00",
+                        end="2026-06-19T11:20:00+03:00",
+                        confidence=0.95,
+                    )
+                ],
+                with_snapshot=True,
+            )
+        ):
+            result = await service.suggest_agent_slot(
+                "abc",
+                MeetingAgentSlotPreviewRequest(),
+                current_user=user,
+            )
 
     assert result.availability_cache_id is not None
 
@@ -312,17 +414,7 @@ async def test_suggest_agent_slot_uses_cached_emails_without_onec_lookup(user) -
     }
     backend = AsyncMock()
     backend.resolve_participants = AsyncMock()
-    backend.find_slots = AsyncMock(
-        return_value=_find_slots_result(
-            [
-                MeetingSlot(
-                    start="2026-06-19T11:00:00+03:00",
-                    end="2026-06-19T11:20:00+03:00",
-                    confidence=0.95,
-                )
-            ]
-        )
-    )
+    backend.find_slots = AsyncMock()
     backend.find_quorum_slots = AsyncMock()
     service._backend = lambda: backend
 
@@ -330,12 +422,23 @@ async def test_suggest_agent_slot_uses_cached_emails_without_onec_lookup(user) -
         "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
-        result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
+        with _patch_preview_ews(
+            find_result=_find_slots_result(
+                [
+                    MeetingSlot(
+                        start="2026-06-19T11:00:00+03:00",
+                        end="2026-06-19T11:20:00+03:00",
+                        confidence=0.95,
+                    )
+                ]
+            )
+        ) as (find_mock, quorum_mock):
+            result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
 
     assert result.slot is not None
     backend.resolve_participants.assert_not_called()
-    backend.find_slots.assert_awaited_once()
-    backend.find_quorum_slots.assert_not_called()
+    find_mock.assert_called_once()
+    quorum_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -416,20 +519,24 @@ async def test_suggest_agent_slot_reports_unexpected_calendar_errors(user) -> No
     }
     backend = AsyncMock()
     backend.resolve_participants = AsyncMock()
-    backend.find_slots = AsyncMock(side_effect=MeetingBackendError("Свободный слот не найден"))
-    backend.find_quorum_slots = AsyncMock(side_effect=RuntimeError("Exchange calendar failed"))
+    backend.find_slots = AsyncMock()
+    backend.find_quorum_slots = AsyncMock()
     service._backend = lambda: backend
 
     with patch(
         "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
-        result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
+        with _patch_preview_ews(
+            find_side_effect=MeetingBackendError("Свободный слот не найден"),
+            quorum_side_effect=RuntimeError("Exchange calendar failed"),
+        ) as (find_mock, quorum_mock):
+            result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
 
     assert result.slot is None
     assert "Exchange calendar failed" in (result.error or "")
-    backend.find_slots.assert_awaited_once()
-    backend.find_quorum_slots.assert_awaited_once()
+    find_mock.assert_called_once()
+    quorum_mock.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -450,36 +557,38 @@ async def test_suggest_agent_slot_partial_when_all_free_missing(user) -> None:
     }
     backend = AsyncMock()
     backend.resolve_participants = AsyncMock()
-    backend.find_slots = AsyncMock(side_effect=MeetingBackendError("Свободный слот не найден"))
-    backend.find_quorum_slots = AsyncMock(
-        return_value=_find_quorum_slots_result(
-            [
-            _quorum_slot(
-                free_count=2,
-                total_count=3,
-                coverage_ratio=2 / 3,
-                weighted_coverage_ratio=2 / 3,
-                conflicts=[
-                    MeetingSlotConflict(
-                        email="c@turbo-don.ru",
-                        fio="C",
-                        role="participant",
-                    )
-                ],
-                busy_attendees=["c@turbo-don.ru"],
-                free_attendees=["a@turbo-don.ru", "b@turbo-don.ru"],
-            )
-            ],
-            with_snapshot=True,
-        )
-    )
+    backend.find_slots = AsyncMock()
+    backend.find_quorum_slots = AsyncMock()
     service._backend = lambda: backend
 
     with patch(
         "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
-        result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
+        with _patch_preview_ews(
+            find_side_effect=MeetingBackendError("Свободный слот не найден"),
+            quorum_result=_find_quorum_slots_result(
+                [
+                    _quorum_slot(
+                        free_count=2,
+                        total_count=3,
+                        coverage_ratio=2 / 3,
+                        weighted_coverage_ratio=2 / 3,
+                        conflicts=[
+                            MeetingSlotConflict(
+                                email="c@turbo-don.ru",
+                                fio="C",
+                                role="participant",
+                            )
+                        ],
+                        busy_attendees=["c@turbo-don.ru"],
+                        free_attendees=["a@turbo-don.ru", "b@turbo-don.ru"],
+                    )
+                ],
+                with_snapshot=True,
+            ),
+        ) as (find_mock, quorum_mock):
+            result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
 
     assert result.slot is None
     assert result.search_mode == "partial"
@@ -487,8 +596,8 @@ async def test_suggest_agent_slot_partial_when_all_free_missing(user) -> None:
     assert len(result.slot_candidates) == 1
     assert len(result.conflicts) == 1
     assert result.availability_cache_id is not None
-    backend.find_slots.assert_awaited_once()
-    backend.find_quorum_slots.assert_awaited_once()
+    find_mock.assert_called_once()
+    quorum_mock.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -509,32 +618,34 @@ async def test_suggest_agent_slot_all_free_via_quorum_when_find_slots_empty(user
     }
     backend = AsyncMock()
     backend.resolve_participants = AsyncMock()
-    backend.find_slots = AsyncMock(return_value=_find_slots_result([]))
-    backend.find_quorum_slots = AsyncMock(
-        return_value=_find_quorum_slots_result(
-            [
-            _quorum_slot(
-                start="2026-07-09 11:00",
-                end="2026-07-09 12:00",
-                free_count=3,
-                total_count=3,
-                coverage_ratio=1.0,
-                weighted_coverage_ratio=1.0,
-                conflicts=[],
-                free_attendees=["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"],
-                busy_attendees=[],
-            )
-            ],
-            with_snapshot=True,
-        )
-    )
+    backend.find_slots = AsyncMock()
+    backend.find_quorum_slots = AsyncMock()
     service._backend = lambda: backend
 
     with patch(
         "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
-        result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
+        with _patch_preview_ews(
+            find_result=_find_slots_result([]),
+            quorum_result=_find_quorum_slots_result(
+                [
+                    _quorum_slot(
+                        start="2026-07-09 11:00",
+                        end="2026-07-09 12:00",
+                        free_count=3,
+                        total_count=3,
+                        coverage_ratio=1.0,
+                        weighted_coverage_ratio=1.0,
+                        conflicts=[],
+                        free_attendees=["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"],
+                        busy_attendees=[],
+                    )
+                ],
+                with_snapshot=True,
+            ),
+        ) as (find_mock, quorum_mock):
+            result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
 
     assert result.search_mode == "all"
     assert result.slot is not None
@@ -542,8 +653,8 @@ async def test_suggest_agent_slot_all_free_via_quorum_when_find_slots_empty(user
     assert result.preview_note is None
     assert result.error is None
     assert not result.conflicts
-    backend.find_slots.assert_awaited_once()
-    backend.find_quorum_slots.assert_awaited_once()
+    find_mock.assert_called_once()
+    quorum_mock.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -565,8 +676,8 @@ async def test_suggest_agent_slot_no_slot_returns_company_calendar_conflicts(use
     }
     backend = AsyncMock()
     backend.resolve_participants = AsyncMock()
-    backend.find_slots = AsyncMock(return_value=_find_slots_result([]))
-    backend.find_quorum_slots = AsyncMock(return_value=_find_quorum_slots_result([]))
+    backend.find_slots = AsyncMock()
+    backend.find_quorum_slots = AsyncMock()
     backend.find_company_calendar_reschedule_candidates = AsyncMock(
         return_value=[
             MeetingSlotConflict(
@@ -588,7 +699,11 @@ async def test_suggest_agent_slot_no_slot_returns_company_calendar_conflicts(use
         "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail_for_agent",
         AsyncMock(return_value=(detail, None, True)),
     ):
-        result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
+        with _patch_preview_ews(
+            find_result=_find_slots_result([]),
+            quorum_result=_find_quorum_slots_result([]),
+        ):
+            result = await service.suggest_agent_slot("abc", MeetingAgentSlotPreviewRequest(), current_user=user)
 
     assert result.slot is None
     assert result.error_stage == "no_slot"
@@ -818,6 +933,9 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
                 "calendar_access_error": None,
             },
         ],
+        "freebusy_by_email": {
+            "konfzalkb@turbo-don.ru": [],
+        },
     }
 
     with patch(
@@ -828,26 +946,14 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
             "app.services.meeting_agent_slot.build_slot_participant_details",
             return_value=raw_details,
         ):
-            with patch(
-                "app.services.meeting_agent_slot.check_rooms_status",
-                return_value=[
-                    {
-                        "name": "Зал совещаний КБ",
-                        "email": "konfzalkb@turbo-don.ru",
-                        "status": "free",
-                        "status_label": "свободна",
-                        "busy_events": 0,
-                    }
-                ],
-            ):
-                result = await service.get_agent_slot_detail(
-                    "abc",
-                    MeetingAgentSlotDetailRequest(
-                        slot_start="2026-07-09 08:45",
-                        slot_end="2026-07-09 10:45",
-                    ),
-                    current_user=user,
-                )
+            result = await service.get_agent_slot_detail(
+                "abc",
+                MeetingAgentSlotDetailRequest(
+                    slot_start="2026-07-09 08:45",
+                    slot_end="2026-07-09 10:45",
+                ),
+                current_user=user,
+            )
 
     assert result.error is None
     assert len(result.participants) == 3
@@ -916,6 +1022,7 @@ async def test_get_agent_slot_detail_ignores_availability_cache(user) -> None:
         "slot_end": "2026-07-20T11:30:00+03:00",
         "duration_minutes": 30,
         "participants": [],
+        "freebusy_by_email": {},
     }
 
     with patch(
@@ -926,27 +1033,15 @@ async def test_get_agent_slot_detail_ignores_availability_cache(user) -> None:
             "app.services.meeting_agent_slot.build_slot_participant_details",
             return_value=raw_details,
         ) as build_details:
-            with patch(
-                "app.services.meeting_agent_slot.check_rooms_status",
-                return_value=[
-                    {
-                        "name": "Зал совещаний КБ",
-                        "email": "konfzalkb@turbo-don.ru",
-                        "status": "free",
-                        "status_label": "свободна",
-                        "busy_events": 0,
-                    }
-                ],
-            ):
-                result = await service.get_agent_slot_detail(
-                    "abc",
-                    MeetingAgentSlotDetailRequest(
-                        slot_start="2026-07-20T11:00:00+03:00",
-                        slot_end="2026-07-20T11:30:00+03:00",
-                        availability_cache_id=cache_id,
-                    ),
-                    current_user=user,
-                )
+            result = await service.get_agent_slot_detail(
+                "abc",
+                MeetingAgentSlotDetailRequest(
+                    slot_start="2026-07-20T11:00:00+03:00",
+                    slot_end="2026-07-20T11:30:00+03:00",
+                    availability_cache_id=cache_id,
+                ),
+                current_user=user,
+            )
 
     assert result.error is None
     assert build_details.call_count == 1
@@ -1007,6 +1102,7 @@ async def test_get_agent_slot_detail_uses_company_calendar_when_slot_busy(user) 
                 "calendar_access_error": None,
             },
         ],
+        "freebusy_by_email": {"konfzalkb@turbo-don.ru": []},
     }
     busy_details = {
         **all_free_details,
@@ -1042,26 +1138,14 @@ async def test_get_agent_slot_detail_uses_company_calendar_when_slot_busy(user) 
             "app.services.meeting_agent_slot.build_slot_participant_details",
             return_value=all_free_details,
         ):
-            with patch(
-                "app.services.meeting_agent_slot.check_rooms_status",
-                return_value=[
-                    {
-                        "name": "Зал совещаний КБ",
-                        "email": "konfzalkb@turbo-don.ru",
-                        "status": "free",
-                        "status_label": "свободна",
-                        "busy_events": 0,
-                    }
-                ],
-            ):
-                free_result = await service.get_agent_slot_detail(
-                    "abc",
-                    MeetingAgentSlotDetailRequest(
-                        slot_start="2026-07-09 08:45",
-                        slot_end="2026-07-09 10:45",
-                    ),
-                    current_user=user,
-                )
+            free_result = await service.get_agent_slot_detail(
+                "abc",
+                MeetingAgentSlotDetailRequest(
+                    slot_start="2026-07-09 08:45",
+                    slot_end="2026-07-09 10:45",
+                ),
+                current_user=user,
+            )
 
     assert free_result.slot_available is True
     backend.find_company_calendar_reschedule_candidates.assert_not_awaited()
@@ -1075,26 +1159,14 @@ async def test_get_agent_slot_detail_uses_company_calendar_when_slot_busy(user) 
             "app.services.meeting_agent_slot.build_slot_participant_details",
             return_value=busy_details,
         ):
-            with patch(
-                "app.services.meeting_agent_slot.check_rooms_status",
-                return_value=[
-                    {
-                        "name": "Зал совещаний КБ",
-                        "email": "konfzalkb@turbo-don.ru",
-                        "status": "free",
-                        "status_label": "свободна",
-                        "busy_events": 0,
-                    }
-                ],
-            ):
-                busy_result = await service.get_agent_slot_detail(
-                    "abc",
-                    MeetingAgentSlotDetailRequest(
-                        slot_start="2026-07-09 08:45",
-                        slot_end="2026-07-09 10:45",
-                    ),
-                    current_user=user,
-                )
+            busy_result = await service.get_agent_slot_detail(
+                "abc",
+                MeetingAgentSlotDetailRequest(
+                    slot_start="2026-07-09 08:45",
+                    slot_end="2026-07-09 10:45",
+                ),
+                current_user=user,
+            )
 
     assert busy_result.slot_available is False
     backend.find_company_calendar_reschedule_candidates.assert_not_awaited()
@@ -1146,6 +1218,14 @@ async def test_get_agent_slot_detail_skips_company_calendar_when_only_room_busy(
                 "calendar_access_error": None,
             },
         ],
+        "freebusy_by_email": {
+            "konfzalkb@turbo-don.ru": [
+                (
+                    datetime(2026, 7, 9, 8, 45, tzinfo=ZoneInfo("Europe/Moscow")),
+                    datetime(2026, 7, 9, 10, 45, tzinfo=ZoneInfo("Europe/Moscow")),
+                )
+            ],
+        },
     }
 
     with patch(
@@ -1156,26 +1236,14 @@ async def test_get_agent_slot_detail_skips_company_calendar_when_only_room_busy(
             "app.services.meeting_agent_slot.build_slot_participant_details",
             return_value=all_free_details,
         ):
-            with patch(
-                "app.services.meeting_agent_slot.check_rooms_status",
-                return_value=[
-                    {
-                        "name": "Зал совещаний КБ",
-                        "email": "konfzalkb@turbo-don.ru",
-                        "status": "busy",
-                        "status_label": "занята",
-                        "busy_events": 1,
-                    }
-                ],
-            ):
-                result = await service.get_agent_slot_detail(
-                    "abc",
-                    MeetingAgentSlotDetailRequest(
-                        slot_start="2026-07-09 08:45",
-                        slot_end="2026-07-09 10:45",
-                    ),
-                    current_user=user,
-                )
+            result = await service.get_agent_slot_detail(
+                "abc",
+                MeetingAgentSlotDetailRequest(
+                    slot_start="2026-07-09 08:45",
+                    slot_end="2026-07-09 10:45",
+                ),
+                current_user=user,
+            )
 
     assert result.error is None
     assert result.slot_available is False

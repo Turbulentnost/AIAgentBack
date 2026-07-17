@@ -50,11 +50,15 @@ from app.services.meeting_backend import (
     MeetingBackend,
     MeetingBackendError,
     MeetingMemo,
+    MeetingQuorumSlot,
     MeetingSlot,
     MeetingSlotConflict,
     ResolvedParticipant,
     _duration_from_memo,
     _normalize_memo,
+    _participant_email_to_fio,
+    _participant_emails,
+    _slot_conflict_from_payload,
 )
 from app.services.meeting_constants import (
     ATTENDEE_NEAREST_SLOT_TIMEOUT_SECONDS,
@@ -91,6 +95,7 @@ from app.services.meeting_memo_cache import (
     detail_to_memo_document,
 )
 from app.services.meeting_slot import (
+    display_timezone,
     format_planned_start_for_search,
     format_attendee_nearest_slot_search_start,
     format_search_start_from_meeting_date,
@@ -102,11 +107,47 @@ from app.tools.Outlook.find_meeting_slot import (
     build_slot_participant_details,
     dispatch_find_attendee_nearest_slots,
     dispatch_find_meeting_slot,
+    dispatch_find_quorum_meeting_slots,
 )
-from app.tools.Outlook.meeting_rooms import check_rooms_status
-from app.tools.Outlook.send_meeting_invite import load_config
+from app.tools.Outlook.meeting_rooms import is_interval_free
+from app.tools.Outlook.send_meeting_invite import load_config, parse_start
+from app.tools.Outlook.slot_search.busy import fetch_busy_intervals_freebusy
+from app.tools.Outlook.slot_search.search import preview_freebusy_window
 
 logger = get_logger(__name__)
+
+
+async def _fetch_preview_busy_by_attendee(
+    *,
+    participant_emails: list[str],
+    planned_start: str,
+    attendee_search_start: str | None,
+    max_days: int,
+) -> dict[str, list[tuple[Any, Any]]]:
+    """Один bulk Free/Busy на весь preview (nearest + all-free + quorum)."""
+    config = load_config()
+    planned_dt = parse_start(planned_start, config.timezone) if planned_start else None
+    attendee_dt = (
+        parse_start(attendee_search_start, config.timezone)
+        if attendee_search_start
+        else None
+    )
+    window_start, window_end = preview_freebusy_window(
+        config,
+        planned_start=planned_dt,
+        attendee_search_start=attendee_dt,
+        max_days=max_days,
+    )
+    emails = sorted({email.strip().lower() for email in participant_emails if email.strip()})
+    if not emails:
+        return {}
+    return await asyncio.to_thread(
+        fetch_busy_intervals_freebusy,
+        config,
+        emails,
+        window_start,
+        window_end,
+    )
 
 
 async def _fetch_attendee_nearest_slots_bulk(
@@ -115,6 +156,7 @@ async def _fetch_attendee_nearest_slots_bulk(
     planned_start: str,
     duration_minutes: int,
     max_days: int,
+    prefetched_busy_by_attendee: dict[str, list[tuple[Any, Any]]] | None = None,
 ) -> dict[str, MeetingSlot | None]:
     """Справочные ближайшие слоты: один bulk Free/Busy на всех участников."""
     if not emails:
@@ -128,6 +170,7 @@ async def _fetch_attendee_nearest_slots_bulk(
             duration_minutes=duration_minutes,
             max_days=max_days,
             quiet=True,
+            prefetched_busy_by_attendee=prefetched_busy_by_attendee,
         ),
         timeout=ATTENDEE_NEAREST_SLOT_TIMEOUT_SECONDS,
     )
@@ -151,26 +194,141 @@ async def _fetch_attendee_nearest_slots_bulk(
     return slots_by_email
 
 
-def _build_room_slot_status(
+def _parse_find_slots_payload(
+    payload: dict[str, Any],
     *,
-    detail: dict[str, Any],
-    config: Any,
+    participant_count: int,
+) -> tuple[list[MeetingSlot], dict[str, Any] | None]:
+    slot_start = payload.get("slot_start")
+    slot_end = payload.get("slot_end")
+    if not slot_start or not slot_end:
+        return [], payload.get("availability_snapshot")
+    confidence = 0.95 if participant_count > 0 else 0.7
+    return (
+        [MeetingSlot(start=slot_start, end=slot_end, confidence=confidence)],
+        payload.get("availability_snapshot"),
+    )
+
+
+def _parse_quorum_slots_payload(
+    payload: dict[str, Any],
+    *,
+    participants: list[ResolvedParticipant],
+    attendee_emails: list[str],
+    roles_by_email: dict[str, str],
+) -> tuple[list[MeetingQuorumSlot], dict[str, Any] | None]:
+    email_to_fio = _participant_email_to_fio(participants)
+    result: list[MeetingQuorumSlot] = []
+    for item in payload.get("candidates") or []:
+        coverage = item.get("coverage") or {}
+        conflicts = [
+            _slot_conflict_from_payload(
+                conflict,
+                email_to_fio=email_to_fio,
+                roles_by_email=roles_by_email,
+            )
+            for conflict in item.get("conflicts") or []
+        ]
+        result.append(
+            MeetingQuorumSlot(
+                start=item["slot_start"],
+                end=item["slot_end"],
+                confidence=float(item.get("confidence") or 0.7),
+                free_count=int(coverage.get("free") or 0),
+                total_count=int(coverage.get("total") or len(attendee_emails)),
+                coverage_ratio=float(coverage.get("ratio") or 0.0),
+                weighted_coverage_ratio=float(
+                    coverage.get("weighted_ratio") or coverage.get("ratio") or 0.0
+                ),
+                required_ok=bool(coverage.get("required_ok")),
+                conflicts=conflicts,
+                free_attendees=list(item.get("free_attendees") or []),
+                busy_attendees=list(item.get("busy_attendees") or []),
+                verified=bool(item.get("verified")),
+                impact_score=(
+                    float(item["impact_score"])
+                    if item.get("impact_score") is not None
+                    else None
+                ),
+                busy_weight_cost=(
+                    float(item["busy_weight_cost"])
+                    if item.get("busy_weight_cost") is not None
+                    else None
+                ),
+                reschedule_count=int(item.get("reschedule_count") or 0),
+                easy_reschedule_count=int(item.get("easy_reschedule_count") or 0),
+                low_movability_count=int(item.get("low_movability_count") or 0),
+            )
+        )
+    return result, payload.get("availability_snapshot")
+
+
+def _resolve_room_email(detail: dict[str, Any]) -> dict[str, str] | None:
+    location = place_from_detail(detail)
+    if not location:
+        return None
+    return resolve_room_for_location(location)
+
+
+def _align_datetime_for_slot_compare(dt: Any) -> Any:
+    """Приводит naive/aware datetime к одному tz для сравнения интервалов."""
+    from datetime import datetime
+
+    if not isinstance(dt, datetime):
+        return dt
+    tz = display_timezone()
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=tz)
+    return dt.astimezone(tz)
+
+
+def _build_room_slot_status_from_freebusy(
+    *,
+    room: dict[str, str],
+    busy_intervals: list[tuple[Any, Any]],
     slot_start: Any,
     slot_end: Any,
 ) -> dict[str, Any]:
-    """Проверяет занятость переговорной из СЗ на выбранный слот."""
-    location = place_from_detail(detail)
-    if not location:
-        return {
-            "name": "Не указана",
-            "email": None,
-            "status": "unknown",
-            "status_label": "не указана",
-            "available": None,
-        }
+    normalized_busy = [
+        (
+            _align_datetime_for_slot_compare(start),
+            _align_datetime_for_slot_compare(end),
+        )
+        for start, end in busy_intervals
+    ]
+    is_free = is_interval_free(
+        _align_datetime_for_slot_compare(slot_start),
+        _align_datetime_for_slot_compare(slot_end),
+        normalized_busy,
+    )
+    return {
+        "name": room["name"],
+        "email": room.get("email"),
+        "status": "free" if is_free else "busy",
+        "status_label": "свободна" if is_free else "занята",
+        "available": is_free,
+    }
 
-    room = resolve_room_for_location(location)
+
+def _build_room_slot_status(
+    *,
+    detail: dict[str, Any],
+    slot_start: Any,
+    slot_end: Any,
+    freebusy_by_email: dict[str, list[tuple[Any, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Занятость переговорной из того же bulk Free/Busy, что и участники."""
+    room = _resolve_room_email(detail)
     if room is None:
+        location = place_from_detail(detail)
+        if not location:
+            return {
+                "name": "Не указана",
+                "email": None,
+                "status": "unknown",
+                "status_label": "не указана",
+                "available": None,
+            }
         return {
             "name": location,
             "email": None,
@@ -179,36 +337,21 @@ def _build_room_slot_status(
             "available": None,
         }
 
-    try:
-        rows = check_rooms_status(
-            config=config,
-            rooms=[room],
+    room_email = (room.get("email") or "").strip().lower()
+    if freebusy_by_email is not None and room_email:
+        return _build_room_slot_status_from_freebusy(
+            room=room,
+            busy_intervals=freebusy_by_email.get(room_email, []),
             slot_start=slot_start,
             slot_end=slot_end,
         )
-    except Exception as exc:
-        logger.warning(
-            "meeting.slot_detail.room_check_failed",
-            room=room.get("name"),
-            error=str(exc),
-        )
-        return {
-            "name": room["name"],
-            "email": room.get("email"),
-            "status": "unknown",
-            "status_label": "не удалось проверить",
-            "available": None,
-            "calendar_access_error": str(exc),
-        }
 
-    row = rows[0]
-    is_free = row.get("status") == "free"
     return {
-        "name": row.get("name") or room["name"],
-        "email": row.get("email") or room.get("email"),
-        "status": "free" if is_free else "busy",
-        "status_label": row.get("status_label") or ("свободна" if is_free else "занята"),
-        "available": is_free,
+        "name": room["name"],
+        "email": room.get("email"),
+        "status": "unknown",
+        "status_label": "не удалось проверить",
+        "available": None,
     }
 
 
@@ -444,6 +587,7 @@ class MeetingAgentSlotService:
         duration_minutes: int,
         current_user: User,
         max_days: int = SLOT_PREVIEW_MAX_DAYS,
+        prefetched_busy_by_attendee: dict[str, list[tuple[Any, Any]]] | None = None,
     ) -> list[MeetingAttendeeRead]:
         del backend, memo, current_user
         if not search_start:
@@ -463,6 +607,7 @@ class MeetingAgentSlotService:
                 planned_start=search_start,
                 duration_minutes=duration_minutes,
                 max_days=max_days,
+                prefetched_busy_by_attendee=prefetched_busy_by_attendee,
             )
         except TimeoutError:
             logger.info(
@@ -562,6 +707,23 @@ class MeetingAgentSlotService:
             application.get("meeting_start"),
             detail.get("queue") or {},
         )
+        resolved_emails = _participant_emails(resolved)
+        prefetched_busy: dict[str, list[tuple[Any, Any]]] | None = None
+        if resolved_emails:
+            try:
+                prefetched_busy = await _fetch_preview_busy_by_attendee(
+                    participant_emails=resolved_emails,
+                    planned_start=planned_start,
+                    attendee_search_start=attendee_search_start,
+                    max_days=SLOT_PREVIEW_MAX_DAYS,
+                )
+            except Exception as exc:
+                logger.info(
+                    "meeting.slot_preview.prefetch_busy_failed",
+                    memo_ref_key=normalized_ref,
+                    error=str(exc),
+                )
+                prefetched_busy = None
 
         attendees = await self._enrich_attendees_with_nearest_slots(
             attendees,
@@ -570,6 +732,7 @@ class MeetingAgentSlotService:
             search_start=attendee_search_start,
             duration_minutes=duration,
             current_user=current_user,
+            prefetched_busy_by_attendee=prefetched_busy,
         )
 
         if missing_emails:
@@ -597,23 +760,26 @@ class MeetingAgentSlotService:
             timeout_seconds=SLOT_PREVIEW_TIMEOUT_SECONDS,
         )
         try:
-            find_result = await asyncio.wait_for(
-                backend.find_slots(
-                    memo=memo,
-                    participants=resolved,
-                    planned_start=planned_start,
+            find_payload = await asyncio.wait_for(
+                asyncio.to_thread(
+                    dispatch_find_meeting_slot,
+                    attendees=resolved_emails,
+                    preferred=planned_start,
                     duration_minutes=duration,
-                    current_user=current_user,
                     max_days=SLOT_PREVIEW_MAX_DAYS,
-                    verify_calendar=True,
+                    verify_calendar=False,
+                    skip_rooms=True,
                     quiet=False,
                     include_timing=True,
+                    prefetched_busy_by_attendee=prefetched_busy,
                 ),
                 timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
             )
-            all_free_slots = find_result.slots
+            all_free_slots, snapshot_payload = _parse_find_slots_payload(
+                find_payload,
+                participant_count=len(resolved_emails),
+            )
             availability_cache_id: str | None = None
-            snapshot_payload = find_result.availability_snapshot
             if snapshot_payload:
                 from app.services.slot_availability_cache import (
                     store_availability_snapshot,
@@ -691,30 +857,34 @@ class MeetingAgentSlotService:
             all_slots_error=str(all_slots_error) if all_slots_error else None,
         )
         try:
-            quorum_result = await asyncio.wait_for(
-                backend.find_quorum_slots(
-                    memo=memo,
-                    participants=resolved,
-                    attendee_roles=attendee_roles,
+            quorum_payload = await asyncio.wait_for(
+                asyncio.to_thread(
+                    dispatch_find_quorum_meeting_slots,
+                    attendees=resolved_emails,
+                    required_attendees=leadership_emails or None,
                     attendee_weights=attendee_weights,
-                    required_attendee_emails=leadership_emails or None,
-                    planned_start=planned_start,
+                    preferred=planned_start,
                     duration_minutes=duration,
-                    current_user=current_user,
                     max_days=SLOT_PREVIEW_MAX_DAYS,
                     min_coverage_ratio=QUORUM_MIN_COVERAGE_RATIO,
                     max_results=QUORUM_MAX_CANDIDATES,
                     verify_top_n=QUORUM_VERIFY_TOP_N,
-                    verify_calendar=True,
+                    verify_calendar=False,
                     quiet=False,
                     include_timing=True,
+                    prefetched_busy_by_attendee=prefetched_busy,
                 ),
                 timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
             )
-            quorum_slots = quorum_result.slots
+            quorum_slots, quorum_snapshot = _parse_quorum_slots_payload(
+                quorum_payload,
+                participants=resolved,
+                attendee_emails=resolved_emails,
+                roles_by_email=attendee_roles,
+            )
             availability_cache_id = _store_availability_cache_id(
                 normalized_ref,
-                quorum_result.availability_snapshot,
+                quorum_snapshot,
             )
         except TimeoutError:
             return agent_slot_preview_error(
@@ -1017,6 +1187,8 @@ class MeetingAgentSlotService:
             timeout_seconds=SLOT_DETAIL_TIMEOUT_SECONDS,
             reused_cache=False,
         )
+        room = _resolve_room_email(detail)
+        extra_freebusy_emails = [room["email"]] if room and room.get("email") else None
         try:
             raw = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -1029,6 +1201,7 @@ class MeetingAgentSlotService:
                     include_company_calendar=True,
                     light_reschedule_hints=True,
                     verify_personal_calendars=False,
+                    extra_freebusy_emails=extra_freebusy_emails,
                 ),
                 timeout=SLOT_DETAIL_TIMEOUT_SECONDS,
             )
@@ -1063,12 +1236,11 @@ class MeetingAgentSlotService:
             participant_status_read(item, attendees=attendees)
             for item in raw.get("participants") or []
         ]
-        outlook_config = load_config()
         room_raw = _build_room_slot_status(
             detail=detail,
-            config=outlook_config,
             slot_start=slot_start_dt,
             slot_end=slot_end_dt,
+            freebusy_by_email=raw.get("freebusy_by_email"),
         )
         room = room_status_read(room_raw)
         participants.append(

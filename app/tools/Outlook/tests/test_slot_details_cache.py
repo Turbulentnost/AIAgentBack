@@ -479,7 +479,7 @@ def test_build_slot_participant_details_freebusy_and_company_calendar_mark_busy(
     assert participant["blocking_events"][0]["source"] == "company_calendar"
 
 
-def test_build_slot_participant_details_enriches_subject_from_personal_calendar() -> None:
+def test_build_slot_participant_details_enriches_subject_from_company_calendar() -> None:
     config = _config()
     tz = ZoneInfo("Europe/Moscow")
     slot_start = datetime(2026, 7, 17, 15, 20, tzinfo=tz)
@@ -488,7 +488,7 @@ def test_build_slot_participant_details_enriches_subject_from_personal_calendar(
         datetime(2026, 7, 17, 13, 0, tzinfo=tz),
         datetime(2026, 7, 17, 16, 30, tzinfo=tz),
     )
-    personal_item = _company_item(
+    company_item = _company_item(
         subject="Тема 1",
         start=datetime(2026, 7, 17, 15, 19, tzinfo=tz),
         end=datetime(2026, 7, 17, 16, 19, tzinfo=tz),
@@ -496,11 +496,9 @@ def test_build_slot_participant_details_enriches_subject_from_personal_calendar(
     )
 
     def _read_calendar(_config, mailbox, *, range_start, range_end, **_kwargs):
-        if mailbox == "sktb_razvitie2@turbo-don.ru":
-            return [personal_item]
         if mailbox == config.company_calendar:
-            return []
-        raise AssertionError(mailbox)
+            return [company_item]
+        raise AssertionError(f"unexpected calendar read: {mailbox}")
 
     with _patch_freebusy({"sktb_razvitie2@turbo-don.ru": [busy_block]}):
         with patch(
@@ -524,14 +522,15 @@ def test_build_slot_participant_details_enriches_subject_from_personal_calendar(
     participant = result["participants"][0]
     assert participant["status"] == "busy"
     assert participant["blocking_events"][0]["event_subject"] == "Тема 1"
+    assert participant["blocking_events"][0]["source"] == "company_calendar"
 
 
-def test_build_slot_participant_details_verify_personal_calendar_marks_busy() -> None:
+def test_build_slot_participant_details_ignores_verify_personal_calendars_flag() -> None:
     config = _config()
     tz = ZoneInfo("Europe/Moscow")
     slot_start = datetime(2026, 7, 17, 15, 20, tzinfo=tz)
     slot_end = datetime(2026, 7, 17, 16, 20, tzinfo=tz)
-    personal_meeting = _company_item(
+    company_meeting = _company_item(
         subject="Тема 1",
         start=datetime(2026, 7, 17, 15, 19, tzinfo=tz),
         end=datetime(2026, 7, 17, 16, 19, tzinfo=tz),
@@ -540,31 +539,30 @@ def test_build_slot_participant_details_verify_personal_calendar_marks_busy() ->
     )
 
     def _read_calendar(_config, mailbox, *, range_start, range_end, **_kwargs):
-        if mailbox == "sktb_razvitie2@turbo-don.ru":
-            return [personal_meeting]
-        if mailbox == config.company_calendar:
-            return []
-        return []
+        assert mailbox == config.company_calendar
+        return [company_meeting]
 
-    with patch(
-        "app.tools.Outlook.slot_search.api.read_calendar_items_in_range",
-        _read_calendar,
-    ):
-        result = build_slot_participant_details(
-            config=config,
-            attendees=[
-                {
-                    "fio": "Соломичева Светлана Викторовна",
-                    "email": "sktb_razvitie2@turbo-don.ru",
-                    "role": "manager",
-                }
-            ],
-            slot_start=slot_start,
-            slot_end=slot_end,
-            include_company_calendar=True,
-            verify_personal_calendars=True,
-        )
+    with _patch_freebusy({}):
+        with patch(
+            "app.tools.Outlook.slot_search.api.read_calendar_items_in_range",
+            side_effect=_read_calendar,
+        ) as read_calendar_mock:
+            result = build_slot_participant_details(
+                config=config,
+                attendees=[
+                    {
+                        "fio": "Соломичева Светлана Викторовна",
+                        "email": "sktb_razvitie2@turbo-don.ru",
+                        "role": "manager",
+                    }
+                ],
+                slot_start=slot_start,
+                slot_end=slot_end,
+                include_company_calendar=True,
+                verify_personal_calendars=True,
+            )
 
+    read_calendar_mock.assert_called_once()
     participant = result["participants"][0]
     assert participant["status"] == "busy"
     assert participant["blocking_events"][0]["event_subject"] == "Тема 1"

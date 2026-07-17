@@ -1206,14 +1206,17 @@ def test_build_slot_participant_details_marks_free_and_busy(monkeypatch) -> None
         datetime(2026, 7, 9, 8, 30, tzinfo=tz),
         datetime(2026, 7, 9, 9, 30, tzinfo=tz),
     )
-    calendar_event = SimpleNamespace(
+    company_item = _calendar_item(
         subject="Согласование бюджета",
         start=busy_block[0],
         end=busy_block[1],
-        legacy_free_busy_status="Busy",
-        is_cancelled=False,
-        organizer=None,
+        attendees=["a@turbo-don.ru"],
     )
+
+    def _read_calendar(_config, mailbox, **_kwargs):
+        if mailbox == config.company_calendar:
+            return [company_item]
+        return []
 
     monkeypatch.setattr(
         "app.tools.Outlook.slot_search.api.busy_intervals_and_events_from_freebusy",
@@ -1227,7 +1230,7 @@ def test_build_slot_participant_details_marks_free_and_busy(monkeypatch) -> None
     )
     monkeypatch.setattr(
         "app.tools.Outlook.slot_search.api.read_calendar_items_in_range",
-        lambda *_args, **_kwargs: [calendar_event],
+        _read_calendar,
     )
 
     result = build_slot_participant_details(
@@ -1238,6 +1241,7 @@ def test_build_slot_participant_details_marks_free_and_busy(monkeypatch) -> None
         ],
         slot_start=slot_start,
         slot_end=slot_end,
+        include_company_calendar=True,
     )
 
     assert result["duration_minutes"] == 120
@@ -1271,15 +1275,17 @@ def test_build_slot_participant_details_skips_company_calendar_by_default(monkey
         _read_calendar,
     )
 
-    build_slot_participant_details(
+    result = build_slot_participant_details(
         config=config,
         attendees=[{"fio": "A", "email": "a@turbo-don.ru", "role": "manager"}],
         slot_start=slot_start,
         slot_end=slot_end,
     )
 
-    assert company_calls == ["a@turbo-don.ru"]
-    assert config.company_calendar not in company_calls
+    assert company_calls == []
+    by_email = {item["email"]: item for item in result["participants"]}
+    assert by_email["a@turbo-don.ru"]["status"] == "busy"
+    assert by_email["a@turbo-don.ru"]["blocking_events"][0]["event_subject"] is None
 
 
 def test_build_slot_participant_details_reads_company_calendar_when_requested(monkeypatch) -> None:
