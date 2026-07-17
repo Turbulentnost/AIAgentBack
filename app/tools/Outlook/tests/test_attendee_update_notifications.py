@@ -188,3 +188,20 @@ def test_build_new_attendees_calendar_invite_body_uses_standard_invite_format() 
     assert "Попов Павел Павлович <popov@turbo-don.ru>" in html
     assert INVITE_AGENT_FOOTER in html
     assert "Вы были добавлены участником" not in html
+
+
+def test_build_new_attendees_calendar_invite_body_ignores_composition_message() -> None:
+    item = SimpleNamespace(
+        subject="Тестовая СЗ",
+        required_attendees=[attendee("new@turbo-don.ru", "Новый Участник")],
+        optional_attendees=[],
+    )
+    body = build_new_attendees_calendar_invite_body(
+        item=item,
+        changes={"after": ["new@turbo-don.ru"]},
+        account=None,
+        message="Состав участников совещания изменён",
+    )
+    html = str(body)
+    assert "Состав участников совещания изменён" not in html
+    assert "Новый Участник <new@turbo-don.ru>" in html

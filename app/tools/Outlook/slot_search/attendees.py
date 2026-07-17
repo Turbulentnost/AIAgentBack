@@ -61,6 +61,30 @@ def calendar_item_attendee_emails(item: Any) -> list[str]:
         emails.append(organizer)
     return list(dict.fromkeys(emails))
 
+def calendar_item_attendee_entries(item: Any) -> list[tuple[str | None, str]]:
+    """Пары (отображаемое имя, e-mail) участников CalendarItem."""
+    entries: list[tuple[str | None, str]] = []
+    for attr in ("required_attendees", "optional_attendees"):
+        for entry in getattr(item, attr, None) or []:
+            email = normalize_calendar_email(entry)
+            if not email:
+                continue
+            entries.append((calendar_attendee_display_name(entry), email))
+    organizer = getattr(item, "organizer", None)
+    organizer_email = normalize_calendar_email(organizer)
+    if organizer_email:
+        entries.append((calendar_attendee_display_name(organizer), organizer_email))
+
+    deduped: list[tuple[str | None, str]] = []
+    seen: set[str] = set()
+    for name, email in entries:
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((name, email))
+    return deduped
+
 def _is_resource_calendar_email(email: str) -> bool:
     normalized = email.strip().lower()
     return any(normalized.startswith(prefix) for prefix in RESOURCE_CALENDAR_PREFIXES)

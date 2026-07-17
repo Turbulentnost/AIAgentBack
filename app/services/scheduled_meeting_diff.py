@@ -17,6 +17,10 @@ class SeriesUpdateChangeSet:
     new_series_end_date: date
     series_end_changed: bool
     comment_changed: bool
+    participants_changed: bool
+    participants_added: tuple[uuid.UUID, ...]
+    participants_removed: tuple[uuid.UUID, ...]
+    new_participants: tuple[ScheduledMeetingParticipantCreate, ...]
     unsupported_fields: tuple[str, ...]
 
 
@@ -87,13 +91,30 @@ def _unsupported_update_fields(
         unsupported.append("статус")
     if payload.series_start_date is not None and payload.series_start_date != meeting.series_start_date:
         unsupported.append("дата начала серии")
-    if payload.participants is not None:
-        if _participant_position_ids(meeting) != _payload_participant_position_ids(payload.participants):
-            unsupported.append("участники")
     if payload.recurrence is not None and _recurrence_schedule_changed(meeting, payload.recurrence):
         unsupported.append("периодичность")
 
     return unsupported
+
+
+def _participant_update_change(
+    meeting: ScheduledMeeting,
+    payload: ScheduledMeetingUpdate,
+) -> tuple[bool, tuple[uuid.UUID, ...], tuple[uuid.UUID, ...], tuple[ScheduledMeetingParticipantCreate, ...]]:
+    if payload.participants is None:
+        return False, (), (), ()
+
+    current_ids = _participant_position_ids(meeting)
+    new_items = tuple(payload.participants)
+    new_ids = _payload_participant_position_ids(payload.participants)
+    if current_ids == new_ids:
+        return False, (), (), ()
+
+    current_set = set(current_ids)
+    new_set = set(new_ids)
+    added = tuple(position_id for position_id in new_ids if position_id not in current_set)
+    removed = tuple(position_id for position_id in current_ids if position_id not in new_set)
+    return True, added, removed, new_items
 
 
 def _resolved_comment(payload: ScheduledMeetingUpdate) -> str | None:
@@ -117,9 +138,18 @@ def build_series_update_change_set(
     new_comment = _resolved_comment(payload)
     comment_changed = payload.comment is not None and new_comment != current_comment
 
+    participants_changed, participants_added, participants_removed, new_participants = (
+        _participant_update_change(meeting, payload)
+    )
+    unsupported = list(_unsupported_update_fields(meeting, payload))
+
     return SeriesUpdateChangeSet(
         new_series_end_date=new_end,
         series_end_changed=new_end != meeting.series_end_date,
         comment_changed=comment_changed,
-        unsupported_fields=tuple(_unsupported_update_fields(meeting, payload)),
+        participants_changed=participants_changed,
+        participants_added=participants_added,
+        participants_removed=participants_removed,
+        new_participants=new_participants,
+        unsupported_fields=tuple(unsupported),
     )

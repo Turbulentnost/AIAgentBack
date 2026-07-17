@@ -13,7 +13,7 @@ from app.services.meeting_backend import (
     MeetingSlotConflict,
 )
 from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
-from app.services.meeting_attendees import registry_participant_names
+from app.services.meeting_attendees import registry_participants_for_display
 from app.schemas.meeting import (
     MeetingAttendeeRead,
     MeetingInviteDraftRead,
@@ -578,8 +578,8 @@ def _pending_add_payload(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
 
 
 def _registry_participants_for_read(entry: MeetingRegistryEntry) -> list[str]:
-    """ФИО для модалки: только participants из БД реестра."""
-    return registry_participant_names(entry)
+    """ФИО для модалки: participants из БД, pending_add и сохранённый состав вхождения."""
+    return registry_participants_for_display(entry)
 
 
 def registry_cancel_read(

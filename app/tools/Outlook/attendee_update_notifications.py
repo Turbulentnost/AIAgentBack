@@ -245,8 +245,6 @@ def build_new_attendees_calendar_invite_body(
     after = list(changes.get("after") or [])
     roster_pairs = resolve_attendee_pairs(after, item=item, account=account)
     text = format_invite_body(roster_pairs, footer=INVITE_AGENT_FOOTER)
-    if message.strip():
-        text = f"{message.strip()}\n\n{text}"
     return plain_text_to_html(text)
 
 

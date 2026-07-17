@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -23,6 +25,7 @@ from app.models.enums import (
     ScheduledMeetingWeekdayPosition,
 )
 from app.models.scheduled_meeting import ScheduledMeeting
+from app.models.position import Position
 from app.models.user import User
 from app.services.enterprise_positions_report import (
     lookup_fios_by_position_title,
@@ -43,6 +46,8 @@ from app.tools.Outlook.send_recurring_meeting_invite import (
     weekday_mismatch_warning,
 )
 from app.utils.department_classification import normalize_position_name
+
+logger = logging.getLogger(__name__)
 
 
 class ScheduledMeetingOutlookError(Exception):
@@ -266,16 +271,7 @@ def _is_invitable_attendee_email(address: str) -> bool:
     return is_corporate_email(address)
 
 
-async def resolve_attendees(
-    db: AsyncSession,
-    meeting: ScheduledMeeting,
-) -> list[tuple[str, str]]:
-    from app.tools.onec.lookup_email_by_fio import lookup_email_by_fio
-
-    attendees: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    unresolved: list[str] = []
-
+async def _load_users_by_position(db: AsyncSession) -> dict[str, list[tuple[str, str]]]:
     users_result = await db.execute(
         select(User.full_name, User.email, User.position).where(
             User.deleted_at.is_(None),
@@ -294,20 +290,27 @@ async def resolve_attendees(
         if not address or not _is_invitable_attendee_email(address):
             continue
         users_by_position.setdefault(position_key, []).append((fio, address))
+    return users_by_position
 
-    for participant in sorted(meeting.participants, key=lambda item: item.sort_order):
-        title = (
-            participant.position.name.strip()
-            if participant.position is not None and participant.position.name
-            else ""
-        )
-        if not title:
-            unresolved.append(str(participant.position_id))
+
+async def resolve_attendees_for_position_titles(
+    db: AsyncSession,
+    titles: list[str],
+) -> list[tuple[str, str]]:
+    from app.tools.onec.lookup_email_by_fio import lookup_email_by_fio
+
+    users_by_position = await _load_users_by_position(db)
+    attendees: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    unresolved: list[str] = []
+
+    for title in titles:
+        normalized_title = normalize_position_title(title)
+        if not normalized_title:
+            unresolved.append(title)
             continue
 
-        normalized_title = normalize_position_title(title)
         found_for_role = False
-
         for fio, address in users_by_position.get(normalized_title, []):
             key = address.lower()
             if key in seen:
@@ -341,6 +344,176 @@ async def resolve_attendees(
     if not attendees:
         raise ScheduledMeetingOutlookError("Не удалось определить e-mail участников серии")
     return attendees
+
+
+def _fio_matches_series_attendee_name(fio: str, display_name: str | None) -> bool:
+    if not display_name:
+        return False
+    surname = fio.split()[0].casefold() if fio.split() else ""
+    if surname and surname in display_name.casefold():
+        return True
+    parts = [part for part in fio.split() if len(part) > 1]
+    return bool(parts) and all(part.casefold() in display_name.casefold() for part in parts[:2])
+
+
+def _emails_for_removed_position_in_series(
+    title: str,
+    *,
+    series_attendees: list[tuple[str | None, str]],
+    users_by_position: dict[str, list[tuple[str, str]]],
+) -> list[str]:
+    series_email_set = {email.lower() for _name, email in series_attendees}
+    normalized_title = normalize_position_title(normalize_position_name(title))
+    matched: list[str] = []
+    seen: set[str] = set()
+
+    for _fio, address in users_by_position.get(normalized_title, []):
+        key = address.strip().lower()
+        if key in series_email_set and key not in seen:
+            seen.add(key)
+            matched.append(address.strip())
+
+    if not matched:
+        for fio in lookup_fios_by_position_title(title):
+            for display_name, email in series_attendees:
+                key = email.lower()
+                if key in seen:
+                    continue
+                if _fio_matches_series_attendee_name(fio, display_name):
+                    seen.add(key)
+                    matched.append(email)
+
+    return matched
+
+
+def _load_outlook_series_item(meeting: ScheduledMeeting) -> Any:
+    from app.tools.Outlook.cancel_meeting import get_meeting_by_id
+    from app.tools.Outlook.slot_search.attendees import (
+        calendar_item_attendee_emails,
+        calendar_item_attendee_entries,
+    )
+
+    if not meeting.outlook_series_id:
+        raise ScheduledMeetingOutlookError(
+            "Серия не связана с календарём Outlook",
+            status_code=409,
+        )
+
+    config = load_config()
+    item = get_meeting_by_id(
+        config=config,
+        item_id=meeting.outlook_series_id,
+        changekey=meeting.outlook_changekey or "",
+    )
+    if not calendar_item_attendee_emails(item):
+        try:
+            item.refresh()
+        except Exception as exc:
+            logger.warning("outlook_series_refresh_failed error=%s", exc)
+
+    if not calendar_item_attendee_entries(item):
+        raise ScheduledMeetingOutlookError(
+            "В серии Outlook не найдены участники для удаления",
+            status_code=409,
+        )
+    return item
+
+
+def _resolve_removed_emails_from_outlook_series_sync(
+    meeting: ScheduledMeeting,
+    titles: list[str],
+    users_by_position: dict[str, list[tuple[str, str]]],
+) -> list[str]:
+    from app.tools.Outlook.slot_search.attendees import calendar_item_attendee_entries
+
+    item = _load_outlook_series_item(meeting)
+    series_attendees = calendar_item_attendee_entries(item)
+    emails: list[str] = []
+    seen: set[str] = set()
+    unresolved: list[str] = []
+
+    for title in titles:
+        role_emails = _emails_for_removed_position_in_series(
+            title,
+            series_attendees=series_attendees,
+            users_by_position=users_by_position,
+        )
+        if not role_emails:
+            unresolved.append(title)
+            continue
+        for address in role_emails:
+            key = address.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            emails.append(address)
+
+    if unresolved:
+        raise ScheduledMeetingOutlookError(
+            "Не удалось сопоставить удаляемые должности с участниками серии Outlook: "
+            + ", ".join(unresolved)
+        )
+    if not emails:
+        raise ScheduledMeetingOutlookError(
+            "Не удалось определить e-mail удаляемых участников серии Outlook"
+        )
+    return emails
+
+
+async def resolve_removed_emails_from_outlook_series(
+    db: AsyncSession,
+    meeting: ScheduledMeeting,
+    position_ids: tuple[uuid.UUID, ...],
+) -> list[str]:
+    """E-mail удаляемых участников из текущего состава серии Outlook (без GAL)."""
+    if not position_ids:
+        return []
+
+    result = await db.execute(select(Position).where(Position.id.in_(position_ids)))
+    positions = list(result.scalars().all())
+    titles_by_id = {
+        position.id: position.name.strip()
+        for position in positions
+        if position.name and position.name.strip()
+    }
+    if len(titles_by_id) != len(position_ids):
+        missing = [str(position_id) for position_id in position_ids if position_id not in titles_by_id]
+        raise ScheduledMeetingOutlookError(
+            f"Не найдены должности для участников: {', '.join(missing)}"
+        )
+
+    users_by_position = await _load_users_by_position(db)
+    titles = [titles_by_id[position_id] for position_id in position_ids]
+    return await asyncio.to_thread(
+        _resolve_removed_emails_from_outlook_series_sync,
+        meeting,
+        titles,
+        users_by_position,
+    )
+
+
+async def resolve_attendees(
+    db: AsyncSession,
+    meeting: ScheduledMeeting,
+) -> list[tuple[str, str]]:
+    titles: list[str] = []
+    unresolved: list[str] = []
+    for participant in sorted(meeting.participants, key=lambda item: item.sort_order):
+        title = (
+            participant.position.name.strip()
+            if participant.position is not None and participant.position.name
+            else ""
+        )
+        if not title:
+            unresolved.append(str(participant.position_id))
+            continue
+        titles.append(title)
+
+    if unresolved:
+        raise ScheduledMeetingOutlookError(
+            "Не удалось найти e-mail для должностей: " + ", ".join(unresolved)
+        )
+    return await resolve_attendees_for_position_titles(db, titles)
 
 
 async def resolve_attendee_emails(db: AsyncSession, meeting: ScheduledMeeting) -> list[str]:

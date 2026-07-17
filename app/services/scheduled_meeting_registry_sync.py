@@ -95,6 +95,41 @@ class ScheduledMeetingRegistrySyncService:
             names.append(name)
         return names
 
+    def _merge_occurrence_participants(
+        self,
+        meeting: ScheduledMeeting,
+        entry: MeetingRegistryEntry,
+    ) -> list[str]:
+        """Должности серии + вручную добавленные участники конкретного вхождения."""
+        series_names = self._participant_names(meeting)
+        series_keys = {name.casefold() for name in series_names}
+        merged: list[str] = list(series_names)
+        seen = set(series_keys)
+
+        def append_extra(name: str) -> None:
+            normalized = name.strip()
+            if not normalized:
+                return
+            key = normalized.casefold()
+            if key in seen:
+                return
+            seen.add(key)
+            merged.append(normalized)
+
+        current = entry.participants if isinstance(entry.participants, list) else []
+        for name in current:
+            if isinstance(name, str) and name.casefold() not in series_keys:
+                append_extra(name)
+
+        payload = entry.payload if isinstance(entry.payload, dict) else {}
+        stored = payload.get("occurrence_participant_names")
+        if isinstance(stored, list):
+            for name in stored:
+                if isinstance(name, str) and name.casefold() not in series_keys:
+                    append_extra(name)
+
+        return merged
+
     async def _resolve_occurrences(
         self,
         meeting: ScheduledMeeting,
@@ -112,7 +147,7 @@ class ScheduledMeetingRegistrySyncService:
         meeting: ScheduledMeeting,
         occurrence: SeriesOccurrence,
     ) -> None:
-        participants = self._participant_names(meeting)
+        participants = self._merge_occurrence_participants(meeting, entry)
         entry.title = meeting.title
         entry.subject = occurrence.subject or meeting.title
         entry.participants = participants

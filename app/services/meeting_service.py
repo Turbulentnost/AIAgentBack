@@ -132,6 +132,7 @@ from app.services.meeting_attendees import (
     collect_attendees_from_registry_entry,
     emails_for_resolved_participant_names,
     registry_participant_names,
+    resolve_registry_participant_emails_from_outlook,
 )
 from app.services.meeting_offline_cache import (
     build_offline_approve_result,
@@ -769,10 +770,12 @@ class MeetingService:
     ) -> MeetingRegistryParticipantsRead:
         await self._ensure_access(current_user)
         normalized_ref = memo_ref_key.strip().lower()
-        entry = await MeetingRegistryService(self.db).get_entry(normalized_ref)
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
         if entry is None:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
 
+        entry = await registry.reconcile_participants_from_outlook(entry)
         return registry_participants_read(entry)
 
     @staticmethod
@@ -1025,15 +1028,46 @@ class MeetingService:
             except MemoCacheMissError:
                 pass
 
-            try:
-                all_resolved = await backend.resolve_participants(
-                    target_names,
-                    current_user=current_user,
-                )
-            except MeetingBackendError as exc:
-                raise MeetingServiceError(str(exc)) from exc
+            all_by_fio = dict(by_fio)
+            existing_names = [
+                name
+                for name in target_names
+                if name.casefold() not in {item.casefold() for item in added}
+            ]
+            outlook_emails = resolve_registry_participant_emails_from_outlook(
+                entry,
+                existing_names,
+            )
+            for name in existing_names:
+                key = name.casefold()
+                match = all_by_fio.get(key)
+                if match and match.email:
+                    continue
+                email = outlook_emails.get(key)
+                if email:
+                    all_by_fio[key] = ResolvedParticipant(
+                        fio=name,
+                        email=email,
+                        found=True,
+                    )
 
-            all_by_fio = {item.fio.casefold(): item for item in all_resolved}
+            unresolved_existing = [
+                name
+                for name in existing_names
+                if not (all_by_fio.get(name.casefold()) and all_by_fio[name.casefold()].email)
+            ]
+            if unresolved_existing:
+                try:
+                    fallback_resolved = await backend.resolve_participants(
+                        unresolved_existing,
+                        current_user=current_user,
+                    )
+                except MeetingBackendError as exc:
+                    raise MeetingServiceError(str(exc)) from exc
+                for item in fallback_resolved:
+                    if item.email:
+                        all_by_fio[item.fio.casefold()] = item
+
             missing_target = [
                 fio
                 for fio in target_names

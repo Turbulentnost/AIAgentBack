@@ -21,6 +21,7 @@ from app.schemas.scheduled_meeting import (
     ScheduledMeetingOccurrenceRead,
     ScheduledMeetingParticipantOptionRead,
     ScheduledMeetingParticipantRead,
+    ScheduledMeetingParticipantCreate,
     ScheduledMeetingRead,
     ScheduledMeetingUpdate,
     ScheduledMeetingUpdateRead,
@@ -29,8 +30,12 @@ from app.services.scheduled_meeting_diff import build_series_update_change_set
 from app.services.scheduled_meeting_occurrences import recurrence_input_from_meeting
 from app.services.scheduled_meeting_outlook import (
     ScheduledMeetingOutlookError,
+    _attendee_emails,
     plan_scheduled_meeting_in_outlook,
+    resolve_attendees_for_position_titles,
+    resolve_removed_emails_from_outlook_series,
 )
+from app.services.scheduled_meeting_outlook_participants import sync_series_participants_in_outlook
 from app.services.scheduled_meeting_outlook_update import update_series_end_date_in_outlook
 from app.services.scheduled_meeting_recurrence import (
     build_recurrence_rule,
@@ -190,7 +195,8 @@ class ScheduledMeetingService:
         if change_set.unsupported_fields:
             fields = ", ".join(change_set.unsupported_fields)
             raise ScheduledMeetingServiceError(
-                f"Пока поддерживается только изменение срока серии и комментария. "
+                "Пока поддерживается изменение срока серии, комментария и состава участников "
+                "(добавление и удаление). "
                 f"Не поддерживается: {fields}",
                 status_code=400,
             )
@@ -201,7 +207,11 @@ class ScheduledMeetingService:
                 status_code=400,
             )
 
-        if not change_set.series_end_changed and not change_set.comment_changed:
+        if (
+            not change_set.series_end_changed
+            and not change_set.comment_changed
+            and not change_set.participants_changed
+        ):
             return ScheduledMeetingUpdateRead(
                 series=self.to_read(meeting),
                 applied_changes=ScheduledMeetingAppliedChangesRead(
@@ -215,6 +225,8 @@ class ScheduledMeetingService:
         outlook_updated = False
         outlook_actions: list[str] = []
         changes: list[str] = []
+        participants_added_names: list[str] = []
+        participants_removed_names: list[str] = []
 
         if change_set.series_end_changed:
             if meeting.outlook_series_id and meeting.status == ScheduledMeetingStatus.PLANNED:
@@ -254,9 +266,70 @@ class ScheduledMeetingService:
             meeting.payload = stored_payload or None
             changes.append("comment")
 
+        if change_set.participants_changed:
+            participants_added_names, participants_removed_names = await self._apply_participant_changes(
+                meeting,
+                participants=change_set.new_participants,
+                added_position_ids=change_set.participants_added,
+                removed_position_ids=change_set.participants_removed,
+            )
+            add_emails: list[str] = []
+            remove_emails: list[str] = []
+            if (
+                meeting.outlook_series_id
+                and meeting.status == ScheduledMeetingStatus.PLANNED
+            ):
+                try:
+                    add_emails = (
+                        await self._resolve_emails_for_position_ids(change_set.participants_added)
+                        if change_set.participants_added
+                        else []
+                    )
+                    remove_emails = (
+                        await resolve_removed_emails_from_outlook_series(
+                            self.db,
+                            meeting,
+                            change_set.participants_removed,
+                        )
+                        if change_set.participants_removed
+                        else []
+                    )
+                except ScheduledMeetingOutlookError as exc:
+                    raise ScheduledMeetingServiceError(
+                        str(exc),
+                        status_code=exc.status_code,
+                    ) from exc
+            if (
+                meeting.outlook_series_id
+                and meeting.status == ScheduledMeetingStatus.PLANNED
+                and (add_emails or remove_emails)
+            ):
+                try:
+                    outlook_result = await sync_series_participants_in_outlook(
+                        self.db,
+                        meeting,
+                        add_emails=add_emails,
+                        remove_emails=remove_emails,
+                    )
+                except ScheduledMeetingOutlookError as exc:
+                    raise ScheduledMeetingServiceError(
+                        str(exc),
+                        status_code=exc.status_code,
+                    ) from exc
+                outlook_updated = True
+                action = outlook_result.get("action")
+                if isinstance(action, str) and action:
+                    outlook_actions.append(action)
+                changekey = outlook_result.get("outlook_changekey")
+                if isinstance(changekey, str) and changekey.strip():
+                    meeting.outlook_changekey = changekey
+            changes.append("participants")
+
         await self.db.flush()
 
-        if change_set.series_end_changed and meeting.status == ScheduledMeetingStatus.PLANNED:
+        if (change_set.series_end_changed or change_set.participants_changed) and (
+            meeting.status == ScheduledMeetingStatus.PLANNED
+        ):
             from app.services.scheduled_meeting_registry_sync import (
                 ScheduledMeetingRegistrySyncService,
             )
@@ -265,7 +338,7 @@ class ScheduledMeetingService:
                 await ScheduledMeetingRegistrySyncService(self.db).sync_series_card(meeting.id)
             except Exception:
                 logger.warning(
-                    "scheduled_series_registry_sync_after_end_update_failed meeting_id=%s",
+                    "scheduled_series_registry_sync_after_update_failed meeting_id=%s",
                     meeting.id,
                     exc_info=True,
                 )
@@ -281,6 +354,8 @@ class ScheduledMeetingService:
                 outlook_updated=outlook_updated,
                 changes=changes,
                 outlook_actions=outlook_actions,
+                participants_added=participants_added_names,
+                participants_removed=participants_removed_names,
             ),
         )
 
@@ -361,6 +436,77 @@ class ScheduledMeetingService:
             current_card=current_card,
             history=history,
         )
+
+    async def _position_names_for_ids(self, position_ids: tuple[uuid.UUID, ...]) -> list[str]:
+        if not position_ids:
+            return []
+        result = await self.db.execute(select(Position).where(Position.id.in_(position_ids)))
+        names_by_id = {
+            position.id: position.name.strip()
+            for position in result.scalars().all()
+            if position.name and position.name.strip()
+        }
+        return [names_by_id[position_id] for position_id in position_ids if position_id in names_by_id]
+
+    async def _resolve_emails_for_position_ids(
+        self,
+        position_ids: tuple[uuid.UUID, ...],
+    ) -> list[str]:
+        if not position_ids:
+            return []
+        result = await self.db.execute(select(Position).where(Position.id.in_(position_ids)))
+        positions = list(result.scalars().all())
+        titles = [position.name.strip() for position in positions if position.name and position.name.strip()]
+        if len(titles) != len(position_ids):
+            missing = [str(position_id) for position_id in position_ids]
+            raise ScheduledMeetingServiceError(
+                f"Не найдены должности для участников: {', '.join(missing)}",
+                status_code=400,
+            )
+        attendees = await resolve_attendees_for_position_titles(self.db, titles)
+        return _attendee_emails(attendees)
+
+    async def _apply_participant_changes(
+        self,
+        meeting: ScheduledMeeting,
+        *,
+        participants: tuple[ScheduledMeetingParticipantCreate, ...],
+        added_position_ids: tuple[uuid.UUID, ...],
+        removed_position_ids: tuple[uuid.UUID, ...],
+    ) -> tuple[list[str], list[str]]:
+        position_ids = [item.position_id for item in participants if item.position_id]
+        await self._ensure_positions_exist(position_ids)
+        added_set = set(added_position_ids)
+        removed_set = set(removed_position_ids)
+        existing_by_position = {item.position_id: item for item in meeting.participants}
+
+        for position_id in removed_position_ids:
+            existing = existing_by_position.get(position_id)
+            if existing is not None:
+                await self.db.delete(existing)
+
+        for index, participant in enumerate(participants):
+            position_id = participant.position_id
+            if position_id is None:
+                continue
+            if position_id in added_set:
+                self.db.add(
+                    ScheduledMeetingParticipant(
+                        scheduled_meeting_id=meeting.id,
+                        position_id=position_id,
+                        sort_order=participant.sort_order if participant.sort_order else index,
+                        is_required=participant.is_required,
+                    )
+                )
+                continue
+            existing = existing_by_position.get(position_id)
+            if existing is not None:
+                existing.sort_order = participant.sort_order if participant.sort_order else index
+                existing.is_required = participant.is_required
+
+        added_names = await self._position_names_for_ids(added_position_ids)
+        removed_names = await self._position_names_for_ids(removed_position_ids)
+        return added_names, removed_names
 
     async def _ensure_positions_exist(self, position_ids: list[uuid.UUID]) -> None:
         if not position_ids:

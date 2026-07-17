@@ -440,29 +440,241 @@ async def test_update_series_end_calls_outlook_for_planned_series() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_rejects_participants_change() -> None:
+async def test_update_removes_participant_for_created_series() -> None:
     db = AsyncMock()
     meeting_id = uuid.uuid4()
     position_id = uuid.uuid4()
+    other_position_id = uuid.uuid4()
     meeting = _meeting_stub(meeting_id=meeting_id, title="Серия", position_id=position_id)
+    other_position = SimpleNamespace(id=other_position_id, name="Другая должность", is_active=True)
+    meeting.participants.append(
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            position_id=other_position_id,
+            position=other_position,
+            sort_order=1,
+            is_required=True,
+        )
+    )
+    meeting.status = ScheduledMeetingStatus.CREATED
 
     execute_result = MagicMock()
     execute_result.scalar_one_or_none.return_value = meeting
     db.execute = AsyncMock(return_value=execute_result)
+    db.flush = AsyncMock()
+    db.delete = AsyncMock()
 
     from app.schemas.scheduled_meeting import (
         ScheduledMeetingParticipantCreate,
         ScheduledMeetingUpdate,
     )
 
-    with pytest.raises(ScheduledMeetingServiceError) as exc:
-        await ScheduledMeetingService(db).update(
+    with (
+        patch.object(
+            ScheduledMeetingService,
+            "_apply_participant_changes",
+            AsyncMock(return_value=([], ["Другая должность"])),
+        ) as apply_participants,
+        patch(
+            "app.services.scheduled_meeting_registry_sync.ScheduledMeetingRegistrySyncService.sync_series_card",
+            AsyncMock(),
+        ) as sync_card,
+    ):
+        result = await ScheduledMeetingService(db).update(
             meeting_id,
             ScheduledMeetingUpdate(
-                series_end_date=date(2026, 7, 20),
-                participants=[ScheduledMeetingParticipantCreate(position_id=uuid.uuid4())],
+                participants=[
+                    ScheduledMeetingParticipantCreate(position_id=position_id, sort_order=0),
+                ],
             ),
         )
 
-    assert exc.value.status_code == 400
-    assert "участники" in str(exc.value)
+    apply_participants.assert_awaited_once()
+    sync_card.assert_not_awaited()
+    assert result.applied_changes.db_updated is True
+    assert result.applied_changes.outlook_updated is False
+    assert result.applied_changes.changes == ["participants"]
+    assert result.applied_changes.participants_removed == ["Другая должность"]
+
+
+@pytest.mark.asyncio
+async def test_update_adds_participant_for_created_series() -> None:
+    db = AsyncMock()
+    meeting_id = uuid.uuid4()
+    position_id = uuid.uuid4()
+    new_position_id = uuid.uuid4()
+    meeting = _meeting_stub(meeting_id=meeting_id, title="Серия", position_id=position_id)
+    meeting.status = ScheduledMeetingStatus.CREATED
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = meeting
+    db.execute = AsyncMock(return_value=execute_result)
+    db.flush = AsyncMock()
+    db.add = MagicMock()
+
+    from app.schemas.scheduled_meeting import (
+        ScheduledMeetingParticipantCreate,
+        ScheduledMeetingUpdate,
+    )
+
+    with (
+        patch.object(
+            ScheduledMeetingService,
+            "_apply_participant_changes",
+            AsyncMock(return_value=(["Новая должность"], [])),
+        ) as apply_participants,
+        patch.object(
+            ScheduledMeetingService,
+            "_resolve_emails_for_position_ids",
+            AsyncMock(return_value=["new.user@turbo-don.ru"]),
+        ),
+        patch(
+            "app.services.scheduled_meeting_registry_sync.ScheduledMeetingRegistrySyncService.sync_series_card",
+            AsyncMock(),
+        ) as sync_card,
+    ):
+        result = await ScheduledMeetingService(db).update(
+            meeting_id,
+            ScheduledMeetingUpdate(
+                participants=[
+                    ScheduledMeetingParticipantCreate(position_id=position_id, sort_order=0),
+                    ScheduledMeetingParticipantCreate(position_id=new_position_id, sort_order=1),
+                ],
+            ),
+        )
+
+    apply_participants.assert_awaited_once()
+    sync_card.assert_not_awaited()
+    assert result.applied_changes.db_updated is True
+    assert result.applied_changes.outlook_updated is False
+    assert result.applied_changes.changes == ["participants"]
+    assert result.applied_changes.participants_added == ["Новая должность"]
+
+
+@pytest.mark.asyncio
+async def test_update_adds_participant_calls_outlook_for_planned_series() -> None:
+    db = AsyncMock()
+    meeting_id = uuid.uuid4()
+    position_id = uuid.uuid4()
+    new_position_id = uuid.uuid4()
+    meeting = _meeting_stub(meeting_id=meeting_id, title="Серия", position_id=position_id)
+    meeting.status = ScheduledMeetingStatus.PLANNED
+    meeting.outlook_series_id = "series-1"
+    meeting.outlook_changekey = "ck-1"
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = meeting
+    db.execute = AsyncMock(return_value=execute_result)
+    db.flush = AsyncMock()
+
+    from app.schemas.scheduled_meeting import (
+        ScheduledMeetingParticipantCreate,
+        ScheduledMeetingUpdate,
+    )
+
+    with (
+        patch.object(
+            ScheduledMeetingService,
+            "_apply_participant_changes",
+            AsyncMock(return_value=(["Новая должность"], [])),
+        ),
+        patch.object(
+            ScheduledMeetingService,
+            "_resolve_emails_for_position_ids",
+            AsyncMock(return_value=["new.user@turbo-don.ru"]),
+        ),
+        patch(
+            "app.services.scheduled_meeting_service.sync_series_participants_in_outlook",
+            AsyncMock(return_value={"action": "participants_added", "outlook_changekey": "ck-2"}),
+        ) as outlook_sync,
+        patch(
+            "app.services.scheduled_meeting_registry_sync.ScheduledMeetingRegistrySyncService.sync_series_card",
+            AsyncMock(),
+        ) as sync_card,
+    ):
+        result = await ScheduledMeetingService(db).update(
+            meeting_id,
+            ScheduledMeetingUpdate(
+                participants=[
+                    ScheduledMeetingParticipantCreate(position_id=position_id, sort_order=0),
+                    ScheduledMeetingParticipantCreate(position_id=new_position_id, sort_order=1),
+                ],
+            ),
+        )
+
+    outlook_sync.assert_awaited_once()
+    assert outlook_sync.await_args.kwargs["add_emails"] == ["new.user@turbo-don.ru"]
+    assert outlook_sync.await_args.kwargs["remove_emails"] == []
+    sync_card.assert_awaited_once_with(meeting_id)
+    assert result.applied_changes.outlook_updated is True
+    assert result.applied_changes.outlook_actions == ["participants_added"]
+    assert meeting.outlook_changekey == "ck-2"
+
+
+@pytest.mark.asyncio
+async def test_update_removes_participant_calls_outlook_for_planned_series() -> None:
+    db = AsyncMock()
+    meeting_id = uuid.uuid4()
+    position_id = uuid.uuid4()
+    removed_position_id = uuid.uuid4()
+    meeting = _meeting_stub(meeting_id=meeting_id, title="Серия", position_id=position_id)
+    removed_position = SimpleNamespace(id=removed_position_id, name="Удаляемая должность", is_active=True)
+    meeting.participants.append(
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            position_id=removed_position_id,
+            position=removed_position,
+            sort_order=1,
+            is_required=True,
+        )
+    )
+    meeting.status = ScheduledMeetingStatus.PLANNED
+    meeting.outlook_series_id = "series-1"
+    meeting.outlook_changekey = "ck-1"
+
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = meeting
+    db.execute = AsyncMock(return_value=execute_result)
+    db.flush = AsyncMock()
+
+    from app.schemas.scheduled_meeting import (
+        ScheduledMeetingParticipantCreate,
+        ScheduledMeetingUpdate,
+    )
+
+    with (
+        patch.object(
+            ScheduledMeetingService,
+            "_apply_participant_changes",
+            AsyncMock(return_value=([], ["Удаляемая должность"])),
+        ),
+        patch(
+            "app.services.scheduled_meeting_service.resolve_removed_emails_from_outlook_series",
+            AsyncMock(return_value=["removed.user@turbo-don.ru"]),
+        ),
+        patch(
+            "app.services.scheduled_meeting_service.sync_series_participants_in_outlook",
+            AsyncMock(return_value={"action": "participants_removed", "outlook_changekey": "ck-3"}),
+        ) as outlook_sync,
+        patch(
+            "app.services.scheduled_meeting_registry_sync.ScheduledMeetingRegistrySyncService.sync_series_card",
+            AsyncMock(),
+        ) as sync_card,
+    ):
+        result = await ScheduledMeetingService(db).update(
+            meeting_id,
+            ScheduledMeetingUpdate(
+                participants=[
+                    ScheduledMeetingParticipantCreate(position_id=position_id, sort_order=0),
+                ],
+            ),
+        )
+
+    outlook_sync.assert_awaited_once()
+    assert outlook_sync.await_args.kwargs["add_emails"] == []
+    assert outlook_sync.await_args.kwargs["remove_emails"] == ["removed.user@turbo-don.ru"]
+    sync_card.assert_awaited_once_with(meeting_id)
+    assert result.applied_changes.outlook_updated is True
+    assert result.applied_changes.outlook_actions == ["participants_removed"]
+    assert result.applied_changes.participants_removed == ["Удаляемая должность"]
+    assert meeting.outlook_changekey == "ck-3"

@@ -69,17 +69,43 @@ def test_change_set_detects_series_end_shortening() -> None:
     assert change_set.new_series_end_date == date(2026, 7, 16)
 
 
-def test_change_set_rejects_participants_change() -> None:
+def test_change_set_detects_participants_add() -> None:
     meeting = _meeting_stub()
     other_position = uuid.uuid4()
+    current_position = meeting.participants[0].position_id
     payload = ScheduledMeetingUpdate(
-        series_end_date=date(2026, 7, 20),
-        participants=[ScheduledMeetingParticipantCreate(position_id=other_position)],
+        participants=[
+            ScheduledMeetingParticipantCreate(position_id=current_position, sort_order=0),
+            ScheduledMeetingParticipantCreate(position_id=other_position, sort_order=1),
+        ],
     )
 
     change_set = build_series_update_change_set(meeting, payload)
 
-    assert "участники" in change_set.unsupported_fields
+    assert change_set.participants_changed is True
+    assert change_set.participants_added == (other_position,)
+    assert change_set.participants_removed == ()
+    assert "участники" not in change_set.unsupported_fields
+    assert "удаление участников" not in change_set.unsupported_fields
+
+
+def test_change_set_detects_participants_remove() -> None:
+    meeting = _meeting_stub()
+    removed_position = uuid.uuid4()
+    current_position = meeting.participants[0].position_id
+    meeting.participants.append(
+        SimpleNamespace(position_id=removed_position, sort_order=1),
+    )
+    payload = ScheduledMeetingUpdate(
+        participants=[ScheduledMeetingParticipantCreate(position_id=current_position)],
+    )
+
+    change_set = build_series_update_change_set(meeting, payload)
+
+    assert change_set.participants_changed is True
+    assert change_set.participants_removed == (removed_position,)
+    assert change_set.participants_added == ()
+    assert "удаление участников" not in change_set.unsupported_fields
 
 
 def test_change_set_rejects_recurrence_schedule_change() -> None:

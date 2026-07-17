@@ -262,3 +262,50 @@ def test_update_meeting_attendees_item_series_scope_adds_to_master() -> None:
     assert result["added"] == ["new@turbo-don.ru"]
     assert result["notified_new"] == ["new@turbo-don.ru"]
     assert all_attendee_emails(master) == ["keep@turbo-don.ru", "new@turbo-don.ru"]
+
+
+def test_update_meeting_attendees_item_uses_custom_calendar_invite_body() -> None:
+    master = SimpleNamespace(
+        type="RecurringMaster",
+        id="master-1",
+        subject="Серия",
+        is_cancelled=False,
+        organizer=SimpleNamespace(email_address="postagant@turbo-don.ru"),
+        required_attendees=[attendee("keep@turbo-don.ru")],
+        optional_attendees=[],
+        body="",
+        account=SimpleNamespace(),
+    )
+    master.save = MagicMock()
+
+    custom_body = (
+        "Иванов Иван Иванович <ivanov@turbo-don.ru>;\n"
+        "Попов Павел Павлович <popov@turbo-don.ru>\n\n"
+        "Совещание запланировано ИИ-агентом по планированию совещаний"
+    )
+
+    with (
+        patch(
+            "app.tools.Outlook.update_meeting_attendees.build_new_attendees_calendar_invite_body",
+        ) as build_invite,
+        patch(
+            "app.tools.Outlook.update_meeting_attendees.send_attendee_update_notifications",
+            return_value={
+                "notified_existing": [],
+                "notified_new": ["new@turbo-don.ru"],
+                "notified_removed": [],
+                "notification_errors": [],
+            },
+        ),
+    ):
+        result = update_meeting_attendees_item(
+            master,
+            add=["new@turbo-don.ru"],
+            attendees_scope="series",
+            calendar_invite_body=custom_body,
+        )
+
+    master.save.assert_called_once()
+    build_invite.assert_not_called()
+    assert "Иванов Иван Иванович" in str(master.body)
+    assert result["added"] == ["new@turbo-don.ru"]

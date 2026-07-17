@@ -13,6 +13,7 @@ from app.models.enums import (
 )
 from app.services.scheduled_meeting_outlook import (
     ScheduledMeetingOutlookError,
+    _emails_for_removed_position_in_series,
     _invite_body,
     _is_invitable_attendee_email,
     dispatch_scheduled_meeting_invite,
@@ -178,3 +179,41 @@ async def test_resolve_attendees_prefers_db_corporate_email_without_duplicate(
 
     assert attendees == [("Соломичева Светлана Викторовна", "director@turbo-don.ru")]
     mock_lookup_email.assert_called_once()
+
+
+@patch("app.services.scheduled_meeting_outlook.lookup_fios_by_position_title")
+def test_emails_for_removed_position_matches_db_user_in_series(mock_lookup_fios) -> None:
+    mock_lookup_fios.return_value = []
+    emails = _emails_for_removed_position_in_series(
+        "Директор по развитию",
+        series_attendees=[("Соломичева Светлана Викторовна", "director@turbo-don.ru")],
+        users_by_position={
+            "директор по развитию": [("Соломичева Светлана Викторовна", "director@turbo-don.ru")],
+        },
+    )
+    assert emails == ["director@turbo-don.ru"]
+    mock_lookup_fios.assert_not_called()
+
+
+@patch("app.services.scheduled_meeting_outlook.lookup_fios_by_position_title")
+def test_emails_for_removed_position_matches_fio_in_series_display_name(mock_lookup_fios) -> None:
+    mock_lookup_fios.return_value = ["Кондратюк Михаела Борисовна"]
+    emails = _emails_for_removed_position_in_series(
+        "Ведущий менеджер по развитию",
+        series_attendees=[("Кондратюк Михаела Борисовна", "kondratyuk@turbo-don.ru")],
+        users_by_position={},
+    )
+    assert emails == ["kondratyuk@turbo-don.ru"]
+
+
+@patch("app.services.scheduled_meeting_outlook.lookup_fios_by_position_title")
+def test_emails_for_removed_position_skips_email_not_in_series(mock_lookup_fios) -> None:
+    mock_lookup_fios.return_value = []
+    emails = _emails_for_removed_position_in_series(
+        "Директор по развитию",
+        series_attendees=[("Другой человек", "other@turbo-don.ru")],
+        users_by_position={
+            "директор по развитию": [("Соломичева Светлана Викторовна", "director@turbo-don.ru")],
+        },
+    )
+    assert emails == []

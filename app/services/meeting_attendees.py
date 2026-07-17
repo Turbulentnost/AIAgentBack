@@ -11,7 +11,10 @@ from app.services.meeting_attendee_priority import (
     resolve_priority_role,
     weight_for_priority_role,
 )
-from app.services.enterprise_positions_report import enrich_person_from_positions_report
+from app.services.enterprise_positions_report import (
+    enrich_person_from_positions_report,
+    lookup_fios_by_position_title,
+)
 from app.services.meeting_psd_level import (
     PSD_LEVEL_PARTICIPANT_FIO,
     psd_level_known_emails,
@@ -136,6 +139,89 @@ def registry_participant_names(entry: Any) -> list[str]:
     return names
 
 
+def _merge_participant_name_lists(*lists: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for source in lists:
+        for raw in source:
+            if not isinstance(raw, str):
+                continue
+            normalized = raw.strip()
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(normalized)
+    return merged
+
+
+def registry_participants_for_display(entry: Any) -> list[str]:
+    """Список участников для UI: учитывает pending_add и сохранённый состав вхождения."""
+    payload = entry.payload if isinstance(getattr(entry, "payload", None), dict) else {}
+    pending_add = payload.get("pending_add")
+    if isinstance(pending_add, dict):
+        pending_names = pending_add.get("participants")
+        if isinstance(pending_names, list) and pending_names:
+            return _merge_participant_name_lists(pending_names)
+
+    from_db = registry_participant_names(entry)
+    stored = payload.get("occurrence_participant_names")
+    if isinstance(stored, list) and stored:
+        stored_names = _merge_participant_name_lists(stored)
+        if len(stored_names) > len(from_db):
+            return stored_names
+        merged = _merge_participant_name_lists(from_db, stored_names)
+        if len(merged) > len(from_db):
+            return merged
+    return from_db
+
+
+def participant_names_from_outlook_attendees(
+    entry: Any,
+    *,
+    seed_names: list[str],
+) -> list[str] | None:
+    """Восстанавливает ФИО по e-mail из Outlook, если в реестре участников меньше, чем в приглашении."""
+    payload = entry.payload if isinstance(getattr(entry, "payload", None), dict) else {}
+    payload_attendees = [
+        email.strip()
+        for email in (payload.get("attendees") or [])
+        if isinstance(email, str) and email.strip()
+    ]
+    if len(payload_attendees) <= len(seed_names):
+        return None
+
+    try:
+        attendee_entries = load_registry_outlook_attendee_entries(entry)
+    except Exception:
+        return None
+    if not attendee_entries:
+        return None
+
+    email_to_display: dict[str, str] = {}
+    for display_name, email in attendee_entries:
+        key = email.strip().lower()
+        if not key or key in email_to_display:
+            continue
+        label = (display_name or email).strip()
+        email_to_display[key] = label or email.strip()
+
+    result = list(seed_names)
+    seen = {name.casefold() for name in result}
+    for email in payload_attendees:
+        label = email_to_display.get(email.lower())
+        if not label:
+            continue
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(label)
+    return result if len(result) > len(seed_names) else None
+
+
 def collect_attendees_from_registry_entry(
     entry: Any,
 ) -> list[tuple[str, str]]:
@@ -221,3 +307,96 @@ def registry_attendee_sync_diff(entry: Any) -> tuple[list[str], list[str]]:
     add = [current_by_key[key] for key in current_by_key if key not in sent_by_key]
     remove = [sent_by_key[key] for key in sent_by_key if key not in current_by_key]
     return add, remove
+
+
+def fio_matches_calendar_display_name(fio: str, display_name: str | None) -> bool:
+    if not display_name:
+        return False
+    surname = fio.split()[0].casefold() if fio.split() else ""
+    if surname and surname in display_name.casefold():
+        return True
+    parts = [part for part in fio.split() if len(part) > 1]
+    return bool(parts) and all(part.casefold() in display_name.casefold() for part in parts[:2])
+
+
+def emails_for_name_in_calendar_attendees(
+    name: str,
+    attendee_entries: list[tuple[str | None, str]],
+) -> list[str]:
+    """E-mail участника по ФИО или должности среди уже приглашённых в Outlook."""
+    normalized_name = name.strip()
+    if not normalized_name:
+        return []
+
+    matched: list[str] = []
+    seen: set[str] = set()
+    name_key = normalized_name.casefold()
+
+    for display_name, email in attendee_entries:
+        key = email.lower()
+        if key in seen:
+            continue
+        if display_name and display_name.strip().casefold() == name_key:
+            seen.add(key)
+            matched.append(email)
+
+    if matched:
+        return matched
+
+    for fio in lookup_fios_by_position_title(normalized_name):
+        for display_name, email in attendee_entries:
+            key = email.lower()
+            if key in seen:
+                continue
+            if fio_matches_calendar_display_name(fio, display_name):
+                seen.add(key)
+                matched.append(email)
+
+    return matched
+
+
+def load_registry_outlook_attendee_entries(entry: Any) -> list[tuple[str | None, str]]:
+    """Участники текущего вхождения совещания из Outlook (без GAL)."""
+    item_id = getattr(entry, "outlook_item_id", None)
+    if not isinstance(item_id, str) or not item_id.strip():
+        return []
+
+    from app.tools.Outlook.cancel_meeting import get_meeting_by_id
+    from app.tools.Outlook.send_meeting_invite import load_config
+    from app.tools.Outlook.slot_search.attendees import (
+        calendar_item_attendee_emails,
+        calendar_item_attendee_entries,
+    )
+
+    changekey = getattr(entry, "outlook_changekey", None) or ""
+    item = get_meeting_by_id(
+        config=load_config(),
+        item_id=item_id.strip(),
+        changekey=changekey.strip() if isinstance(changekey, str) else "",
+    )
+    if not calendar_item_attendee_emails(item):
+        try:
+            item.refresh()
+        except Exception:
+            pass
+    return calendar_item_attendee_entries(item)
+
+
+def resolve_registry_participant_emails_from_outlook(
+    entry: Any,
+    names: list[str],
+) -> dict[str, str]:
+    """Сопоставляет ФИО/должности из реестра с e-mail текущего приглашения Outlook."""
+    try:
+        attendee_entries = load_registry_outlook_attendee_entries(entry)
+    except Exception:
+        return {}
+    if not attendee_entries:
+        return {}
+
+    resolved: dict[str, str] = {}
+    for name in names:
+        emails = emails_for_name_in_calendar_attendees(name, attendee_entries)
+        if emails:
+            resolved[name.casefold()] = emails[0]
+    return resolved

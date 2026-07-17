@@ -26,7 +26,7 @@ import json
 import sys
 from typing import Any, Literal
 
-from exchangelib.properties import Attendee, Mailbox
+from app.tools.Outlook.outlook_html_body import plain_text_to_html
 
 from app.tools.Outlook.attendee_update_notifications import (
     SEND_ONLY_TO_CHANGED,
@@ -177,6 +177,43 @@ def apply_attendee_changes(
     }
 
 
+def _calendar_body_for_attendee_changes(
+    *,
+    target: Any,
+    changes: dict[str, Any],
+    account: Any,
+    message: str,
+    config: OutlookConfig,
+    calendar_invite_body: str | None = None,
+) -> Any | None:
+    if changes.get("added") and not changes.get("removed"):
+        if calendar_invite_body and calendar_invite_body.strip():
+            return plain_text_to_html(calendar_invite_body.strip())
+        return build_new_attendees_calendar_invite_body(
+            item=target,
+            changes=changes,
+            account=account,
+        )
+    if calendar_invite_body and calendar_invite_body.strip():
+        text = calendar_invite_body.strip()
+        if message.strip():
+            text = f"{message.strip()}\n\n{text}"
+        return plain_text_to_html(text)
+    if changes.get("removed"):
+        return build_removed_attendees_calendar_body(
+            item=target,
+            message=message,
+            config=config,
+        )
+    if changes.get("added"):
+        return build_new_attendees_calendar_invite_body(
+            item=target,
+            changes=changes,
+            account=account,
+        )
+    return None
+
+
 def update_meeting_attendees_item(
     item: Any,
     *,
@@ -188,6 +225,7 @@ def update_meeting_attendees_item(
     config: OutlookConfig | None = None,
     company_calendar_item_id: str | None = None,
     company_calendar_changekey: str | None = None,
+    calendar_invite_body: str | None = None,
 ) -> dict[str, Any]:
     if getattr(item, "is_cancelled", False):
         raise RuntimeError(f"Совещание уже отменено: {getattr(item, 'subject', '')}")
@@ -205,7 +243,26 @@ def update_meeting_attendees_item(
     resolved_config = config or load_config()
     account = getattr(target, "account", None) or connect_account(resolved_config)
 
-    if remove_emails and add_emails:
+    if calendar_invite_body and calendar_invite_body.strip():
+        changes = apply_attendee_changes(target, add=add_emails, remove=remove_emails)
+        update_fields: list[str] = ["required_attendees", "optional_attendees"]
+        if changes["added"] or changes["removed"]:
+            body = _calendar_body_for_attendee_changes(
+                target=target,
+                changes=changes,
+                account=account,
+                message=message,
+                config=resolved_config,
+                calendar_invite_body=calendar_invite_body,
+            )
+            if body is not None:
+                target.body = body
+                update_fields.append("body")
+            target.save(
+                update_fields=update_fields,
+                send_meeting_invitations=SEND_ONLY_TO_CHANGED,
+            )
+    elif remove_emails and add_emails:
         removed_part = apply_attendee_changes(target, remove=remove_emails)
         if removed_part["removed"]:
             target.body = build_removed_attendees_calendar_body(
@@ -223,7 +280,6 @@ def update_meeting_attendees_item(
                 item=target,
                 changes={"after": all_attendee_emails(target)},
                 account=account,
-                message=message,
             )
             target.save(
                 update_fields=["required_attendees", "optional_attendees", "body"],
@@ -251,7 +307,6 @@ def update_meeting_attendees_item(
                 item=target,
                 changes=changes,
                 account=account,
-                message=message,
             )
             update_fields.append("body")
 

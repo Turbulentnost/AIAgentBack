@@ -395,6 +395,74 @@ async def test_apply_registry_participants_add_only_defers_when_all_free(user) -
 
 
 @pytest.mark.asyncio
+async def test_apply_registry_participants_add_does_not_gal_lookup_existing_position_title(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+    service.audit.log = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.SCHEDULED)
+    entry.participants = ["Директор по развитию"]
+    entry.participants_count = 1
+    entry.subject = "это первое тестирование на автоматическое создание темы"
+    entry.slot_start = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    entry.slot_end = datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    entry.outlook_item_id = "AQMkAD-test"
+    entry.payload = {"source": "scheduled_series"}
+    entry.updated_at = entry.invitations_sent_at
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+    registry.save_pending_add = AsyncMock(return_value=entry)
+    registry.apply_participants_update = AsyncMock()
+
+    backend = MagicMock()
+    backend.resolve_participants = AsyncMock(
+        return_value=[
+            ResolvedParticipant(
+                fio="Кондратюк Михаела Борисовна",
+                email="kondratyuk@turbo-don.ru",
+                found=True,
+            ),
+        ]
+    )
+
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch.object(MeetingService, "_backend", return_value=backend),
+        patch(
+            "app.services.meeting_service.MeetingMemoCacheService",
+            return_value=MagicMock(
+                get_memo_detail=AsyncMock(side_effect=MemoCacheMissError("miss")),
+            ),
+        ),
+        patch(
+            "app.services.meeting_service.resolve_registry_participant_emails_from_outlook",
+            return_value={"директор по развитию": "director@turbo-don.ru"},
+        ),
+        patch(
+            "app.services.meeting_service.resolve_registry_current_slot_availability",
+            AsyncMock(return_value=MagicMock(all_free=True, free_count=2, total_count=2, participants=[])),
+        ),
+    ):
+        result = await service.apply_registry_participants(
+            entry.memo_ref_key,
+            MeetingRegistryParticipantsApplyRequest(
+                participants=["Директор по развитию", "Кондратюк Михаела Борисовна"],
+                added=["Кондратюк Михаела Борисовна"],
+            ),
+            current_user=user,
+        )
+
+    backend.resolve_participants.assert_awaited_once_with(
+        ["Кондратюк Михаела Борисовна"],
+        current_user=user,
+    )
+    assert result.pending_confirmation is True
+    assert result.confirmation_kind == "add_current_slot"
+
+
+@pytest.mark.asyncio
 async def test_apply_registry_participants_add_only_suggests_common_slot_when_busy(user) -> None:
     db = AsyncMock()
     service = MeetingService(db)

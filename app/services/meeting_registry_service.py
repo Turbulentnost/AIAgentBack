@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.enums import MeetingRegistryEventType, MeetingRegistryStage
 from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
 from app.models.user import User
-from app.services.meeting_attendees import participants_from_detail, registry_participant_names
+from app.services.meeting_attendees import (
+    participant_names_from_outlook_attendees,
+    participants_from_detail,
+    registry_participant_names,
+    registry_participants_for_display,
+)
 from app.services.meeting_invite_format import (
     format_invite_location_from_detail,
     manager_name_from_detail,
@@ -183,12 +188,23 @@ def build_stage_counts(entries: list[MeetingRegistryEntry]) -> dict[str, int]:
     return counts
 
 
+_PRESERVED_PAYLOAD_KEYS = (
+    "source",
+    "sync_source",
+    "scheduled_meeting_id",
+    "series_recurrence_label",
+    "occurrence_participant_names",
+)
+
+
 def _operational_payload(
     *,
     attendees: list[str],
     sent_payload: dict[str, Any] | None = None,
     pending_removal: dict[str, Any] | None = None,
     pending_add: dict[str, Any] | None = None,
+    occurrence_participant_names: list[str] | None = None,
+    preserve_from: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "attendees": attendees,
@@ -198,6 +214,14 @@ def _operational_payload(
         payload["pending_removal"] = pending_removal
     if pending_add:
         payload["pending_add"] = pending_add
+    if occurrence_participant_names:
+        payload["occurrence_participant_names"] = _normalize_participant_names(
+            occurrence_participant_names
+        )
+    if preserve_from:
+        for key in _PRESERVED_PAYLOAD_KEYS:
+            if key in preserve_from and key not in payload:
+                payload[key] = preserve_from[key]
     return payload
 
 
@@ -554,9 +578,12 @@ class MeetingRegistryService:
         )
         added, removed = participant_names_diff(previous_names, names)
         now = datetime.now(timezone.utc)
+        current_payload = entry.payload if isinstance(entry.payload, dict) else {}
         payload = _operational_payload(
             attendees=attendees,
-            sent_payload=(entry.payload or {}).get("sent_payload"),
+            sent_payload=current_payload.get("sent_payload"),
+            occurrence_participant_names=names,
+            preserve_from=current_payload,
         )
         if outlook_payload:
             target_id = outlook_payload.get("target_id")
@@ -615,6 +642,7 @@ class MeetingRegistryService:
                 "attendees": attendees,
                 "removed": _normalize_participant_names(removed),
             },
+            preserve_from=current_payload,
         )
         entry.payload = payload
         await self.db.flush()
@@ -646,6 +674,8 @@ class MeetingRegistryService:
                 "removed": _normalize_participant_names(removed),
                 "keep_current_slot": keep_current_slot,
             },
+            occurrence_participant_names=participants,
+            preserve_from=current_payload,
         )
         entry.payload = payload
         await self.db.flush()
@@ -669,6 +699,34 @@ class MeetingRegistryService:
             return None
         current_payload = dict(entry.payload or {})
         current_payload.pop("pending_removal", None)
+        entry.payload = current_payload
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
+
+    async def reconcile_participants_from_outlook(
+        self,
+        entry: MeetingRegistryEntry,
+    ) -> MeetingRegistryEntry:
+        """Подтягивает ФИО из Outlook, если payload.attendees шире, чем entry.participants."""
+        display_names = registry_participants_for_display(entry)
+        payload = entry.payload if isinstance(entry.payload, dict) else {}
+        payload_attendees = [
+            email
+            for email in (payload.get("attendees") or [])
+            if isinstance(email, str) and email.strip()
+        ]
+        if len(payload_attendees) <= len(display_names):
+            return entry
+
+        repaired = participant_names_from_outlook_attendees(entry, seed_names=display_names)
+        if not repaired:
+            return entry
+
+        current_payload = dict(payload)
+        current_payload["occurrence_participant_names"] = repaired
+        entry.participants = repaired
+        entry.participants_count = len(repaired)
         entry.payload = current_payload
         await self.db.flush()
         await self.db.refresh(entry)
