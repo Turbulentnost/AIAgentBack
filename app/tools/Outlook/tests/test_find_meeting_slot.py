@@ -1480,7 +1480,7 @@ def test_find_nearest_slots_per_attendee_uses_single_freebusy_fetch(monkeypatch)
         return {email: busy_by_attendee[email] for email in attendees}
 
     monkeypatch.setattr(
-        "app.tools.Outlook.slot_search.search.fetch_busy_intervals_freebusy",
+        "app.tools.Outlook.slot_search.search.fetch_busy_intervals_freebusy_events",
         _fetch_busy,
     )
 
@@ -1500,3 +1500,67 @@ def test_find_nearest_slots_per_attendee_uses_single_freebusy_fetch(monkeypatch)
     assert result["busy@turbo-don.ru"]["slot_start"] == datetime(
         2026, 6, 19, 16, 0, tzinfo=tz
     ).isoformat()
+
+
+def test_find_nearest_slots_per_attendee_prefers_events_over_merged_grid(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    requested = datetime(2026, 7, 28, 10, 30, tzinfo=tz)
+    fixed_now = datetime(2026, 7, 17, 8, 0, tzinfo=tz)
+    merged_busy = [
+        (datetime(2026, 7, 28, 7, 45, tzinfo=tz), datetime(2026, 7, 28, 11, 15, tzinfo=tz)),
+        (datetime(2026, 7, 28, 12, 45, tzinfo=tz), datetime(2026, 7, 28, 17, 15, tzinfo=tz)),
+    ]
+    events_busy = [
+        (datetime(2026, 7, 28, 10, 0, tzinfo=tz), datetime(2026, 7, 28, 11, 0, tzinfo=tz)),
+        (datetime(2026, 7, 28, 13, 0, tzinfo=tz), datetime(2026, 7, 28, 15, 30, tzinfo=tz)),
+    ]
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.rules.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda _tz=None: fixed_now),
+                "fromisoformat": datetime.fromisoformat,
+            },
+        ),
+    )
+
+    def _fetch_events(_config, attendees, _start, _end):
+        return {email: list(events_busy) for email in attendees}
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.search.fetch_busy_intervals_freebusy_events",
+        _fetch_events,
+    )
+
+    result = find_nearest_slots_per_attendee(
+        config=config,
+        attendees=["manager@turbo-don.ru"],
+        preferred=requested,
+        duration=timedelta(hours=1),
+        max_days=14,
+        step=timedelta(minutes=15),
+    )
+
+    assert result["manager@turbo-don.ru"] is not None
+    slot_start = datetime.fromisoformat(result["manager@turbo-don.ru"]["slot_start"])
+    assert slot_start == datetime(2026, 7, 28, 11, 0, tzinfo=tz)
+
+    # merged grid would miss 11:00-12:00 and jump much later
+    from app.tools.Outlook.slot_search.iteration import find_slot_via_busy_gaps
+    from app.tools.Outlook.slot_search.search import search_bounds_for_preferred
+    from app.tools.Outlook.slot_search.busy import coalesce_intervals
+
+    _, earliest, search_end = search_bounds_for_preferred(config, requested, 14)
+    merged_slot, _ = find_slot_via_busy_gaps(
+        earliest_allowed=earliest,
+        search_end=search_end,
+        duration=timedelta(hours=1),
+        step=timedelta(minutes=15),
+        union_busy=coalesce_intervals(merged_busy, config),
+        config=config,
+    )
+    assert merged_slot is None or merged_slot > slot_start

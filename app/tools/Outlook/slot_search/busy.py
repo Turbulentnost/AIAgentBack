@@ -169,6 +169,79 @@ def fetch_free_busy_views(
         )
     return dict(zip(attendee_list, views))
 
+
+def _busy_intervals_from_views(
+    views_by_email: dict[str, Any],
+    *,
+    range_start: datetime,
+    range_end: datetime,
+    config: OutlookConfig,
+    parser: Any,
+    timed_label: str,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]] = {}
+    for email, view in views_by_email.items():
+        normalized = email.strip().lower()
+        with timed_step(timed_label, attendee=email):
+            try:
+                intervals = parser(
+                    view,
+                    attendee=email,
+                    range_start=range_start,
+                    range_end=range_end,
+                    config=config,
+                )
+            except RuntimeError as exc:
+                logger.warning(
+                    "Free/busy недоступен для %s: %s",
+                    email,
+                    exc,
+                )
+                intervals = []
+        busy_by_attendee[normalized] = intervals
+    return busy_by_attendee
+
+
+def fetch_busy_intervals_freebusy_dual(
+    config: OutlookConfig,
+    attendees: list[str],
+    range_start: datetime,
+    range_end: datetime,
+) -> tuple[
+    dict[str, list[tuple[datetime, datetime]]],
+    dict[str, list[tuple[datetime, datetime]]],
+]:
+    """Один GetUserAvailability: merged (консервативно) + events (для nearest-slot)."""
+    views_by_email = fetch_free_busy_views(config, attendees, range_start, range_end)
+    merged = _busy_intervals_from_views(
+        views_by_email,
+        range_start=range_start,
+        range_end=range_end,
+        config=config,
+        parser=freebusy_busy_intervals,
+        timed_label="parse.freebusy_intervals",
+    )
+    events = _busy_intervals_from_views(
+        views_by_email,
+        range_start=range_start,
+        range_end=range_end,
+        config=config,
+        parser=freebusy_events_busy_intervals,
+        timed_label="parse.freebusy_events",
+    )
+    for email, intervals in merged.items():
+        view = views_by_email.get(email) or views_by_email.get(email.strip())
+        merged_len = len(getattr(view, "merged", "") or "") if view else 0
+        logger.info(
+            "  %s: merged_intervals=%d merged_len=%d events_intervals=%d",
+            email,
+            len(intervals),
+            merged_len,
+            len(events.get(email, [])),
+        )
+    return merged, events
+
+
 def fetch_busy_intervals_freebusy(
     config: OutlookConfig,
     attendees: list[str],

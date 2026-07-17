@@ -45,6 +45,16 @@ def not_before_now(config: OutlookConfig) -> datetime:
     now = datetime.now(ZoneInfo(config.timezone)).replace(second=0, microsecond=0)
     return align_preferred(now, config)
 
+
+def snap_to_step(dt: datetime, step: timedelta, config: OutlookConfig) -> datetime:
+    """Округляет время вверх до сетки step (например 15 мин)."""
+    dt = to_local(dt, config).replace(second=0, microsecond=0)
+    step_minutes = max(int(step.total_seconds() // 60), 1)
+    remainder = dt.minute % step_minutes
+    if remainder == 0:
+        return dt
+    return dt + timedelta(minutes=step_minutes - remainder)
+
 def intervals_overlap(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
     return a_start < b_end and a_end > b_start
 

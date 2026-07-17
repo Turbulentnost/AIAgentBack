@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,10 +111,17 @@ from app.tools.Outlook.find_meeting_slot import (
 )
 from app.tools.Outlook.meeting_rooms import is_interval_free
 from app.tools.Outlook.send_meeting_invite import load_config, parse_start
-from app.tools.Outlook.slot_search.busy import fetch_busy_intervals_freebusy
+from app.tools.Outlook.slot_search.busy import fetch_busy_intervals_freebusy_dual
 from app.tools.Outlook.slot_search.search import preview_freebusy_window
 
 logger = get_logger(__name__)
+
+
+class PreviewBusyPrefetch(NamedTuple):
+    """Один EWS Free/Busy: merged для all-free/quorum, events для nearest-slot."""
+
+    merged: dict[str, list[tuple[Any, Any]]]
+    nearest: dict[str, list[tuple[Any, Any]]]
 
 
 async def _fetch_preview_busy_by_attendee(
@@ -123,7 +130,7 @@ async def _fetch_preview_busy_by_attendee(
     planned_start: str,
     attendee_search_start: str | None,
     max_days: int,
-) -> dict[str, list[tuple[Any, Any]]]:
+) -> PreviewBusyPrefetch:
     """Один bulk Free/Busy на весь preview (nearest + all-free + quorum)."""
     config = load_config()
     planned_dt = parse_start(planned_start, config.timezone) if planned_start else None
@@ -140,14 +147,15 @@ async def _fetch_preview_busy_by_attendee(
     )
     emails = sorted({email.strip().lower() for email in participant_emails if email.strip()})
     if not emails:
-        return {}
-    return await asyncio.to_thread(
-        fetch_busy_intervals_freebusy,
+        return PreviewBusyPrefetch(merged={}, nearest={})
+    merged, nearest = await asyncio.to_thread(
+        fetch_busy_intervals_freebusy_dual,
         config,
         emails,
         window_start,
         window_end,
     )
+    return PreviewBusyPrefetch(merged=merged, nearest=nearest)
 
 
 async def _fetch_attendee_nearest_slots_bulk(
@@ -708,7 +716,7 @@ class MeetingAgentSlotService:
             detail.get("queue") or {},
         )
         resolved_emails = _participant_emails(resolved)
-        prefetched_busy: dict[str, list[tuple[Any, Any]]] | None = None
+        prefetched_busy: PreviewBusyPrefetch | None = None
         if resolved_emails:
             try:
                 prefetched_busy = await _fetch_preview_busy_by_attendee(
@@ -732,7 +740,9 @@ class MeetingAgentSlotService:
             search_start=attendee_search_start,
             duration_minutes=duration,
             current_user=current_user,
-            prefetched_busy_by_attendee=prefetched_busy,
+            prefetched_busy_by_attendee=(
+                prefetched_busy.nearest if prefetched_busy is not None else None
+            ),
         )
 
         if missing_emails:
@@ -771,7 +781,9 @@ class MeetingAgentSlotService:
                     skip_rooms=True,
                     quiet=False,
                     include_timing=True,
-                    prefetched_busy_by_attendee=prefetched_busy,
+                    prefetched_busy_by_attendee=(
+                        prefetched_busy.merged if prefetched_busy is not None else None
+                    ),
                 ),
                 timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
             )
@@ -872,7 +884,9 @@ class MeetingAgentSlotService:
                     verify_calendar=False,
                     quiet=False,
                     include_timing=True,
-                    prefetched_busy_by_attendee=prefetched_busy,
+                    prefetched_busy_by_attendee=(
+                        prefetched_busy.merged if prefetched_busy is not None else None
+                    ),
                 ),
                 timeout=SLOT_PREVIEW_TIMEOUT_SECONDS,
             )

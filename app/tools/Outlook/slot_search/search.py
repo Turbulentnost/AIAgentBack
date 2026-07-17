@@ -26,6 +26,7 @@ from .busy import (
     fetch_all_busy_intervals,
     fetch_busy_intervals_calendar,
     fetch_busy_intervals_freebusy,
+    fetch_busy_intervals_freebusy_events,
     fetch_freebusy_calendar_events,
     merge_busy_intervals,
 )
@@ -143,7 +144,7 @@ def clip_busy_by_attendee_for_window(
     range_end: datetime,
 ) -> dict[str, list[tuple[datetime, datetime]]]:
     return {
-        email: coalesce_intervals(
+        email.strip().lower(): coalesce_intervals(
             intervals,
             config,
             clip_start=range_start,
@@ -151,6 +152,14 @@ def clip_busy_by_attendee_for_window(
         )
         for email, intervals in busy_by_attendee.items()
     }
+
+
+def _lookup_busy_intervals(
+    busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    email: str,
+) -> list[tuple[datetime, datetime]]:
+    normalized = email.strip().lower()
+    return busy_by_attendee.get(normalized, busy_by_attendee.get(email, []))
 
 
 def _iter_company_calendar_windows(
@@ -738,7 +747,7 @@ def find_nearest_slots_per_attendee(
             search_end,
         )
     else:
-        busy_by_attendee = fetch_busy_intervals_freebusy(
+        busy_by_attendee = fetch_busy_intervals_freebusy_events(
             config,
             attendee_list,
             earliest_allowed,
@@ -748,7 +757,7 @@ def find_nearest_slots_per_attendee(
     nearest_by_email: dict[str, dict[str, str] | None] = {}
     for email in attendee_list:
         busy = coalesce_intervals(
-            busy_by_attendee.get(email, []),
+            _lookup_busy_intervals(busy_by_attendee, email),
             config,
             clip_start=earliest_allowed,
             clip_end=search_end,

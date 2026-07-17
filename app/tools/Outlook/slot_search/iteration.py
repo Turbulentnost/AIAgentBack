@@ -15,6 +15,7 @@ from .rules import (
     is_workday,
     not_before_now,
     slot_respects_rules,
+    snap_to_step,
 )
 
 
@@ -60,7 +61,11 @@ def first_valid_slot_in_window(
         return None, 0
 
     checked = 0
-    candidate = max(local_start, align_preferred(local_start, config))
+    candidate = snap_to_step(
+        max(local_start, align_preferred(local_start, config)),
+        step,
+        config,
+    )
     while candidate < local_end and candidate + duration <= local_end:
         if candidate < local_start:
             candidate = max(local_start, align_preferred(local_start, config))
@@ -98,7 +103,7 @@ def find_slot_via_busy_gaps(
             checked += window_checked
             if slot is not None:
                 return slot, checked
-        window_start = max(window_start, busy_end)
+        window_start = snap_to_step(max(window_start, busy_end), step, config)
 
     if window_start < search_end:
         slot, window_checked = first_valid_slot_in_window(

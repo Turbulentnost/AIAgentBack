@@ -25,7 +25,7 @@ from app.schemas.meeting import (
     MeetingAttendeeRead,
 )
 from app.services.meeting_agent_errors import is_personal_calendar_access_error
-from app.services.meeting_agent_slot import MeetingAgentSlotService
+from app.services.meeting_agent_slot import MeetingAgentSlotService, PreviewBusyPrefetch
 from app.services.meeting_exceptions import MeetingServiceError
 from app.services.meeting_service import MeetingService
 
@@ -165,7 +165,7 @@ def _patch_preview_ews(
     )
     with patch(
         "app.services.meeting_agent_slot._fetch_preview_busy_by_attendee",
-        AsyncMock(return_value={}),
+        AsyncMock(return_value=PreviewBusyPrefetch(merged={}, nearest={})),
     ):
         with patch(
             "app.services.meeting_agent_slot.dispatch_find_meeting_slot",
