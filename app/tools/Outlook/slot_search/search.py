@@ -611,6 +611,63 @@ def _slot_search_result(
     return result
 
 
+def find_nearest_slots_per_attendee(
+    *,
+    config: OutlookConfig,
+    attendees: list[str],
+    preferred: datetime,
+    duration: timedelta,
+    max_days: int,
+    step: timedelta,
+) -> dict[str, dict[str, str] | None]:
+    """Справочные ближайшие слоты: один GetUserAvailability, затем локальный gap-scan."""
+    attendee_list = [email.strip() for email in attendees if email.strip()]
+    if not attendee_list:
+        return {}
+    if duration <= timedelta(0):
+        raise ValueError("Длительность должна быть больше 0.")
+    if max_days < 1:
+        raise ValueError("max_days должно быть >= 1.")
+
+    requested = to_local(preferred, config).replace(second=0, microsecond=0)
+    search_start = align_preferred(requested, config)
+    earliest_allowed = max(requested, search_start, not_before_now(config))
+    search_end = earliest_allowed + timedelta(days=max_days)
+
+    busy_by_attendee = fetch_busy_intervals_freebusy(
+        config,
+        attendee_list,
+        earliest_allowed,
+        search_end,
+    )
+
+    nearest_by_email: dict[str, dict[str, str] | None] = {}
+    for email in attendee_list:
+        busy = coalesce_intervals(
+            busy_by_attendee.get(email, []),
+            config,
+            clip_start=earliest_allowed,
+            clip_end=search_end,
+        )
+        slot, _checked = find_slot_via_busy_gaps(
+            earliest_allowed=earliest_allowed,
+            search_end=search_end,
+            duration=duration,
+            step=step,
+            union_busy=busy,
+            config=config,
+        )
+        if slot is None:
+            nearest_by_email[email] = None
+            continue
+        end = slot + duration
+        nearest_by_email[email] = {
+            "slot_start": slot.isoformat(),
+            "slot_end": end.isoformat(),
+        }
+    return nearest_by_email
+
+
 def find_nearest_slot(
     *,
     config: OutlookConfig,

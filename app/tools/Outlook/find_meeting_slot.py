@@ -49,11 +49,13 @@ from app.tools.Outlook.slot_search import (  # noqa: F401
     find_quorum_slots,
     find_company_calendar_reschedule_candidates,
     find_nearest_slot,
+    find_nearest_slots_per_attendee,
     build_slot_participant_details,
     format_slot,
     attach_room_status,
     dispatch_find_quorum_meeting_slots,
     dispatch_find_meeting_slot,
+    dispatch_find_attendee_nearest_slots,
     build_parser,
     main,
 )

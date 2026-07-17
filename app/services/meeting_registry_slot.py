@@ -222,7 +222,8 @@ async def resolve_registry_current_slot_availability(
             attendees=attendees,
             slot_start=slot_start,
             slot_end=slot_end,
-            verify_personal_calendars=True,
+            include_company_calendar=True,
+            verify_personal_calendars=False,
         )
     except Exception as exc:
         logger.warning(

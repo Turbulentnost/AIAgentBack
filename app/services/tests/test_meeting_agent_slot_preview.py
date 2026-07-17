@@ -215,15 +215,17 @@ async def test_enrich_attendees_uses_freebusy_for_nearest_slot(user) -> None:
     ]
 
     with patch(
-        "app.services.meeting_agent_slot._find_attendee_nearest_slot",
+        "app.services.meeting_agent_slot._fetch_attendee_nearest_slots_bulk",
         AsyncMock(
-            return_value=MeetingSlot(
-                start="2026-07-28T11:00:00+03:00",
-                end="2026-07-28T12:00:00+03:00",
-                confidence=0.7,
-            )
+            return_value={
+                "user@turbo-don.ru": MeetingSlot(
+                    start="2026-07-28T11:00:00+03:00",
+                    end="2026-07-28T12:00:00+03:00",
+                    confidence=0.7,
+                )
+            }
         ),
-    ) as find_slot:
+    ) as find_slots:
         result = await service._enrich_attendees_with_nearest_slots(
             attendees,
             backend=AsyncMock(),
@@ -235,7 +237,8 @@ async def test_enrich_attendees_uses_freebusy_for_nearest_slot(user) -> None:
 
     assert result[0].nearest_slot_start == "2026-07-28T11:00:00+03:00"
     assert result[0].nearest_slot_label == "28.07.2026, 11:00–12:00"
-    find_slot.assert_awaited_once()
+    find_slots.assert_awaited_once()
+    assert find_slots.await_args.kwargs["emails"] == ["user@turbo-don.ru"]
 
 
 @pytest.mark.asyncio
@@ -865,7 +868,7 @@ async def test_get_agent_slot_detail_returns_participant_status(user) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_agent_slot_detail_reuses_availability_cache(user) -> None:
+async def test_get_agent_slot_detail_ignores_availability_cache(user) -> None:
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -947,10 +950,7 @@ async def test_get_agent_slot_detail_reuses_availability_cache(user) -> None:
 
     assert result.error is None
     assert build_details.call_count == 1
-    assert build_details.call_args.kwargs["cached_busy_by_attendee"] is not None
-    assert build_details.call_args.kwargs["cached_busy_by_attendee"]["a@turbo-don.ru"] == [
-        busy_block
-    ]
+    assert build_details.call_args.kwargs.get("cached_busy_by_attendee") is None
 
 
 @pytest.mark.asyncio

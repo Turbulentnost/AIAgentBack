@@ -100,6 +100,7 @@ from app.services.meeting_slot import (
 )
 from app.tools.Outlook.find_meeting_slot import (
     build_slot_participant_details,
+    dispatch_find_attendee_nearest_slots,
     dispatch_find_meeting_slot,
 )
 from app.tools.Outlook.meeting_rooms import check_rooms_status
@@ -108,33 +109,46 @@ from app.tools.Outlook.send_meeting_invite import load_config
 logger = get_logger(__name__)
 
 
-async def _find_attendee_nearest_slot(
+async def _fetch_attendee_nearest_slots_bulk(
     *,
-    email: str,
+    emails: list[str],
     planned_start: str,
     duration_minutes: int,
     max_days: int,
-) -> MeetingSlot | None:
-    """Справочный ближайший слот участника: только Free/Busy (без чтения личного календаря)."""
+) -> dict[str, MeetingSlot | None]:
+    """Справочные ближайшие слоты: один bulk Free/Busy на всех участников."""
+    if not emails:
+        return {}
+
     payload = await asyncio.wait_for(
         asyncio.to_thread(
-            dispatch_find_meeting_slot,
-            attendees=[email],
+            dispatch_find_attendee_nearest_slots,
+            attendees=emails,
             preferred=planned_start,
             duration_minutes=duration_minutes,
             max_days=max_days,
-            source="freebusy",
-            verify_calendar=False,
-            skip_rooms=True,
             quiet=True,
         ),
         timeout=ATTENDEE_NEAREST_SLOT_TIMEOUT_SECONDS,
     )
-    slot_start = payload.get("slot_start")
-    slot_end = payload.get("slot_end")
-    if not slot_start or not slot_end:
-        return None
-    return MeetingSlot(start=slot_start, end=slot_end, confidence=0.7)
+
+    slots_by_email: dict[str, MeetingSlot | None] = {}
+    for email in emails:
+        slot_payload = payload.get(email)
+        if not slot_payload:
+            slots_by_email[email] = None
+            continue
+        slot_start = slot_payload.get("slot_start")
+        slot_end = slot_payload.get("slot_end")
+        if not slot_start or not slot_end:
+            slots_by_email[email] = None
+            continue
+        slots_by_email[email] = MeetingSlot(
+            start=slot_start,
+            end=slot_end,
+            confidence=0.7,
+        )
+    return slots_by_email
 
 
 def _build_room_slot_status(
@@ -435,47 +449,54 @@ class MeetingAgentSlotService:
         if not search_start:
             return attendees
 
-        async def enrich_one(attendee: MeetingAttendeeRead) -> MeetingAttendeeRead:
-            if not attendee.found or not attendee.email:
-                return attendee
+        emails = [
+            attendee.email.strip()
+            for attendee in attendees
+            if attendee.found and attendee.email
+        ]
+        if not emails:
+            return attendees
 
-            try:
-                slot = await _find_attendee_nearest_slot(
-                    email=attendee.email,
-                    planned_start=search_start,
-                    duration_minutes=duration_minutes,
-                    max_days=max_days,
-                )
-            except TimeoutError:
-                logger.info(
-                    "meeting.slot_preview.attendee_slot_failed",
-                    fio=attendee.fio,
-                    email=attendee.email,
-                    error="timeout",
-                )
-                return attendee
-            except Exception as exc:
-                logger.info(
-                    "meeting.slot_preview.attendee_slot_failed",
-                    fio=attendee.fio,
-                    email=attendee.email,
-                    error=str(exc),
-                )
-                return attendee
-
-            if slot is None:
-                return attendee
-            return attendee.model_copy(
-                update={
-                    "nearest_slot_start": slot.start,
-                    "nearest_slot_end": slot.end,
-                    "nearest_slot_label": format_slot_label(slot.start, slot.end),
-                }
+        try:
+            nearest_by_email = await _fetch_attendee_nearest_slots_bulk(
+                emails=emails,
+                planned_start=search_start,
+                duration_minutes=duration_minutes,
+                max_days=max_days,
             )
+        except TimeoutError:
+            logger.info(
+                "meeting.slot_preview.attendee_slots_failed",
+                emails=emails,
+                error="timeout",
+            )
+            return attendees
+        except Exception as exc:
+            logger.info(
+                "meeting.slot_preview.attendee_slots_failed",
+                emails=emails,
+                error=str(exc),
+            )
+            return attendees
 
         enriched: list[MeetingAttendeeRead] = []
         for attendee in attendees:
-            enriched.append(await enrich_one(attendee))
+            if not attendee.found or not attendee.email:
+                enriched.append(attendee)
+                continue
+            slot = nearest_by_email.get(attendee.email.strip())
+            if slot is None:
+                enriched.append(attendee)
+                continue
+            enriched.append(
+                attendee.model_copy(
+                    update={
+                        "nearest_slot_start": slot.start,
+                        "nearest_slot_end": slot.end,
+                        "nearest_slot_label": format_slot_label(slot.start, slot.end),
+                    }
+                )
+            )
         return enriched
 
     async def suggest_agent_slot(
@@ -980,45 +1001,12 @@ class MeetingAgentSlotService:
             for attendee in attendees
         ]
 
-        cached_busy_by_attendee = None
         if payload.availability_cache_id:
-            from app.services.slot_availability_cache import (
-                get_availability_snapshot,
-                slot_within_snapshot_window,
+            logger.info(
+                "meeting.slot_detail.ignore_availability_cache",
+                memo_ref_key=normalized_ref,
+                cache_id=payload.availability_cache_id,
             )
-
-            snapshot = get_availability_snapshot(payload.availability_cache_id)
-            if snapshot is None:
-                logger.info(
-                    "meeting.slot_detail.cache_miss",
-                    memo_ref_key=normalized_ref,
-                    cache_id=payload.availability_cache_id,
-                )
-            elif (
-                snapshot.memo_ref_key == normalized_ref
-                and slot_within_snapshot_window(
-                    snapshot,
-                    slot_start=slot_start_dt,
-                    slot_end=slot_end_dt,
-                )
-            ):
-                cached_busy_by_attendee = snapshot.busy_by_attendee
-                logger.info(
-                    "meeting.slot_detail.reuse_availability_cache",
-                    memo_ref_key=normalized_ref,
-                    cache_id=payload.availability_cache_id,
-                )
-            else:
-                logger.info(
-                    "meeting.slot_detail.cache_skip",
-                    memo_ref_key=normalized_ref,
-                    cache_id=payload.availability_cache_id,
-                    snapshot_memo_ref_key=snapshot.memo_ref_key,
-                    slot_start=payload.slot_start,
-                    slot_end=payload.slot_end,
-                    window_start=snapshot.window_start.isoformat(),
-                    window_end=snapshot.window_end.isoformat(),
-                )
 
         logger.info(
             "meeting.slot_detail.fetch",
@@ -1027,7 +1015,7 @@ class MeetingAgentSlotService:
             slot_end=payload.slot_end,
             attendees=len(attendee_payload),
             timeout_seconds=SLOT_DETAIL_TIMEOUT_SECONDS,
-            reused_cache=bool(cached_busy_by_attendee),
+            reused_cache=False,
         )
         try:
             raw = await asyncio.wait_for(
@@ -1040,8 +1028,7 @@ class MeetingAgentSlotService:
                     step_minutes=15,
                     include_company_calendar=True,
                     light_reschedule_hints=True,
-                    verify_personal_calendars=True,
-                    cached_busy_by_attendee=cached_busy_by_attendee,
+                    verify_personal_calendars=False,
                 ),
                 timeout=SLOT_DETAIL_TIMEOUT_SECONDS,
             )
@@ -1236,7 +1223,7 @@ class MeetingAgentSlotService:
                     step_minutes=15,
                     include_company_calendar=True,
                     light_reschedule_hints=True,
-                    verify_personal_calendars=True,
+                    verify_personal_calendars=False,
                 ),
                 timeout=SLOT_DETAIL_TIMEOUT_SECONDS,
             )

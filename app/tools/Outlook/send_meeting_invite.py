@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -27,6 +28,9 @@ from app.tools.Outlook.outlook_meeting_link import calendar_item_outlook_meta
 
 _EWS_VERSION = Version(build=EXCHANGE_2013_SP1)
 
+_SERVICE_ACCOUNT_CACHE: dict[str, Account] = {}
+_SERVICE_ACCOUNT_LOCK = threading.Lock()
+
 
 def load_config() -> OutlookConfig:
     return build_outlook_config()
@@ -42,6 +46,19 @@ def is_shared_mailbox(config: OutlookConfig) -> bool:
     return bool(config.mailbox) and config.mailbox.strip().lower() != config.email.strip().lower()
 
 
+def _service_account_cache_key(config: OutlookConfig) -> str:
+    return (
+        f"{config.email.strip().lower()}|{config.server.strip().lower()}|"
+        f"{primary_smtp_address(config).lower()}"
+    )
+
+
+def clear_service_account_cache() -> None:
+    """Сброс кэша Postagent Account (для тестов и смены пароля без рестарта)."""
+    with _SERVICE_ACCOUNT_LOCK:
+        _SERVICE_ACCOUNT_CACHE.clear()
+
+
 def connect_account(config: OutlookConfig, *, verify_mailbox: bool = True) -> Account:
     if not config.email or not config.password:
         raise ValueError(
@@ -50,6 +67,12 @@ def connect_account(config: OutlookConfig, *, verify_mailbox: bool = True) -> Ac
         )
     if not primary_smtp_address(config):
         raise ValueError("Не задан email (и OUTLOOK_MAILBOX, если SMTP ящика другой).")
+
+    cache_key = _service_account_cache_key(config)
+    with _SERVICE_ACCOUNT_LOCK:
+        cached = _SERVICE_ACCOUNT_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
 
     smtp = primary_smtp_address(config)
     credentials = Credentials(username=config.email, password=config.password)
@@ -75,6 +98,9 @@ def connect_account(config: OutlookConfig, *, verify_mailbox: bool = True) -> Ac
 
     if verify_mailbox:
         verify_mailbox_access(account, config)
+
+    with _SERVICE_ACCOUNT_LOCK:
+        _SERVICE_ACCOUNT_CACHE[cache_key] = account
     return account
 
 

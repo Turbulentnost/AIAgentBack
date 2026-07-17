@@ -47,11 +47,13 @@ from .scoring import slot_impact_score
 from .search import find_quorum_slots
 from .search import find_company_calendar_reschedule_candidates
 from .search import find_nearest_slot
+from .search import find_nearest_slots_per_attendee
 from .api import build_slot_participant_details
 from .api import format_slot
 from .api import attach_room_status
 from .api import dispatch_find_quorum_meeting_slots
 from .api import dispatch_find_meeting_slot
+from .api import dispatch_find_attendee_nearest_slots
 from .api import build_parser
 from .api import main
 
@@ -101,11 +103,13 @@ __all__ = [
     "find_quorum_slots",
     "find_company_calendar_reschedule_candidates",
     "find_nearest_slot",
+    "find_nearest_slots_per_attendee",
     "build_slot_participant_details",
     "format_slot",
     "attach_room_status",
     "dispatch_find_quorum_meeting_slots",
     "dispatch_find_meeting_slot",
+    "dispatch_find_attendee_nearest_slots",
     "build_parser",
     "main",
 ]

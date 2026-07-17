@@ -32,6 +32,7 @@ from app.tools.Outlook.find_meeting_slot import (
     partition_attendees_at_slot,
     union_busy_for_all,
     find_company_calendar_reschedule_candidates,
+    find_nearest_slots_per_attendee,
 )
 from app.tools.Outlook.outlook_config import OutlookConfig
 
@@ -1316,7 +1317,7 @@ def test_build_slot_participant_details_reads_company_calendar_when_requested(mo
     assert config.company_calendar in company_calls
 
 
-def test_build_slot_participant_details_skips_company_calendar_when_all_free(monkeypatch) -> None:
+def test_build_slot_participant_details_reads_company_calendar_when_all_free(monkeypatch) -> None:
     config = _config()
     tz = ZoneInfo("Europe/Moscow")
     slot_start = datetime(2026, 7, 9, 8, 45, tzinfo=tz)
@@ -1344,7 +1345,7 @@ def test_build_slot_participant_details_skips_company_calendar_when_all_free(mon
         include_company_calendar=True,
     )
 
-    assert company_calls == []
+    assert company_calls == [config.company_calendar]
 
 
 def test_build_slot_participant_details_uses_company_calendar_for_busy_subject(monkeypatch) -> None:
@@ -1438,3 +1439,58 @@ def test_slot_impact_score_accounts_for_movability_and_role() -> None:
         attendee_weights=weights,
     )
     assert staff_conflict < director_conflict
+
+
+def test_find_nearest_slots_per_attendee_uses_single_freebusy_fetch(monkeypatch) -> None:
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    requested = datetime(2026, 6, 19, 14, 0, tzinfo=tz)
+    fixed_now = datetime(2026, 6, 19, 8, 0, tzinfo=tz)
+    busy_by_attendee = {
+        "busy@turbo-don.ru": [
+            (
+                datetime(2026, 6, 19, 14, 0, tzinfo=tz),
+                datetime(2026, 6, 19, 16, 0, tzinfo=tz),
+            )
+        ],
+        "free@turbo-don.ru": [],
+    }
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.rules.datetime",
+        type(
+            "FixedDatetime",
+            (),
+            {
+                "now": staticmethod(lambda _tz=None: fixed_now),
+                "combine": datetime.combine,
+            },
+        ),
+    )
+
+    def _fetch_busy(_config, attendees, _start, _end):
+        calls.append(list(attendees))
+        return {email: busy_by_attendee[email] for email in attendees}
+
+    monkeypatch.setattr(
+        "app.tools.Outlook.slot_search.search.fetch_busy_intervals_freebusy",
+        _fetch_busy,
+    )
+
+    result = find_nearest_slots_per_attendee(
+        config=config,
+        attendees=["busy@turbo-don.ru", "free@turbo-don.ru"],
+        preferred=requested,
+        duration=timedelta(hours=1),
+        max_days=7,
+        step=timedelta(minutes=15),
+    )
+
+    assert calls == [["busy@turbo-don.ru", "free@turbo-don.ru"]]
+    assert result["free@turbo-don.ru"] is not None
+    assert result["free@turbo-don.ru"]["slot_start"] == requested.isoformat()
+    assert result["busy@turbo-don.ru"] is not None
+    assert result["busy@turbo-don.ru"]["slot_start"] == datetime(
+        2026, 6, 19, 16, 0, tzinfo=tz
+    ).isoformat()
