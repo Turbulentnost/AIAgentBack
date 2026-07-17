@@ -813,6 +813,10 @@ class MeetingRegistryParticipantsApplyRead(BaseModel):
         default_factory=list,
         description="Переносы для новых участников на текущем слоте (п.5)",
     )
+    requires_reschedule: bool = Field(
+        default=False,
+        description="Перед добавлением нужно перенести конфликтующие встречи нового участника",
+    )
     confirmation_kind: str | None = Field(
         default=None,
         description="removal | add_current_slot | add_reschedule",

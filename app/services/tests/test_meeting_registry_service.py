@@ -548,6 +548,7 @@ async def test_get_registry_participants_returns_participants_from_db(user) -> N
     registry = MagicMock()
     registry.get_entry = AsyncMock(return_value=entry)
     registry.reconcile_participants_from_outlook = AsyncMock(return_value=entry)
+    registry.repair_stale_participant_payload = AsyncMock(return_value=entry)
 
     with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
         result = await service.get_registry_participants(
@@ -597,6 +598,7 @@ async def test_get_registry_participants_keeps_db_list_when_pending_removal_exis
     registry = MagicMock()
     registry.get_entry = AsyncMock(return_value=entry)
     registry.reconcile_participants_from_outlook = AsyncMock(return_value=entry)
+    registry.repair_stale_participant_payload = AsyncMock(return_value=entry)
 
     with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
         result = await service.get_registry_participants(

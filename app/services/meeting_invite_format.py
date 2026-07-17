@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.tools.mail_templates import INVITE_AGENT_FOOTER, invite_agent_footer, render_mail_template
 from app.tools.Outlook.meeting_rooms import resolve_room_by_name
-
-INVITE_AGENT_FOOTER = "Совещание запланировано ИИ-агентом по планированию совещаний"
 
 
 def _memo_number_text(number: Any) -> str:
@@ -175,9 +174,10 @@ def format_invite_body(
     attendees: list[tuple[str, str]],
     *,
     room: dict[str, str] | None = None,
-    footer: str = INVITE_AGENT_FOOTER,
+    footer: str | None = None,
 ) -> str:
     """Тело приглашения: «ФИО <email>» построчно и подпись агента."""
+    footer_text = invite_agent_footer() if footer is None else footer
     pairs = list(attendees)
     if room and room.get("email"):
         pairs.append((str(room.get("name") or room["email"]).strip(), str(room["email"]).strip()))
@@ -187,16 +187,21 @@ def format_invite_body(
         address = email.strip()
         suffix = ";" if index < len(pairs) - 1 else ""
         lines.append(f"{name} <{address}>{suffix}")
-    if footer.strip():
-        lines.extend(["", footer.strip()])
-    return "\n".join(lines)
+    participants_block = "\n".join(lines)
+    if not footer_text.strip():
+        return participants_block
+    return render_mail_template(
+        "invite_body",
+        participants_block=participants_block,
+        footer=footer_text.strip(),
+    )
 
 
 def invite_body_from_attendees(
     attendees: list[Any],
     *,
     room: dict[str, str] | None = None,
-    footer: str = INVITE_AGENT_FOOTER,
+    footer: str | None = None,
 ) -> str:
     pairs: list[tuple[str, str]] = []
     for item in attendees:

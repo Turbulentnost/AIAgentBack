@@ -1,0 +1,7 @@
+Произошло обновление состава участников
+{{new_participants_section}}
+{{removed_participants_section}}
+Обновленный состав:
+{{roster_lines}}
+{{extra_message}}
+{{footer}}

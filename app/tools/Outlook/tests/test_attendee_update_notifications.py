@@ -8,12 +8,14 @@ from app.tools.Outlook.attendee_update_notifications import (
     INVITE_AGENT_FOOTER,
     attendee_line,
     build_existing_attendees_notification_body,
+    build_meeting_roster_calendar_body,
     build_new_attendees_calendar_invite_body,
     build_new_attendees_notification_body,
     build_removed_attendees_calendar_body,
     build_removed_attendees_notification_body,
     existing_attendee_recipients,
     resolve_attendee_pair,
+    send_attendee_update_notifications,
     stakeholder_notification_recipients,
 )
 
@@ -168,6 +170,29 @@ def test_build_removed_attendees_calendar_body_contains_exclusion_text() -> None
     assert INVITE_AGENT_FOOTER in html
 
 
+def test_build_meeting_roster_calendar_body_uses_standard_invite_format() -> None:
+    item = SimpleNamespace(
+        subject="Тестовая СЗ",
+        required_attendees=[
+            attendee("ivanov@turbo-don.ru", "Иванов Иван Иванович"),
+            attendee("popov@turbo-don.ru", "Попов Павел Павлович"),
+        ],
+        optional_attendees=[],
+    )
+    body = build_meeting_roster_calendar_body(
+        item=item,
+        changes={"after": ["ivanov@turbo-don.ru", "popov@turbo-don.ru"]},
+        account=None,
+    )
+    html = str(body)
+    assert "Arial" in html
+    assert "Иванов Иван Иванович &lt;ivanov@turbo-don.ru&gt;" in html
+    assert "Попов Павел Павлович &lt;popov@turbo-don.ru&gt;" in html
+    assert INVITE_AGENT_FOOTER in html
+    assert "Вы были исключены" not in html
+    assert "Вы были добавлены участником" not in html
+
+
 def test_build_new_attendees_calendar_invite_body_uses_standard_invite_format() -> None:
     item = SimpleNamespace(
         subject="Тестовая СЗ",
@@ -184,8 +209,8 @@ def test_build_new_attendees_calendar_invite_body_uses_standard_invite_format() 
     )
     html = str(body)
     assert "Arial" in html
-    assert "Иванов Иван Иванович <ivanov@turbo-don.ru>" in html
-    assert "Попов Павел Павлович <popov@turbo-don.ru>" in html
+    assert "Иванов Иван Иванович &lt;ivanov@turbo-don.ru&gt;" in html
+    assert "Попов Павел Павлович &lt;popov@turbo-don.ru&gt;" in html
     assert INVITE_AGENT_FOOTER in html
     assert "Вы были добавлены участником" not in html
 
@@ -204,4 +229,47 @@ def test_build_new_attendees_calendar_invite_body_ignores_composition_message() 
     )
     html = str(body)
     assert "Состав участников совещания изменён" not in html
-    assert "Новый Участник <new@turbo-don.ru>" in html
+    assert "Новый Участник &lt;new@turbo-don.ru&gt;" in html
+
+
+def test_send_attendee_update_notifications_emails_added_and_removed() -> None:
+    from unittest.mock import MagicMock, patch
+
+    item = SimpleNamespace(
+        subject="Тестовая СЗ",
+        start=None,
+        end=None,
+        required_attendees=[attendee("keep@turbo-don.ru", "Комарькова")],
+        optional_attendees=[],
+        organizer=SimpleNamespace(email_address="postagant@turbo-don.ru"),
+    )
+    account = MagicMock()
+    sent: list[tuple[str, str, str]] = []
+
+    def _capture_send(_account, *, to_email, subject, body):
+        sent.append((to_email, subject, body))
+
+    with patch(
+        "app.tools.Outlook.attendee_update_notifications.send_plain_notification_email",
+        side_effect=_capture_send,
+    ):
+        result = send_attendee_update_notifications(
+            account=account,
+            item=item,
+            changes={
+                "before": ["keep@turbo-don.ru", "old@turbo-don.ru"],
+                "after": ["keep@turbo-don.ru", "new@turbo-don.ru"],
+                "added": ["new@turbo-don.ru"],
+                "removed": ["old@turbo-don.ru"],
+            },
+            message="Состав участников совещания изменён",
+            stakeholder_emails=["manager@turbo-don.ru"],
+        )
+
+    assert result["notified_new"] == ["new@turbo-don.ru"]
+    assert result["notified_removed"] == ["old@turbo-don.ru"]
+    assert len(sent) == 3
+    subjects = {email: subject for email, subject, _body in sent}
+    assert subjects["new@turbo-don.ru"].startswith("Добавление на совещание:")
+    assert subjects["old@turbo-don.ru"].startswith("Исключение из совещания:")
+    assert subjects["manager@turbo-don.ru"].startswith("Обновление состава участников:")

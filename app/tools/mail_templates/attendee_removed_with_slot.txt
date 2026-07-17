@@ -1,0 +1,3 @@
+Вы были исключены из участников совещания {{slot_label}} по теме "{{subject}}"
+{{extra_message}}
+{{footer}}

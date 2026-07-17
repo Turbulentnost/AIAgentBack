@@ -10,6 +10,7 @@ from exchangelib.properties import HTMLBody, Mailbox
 
 from app.services.meeting_invite_format import format_invite_body
 from app.services.meeting_slot import format_slot_label
+from app.tools.mail_templates import INVITE_AGENT_FOOTER, invite_agent_footer, render_mail_template
 from app.tools.Outlook.company_calendar_sync import is_company_calendar_email
 from app.tools.Outlook.meeting_rooms import load_rooms
 from app.tools.Outlook.outlook_html_body import plain_text_to_html
@@ -22,7 +23,6 @@ from app.tools.Outlook.slot_search.attendees import (
 
 AttendeeField = Literal["required_attendees", "optional_attendees"]
 ATTENDEE_FIELDS: tuple[AttendeeField, ...] = ("required_attendees", "optional_attendees")
-INVITE_AGENT_FOOTER = "Совещание запланировано ИИ-агентом по планированию совещаний"
 
 AttendeePair = tuple[str, str]
 
@@ -148,6 +148,16 @@ def format_meeting_datetime_label(item: Any, *, config: OutlookConfig | None = N
     return ""
 
 
+def _lines_block(title: str, lines: list[str]) -> str:
+    if not lines:
+        return ""
+    return "\n".join([title, *lines])
+
+
+def _optional_message_block(message: str) -> str:
+    return message.strip()
+
+
 def build_existing_attendees_notification_body(
     *,
     subject: str = "",
@@ -156,41 +166,39 @@ def build_existing_attendees_notification_body(
     removed_pairs: list[AttendeePair],
     roster_pairs: list[AttendeePair],
     extra_message: str = "",
-    footer: str = INVITE_AGENT_FOOTER,
+    footer: str | None = None,
 ) -> str:
+    footer_text = invite_agent_footer() if footer is None else footer
     topic = subject.strip() or "Совещание"
     slot_text = slot_label.strip()
+    roster_lines = attendee_lines(roster_pairs)
+    extra = _optional_message_block(extra_message)
+    footer_value = footer_text.strip()
+
     if slot_text:
-        sections = [
-            (
-                f'Состав участников совещания {slot_text} по теме "{topic}" был изменен. '
-                "Обновленный состав:"
-            ),
-        ]
-        sections.extend(attendee_lines(roster_pairs))
-        if added_pairs:
-            sections.append("Добавленные участники:")
-            sections.extend(attendee_lines(added_pairs))
-        if removed_pairs:
-            sections.append("Удаленные участники:")
-            sections.extend(attendee_lines(removed_pairs))
-    else:
-        sections = ["Произошло обновление состава участников", ""]
-        if added_pairs:
-            sections.append("Новые участники:")
-            sections.extend(attendee_lines(added_pairs))
-            sections.append("")
-        if removed_pairs:
-            sections.append("Удаленные участники:")
-            sections.extend(attendee_lines(removed_pairs))
-            sections.append("")
-        sections.append("Обновленный состав:")
-        sections.extend(attendee_lines(roster_pairs))
-    if extra_message.strip():
-        sections.extend(["", extra_message.strip()])
-    if footer.strip():
-        sections.extend(["", footer.strip()])
-    return "\n".join(sections)
+        added_section = _lines_block("Добавленные участники:", attendee_lines(added_pairs))
+        removed_section = _lines_block("Удаленные участники:", attendee_lines(removed_pairs))
+        return render_mail_template(
+            "attendee_roster_changed_with_slot",
+            slot_label=slot_text,
+            subject=topic,
+            roster_lines="\n".join(roster_lines),
+            added_section=added_section,
+            removed_section=removed_section,
+            extra_message=extra,
+            footer=footer_value,
+        )
+
+    new_section = _lines_block("Новые участники:", attendee_lines(added_pairs))
+    removed_section = _lines_block("Удаленные участники:", attendee_lines(removed_pairs))
+    return render_mail_template(
+        "attendee_roster_changed_generic",
+        new_participants_section=new_section,
+        removed_participants_section=removed_section,
+        roster_lines="\n".join(roster_lines),
+        extra_message=extra,
+        footer=footer_value,
+    )
 
 
 def build_new_attendees_notification_body(
@@ -198,19 +206,16 @@ def build_new_attendees_notification_body(
     subject: str,
     roster_pairs: list[AttendeePair],
     extra_message: str = "",
-    footer: str = INVITE_AGENT_FOOTER,
+    footer: str | None = None,
 ) -> str:
-    sections = [
-        f'Вы были добавлены участником на совещание по теме "{subject.strip()}"',
-        "",
-        "Участники:",
-    ]
-    sections.extend(attendee_lines(roster_pairs))
-    if extra_message.strip():
-        sections.extend(["", extra_message.strip()])
-    if footer.strip():
-        sections.extend(["", footer.strip()])
-    return "\n".join(sections)
+    footer_text = invite_agent_footer() if footer is None else footer
+    return render_mail_template(
+        "attendee_added",
+        subject=subject.strip(),
+        roster_lines="\n".join(attendee_lines(roster_pairs)),
+        extra_message=_optional_message_block(extra_message),
+        footer=footer_text.strip(),
+    )
 
 
 def build_removed_attendees_notification_body(
@@ -218,20 +223,40 @@ def build_removed_attendees_notification_body(
     subject: str,
     slot_label: str = "",
     extra_message: str = "",
-    footer: str = INVITE_AGENT_FOOTER,
+    footer: str | None = None,
 ) -> str:
+    footer_text = invite_agent_footer() if footer is None else footer
     topic = subject.strip() or "Совещание"
     slot_text = slot_label.strip()
+    extra = _optional_message_block(extra_message)
+    footer_value = footer_text.strip()
     if slot_text:
-        lead = f'Вы были исключены из участников совещания {slot_text} по теме "{topic}"'
-    else:
-        lead = f'Вы были исключены из участников совещания по теме "{topic}"'
-    sections = [lead]
-    if extra_message.strip():
-        sections.extend(["", extra_message.strip()])
-    if footer.strip():
-        sections.extend(["", footer.strip()])
-    return "\n".join(sections)
+        return render_mail_template(
+            "attendee_removed_with_slot",
+            slot_label=slot_text,
+            subject=topic,
+            extra_message=extra,
+            footer=footer_value,
+        )
+    return render_mail_template(
+        "attendee_removed_generic",
+        subject=topic,
+        extra_message=extra,
+        footer=footer_value,
+    )
+
+
+def build_meeting_roster_calendar_body(
+    *,
+    item: Any,
+    changes: dict[str, Any],
+    account: Account,
+) -> HTMLBody:
+    """Стандартное описание совещания для календарной записи (актуальный состав)."""
+    after = list(changes.get("after") or [])
+    roster_pairs = resolve_attendee_pairs(after, item=item, account=account)
+    text = format_invite_body(roster_pairs, footer=invite_agent_footer())
+    return plain_text_to_html(text)
 
 
 def build_new_attendees_calendar_invite_body(
@@ -241,11 +266,13 @@ def build_new_attendees_calendar_invite_body(
     account: Account,
     message: str = "",
 ) -> HTMLBody:
-    """Тело календарного приглашения для новых участников (SendOnlyToChanged)."""
-    after = list(changes.get("after") or [])
-    roster_pairs = resolve_attendee_pairs(after, item=item, account=account)
-    text = format_invite_body(roster_pairs, footer=INVITE_AGENT_FOOTER)
-    return plain_text_to_html(text)
+    """Обратная совместимость: описание совещания с актуальным составом."""
+    del message
+    return build_meeting_roster_calendar_body(
+        item=item,
+        changes=changes,
+        account=account,
+    )
 
 
 def build_removed_attendees_calendar_body(
@@ -254,7 +281,7 @@ def build_removed_attendees_calendar_body(
     message: str = "",
     config: OutlookConfig | None = None,
 ) -> HTMLBody:
-    """Тело уведомления об отмене участия (SendOnlyToChanged для удалённых)."""
+    """HTML-тело письма об исключении (не для описания календарного события)."""
     subject = str(getattr(item, "subject", "") or "Совещание").strip()
     text = build_removed_attendees_notification_body(
         subject=subject,
@@ -377,24 +404,59 @@ def send_attendee_update_notifications(
             send_plain_notification_email(
                 account,
                 to_email=email,
-                subject=f"Обновление состава участников: {subject}",
+                subject=render_mail_template(
+                    "notification_subject_roster_update",
+                    subject=subject,
+                ),
                 body=body,
             )
             notified_existing.append(email)
         except Exception as error:
             errors.append(f"{email}: {error}")
 
-    # Новым участникам текст уходит в календарном приглашении (SendOnlyToChanged).
     for email in added:
         if email.lower() in protected or not is_notification_recipient(email):
             continue
-        notified_new.append(email)
+        body = build_new_attendees_notification_body(
+            subject=subject,
+            roster_pairs=roster_pairs,
+            extra_message=message,
+        )
+        try:
+            send_plain_notification_email(
+                account,
+                to_email=email,
+                subject=render_mail_template(
+                    "notification_subject_attendee_added",
+                    subject=subject,
+                ),
+                body=body,
+            )
+            notified_new.append(email)
+        except Exception as error:
+            errors.append(f"{email}: {error}")
 
-    # Удалённым — в уведомлении об отмене участия (SendOnlyToChanged).
     for email in removed:
         if email.lower() in protected or not is_notification_recipient(email):
             continue
-        notified_removed.append(email)
+        body = build_removed_attendees_notification_body(
+            subject=subject,
+            slot_label=slot_label,
+            extra_message=message,
+        )
+        try:
+            send_plain_notification_email(
+                account,
+                to_email=email,
+                subject=render_mail_template(
+                    "notification_subject_attendee_removed",
+                    subject=subject,
+                ),
+                body=body,
+            )
+            notified_removed.append(email)
+        except Exception as error:
+            errors.append(f"{email}: {error}")
 
     return {
         "notified_existing": notified_existing,
@@ -409,6 +471,7 @@ __all__ = [
     "SEND_ONLY_TO_CHANGED",
     "attendee_line",
     "build_existing_attendees_notification_body",
+    "build_meeting_roster_calendar_body",
     "build_new_attendees_calendar_invite_body",
     "build_removed_attendees_calendar_body",
     "build_removed_attendees_notification_body",

@@ -51,15 +51,19 @@ def build_rejection_patch(
     return payload
 
 
+from app.tools.mail_templates import render_mail_template
+
+
 def build_rejection_notification_message(
     *,
     number: str | None,
     reason: str,
 ) -> str:
     memo_number = (number or "").strip() or "?"
-    return (
-        f"Служебная записка №{memo_number} отклонена управлением делами. "
-        f"Причина: {reason.strip()}"
+    return render_mail_template(
+        "reject_memo_notification",
+        memo_number=memo_number,
+        reason=reason.strip(),
     )
 
 

@@ -30,8 +30,7 @@ from app.tools.Outlook.outlook_html_body import plain_text_to_html
 
 from app.tools.Outlook.attendee_update_notifications import (
     SEND_ONLY_TO_CHANGED,
-    build_new_attendees_calendar_invite_body,
-    build_removed_attendees_calendar_body,
+    build_meeting_roster_calendar_body,
     send_attendee_update_notifications,
 )
 
@@ -182,36 +181,17 @@ def _calendar_body_for_attendee_changes(
     target: Any,
     changes: dict[str, Any],
     account: Any,
-    message: str,
-    config: OutlookConfig,
     calendar_invite_body: str | None = None,
 ) -> Any | None:
-    if changes.get("added") and not changes.get("removed"):
-        if calendar_invite_body and calendar_invite_body.strip():
-            return plain_text_to_html(calendar_invite_body.strip())
-        return build_new_attendees_calendar_invite_body(
-            item=target,
-            changes=changes,
-            account=account,
-        )
+    if not changes.get("added") and not changes.get("removed"):
+        return None
     if calendar_invite_body and calendar_invite_body.strip():
-        text = calendar_invite_body.strip()
-        if message.strip():
-            text = f"{message.strip()}\n\n{text}"
-        return plain_text_to_html(text)
-    if changes.get("removed"):
-        return build_removed_attendees_calendar_body(
-            item=target,
-            message=message,
-            config=config,
-        )
-    if changes.get("added"):
-        return build_new_attendees_calendar_invite_body(
-            item=target,
-            changes=changes,
-            account=account,
-        )
-    return None
+        return plain_text_to_html(calendar_invite_body.strip())
+    return build_meeting_roster_calendar_body(
+        item=target,
+        changes=changes,
+        account=account,
+    )
 
 
 def update_meeting_attendees_item(
@@ -239,77 +219,21 @@ def update_meeting_attendees_item(
 
     remove_emails = normalize_emails(remove or [])
     add_emails = normalize_emails(add or [])
-    before_emails = all_attendee_emails(target)
     resolved_config = config or load_config()
     account = getattr(target, "account", None) or connect_account(resolved_config)
 
-    if calendar_invite_body and calendar_invite_body.strip():
-        changes = apply_attendee_changes(target, add=add_emails, remove=remove_emails)
-        update_fields: list[str] = ["required_attendees", "optional_attendees"]
-        if changes["added"] or changes["removed"]:
-            body = _calendar_body_for_attendee_changes(
-                target=target,
-                changes=changes,
-                account=account,
-                message=message,
-                config=resolved_config,
-                calendar_invite_body=calendar_invite_body,
-            )
-            if body is not None:
-                target.body = body
-                update_fields.append("body")
-            target.save(
-                update_fields=update_fields,
-                send_meeting_invitations=SEND_ONLY_TO_CHANGED,
-            )
-    elif remove_emails and add_emails:
-        removed_part = apply_attendee_changes(target, remove=remove_emails)
-        if removed_part["removed"]:
-            target.body = build_removed_attendees_calendar_body(
-                item=target,
-                message=message,
-                config=resolved_config,
-            )
-            target.save(
-                update_fields=["required_attendees", "optional_attendees", "body"],
-                send_meeting_invitations=SEND_ONLY_TO_CHANGED,
-            )
-        added_part = apply_attendee_changes(target, add=add_emails)
-        if added_part["added"]:
-            target.body = build_new_attendees_calendar_invite_body(
-                item=target,
-                changes={"after": all_attendee_emails(target)},
-                account=account,
-            )
-            target.save(
-                update_fields=["required_attendees", "optional_attendees", "body"],
-                send_meeting_invitations=SEND_ONLY_TO_CHANGED,
-            )
-        changes = {
-            "before": before_emails,
-            "after": all_attendee_emails(target),
-            "added": added_part["added"],
-            "removed": removed_part["removed"],
-            "skipped_remove": removed_part["skipped_remove"],
-        }
-    else:
-        changes = apply_attendee_changes(target, add=add_emails, remove=remove_emails)
-        update_fields: list[str] = ["required_attendees", "optional_attendees"]
-        if changes["removed"]:
-            target.body = build_removed_attendees_calendar_body(
-                item=target,
-                message=message,
-                config=resolved_config,
-            )
+    changes = apply_attendee_changes(target, add=add_emails, remove=remove_emails)
+    update_fields: list[str] = ["required_attendees", "optional_attendees"]
+    if changes["added"] or changes["removed"]:
+        body = _calendar_body_for_attendee_changes(
+            target=target,
+            changes=changes,
+            account=account,
+            calendar_invite_body=calendar_invite_body,
+        )
+        if body is not None:
+            target.body = body
             update_fields.append("body")
-        elif changes["added"]:
-            target.body = build_new_attendees_calendar_invite_body(
-                item=target,
-                changes=changes,
-                account=account,
-            )
-            update_fields.append("body")
-
         target.save(
             update_fields=update_fields,
             send_meeting_invitations=SEND_ONLY_TO_CHANGED,

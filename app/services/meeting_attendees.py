@@ -158,24 +158,27 @@ def _merge_participant_name_lists(*lists: list[str]) -> list[str]:
 
 
 def registry_participants_for_display(entry: Any) -> list[str]:
-    """Список участников для UI: учитывает pending_add и сохранённый состав вхождения."""
-    payload = entry.payload if isinstance(getattr(entry, "payload", None), dict) else {}
-    pending_add = payload.get("pending_add")
-    if isinstance(pending_add, dict):
-        pending_names = pending_add.get("participants")
-        if isinstance(pending_names, list) and pending_names:
-            return _merge_participant_name_lists(pending_names)
-
+    """Подтверждённый состав для UI: колонка participants, без pending_add."""
     from_db = registry_participant_names(entry)
+    if from_db:
+        return from_db
+    payload = entry.payload if isinstance(getattr(entry, "payload", None), dict) else {}
     stored = payload.get("occurrence_participant_names")
     if isinstance(stored, list) and stored:
-        stored_names = _merge_participant_name_lists(stored)
-        if len(stored_names) > len(from_db):
-            return stored_names
-        merged = _merge_participant_name_lists(from_db, stored_names)
-        if len(merged) > len(from_db):
-            return merged
-    return from_db
+        return _merge_participant_name_lists(stored)
+    return []
+
+
+def registry_participants_pending_target(entry: Any) -> list[str] | None:
+    """Целевой состав из pending_add (ещё не применён в Outlook)."""
+    payload = entry.payload if isinstance(getattr(entry, "payload", None), dict) else {}
+    pending_add = payload.get("pending_add")
+    if not isinstance(pending_add, dict):
+        return None
+    pending_names = pending_add.get("participants")
+    if not isinstance(pending_names, list) or not pending_names:
+        return None
+    return _merge_participant_name_lists(pending_names)
 
 
 def participant_names_from_outlook_attendees(

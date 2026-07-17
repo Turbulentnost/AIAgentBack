@@ -12,7 +12,10 @@ from app.schemas.meeting import (
     MeetingRegistryRescheduleSlotPreviewRequest,
     MeetingSlotRescheduleRecommendationRead,
 )
-from app.services.meeting_slot_flow import reschedule_recommendations_from_participants
+from app.services.meeting_slot_flow import (
+    evaluate_added_participant_slot,
+    reschedule_recommendations_from_participants,
+)
 
 
 def test_reschedule_recommendations_filters_by_added_fio() -> None:
@@ -48,6 +51,84 @@ def test_reschedule_recommendations_filters_by_added_fio() -> None:
     assert len(result) == 1
     assert result[0].participant_fio == "Иванов И.И."
     assert result[0].event_label == "Совещание А"
+
+
+def test_evaluate_added_participant_slot_accepts_freebusy_conflict() -> None:
+    participants = [
+        {
+            "fio": "Иванов И.И.",
+            "email": "ivanov@test.ru",
+            "role": "participant",
+            "status": "free",
+            "blocking_events": [],
+        },
+        {
+            "fio": "Лапина А.А.",
+            "email": "lapina@test.ru",
+            "role": "participant",
+            "status": "busy",
+            "blocking_events": [
+                {
+                    "event_subject": "Совещание с Лапиной А.А.",
+                    "event_start_iso": "2026-07-17T13:00:00+00:00",
+                    "event_end_iso": "2026-07-17T14:00:00+00:00",
+                    "event_label": "Совещание с Лапиной А.А.",
+                    "source": "freebusy",
+                    "reschedule_hint_start": "2026-07-20T05:00:00+00:00",
+                    "reschedule_hint_end": "2026-07-20T06:00:00+00:00",
+                    "reschedule_hint_label": "20.07.2026, 08:00–09:00",
+                }
+            ],
+        },
+    ]
+
+    decision = evaluate_added_participant_slot(
+        participants,
+        added_fio=["Лапина А.А."],
+    )
+
+    assert decision.can_add_with_reschedule is True
+
+
+def test_evaluate_added_participant_slot_prefers_current_slot_with_reschedule() -> None:
+    participants = [
+        {
+            "fio": "Иванов И.И.",
+            "email": "ivanov@test.ru",
+            "role": "participant",
+            "status": "free",
+            "blocking_events": [],
+        },
+        {
+            "fio": "Мангасарян Д.К.",
+            "email": "mangasaryan@test.ru",
+            "role": "participant",
+            "status": "busy",
+            "blocking_events": [
+                {
+                    "event_subject": "Другое совещание",
+                    "event_start_iso": "2026-07-17T10:00:00+00:00",
+                    "event_end_iso": "2026-07-17T11:00:00+00:00",
+                    "event_label": "Другое совещание",
+                    "source": "company_calendar",
+                    "reschedule_hint_start": "2026-07-17T12:00:00+00:00",
+                    "reschedule_hint_end": "2026-07-17T13:00:00+00:00",
+                    "reschedule_hint_label": "17.07.2026, 15:00–16:00",
+                }
+            ],
+        },
+    ]
+
+    decision = evaluate_added_participant_slot(
+        participants,
+        added_fio=["Мангасарян Д.К."],
+    )
+
+    assert decision.all_free is False
+    assert decision.existing_all_free is True
+    assert decision.can_add_with_reschedule is True
+    assert len(decision.reschedule_recommendations) == 1
+    assert len(decision.reschedule_targets) == 1
 
 
 @pytest.mark.asyncio

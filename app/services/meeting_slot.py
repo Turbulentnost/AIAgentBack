@@ -46,6 +46,28 @@ def slot_duration_minutes(slot_start: str, slot_end: str, *, default: int = 60) 
     return minutes if minutes > 0 else default
 
 
+def slots_match(
+    start_a: datetime | str | None,
+    end_a: datetime | str | None,
+    start_b: datetime | str | None,
+    end_b: datetime | str | None,
+) -> bool:
+    def _normalize(value: datetime | str | None) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        return parse_slot_datetime(str(value))
+
+    norm_start_a = _normalize(start_a)
+    norm_start_b = _normalize(start_b)
+    if norm_start_a is None or norm_start_b is None:
+        return False
+    norm_end_a = _normalize(end_a) or norm_start_a
+    norm_end_b = _normalize(end_b) or norm_start_b
+    return norm_start_a == norm_start_b and norm_end_a == norm_end_b
+
+
 def format_slot_label(start: str, end: str) -> str:
     start_dt = parse_slot_datetime(start)
     end_dt = parse_slot_datetime(end)

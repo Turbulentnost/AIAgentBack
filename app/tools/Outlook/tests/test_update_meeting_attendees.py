@@ -165,6 +165,45 @@ def test_update_meeting_attendees_item_series_scope_removes_from_master() -> Non
     assert all_attendee_emails(master) == ["keep@turbo-don.ru"]
 
 
+def test_update_meeting_attendees_item_remove_uses_roster_body() -> None:
+    occurrence = SimpleNamespace(
+        type="Occurrence",
+        id="occ-1",
+        subject="Серия",
+        is_cancelled=False,
+        organizer=SimpleNamespace(email_address="postagant@turbo-don.ru"),
+        required_attendees=[attendee("keep@turbo-don.ru"), attendee("old@turbo-don.ru")],
+        optional_attendees=[],
+        body="",
+        account=SimpleNamespace(),
+    )
+    occurrence.save = MagicMock()
+
+    with (
+        patch(
+            "app.tools.Outlook.update_meeting_attendees.build_meeting_roster_calendar_body",
+            return_value="<p>roster</p>",
+        ) as build_roster,
+        patch(
+            "app.tools.Outlook.update_meeting_attendees.send_attendee_update_notifications",
+            return_value={
+                "notified_existing": ["keep@turbo-don.ru"],
+                "notified_new": [],
+                "notified_removed": ["old@turbo-don.ru"],
+                "notification_errors": [],
+            },
+        ),
+    ):
+        update_meeting_attendees_item(
+            occurrence,
+            remove=["old@turbo-don.ru"],
+            attendees_scope="occurrence",
+        )
+
+    build_roster.assert_called_once()
+    assert str(occurrence.body) == "<p>roster</p>"
+
+
 def test_update_meeting_attendees_item_occurrence_scope_adds_to_occurrence() -> None:
     occurrence = SimpleNamespace(
         type="Occurrence",
@@ -181,7 +220,7 @@ def test_update_meeting_attendees_item_occurrence_scope_adds_to_occurrence() -> 
 
     with (
         patch(
-            "app.tools.Outlook.update_meeting_attendees.build_new_attendees_calendar_invite_body",
+            "app.tools.Outlook.update_meeting_attendees.build_meeting_roster_calendar_body",
             return_value="<p>invite</p>",
         ) as build_invite,
         patch(
@@ -232,7 +271,7 @@ def test_update_meeting_attendees_item_series_scope_adds_to_master() -> None:
 
     with (
         patch(
-            "app.tools.Outlook.update_meeting_attendees.build_new_attendees_calendar_invite_body",
+            "app.tools.Outlook.update_meeting_attendees.build_meeting_roster_calendar_body",
             return_value="<p>invite</p>",
         ) as build_invite,
         patch(
@@ -286,7 +325,7 @@ def test_update_meeting_attendees_item_uses_custom_calendar_invite_body() -> Non
 
     with (
         patch(
-            "app.tools.Outlook.update_meeting_attendees.build_new_attendees_calendar_invite_body",
+            "app.tools.Outlook.update_meeting_attendees.build_meeting_roster_calendar_body",
         ) as build_invite,
         patch(
             "app.tools.Outlook.update_meeting_attendees.send_attendee_update_notifications",

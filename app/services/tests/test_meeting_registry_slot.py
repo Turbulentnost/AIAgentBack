@@ -11,11 +11,15 @@ from app.models.enums import MeetingRegistryEventType, MeetingRegistryStage
 from app.models.meeting_registry import MeetingRegistryEntry
 from app.models.user import User
 from app.schemas.meeting import (
+    MeetingRegistryCurrentSlotAvailabilityRead,
     MeetingRegistryEarlierSlotCandidateRead,
     MeetingRegistryEarlierSlotSuggestionRead,
     MeetingRegistryParticipantsAddConfirmRequest,
     MeetingRegistryParticipantsApplyRequest,
     MeetingRegistryParticipantsRemovalConfirmRequest,
+    MeetingSlotBlockingEventRead,
+    MeetingSlotParticipantStatusRead,
+    MeetingSlotRescheduleRecommendationRead,
 )
 from app.services.meeting_backend import MeetingQuorumSlot
 from app.services.meeting_memo_cache import MemoCacheMissError
@@ -23,8 +27,11 @@ from app.services.meeting_registry_slot import (
     ADD_CURRENT_SLOT_MESSAGE,
     COMMON_SLOT_MESSAGE,
     EARLIER_SLOT_MESSAGE,
+    NO_COMMON_SLOT_MESSAGE,
     _filter_and_sort_candidates,
     _filter_fully_free_candidates,
+    format_add_reschedule_failure_message,
+    normalize_registry_add_slot_participants,
     suggest_earlier_slots_after_removal,
 )
 from app.services.meeting_service import MeetingService
@@ -46,6 +53,108 @@ def _entry(stage: MeetingRegistryStage) -> MeetingRegistryEntry:
     )
     entry.id = uuid4()
     return entry
+
+
+def test_normalize_registry_add_slot_participants_ignores_current_meeting_for_existing() -> None:
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.subject = "Тестирование"
+    entry.slot_start = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
+    entry.slot_end = datetime(2026, 7, 17, 14, 0, tzinfo=timezone.utc)
+
+    participants = [
+        {
+            "fio": "Комарькова Анастасия Эдуардовна",
+            "email": "a@co.ru",
+            "role": "participant",
+            "status": "busy",
+            "blocking_events": [
+                {
+                    "event_subject": "Тестирование",
+                    "event_start_iso": "2026-07-17T12:00:00+00:00",
+                    "event_end_iso": "2026-07-17T14:00:00+00:00",
+                },
+                {
+                    "event_subject": "Тема 1",
+                    "event_start_iso": "2026-07-17T12:15:00+00:00",
+                    "event_end_iso": "2026-07-17T13:15:00+00:00",
+                },
+            ],
+        },
+        {
+            "fio": "Лапина Арина Антоновна",
+            "email": "b@co.ru",
+            "role": "participant",
+            "status": "free",
+            "blocking_events": [],
+        },
+    ]
+
+    normalized = normalize_registry_add_slot_participants(
+        entry,
+        participants,
+        added_fio=["Лапина Арина Антоновна"],
+    )
+
+    assert normalized[0]["status"] == "free"
+    assert len(normalized[0]["blocking_events"]) == 1
+    assert normalized[0]["blocking_events"][0]["event_subject"] == "Тема 1"
+    assert normalized[1]["status"] == "free"
+
+
+def test_format_add_reschedule_failure_message_includes_busy_and_search_window() -> None:
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.slot_start = datetime(2026, 7, 17, 10, 0, tzinfo=timezone.utc)
+    entry.slot_end = datetime(2026, 7, 17, 11, 0, tzinfo=timezone.utc)
+
+    availability = MeetingRegistryCurrentSlotAvailabilityRead(
+        slot_label="17.07.2026, 13:00–14:00",
+        free_count=1,
+        total_count=2,
+        all_free=False,
+        participants=[
+            MeetingSlotParticipantStatusRead(
+                fio="Иванов Иван Иванович",
+                email="ivanov@turbo-don.ru",
+                role="participant",
+                role_label="Участник",
+                status="free",
+            ),
+            MeetingSlotParticipantStatusRead(
+                fio="Мангасарян Давид Каренович",
+                email="mangasaryan@turbo-don.ru",
+                role="participant",
+                role_label="Участник",
+                status="busy",
+                blocking_events=[
+                    MeetingSlotBlockingEventRead(
+                        event_label="Совещание по проекту",
+                        event_time_label="17.07.2026, 13:00–14:00",
+                        reschedule_hint_label="17.07.2026, 15:00–16:00",
+                    )
+                ],
+            ),
+        ],
+    )
+    recommendations = [
+        MeetingSlotRescheduleRecommendationRead(
+            participant_fio="Мангасарян Давид Каренович",
+            event_label="Совещание по проекту",
+            event_time_label="17.07.2026, 13:00–14:00",
+            reschedule_hint_label="17.07.2026, 15:00–16:00",
+        )
+    ]
+
+    message = format_add_reschedule_failure_message(
+        current_slot_availability=availability,
+        reschedule_recommendations=recommendations,
+        entry=entry,
+    )
+
+    assert NO_COMMON_SLOT_MESSAGE in message
+    assert "Иванов Иван Иванович" in message
+    assert "Мангасарян Давид Каренович" in message
+    assert "Совещание по проекту" in message
+    assert "не найдено времени, когда все участники одновременно свободны" in message
 
 
 def test_filter_and_sort_candidates_keeps_only_earlier_slots() -> None:
@@ -603,6 +712,11 @@ async def test_confirm_registry_participants_add_updates_registry_at_current_slo
         patch(
             "app.services.meeting_service.dispatch_reschedule_meeting",
         ) as reschedule_mock,
+        patch.object(
+            MeetingService,
+            "_reschedule_added_participant_conflicts",
+            AsyncMock(),
+        ),
     ):
         result = await service.confirm_registry_participants_add(
             entry.memo_ref_key,
@@ -764,3 +878,85 @@ async def test_confirm_registry_participants_removal_updates_outlook_and_registr
     assert result.participants_count == 1
     assert result.removed == ["Петров Петр Петрович"]
     assert result.outlook_updated is True
+
+
+@pytest.mark.asyncio
+async def test_confirm_registry_participants_removal_skips_reschedule_when_slot_unchanged(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+    service.audit.log = AsyncMock()
+    service._sync_meeting_slot_to_cache = AsyncMock()
+
+    slot_start = datetime(2026, 7, 14, 16, 0, tzinfo=timezone.utc)
+    slot_end = datetime(2026, 7, 14, 17, 0, tzinfo=timezone.utc)
+    entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    entry.participants = ["Иванов Иван Иванович", "Петров Петр Петрович"]
+    entry.participants_count = 2
+    entry.subject = "Тестовое совещание"
+    entry.slot_start = slot_start
+    entry.slot_end = slot_end
+    entry.outlook_item_id = "AQMkAD-test"
+    entry.outlook_changekey = "change-key"
+    entry.payload = {"attendees": ["ivanov@turbo-don.ru", "petrov@turbo-don.ru"]}
+    entry.updated_at = entry.invitations_sent_at
+
+    updated_entry = _entry(MeetingRegistryStage.INVITATIONS_SENT)
+    updated_entry.participants = ["Иванов Иван Иванович"]
+    updated_entry.participants_count = 1
+    updated_entry.slot_start = slot_start
+    updated_entry.slot_end = slot_end
+    updated_entry.updated_at = entry.invitations_sent_at
+
+    registry = MagicMock()
+    registry.get_entry = AsyncMock(return_value=entry)
+    registry.apply_participants_update = AsyncMock(return_value=updated_entry)
+    registry.apply_reschedule = AsyncMock(return_value=updated_entry)
+    registry.clear_pending_removal = AsyncMock(return_value=updated_entry)
+
+    backend = MagicMock()
+    backend.resolve_participants = AsyncMock(
+        return_value=[
+            ResolvedParticipant(
+                fio="Петров Петр Петрович",
+                email="petrov@turbo-don.ru",
+                found=True,
+            ),
+        ]
+    )
+
+    with (
+        patch("app.services.meeting_service.MeetingRegistryService", return_value=registry),
+        patch.object(MeetingService, "_backend", return_value=backend),
+        patch(
+            "app.services.meeting_service.dispatch_update_meeting_attendees",
+            return_value={"status": "updated", "target_id": "AQMkAD-test"},
+        ) as attendees_mock,
+        patch(
+            "app.services.meeting_service.dispatch_reschedule_meeting",
+            return_value={"status": "rescheduled", "outlook_item_id": "AQMkAD-test"},
+        ) as reschedule_mock,
+        patch(
+            "app.services.meeting_service.MeetingMemoCacheService",
+        ) as memo_cache_cls,
+    ):
+        memo_cache_cls.return_value.get_memo_detail = AsyncMock(
+            side_effect=MemoCacheMissError("miss")
+        )
+        result = await service.confirm_registry_participants_removal(
+            entry.memo_ref_key,
+            MeetingRegistryParticipantsRemovalConfirmRequest(
+                participants=["Иванов Иван Иванович"],
+                removed=["Петров Петр Петрович"],
+                slot_start=slot_start.isoformat(),
+                slot_end=slot_end.isoformat(),
+            ),
+            current_user=user,
+        )
+
+    attendees_mock.assert_called_once()
+    reschedule_mock.assert_not_called()
+    registry.apply_participants_update.assert_awaited_once()
+    registry.apply_reschedule.assert_not_awaited()
+    service._sync_meeting_slot_to_cache.assert_not_awaited()
+    assert result.message == "Состав участников совещания изменён"

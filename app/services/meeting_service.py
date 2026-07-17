@@ -155,6 +155,8 @@ from app.services.meeting_registry_service import (
 from app.services.meeting_registry_slot import (
     ADD_CURRENT_SLOT_MESSAGE,
     COMMON_SLOT_MESSAGE,
+    NO_COMMON_SLOT_MESSAGE,
+    format_add_reschedule_failure_message,
     resolve_registry_current_slot_availability,
 )
 from app.tools.onec.exchange_gal_lookup import (
@@ -169,7 +171,12 @@ from app.services.meeting_invite_format import (
     resolve_invite_subject,
     resolve_room_for_location,
 )
-from app.services.meeting_slot_flow import MeetingSlotFlowService, SlotSchedulingMode
+from app.services.meeting_slot_flow import (
+    ADD_PARTICIPANT_RESCHEDULE_MESSAGE,
+    MeetingSlotFlowService,
+    SlotSchedulingMode,
+    evaluate_added_participant_slot,
+)
 from app.services.meeting_slot import (
     format_planned_start_for_search,
     format_search_start_after_registry_slot,
@@ -177,6 +184,7 @@ from app.services.meeting_slot import (
     format_slot_label,
     parse_slot_datetime,
     slot_duration_minutes,
+    slots_match,
 )
 from app.services.permission_service import PermissionService
 from app.services.task_service import TaskService
@@ -185,6 +193,7 @@ from app.tools.Outlook.send_meeting_invite import dispatch_meeting_invite, load_
 from app.tools.Outlook.reschedule_meeting import dispatch_reschedule_meeting
 from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
 from app.tools.Outlook.update_meeting_attendees import dispatch_update_meeting_attendees
+from app.tools.mail_templates import default_reschedule_comment
 from app.tools.onec.approve_service_memo import approve_service_memo
 from app.tools.onec.reject_service_memo import reject_service_memo
 from app.services.meeting_memo_cache import (
@@ -357,7 +366,7 @@ class MeetingService:
         if reschedule_targets:
             reschedule_message = (
                 (payload.reschedule_message or "").strip()
-                or "Встреча перенесена для освобождения слота по служебной записке"
+                or default_reschedule_comment()
             )
             try:
                 await asyncio.to_thread(
@@ -824,6 +833,7 @@ class MeetingService:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
 
         entry = await registry.reconcile_participants_from_outlook(entry)
+        entry = await registry.repair_stale_participant_payload(entry)
         return registry_participants_read(entry)
 
     @staticmethod
@@ -855,6 +865,64 @@ class MeetingService:
                 role = PRIORITY_PARTICIPANT
             details.append({"fio": name, "email": email, "role": role})
         return details
+
+    async def _reschedule_added_participant_conflicts(
+        self,
+        *,
+        entry: Any,
+        target_names: list[str],
+        added: list[str],
+        by_fio: dict[str, Any],
+        message: str,
+    ) -> None:
+        """П.5: перенос конфликтов нового участника перед добавлением в текущий слот."""
+        if entry.slot_start is None or entry.slot_end is None:
+            return
+        attendee_details = self._attendee_details_for_target_names(
+            entry,
+            target_names,
+            by_fio,
+        )
+        availability = await resolve_registry_current_slot_availability(
+            entry=entry,
+            attendee_details=attendee_details,
+            added_fio=added,
+        )
+        if availability is None:
+            raise MeetingServiceError(
+                "Не удалось проверить занятость нового участника перед добавлением"
+            )
+        decision = evaluate_added_participant_slot(
+            availability.participants,
+            added_fio=added,
+        )
+        added_keys = {name.casefold() for name in added}
+        added_reads = [
+            participant
+            for participant in decision.participant_reads
+            if participant.fio.casefold() in added_keys
+        ]
+        if not any(participant.status == "busy" for participant in added_reads):
+            return
+        targets = decision.reschedule_targets or collect_slot_conflict_reschedule_targets(
+            added_reads,
+            config=load_config(),
+        )
+        if not targets:
+            raise MeetingServiceError(
+                "Новый участник занят, но перенос конфликтующих встреч недоступен. "
+                "Выберите другой слот совещания."
+            )
+        try:
+            await asyncio.to_thread(
+                reschedule_slot_conflicts_sync,
+                targets,
+                message=message,
+            )
+        except Exception as exc:
+            raise MeetingServiceError(
+                f"Не удалось перенести конфликтующие встречи нового участника: {exc}"
+            ) from exc
 
     async def search_registry_participant(
         self,
@@ -1140,6 +1208,7 @@ class MeetingService:
             availability = await resolve_registry_current_slot_availability(
                 entry=entry,
                 attendee_details=attendee_details,
+                added_fio=added,
             )
             current_slot_availability = (
                 registry_current_slot_availability_read(
@@ -1150,8 +1219,16 @@ class MeetingService:
                 else None
             )
             all_free = bool(availability and availability.all_free)
+            slot_decision = (
+                evaluate_added_participant_slot(
+                    availability.participants,
+                    added_fio=added,
+                )
+                if availability is not None
+                else None
+            )
 
-            if all_free:
+            if availability and availability.all_free:
                 await registry.save_pending_add(
                     normalized_ref,
                     participants=target_names,
@@ -1174,6 +1251,31 @@ class MeetingService:
                     fetched_at=fetched_at,
                 )
 
+            if slot_decision and slot_decision.can_add_with_reschedule:
+                await registry.save_pending_add(
+                    normalized_ref,
+                    participants=target_names,
+                    attendees=new_attendees,
+                    added=added,
+                    removed=removed,
+                    keep_current_slot=True,
+                )
+                return MeetingRegistryParticipantsApplyRead(
+                    ref_key=normalized_ref,
+                    participants=target_names,
+                    participants_count=len(target_names),
+                    added=added,
+                    removed=removed,
+                    outlook_updated=False,
+                    message=ADD_PARTICIPANT_RESCHEDULE_MESSAGE,
+                    confirmation_kind="add_current_slot",
+                    pending_confirmation=True,
+                    requires_reschedule=True,
+                    current_slot_availability=current_slot_availability,
+                    reschedule_recommendations=slot_decision.reschedule_recommendations,
+                    fetched_at=fetched_at,
+                )
+
             common_slot_suggestion = await self._slot_flow().suggest_slot_after_participant_add(
                 entry=entry,
                 attendee_emails=new_attendees,
@@ -1182,7 +1284,9 @@ class MeetingService:
                 backend=backend,
             )
             reschedule_recommendations = (
-                self._slot_flow().build_add_reschedule_recommendations(
+                slot_decision.reschedule_recommendations
+                if slot_decision is not None
+                else self._slot_flow().build_add_reschedule_recommendations(
                     availability_participants=availability.participants,
                     added_fio=added,
                 )
@@ -1207,7 +1311,11 @@ class MeetingService:
                 message=(
                     COMMON_SLOT_MESSAGE
                     if common_slot_suggestion
-                    else "Не удалось подобрать общий свободный слот для всех участников"
+                    else format_add_reschedule_failure_message(
+                        current_slot_availability=current_slot_availability,
+                        reschedule_recommendations=reschedule_recommendations,
+                        entry=entry,
+                    )
                 ),
                 common_slot_suggestion=common_slot_suggestion,
                 reschedule_recommendations=reschedule_recommendations,
@@ -1430,6 +1538,12 @@ class MeetingService:
             entry.slot_end.isoformat() if entry.slot_end else entry.slot_start.isoformat(),
         )
         composition_message = "Состав участников совещания изменён"
+        slot_changed = not slots_match(
+            entry.slot_start,
+            entry.slot_end,
+            payload.slot_start,
+            payload.slot_end,
+        )
         reschedule_message = (payload.message or "").strip() or "Совещание перенесено"
 
         memo_detail: dict | None = None
@@ -1469,7 +1583,7 @@ class MeetingService:
                         f"Не удалось обновить участников в Outlook/Exchange: {exc}"
                     ) from exc
 
-            if entry.outlook_item_id:
+            if slot_changed and entry.outlook_item_id:
                 try:
                     reschedule_outlook_payload = await asyncio.to_thread(
                         dispatch_reschedule_meeting,
@@ -1487,7 +1601,7 @@ class MeetingService:
                     raise MeetingServiceError(
                         f"Не удалось перенести совещание в Outlook/Exchange: {exc}"
                     ) from exc
-            elif remove_emails:
+            elif remove_emails and not entry.outlook_item_id:
                 start_label = self._format_registry_slot_start(entry.slot_start)
                 try:
                     attendee_outlook_payload = await asyncio.to_thread(
@@ -1513,30 +1627,32 @@ class MeetingService:
             apply_message=composition_message,
             outlook_payload=attendee_outlook_payload,
         )
-        entry = await registry.apply_reschedule(
-            memo_ref_key=normalized_ref,
-            slot_start=payload.slot_start,
-            slot_end=payload.slot_end,
-            subject=subject,
-            location=location or None,
-            attendees=new_attendees,
-            rescheduled_by=current_user,
-            sent_payload=reschedule_outlook_payload if isinstance(reschedule_outlook_payload, dict) else None,
-            reschedule_message=reschedule_message,
-            participant_names=target_names,
-            memo_detail=memo_detail,
-        )
+        if slot_changed:
+            entry = await registry.apply_reschedule(
+                memo_ref_key=normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                subject=subject,
+                location=location or None,
+                attendees=new_attendees,
+                rescheduled_by=current_user,
+                sent_payload=reschedule_outlook_payload if isinstance(reschedule_outlook_payload, dict) else None,
+                reschedule_message=reschedule_message,
+                participant_names=target_names,
+                memo_detail=memo_detail,
+            )
         await registry.clear_pending_removal(normalized_ref)
 
-        await self._sync_meeting_slot_to_cache(
-            normalized_ref,
-            slot_start=payload.slot_start,
-            slot_end=payload.slot_end,
-            location=location or None,
-            history_message=(
-                f"Совещание перенесено на {format_slot_label(payload.slot_start, payload.slot_end)}"
-            ),
-        )
+        if slot_changed:
+            await self._sync_meeting_slot_to_cache(
+                normalized_ref,
+                slot_start=payload.slot_start,
+                slot_end=payload.slot_end,
+                location=location or None,
+                history_message=(
+                    f"Совещание перенесено на {format_slot_label(payload.slot_start, payload.slot_end)}"
+                ),
+            )
 
         await self.audit.log(
             action="meeting.registry_participants_removal_confirmed",
@@ -1569,7 +1685,7 @@ class MeetingService:
             slot_start=payload.slot_start,
             slot_end=payload.slot_end,
             outlook_updated=outlook_updated,
-            message=reschedule_message,
+            message=reschedule_message if slot_changed else composition_message,
             fetched_at=fetched_at,
         )
 
@@ -1666,6 +1782,63 @@ class MeetingService:
         subject = resolve_invite_subject(memo_detail) or entry.subject or "Совещание"
         location = format_invite_location_from_detail(memo_detail) or entry.location
 
+        try:
+            all_resolved = await backend.resolve_participants(
+                target_names,
+                current_user=current_user,
+            )
+        except MeetingBackendError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+        all_by_fio = {item.fio.casefold(): item for item in all_resolved}
+
+        slot_requested = bool((payload.slot_start or "").strip() and (payload.slot_end or "").strip())
+        move_whole_meeting = (
+            not keep_current_slot
+            and slot_requested
+            and not slots_match(
+                entry.slot_start,
+                entry.slot_end,
+                payload.slot_start,
+                payload.slot_end,
+            )
+        )
+        add_on_current_slot = not move_whole_meeting
+
+        if add_on_current_slot:
+            conflict_message = (
+                (payload.message or "").strip() or default_reschedule_comment()
+            )
+            await self._reschedule_added_participant_conflicts(
+                entry=entry,
+                target_names=target_names,
+                added=added,
+                by_fio=all_by_fio,
+                message=conflict_message,
+            )
+
+        if move_whole_meeting:
+            reschedule_message = (payload.message or "").strip() or "Совещание перенесено"
+            duration = slot_duration_minutes(slot_start, slot_end)
+            if entry.outlook_item_id:
+                try:
+                    reschedule_outlook_payload = await asyncio.to_thread(
+                        dispatch_reschedule_meeting,
+                        item_id=entry.outlook_item_id or "",
+                        changekey=entry.outlook_changekey or "",
+                        new_start=slot_start,
+                        new_end=slot_end,
+                        duration_minutes=duration,
+                        location=location,
+                        message=reschedule_message,
+                        **self._company_calendar_kwargs(entry),
+                    )
+                    outlook_updated = reschedule_outlook_payload.get("status") == "rescheduled"
+                except Exception as exc:
+                    raise MeetingServiceError(
+                        f"Не удалось перенести совещание в Outlook/Exchange: {exc}"
+                    ) from exc
+            slot_label = format_slot_label(slot_start, slot_end)
+
         if entry.outlook_item_id or (entry.subject and entry.slot_start):
             stakeholder_emails = await self._resolve_registry_stakeholder_emails(
                 entry,
@@ -1696,34 +1869,6 @@ class MeetingService:
                     f"Не удалось обновить участников в Outlook/Exchange: {exc}"
                 ) from exc
 
-        if not keep_current_slot:
-            if not slot_start or not slot_end:
-                raise MeetingServiceError(
-                    "Укажите новый слот совещания для всех участников",
-                    status_code=400,
-                )
-            reschedule_message = (payload.message or "").strip() or "Совещание перенесено"
-            duration = slot_duration_minutes(slot_start, slot_end)
-            if entry.outlook_item_id:
-                try:
-                    reschedule_outlook_payload = await asyncio.to_thread(
-                        dispatch_reschedule_meeting,
-                        item_id=entry.outlook_item_id or "",
-                        changekey=entry.outlook_changekey or "",
-                        new_start=slot_start,
-                        new_end=slot_end,
-                        duration_minutes=duration,
-                        location=location,
-                        message=reschedule_message,
-                        **self._company_calendar_kwargs(entry),
-                    )
-                    outlook_updated = reschedule_outlook_payload.get("status") == "rescheduled"
-                except Exception as exc:
-                    raise MeetingServiceError(
-                        f"Не удалось перенести совещание в Outlook/Exchange: {exc}"
-                    ) from exc
-            slot_label = format_slot_label(slot_start, slot_end)
-
         entry = await registry.apply_participants_update(
             normalized_ref,
             participants=target_names,
@@ -1733,7 +1878,7 @@ class MeetingService:
             outlook_payload=attendee_outlook_payload,
         )
 
-        if not keep_current_slot and slot_start and slot_end:
+        if move_whole_meeting:
             entry = await registry.apply_reschedule(
                 memo_ref_key=normalized_ref,
                 slot_start=slot_start,

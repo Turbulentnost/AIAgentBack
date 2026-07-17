@@ -12,8 +12,11 @@ from app.core.logging import get_logger
 from app.models.meeting_registry import MeetingRegistryEntry
 from app.models.user import User
 from app.schemas.meeting import (
+    MeetingRegistryCurrentSlotAvailabilityRead,
     MeetingRegistryEarlierSlotCandidateRead,
     MeetingRegistryEarlierSlotSuggestionRead,
+    MeetingSlotParticipantStatusRead,
+    MeetingSlotRescheduleRecommendationRead,
 )
 from app.services.meeting_backend import MeetingBackend, MeetingBackendError, MeetingQuorumSlot
 from app.services.meeting_constants import (
@@ -45,6 +48,207 @@ COMMON_SLOT_MESSAGE = (
     "Для всех участников нет общего свободного времени в текущий слот. "
     "Выберите новое время совещания."
 )
+NO_COMMON_SLOT_MESSAGE = (
+    "Не удалось подобрать общий свободный слот для всех участников."
+)
+
+
+def _parse_blocking_event_bounds(record: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
+    for start_key, end_key in (
+        ("event_start_iso", "event_end_iso"),
+        ("event_start", "event_end"),
+    ):
+        raw_start = record.get(start_key)
+        raw_end = record.get(end_key)
+        if not raw_start or not raw_end:
+            continue
+        start = parse_slot_datetime(str(raw_start))
+        end = parse_slot_datetime(str(raw_end))
+        if start is not None and end is not None:
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            return start, end
+    return None, None
+
+
+def _intervals_overlap(
+    left_start: datetime,
+    left_end: datetime,
+    right_start: datetime,
+    right_end: datetime,
+) -> bool:
+    return left_start < right_end and right_start < left_end
+
+
+def _registry_meeting_subjects(entry: MeetingRegistryEntry) -> set[str]:
+    subjects: set[str] = set()
+    for raw in (entry.subject, entry.title):
+        if isinstance(raw, str) and raw.strip():
+            subjects.add(raw.strip().casefold())
+    return subjects
+
+
+def _event_matches_registry_meeting(
+    entry: MeetingRegistryEntry,
+    record: dict[str, Any],
+    *,
+    slot_start: datetime,
+    slot_end: datetime,
+) -> bool:
+    """True, если blocking event — это текущее совещание реестра (не сторонний конфликт)."""
+    event_start, event_end = _parse_blocking_event_bounds(record)
+    if event_start is None or event_end is None:
+        return False
+    if not _intervals_overlap(event_start, event_end, slot_start, slot_end):
+        return False
+
+    subjects = _registry_meeting_subjects(entry)
+    if not subjects:
+        return False
+
+    for raw in (
+        record.get("event_subject"),
+        record.get("event_label"),
+    ):
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        normalized = raw.strip().casefold()
+        if normalized in subjects or any(
+            subject in normalized or normalized in subject for subject in subjects
+        ):
+            return True
+    return False
+
+
+def normalize_registry_add_slot_participants(
+    entry: MeetingRegistryEntry,
+    participants: list[dict[str, Any]],
+    *,
+    added_fio: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Для добавления участника: текущее совещание не считается конфликтом у существующих."""
+    if entry.slot_start is None or entry.slot_end is None:
+        return participants
+
+    slot_start = entry.slot_start
+    slot_end = entry.slot_end
+    if slot_start.tzinfo is None:
+        slot_start = slot_start.replace(tzinfo=timezone.utc)
+    if slot_end.tzinfo is None:
+        slot_end = slot_end.replace(tzinfo=timezone.utc)
+
+    added_keys = {name.casefold() for name in (added_fio or [])}
+    normalized: list[dict[str, Any]] = []
+
+    for participant in participants:
+        item = dict(participant)
+        fio = str(item.get("fio") or "")
+        events = list(item.get("blocking_events") or [])
+        filtered_events = [
+            event
+            for event in events
+            if not _event_matches_registry_meeting(
+                entry,
+                event,
+                slot_start=slot_start,
+                slot_end=slot_end,
+            )
+        ]
+        item["blocking_events"] = filtered_events
+
+        if added_keys and fio.casefold() not in added_keys:
+            item["status"] = "free"
+        else:
+            item["status"] = "busy" if filtered_events else "free"
+
+        normalized.append(item)
+
+    return normalized
+
+
+def _format_busy_participant_line(participant: MeetingSlotParticipantStatusRead) -> str:
+    events = participant.blocking_events or []
+    if not events:
+        return f"• {participant.fio} — занят"
+    event_parts: list[str] = []
+    for event in events:
+        label = (event.event_label or event.event_subject or "Занято").strip()
+        piece = label
+        if event.event_time_label:
+            piece = f"{piece} ({event.event_time_label.strip()})"
+        if event.reschedule_hint_label and event.reschedule_hint_label.strip():
+            piece = f"{piece}, альтернатива: {event.reschedule_hint_label.strip()}"
+        event_parts.append(piece)
+    return f"• {participant.fio}: {'; '.join(event_parts)}"
+
+
+def format_add_reschedule_failure_message(
+    *,
+    current_slot_availability: MeetingRegistryCurrentSlotAvailabilityRead | None,
+    reschedule_recommendations: list[MeetingSlotRescheduleRecommendationRead],
+    entry: MeetingRegistryEntry | None = None,
+) -> str:
+    """Пояснение, почему не найден общий слот после добавления участника."""
+    lines = [NO_COMMON_SLOT_MESSAGE, ""]
+
+    if current_slot_availability is not None:
+        lines.append(f"Текущий слот: {current_slot_availability.slot_label}")
+        busy = [
+            participant
+            for participant in current_slot_availability.participants
+            if participant.status == "busy"
+        ]
+        free = [
+            participant
+            for participant in current_slot_availability.participants
+            if participant.status == "free"
+        ]
+        unknown = [
+            participant
+            for participant in current_slot_availability.participants
+            if participant.status == "unknown"
+        ]
+        if busy:
+            lines.append("Заняты в текущем слоте:")
+            lines.extend(_format_busy_participant_line(participant) for participant in busy)
+        if free:
+            lines.append(
+                "Свободны: "
+                + ", ".join(participant.fio for participant in free)
+            )
+        if unknown:
+            lines.append(
+                "Не удалось проверить: "
+                + ", ".join(participant.fio for participant in unknown)
+            )
+    else:
+        lines.append("Не удалось проверить занятость участников в текущем слоте.")
+
+    window = resolve_registry_common_slot_window(entry) if entry is not None else None
+    if window is not None:
+        lines.extend(
+            [
+                "",
+                (
+                    f"В периоде {window.search_from_label} — {window.search_until_label} "
+                    "не найдено времени, когда все участники одновременно свободны."
+                ),
+            ]
+        )
+
+    if reschedule_recommendations:
+        lines.extend(["", "Конфликты у добавляемых участников:"])
+        for recommendation in reschedule_recommendations:
+            piece = f"• {recommendation.participant_fio}: {recommendation.event_label}"
+            if recommendation.event_time_label:
+                piece = f"{piece} ({recommendation.event_time_label})"
+            if recommendation.reschedule_hint_label:
+                piece = f"{piece}, альтернатива: {recommendation.reschedule_hint_label}"
+            lines.append(piece)
+
+    return "\n".join(line for line in lines if line is not None).strip()
 
 
 @dataclass(frozen=True)
@@ -195,6 +399,7 @@ async def resolve_registry_current_slot_availability(
     *,
     entry: MeetingRegistryEntry,
     attendee_details: list[dict[str, str]],
+    added_fio: list[str] | None = None,
 ) -> RegistryCurrentSlotAvailability | None:
     """Статус каждого участника в текущем слоте совещания реестра."""
     if entry.slot_start is None or entry.slot_end is None:
@@ -234,12 +439,30 @@ async def resolve_registry_current_slot_availability(
         return None
 
     participants = payload.get("participants") or []
+    if added_fio:
+        participants = normalize_registry_add_slot_participants(
+            entry,
+            participants,
+            added_fio=added_fio,
+        )
     if not participants:
         return None
     free_count = sum(1 for participant in participants if participant.get("status") == "free")
     total_count = len(participants)
+    added_keys = {name.casefold() for name in (added_fio or [])}
+    if added_keys:
+        added_participants = [
+            participant
+            for participant in participants
+            if str(participant.get("fio") or "").casefold() in added_keys
+        ]
+        all_free = bool(added_participants) and all(
+            participant.get("status") == "free" for participant in added_participants
+        )
+    else:
+        all_free = free_count == total_count and total_count > 0
     return RegistryCurrentSlotAvailability(
-        all_free=free_count == total_count and total_count > 0,
+        all_free=all_free,
         free_count=free_count,
         total_count=total_count,
         participants=participants,

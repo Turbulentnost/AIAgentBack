@@ -16,6 +16,15 @@ def test_plain_text_to_html_uses_arial_font() -> None:
     assert "<p>Абзац 2</p>" in html
 
 
+def test_plain_text_to_html_escapes_angle_brackets_in_emails() -> None:
+    body = plain_text_to_html(
+        "Комарькова Анастасия Эдуардовна <sktb_razvitie10@turbo-don.ru>"
+    )
+    html = str(body)
+    assert "Комарькова Анастасия Эдуардовна &lt;sktb_razvitie10@turbo-don.ru&gt;" in html
+    assert "<sktb_razvitie10@turbo-don.ru>" not in html
+
+
 def test_append_plain_text_to_html_preserves_existing_and_uses_arial() -> None:
     body = append_plain_text_to_html("<p>старое</p>", "новое сообщение")
     html = str(body)

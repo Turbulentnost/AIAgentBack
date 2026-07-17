@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,7 @@ from app.schemas.meeting import (
     MeetingRegistryEarlierSlotSuggestionRead,
     MeetingRegistryRescheduleSlotPreviewRead,
     MeetingRegistryRescheduleSlotPreviewRequest,
+    MeetingSlotParticipantStatusRead,
     MeetingSlotRescheduleRecommendationRead,
 )
 from app.services.meeting_mappers import participant_status_read
@@ -33,7 +35,90 @@ from app.services.meeting_registry_slot import (
 
 if TYPE_CHECKING:
     from app.services.meeting_agent_slot import MeetingAgentSlotService
+    from app.services.meeting_agent_slot_confirm import SlotConflictRescheduleTarget
     from app.services.meeting_backend import MeetingBackend
+else:
+    SlotConflictRescheduleTarget = Any
+
+
+ADD_PARTICIPANT_RESCHEDULE_MESSAGE = (
+    "Новый участник занят в текущем слоте. "
+    "Подтвердите перенос его конфликтующих встреч и добавление в совещание."
+)
+
+
+@dataclass(frozen=True)
+class AddParticipantSlotDecision:
+    all_free: bool
+    existing_all_free: bool
+    can_add_with_reschedule: bool
+    reschedule_recommendations: list[MeetingSlotRescheduleRecommendationRead]
+    participant_reads: list[Any]
+    reschedule_targets: list[Any]
+
+
+def evaluate_added_participant_slot(
+    availability_participants: list[Any],
+    *,
+    added_fio: list[str],
+) -> AddParticipantSlotDecision:
+    """П.5: текущий слот + переносы у новых или общий слот для всех."""
+    from app.services.meeting_agent_slot_confirm import (
+        build_slot_confirm_state,
+        collect_slot_conflict_reschedule_targets,
+    )
+    from app.services.meeting_mappers import participant_status_read
+    from app.tools.Outlook.send_meeting_invite import load_config
+
+    resolved_config = load_config()
+    participant_reads = [
+        participant_status_read(item, attendees=[]) for item in availability_participants
+    ]
+    added_keys = {name.casefold() for name in added_fio}
+    added_reads = [
+        participant
+        for participant in participant_reads
+        if participant.fio.casefold() in added_keys
+    ]
+    all_free = (
+        all(participant.status != "busy" for participant in added_reads)
+        if added_reads
+        else False
+    )
+    existing_all_free = all(
+        participant.status != "busy"
+        for participant in participant_reads
+        if participant.fio.casefold() not in added_keys
+    )
+    recommendations = reschedule_recommendations_from_participants(
+        participant_reads,
+        only_fio=added_keys,
+    )
+    reschedule_targets = collect_slot_conflict_reschedule_targets(
+        added_reads,
+        config=resolved_config,
+    )
+    added_free = all(participant.status != "busy" for participant in added_reads)
+    can_confirm, requires_reschedule = build_slot_confirm_state(
+        added_reads,
+        room=None,
+        slot_available=added_free,
+        config=resolved_config,
+    )
+    can_add_with_reschedule = (
+        existing_all_free
+        and requires_reschedule
+        and bool(reschedule_targets)
+        and can_confirm
+    )
+    return AddParticipantSlotDecision(
+        all_free=all_free,
+        existing_all_free=existing_all_free,
+        can_add_with_reschedule=can_add_with_reschedule,
+        reschedule_recommendations=recommendations,
+        participant_reads=participant_reads,
+        reschedule_targets=reschedule_targets,
+    )
 
 
 class SlotSchedulingMode(str, Enum):
@@ -49,9 +134,15 @@ def reschedule_recommendations_from_participants(
     """Рекомендации по переносу из статусов участников (blocking_events)."""
     recommendations: list[MeetingSlotRescheduleRecommendationRead] = []
     for raw in participants:
+        if isinstance(raw, MeetingSlotRescheduleRecommendationRead):
+            participant = raw
+            if only_fio is not None and participant.participant_fio.casefold() not in only_fio:
+                continue
+            recommendations.append(participant)
+            continue
         participant = (
             raw
-            if isinstance(raw, MeetingSlotRescheduleRecommendationRead)
+            if isinstance(raw, MeetingSlotParticipantStatusRead)
             else participant_status_read(raw, attendees=[])
         )
         if only_fio is not None and participant.fio.casefold() not in only_fio:

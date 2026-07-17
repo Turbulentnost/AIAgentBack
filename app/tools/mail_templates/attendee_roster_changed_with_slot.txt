@@ -1,0 +1,6 @@
+Состав участников совещания {{slot_label}} по теме "{{subject}}" был изменен. Обновленный состав:
+{{roster_lines}}
+{{added_section}}
+{{removed_section}}
+{{extra_message}}
+{{footer}}

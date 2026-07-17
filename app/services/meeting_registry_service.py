@@ -15,6 +15,7 @@ from app.services.meeting_attendees import (
     participants_from_detail,
     registry_participant_names,
     registry_participants_for_display,
+    resolve_registry_participant_emails_from_outlook,
 )
 from app.services.meeting_invite_format import (
     format_invite_location_from_detail,
@@ -664,17 +665,20 @@ class MeetingRegistryService:
             raise ValueError("Совещание не найдено в реестре")
 
         current_payload = entry.payload if isinstance(entry.payload, dict) else {}
+        previous_attendees = list(current_payload.get("attendees") or [])
+        previous_occurrence = current_payload.get("occurrence_participant_names")
         payload = _operational_payload(
-            attendees=attendees,
+            attendees=previous_attendees,
             sent_payload=current_payload.get("sent_payload"),
             pending_add={
                 "participants": _normalize_participant_names(participants),
                 "attendees": attendees,
                 "added": _normalize_participant_names(added),
-                "removed": _normalize_participant_names(removed),
+                "removed": _normalize_participant_names(removed or []),
                 "keep_current_slot": keep_current_slot,
+                "previous_attendees": previous_attendees,
+                "previous_occurrence_participant_names": previous_occurrence,
             },
-            occurrence_participant_names=participants,
             preserve_from=current_payload,
         )
         entry.payload = payload
@@ -687,7 +691,20 @@ class MeetingRegistryService:
         if entry is None:
             return None
         current_payload = dict(entry.payload or {})
-        current_payload.pop("pending_add", None)
+        pending = current_payload.pop("pending_add", None)
+        if isinstance(pending, dict):
+            if isinstance(pending.get("previous_attendees"), list):
+                current_payload["attendees"] = pending["previous_attendees"]
+            previous_occurrence = pending.get("previous_occurrence_participant_names")
+            if previous_occurrence is not None:
+                current_payload["occurrence_participant_names"] = previous_occurrence
+            else:
+                current_payload.pop("occurrence_participant_names", None)
+        elif "occurrence_participant_names" in current_payload:
+            db_names = entry.participants if isinstance(entry.participants, list) else []
+            stored = current_payload.get("occurrence_participant_names")
+            if isinstance(stored, list) and len(stored) > len(db_names):
+                current_payload.pop("occurrence_participant_names", None)
         entry.payload = current_payload
         await self.db.flush()
         await self.db.refresh(entry)
@@ -700,6 +717,45 @@ class MeetingRegistryService:
         current_payload = dict(entry.payload or {})
         current_payload.pop("pending_removal", None)
         entry.payload = current_payload
+        await self.db.flush()
+        await self.db.refresh(entry)
+        return entry
+
+    async def repair_stale_participant_payload(
+        self,
+        entry: MeetingRegistryEntry,
+    ) -> MeetingRegistryEntry:
+        """Убирает из payload следы отменённого pending_add (occurrence/attendees)."""
+        payload = dict(entry.payload or {})
+        if payload.get("pending_add"):
+            return entry
+
+        db_names = registry_participant_names(entry)
+        if not db_names:
+            return entry
+
+        changed = False
+        stored = payload.get("occurrence_participant_names")
+        if isinstance(stored, list) and len(stored) > len(db_names):
+            payload.pop("occurrence_participant_names", None)
+            changed = True
+
+        attendees = payload.get("attendees")
+        if isinstance(attendees, list) and len(attendees) > len(db_names):
+            outlook_emails = resolve_registry_participant_emails_from_outlook(entry, db_names)
+            repaired_attendees: list[str] = []
+            for name in db_names:
+                email = outlook_emails.get(name.casefold())
+                if email:
+                    repaired_attendees.append(email)
+            if len(repaired_attendees) == len(db_names):
+                payload["attendees"] = repaired_attendees
+                changed = True
+
+        if not changed:
+            return entry
+
+        entry.payload = payload
         await self.db.flush()
         await self.db.refresh(entry)
         return entry

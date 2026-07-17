@@ -45,6 +45,22 @@ def test_collect_reschedule_targets_deduplicates_same_meeting() -> None:
     assert targets[0].event_subject == "Тема 1"
 
 
+def test_collect_reschedule_targets_accepts_freebusy_source() -> None:
+    participants = [
+        _participant(
+            blocking_events=[
+                _blocking_event(
+                    event_subject="Совещание с Лапиной А.А.",
+                    source="freebusy",
+                )
+            ]
+        )
+    ]
+    targets = collect_slot_conflict_reschedule_targets(participants)
+    assert len(targets) == 1
+    assert targets[0].event_subject == "Совещание с Лапиной А.А."
+
+
 def test_build_slot_confirm_state_allows_reschedule_when_hints_present() -> None:
     participants = [_participant()]
     can_confirm, requires_reschedule = build_slot_confirm_state(

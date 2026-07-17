@@ -1,0 +1,3 @@
+{{participants_block}}
+
+{{footer}}

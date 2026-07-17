@@ -193,6 +193,46 @@ def find_meetings(
     return matches
 
 
+def find_meetings_overlapping_for_attendee(
+    *,
+    config: OutlookConfig,
+    event_start: datetime,
+    event_end: datetime,
+    attendee: str,
+    tolerance_minutes: int = 5,
+) -> list[Any]:
+    """Ищет в календаре Postagent совещания, пересекающиеся с интервалом и с участником."""
+    if not attendee.strip():
+        return []
+    account = connect_account(config)
+    local_start = to_local(event_start, config)
+    local_end = to_local(event_end, config)
+    if local_end <= local_start:
+        local_end = local_start + timedelta(minutes=1)
+    pad = timedelta(minutes=max(tolerance_minutes, 0))
+    window_start = to_ews(local_start - pad, config)
+    window_end = to_ews(local_end + pad, config)
+    items = list(account.calendar.view(start=window_start, end=window_end, max_items=100))
+    matches: list[tuple[float, Any]] = []
+    for item in items:
+        if getattr(item, "is_cancelled", False):
+            continue
+        if not item_has_attendee(item, attendee):
+            continue
+        if not getattr(item, "start", None) or not getattr(item, "end", None):
+            continue
+        item_start = to_local(item.start, config)
+        item_end = to_local(item.end, config)
+        overlap_start = max(local_start, item_start)
+        overlap_end = min(local_end, item_end)
+        if overlap_start >= overlap_end:
+            continue
+        overlap_seconds = (overlap_end - overlap_start).total_seconds()
+        matches.append((-overlap_seconds, item))
+    matches.sort(key=lambda pair: pair[0])
+    return [item for _, item in matches]
+
+
 def find_meetings_by_subject_on_day(
     *,
     config: OutlookConfig,

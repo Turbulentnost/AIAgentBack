@@ -234,10 +234,13 @@ async def test_sync_series_card_preserves_ad_hoc_participants_on_roll() -> None:
     assert entry.participants_count == 2
 
 
-def test_registry_participants_for_display_uses_pending_add() -> None:
+def test_registry_participants_for_display_ignores_pending_add() -> None:
     from types import SimpleNamespace
 
-    from app.services.meeting_attendees import registry_participants_for_display
+    from app.services.meeting_attendees import (
+        registry_participants_for_display,
+        registry_participants_pending_target,
+    )
 
     entry = SimpleNamespace(
         participants=["Директор по развитию"],
@@ -248,6 +251,32 @@ def test_registry_participants_for_display_uses_pending_add() -> None:
                     "Кондratyuk M.B.",
                 ],
             },
+            "occurrence_participant_names": [
+                "Директор по развитию",
+                "Кондratyuk M.B.",
+            ],
+            "attendees": ["a@co.ru", "b@co.ru"],
+        },
+    )
+    assert registry_participants_for_display(entry) == ["Директор по развитию"]
+    assert registry_participants_pending_target(entry) == [
+        "Директор по развитию",
+        "Кондratyuk M.B.",
+    ]
+
+
+def test_registry_participants_for_display_uses_occurrence_when_db_empty() -> None:
+    from types import SimpleNamespace
+
+    from app.services.meeting_attendees import registry_participants_for_display
+
+    entry = SimpleNamespace(
+        participants=[],
+        payload={
+            "occurrence_participant_names": [
+                "Директор по развитию",
+                "Кондratyuk M.B.",
+            ],
         },
     )
     assert registry_participants_for_display(entry) == [

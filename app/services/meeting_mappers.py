@@ -252,8 +252,8 @@ def _normalize_event_fields(record: dict[str, Any]) -> dict[str, Any]:
     source = record.get("source")
     if source not in _VALID_CONFLICT_SOURCE:
         source = None
-    raw_start = record.get("event_start")
-    raw_end = record.get("event_end")
+    raw_start = record.get("event_start") or record.get("event_start_iso")
+    raw_end = record.get("event_end") or record.get("event_end_iso")
     event_start_label, event_end_label = format_event_time_display(
         str(raw_start) if raw_start else None,
         str(raw_end) if raw_end else None,
