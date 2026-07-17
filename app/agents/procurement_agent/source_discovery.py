@@ -43,6 +43,7 @@ class NormalizedNeedLine(BaseModel):
     quantity: Decimal
     required_date: datetime | None = None
     cancelled: bool = False
+    supply_action: str | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -163,6 +164,20 @@ def is_terminal_status(status: str | None) -> bool:
     return status.strip().casefold() in TERMINAL_STATUSES
 
 
+def is_supply_action(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = (
+        value.strip()
+        .casefold()
+        .replace("ё", "е")
+        .replace(" ", "")
+        .replace("_", "")
+        .replace("-", "")
+    )
+    return normalized == "кобеспечению"
+
+
 def normalize_need_lines(raw_lines: Any) -> list[NormalizedNeedLine]:
     if not isinstance(raw_lines, list):
         return []
@@ -200,6 +215,12 @@ def normalize_need_lines(raw_lines: Any) -> list[NormalizedNeedLine]:
                 quantity=quantity,
                 required_date=required_date,
                 cancelled=bool(item.get("Отменено")),
+                supply_action=_optional_str(
+                    item.get("ВариантОбеспечения")
+                    or item.get("Действие")
+                    or item.get("ОбеспечениеЗаказовПриПоддержанииЗапаса")
+                    or item.get("МетодОбеспеченияПотребностей")
+                ),
                 raw_payload={
                     key: item.get(key)
                     for key in (
@@ -243,6 +264,7 @@ def normalize_source_document(
     status = _optional_str(raw.get("Статус"))
     deletion_mark = bool(raw.get("DeletionMark"))
     positions = normalize_need_lines(raw.get("Товары") or [])
+    active_positions = [line for line in positions if not line.cancelled]
     required_date = (
         parse_1c_datetime(raw.get("ЖелаемаяДатаПоступления"))
         or parse_1c_datetime(raw.get("ДатаОтгрузки"))
@@ -274,7 +296,7 @@ def normalize_source_document(
         organization_1c_ref=_optional_str(raw.get("Организация_Key")),
         priority_1c_ref=_optional_str(raw.get("Приоритет_Key")),
         required_date=required_date,
-        positions=[line for line in positions if not line.cancelled],
+        positions=active_positions,
         content_hash="",
     )
     hash_payload = document.model_dump(mode="json", exclude={"content_hash", "skip_reason"})
@@ -284,8 +306,10 @@ def normalize_source_document(
         document.skip_reason = "deletion_mark"
     elif is_terminal_status(status):
         document.skip_reason = f"terminal_status:{status}"
-    elif not document.positions:
+    elif not active_positions:
         document.skip_reason = "no_active_positions"
+    elif any(not is_supply_action(line.supply_action) for line in active_positions):
+        document.skip_reason = "inactive_supply_action"
     return document
 
 
@@ -327,6 +351,7 @@ __all__ = [
     "SourceCapability",
     "get_source_capability",
     "is_terminal_status",
+    "is_supply_action",
     "list_source_capabilities",
     "normalize_need_lines",
     "normalize_source_document",

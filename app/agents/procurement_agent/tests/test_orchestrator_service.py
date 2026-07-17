@@ -33,7 +33,14 @@ async def db_session():
     await engine.dispose()
 
 
-def _document(ref: str, version: str, quantity: int = 2):
+def _document(
+    ref: str,
+    version: str,
+    quantity: int = 2,
+    *,
+    action: str = "КОбеспечению",
+    cancelled: bool = False,
+):
     return normalize_source_document(
         source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
         database="erp_pm",
@@ -56,7 +63,8 @@ def _document(ref: str, version: str, quantity: int = 2):
                     "КодСтроки": 1,
                     "Номенклатура_Key": "item-1",
                     "Количество": quantity,
-                    "Отменено": False,
+                    "Отменено": cancelled,
+                    "ВариантОбеспечения": action,
                 }
             ],
         },
@@ -88,3 +96,16 @@ async def test_upsert_updates_on_version_change(db_session: AsyncSession):
     assert case.source_data_version == "v2"
     position = (await db_session.execute(select(ProcurementCasePosition))).scalar_one()
     assert str(position.quantity) in {"5", "5.000000"}
+
+
+@pytest.mark.asyncio
+async def test_upsert_closes_case_when_line_is_not_for_supply(db_session: AsyncSession):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=False)
+    await service._upsert_case_from_document(_document(ref, "v1"))
+    result = await service._upsert_case_from_document(
+        _document(ref, "v2", action="КПроизводству")
+    )
+    assert result == "updated"
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    assert case.status == "closed"

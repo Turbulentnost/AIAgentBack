@@ -12,7 +12,7 @@
           "ODATA_BASE_URL": "${ODATA_BASE_URL}",
           "ODATA_USERNAME": "${ODATA_USERNAME}",
           "ODATA_PASSWORD": "${ODATA_PASSWORD}",
-          "ODATA_TIMEOUT_MS": "${ODATA_TIMEOUT_MS:-120000}",
+          "ODATA_TIMEOUT_MS": "${ODATA_TIMEOUT_MS:-600000}",
           "ODATA_RETRIES": "${ODATA_RETRIES:-2}",
           "READ_ONLY": "true"
         }

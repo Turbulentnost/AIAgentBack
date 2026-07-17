@@ -73,6 +73,7 @@ def test_normalize_internal_consumption_document() -> None:
                     "Номенклатура_Key": "item-1",
                     "Количество": 3,
                     "Отменено": False,
+                    "ВариантОбеспечения": "КОбеспечению",
                     "ДатаОтгрузки": "2026-07-23T00:00:00",
                 }
             ],
@@ -128,6 +129,50 @@ def test_terminal_and_deleted_documents_are_skipped() -> None:
     assert deleted.warehouse_1c_ref == "to-1"
 
 
+def test_document_requires_all_non_cancelled_lines_to_be_for_supply() -> None:
+    base = {
+        "Ref_Key": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+        "DataVersion": "v-action",
+        "Number": "НП-2",
+        "Date": "2026-07-16T10:00:00",
+        "DeletionMark": False,
+        "Статус": "КВыполнению",
+        "Товары": [
+            {
+                "LineNumber": 1,
+                "Номенклатура_Key": "item-active",
+                "Количество": 2,
+                "Отменено": False,
+                "ВариантОбеспечения": "КОбеспечению",
+            },
+            {
+                "LineNumber": 2,
+                "Номенклатура_Key": "item-other",
+                "Количество": 1,
+                "Отменено": False,
+                "ВариантОбеспечения": "КПроизводству",
+            },
+        ],
+    }
+    inactive = normalize_source_document(
+        source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
+        database="erp_pm",
+        entity_set="Document_ЗаказНаВнутреннееПотребление",
+        raw=base,
+    )
+    assert inactive.skip_reason == "inactive_supply_action"
+
+    base["Товары"][1]["Отменено"] = True
+    active = normalize_source_document(
+        source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
+        database="erp_pm",
+        entity_set="Document_ЗаказНаВнутреннееПотребление",
+        raw=base,
+    )
+    assert active.skip_reason is None
+    assert [line.nomenclature_id for line in active.positions] == ["item-active"]
+
+
 def test_reorder_point_capability_is_published() -> None:
     capability = get_source_capability(ProcurementSourceType.REORDER_POINT)
     assert capability.available is True
@@ -159,6 +204,7 @@ def test_normalize_reorder_point_uses_new_maximum_stock() -> None:
                     "Номенклатура_Key": "item-4",
                     "МинимальноеКоличествоЗапаса_После": 5,
                     "МаксимальноеКоличествоЗапаса_После": 12,
+                    "ОбеспечениеЗаказовПриПоддержанииЗапаса": "КОбеспечению",
                 }
             ],
         },

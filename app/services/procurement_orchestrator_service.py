@@ -19,7 +19,6 @@ from app.agents.procurement_agent.source_discovery import (
     normalize_source_document,
     positions_to_agent_source_data,
 )
-from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
 from app.models.procurement import (
@@ -41,6 +40,27 @@ ACTIVE_CASE_STATUSES = frozenset(
         ProcurementCaseStatus.BLOCKED.value,
     }
 )
+PROCUREMENT_DOCUMENT_FIELDS = [
+    "DataVersion",
+    "Number",
+    "Date",
+    "Posted",
+    "DeletionMark",
+    "Статус",
+    "Автор_Key",
+    "Ответственный_Key",
+    "Подразделение_Key",
+    "Склад_Key",
+    "ЦеховаяКладовая_Key",
+    "СкладОтправитель_Key",
+    "СкладПолучатель_Key",
+    "Организация_Key",
+    "Приоритет_Key",
+    "ЖелаемаяДатаПоступления",
+    "ДатаОтгрузки",
+    "ДатаУтверждения",
+    "Товары",
+]
 TERMINAL_CASE_STATUSES = frozenset(
     {
         ProcurementCaseStatus.CLOSED.value,
@@ -60,7 +80,7 @@ class ProcurementOrchestratorService:
     ) -> None:
         self.db = db
         self.mcp = mcp_client or OneCMCPClient(
-            timeout_seconds=60,
+            timeout_seconds=650,
             max_attempts=2,
         )
         self.enqueue_case = enqueue_case
@@ -193,38 +213,91 @@ class ProcurementOrchestratorService:
         entity_set: str,
         state: ProcurementSourceSyncState,
     ) -> list[NormalizedSourceDocument]:
-        now = datetime.now(UTC)
-        lookback_days = max(1, settings.PROCUREMENT_ORCHESTRATOR_LOOKBACK_DAYS)
-        overlap = timedelta(hours=max(1, settings.PROCUREMENT_ORCHESTRATOR_OVERLAP_HOURS))
-        page_limit = max(1, min(settings.PROCUREMENT_ORCHESTRATOR_PAGE_LIMIT, 50))
-
-        if state.watermark_date is not None:
-            start = state.watermark_date - overlap
-        else:
-            start = now - timedelta(days=lookback_days)
-        end = now
-
-        rows = await self._search_documents_window(
-            database=database,
-            entity_set=entity_set,
-            start=start,
-            end=end,
-            page_limit=page_limit,
+        capability = get_source_capability(source_type)
+        if not capability.lines_entity_set:
+            raise MCPUnavailableError(
+                f"Табличная часть для {source_type.value} не настроена"
+            )
+        selection = await self.mcp.call_capability(
+            "read_procurement_get_active_document_refs",
+            {
+                "database": database,
+                "linesEntitySet": capability.lines_entity_set,
+            },
         )
-        watermark_refs = {
-            str(value)
-            for value in (state.watermark_refs or [])
+        candidate_refs = {
+            str(value).lower()
+            for value in (selection.get("activeRefs") or [])
             if value
         }
-        candidate_refs = {
-            str(row.get("ref") or row.get("Ref_Key"))
-            for row in rows
-            if isinstance(row, dict) and (row.get("ref") or row.get("Ref_Key"))
+        await self._close_cases_outside_active_refs(
+            database=database,
+            source_type=source_type,
+            active_refs=candidate_refs,
+        )
+        active_versions = {
+            str(item.get("ref")).lower(): (
+                str(item.get("dataVersion"))
+                if item.get("dataVersion") not in (None, "")
+                else None
+            )
+            for item in (selection.get("activeDocuments") or [])
+            if isinstance(item, dict) and item.get("ref")
         }
-        # Keep refs from the watermark date for same-day collision handling.
-        candidate_refs |= watermark_refs
+        skipped_versions = {
+            parts[1].lower(): parts[2]
+            for value in (state.watermark_refs or [])
+            if isinstance(value, str)
+            and len(parts := value.split(":", 2)) == 3
+            and parts[0] == "skip"
+        }
+        skipped_versions = {
+            ref: version
+            for ref, version in skipped_versions.items()
+            if ref in candidate_refs
+        }
+        existing_rows = (
+            await self.db.execute(
+                select(
+                    ProcurementCase.source_1c_ref,
+                    ProcurementCase.source_data_version,
+                ).where(
+                    ProcurementCase.source_database == database,
+                    ProcurementCase.source_type == source_type.value,
+                    ProcurementCase.source_1c_ref.in_(candidate_refs),
+                )
+            )
+        ).all()
+        existing = {
+            str(ref).lower(): version
+            for ref, version in existing_rows
+        }
+        candidate_refs = {
+            ref
+            for ref in candidate_refs
+            if (
+                (
+                    ref not in existing
+                    and skipped_versions.get(ref) != active_versions.get(ref)
+                )
+                or (
+                    ref in existing
+                    and existing[ref] != active_versions.get(ref)
+                )
+            )
+        }
 
-        sorted_refs = sorted(candidate_refs)
+        selected_documents = {
+            str(raw.get("Ref_Key") or raw.get("ref")).lower(): raw
+            for raw in (selection.get("documents") or [])
+            if isinstance(raw, dict) and (raw.get("Ref_Key") or raw.get("ref"))
+        }
+        raw_documents = [
+            selected_documents[ref]
+            for ref in sorted(candidate_refs)
+            if ref in selected_documents
+        ]
+        sorted_refs = sorted(candidate_refs - set(selected_documents))
         ref_chunks = [
             sorted_refs[index:index + 50]
             for index in range(0, len(sorted_refs), 50)
@@ -239,6 +312,7 @@ class ProcurementOrchestratorService:
                         "database": database,
                         "entitySet": entity_set,
                         "refs": refs,
+                        "fields": PROCUREMENT_DOCUMENT_FIELDS,
                     },
                 )
             return [
@@ -255,11 +329,62 @@ class ProcurementOrchestratorService:
                 entity_set=entity_set,
                 raw=raw,
             )
-            for batch in batches
+            for batch in [raw_documents, *batches]
             for raw in batch
         ]
-        await self._enrich_document_presentations(database, documents)
+        for document in documents:
+            if document.skip_reason:
+                skipped_versions[document.ref_key.lower()] = (
+                    document.data_version or document.content_hash
+                )
+            else:
+                skipped_versions.pop(document.ref_key.lower(), None)
+        state.watermark_refs = [
+            f"skip:{ref}:{version}"
+            for ref, version in sorted(skipped_versions.items())
+        ]
+        await self._enrich_document_presentations(
+            database,
+            [document for document in documents if not document.skip_reason],
+        )
         return documents
+
+    async def _close_cases_outside_active_refs(
+        self,
+        *,
+        database: str,
+        source_type: ProcurementSourceType,
+        active_refs: set[str],
+    ) -> None:
+        cases = (
+            await self.db.execute(
+                select(ProcurementCase).where(
+                    ProcurementCase.source_database == database,
+                    ProcurementCase.source_type == source_type.value,
+                    ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES)),
+                )
+            )
+        ).scalars().all()
+        for case in cases:
+            if case.source_1c_ref.lower() in active_refs:
+                continue
+            previous = case.status
+            case.status = ProcurementCaseStatus.CLOSED.value
+            case.closed_at = datetime.now(UTC)
+            case.deviation_summary = (
+                "В документе нет активных строк: отменённые строки исключены, "
+                "для остальных действие должно быть «К обеспечению»."
+            )
+            await self._append_event(
+                case,
+                event_type="case_closed_not_for_supply",
+                idempotency_key=(
+                    f"inactive-supply:{case.source_content_hash or case.source_data_version or 'unknown'}"
+                )[:255],
+                previous_status=previous,
+                new_status=case.status,
+                payload={"reason": "inactive_supply_action"},
+            )
 
     async def _enrich_document_presentations(
         self,
@@ -500,7 +625,7 @@ class ProcurementOrchestratorService:
                     ProcurementCase.correlation_id == document.correlation_id
                 )
             )
-            if existing is not None and document.skip_reason.startswith("terminal_status"):
+            if existing is not None:
                 if existing.status not in TERMINAL_CASE_STATUSES:
                     previous = existing.status
                     existing.status = ProcurementCaseStatus.CLOSED.value
@@ -941,13 +1066,7 @@ class ProcurementOrchestratorService:
         if not dated:
             return
         latest = max(doc.date for doc in dated if doc.date is not None)
-        same_day_refs = [
-            doc.ref_key
-            for doc in dated
-            if doc.date is not None and doc.date.date() == latest.date()
-        ]
         state.watermark_date = latest
-        state.watermark_refs = same_day_refs
 
     async def _append_event(
         self,
