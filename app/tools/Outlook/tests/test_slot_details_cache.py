@@ -479,6 +479,65 @@ def test_build_slot_participant_details_freebusy_and_company_calendar_mark_busy(
     assert participant["blocking_events"][0]["source"] == "company_calendar"
 
 
+def test_build_slot_participant_details_manual_check_includes_reschedule_hints() -> None:
+    """Ручная проверка слота: тема из calendar@ и подсказка куда перенести."""
+    config = _config()
+    tz = ZoneInfo("Europe/Moscow")
+    slot_start = datetime(2026, 7, 17, 15, 19, tzinfo=tz)
+    slot_end = datetime(2026, 7, 17, 16, 19, tzinfo=tz)
+    busy_block = (
+        datetime(2026, 7, 17, 15, 19, tzinfo=tz),
+        datetime(2026, 7, 17, 16, 19, tzinfo=tz),
+    )
+    company_item = _company_item(
+        subject="Тема 1",
+        start=slot_start,
+        end=slot_end,
+        attendees=[
+            "sktb_razvitie2@turbo-don.ru",
+            "sktb_razvitie9@turbo-don.ru",
+            "npo_razvitie9@turbo-don.ru",
+        ],
+    )
+    group_busy = {
+        "sktb_razvitie2@turbo-don.ru": [busy_block],
+        "sktb_razvitie9@turbo-don.ru": [busy_block],
+        "npo_razvitie9@turbo-don.ru": [busy_block],
+    }
+
+    with _patch_freebusy({"sktb_razvitie2@turbo-don.ru": [busy_block]}):
+        with patch(
+            "app.tools.Outlook.slot_search.api.read_calendar_items_in_range",
+            return_value=[company_item],
+        ):
+            with patch(
+                "app.tools.Outlook.slot_search.conflicts.fetch_busy_intervals_freebusy_events",
+                return_value=group_busy,
+            ):
+                result = build_slot_participant_details(
+                    config=config,
+                    attendees=[
+                        {
+                            "fio": "Соломичева Светлана Викторовна",
+                            "email": "sktb_razvitie2@turbo-don.ru",
+                            "role": "manager",
+                        }
+                    ],
+                    slot_start=slot_start,
+                    slot_end=slot_end,
+                    include_company_calendar=True,
+                    manual_slot_check=True,
+                    light_reschedule_hints=False,
+                )
+
+    participant = result["participants"][0]
+    assert participant["status"] == "busy"
+    event = participant["blocking_events"][0]
+    assert event["event_subject"] == "Тема 1"
+    assert event.get("reschedule_hint_start")
+    assert event.get("reschedule_hint_end")
+
+
 def test_build_slot_participant_details_enriches_subject_from_company_calendar() -> None:
     config = _config()
     tz = ZoneInfo("Europe/Moscow")

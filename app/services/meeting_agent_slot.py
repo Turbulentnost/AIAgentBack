@@ -31,7 +31,9 @@ from app.services.meeting_agent_errors import (
     format_participants_missing_error,
     format_reschedule_suggestions_note,
     format_slot_preview_timeout_error,
+    is_no_slot_search_error,
 )
+from app.services.meeting_agent_slot_confirm import build_slot_confirm_state
 from app.services.meeting_agent_slot_responses import (
     agent_slot_detail_error,
     agent_slot_preview_error,
@@ -824,6 +826,19 @@ class MeetingAgentSlotService:
         except MeetingBackendError as exc:
             all_free_slots = None
             all_slots_error = exc
+        except RuntimeError as exc:
+            if is_no_slot_search_error(exc):
+                all_free_slots = None
+                all_slots_error = exc
+            else:
+                return agent_slot_preview_error(
+                    normalized_ref,
+                    message=format_calendar_error(exc),
+                    duration_minutes=duration,
+                    attendees=attendees,
+                    missing_emails=missing_emails,
+                    error_stage="calendar",
+                )
         except Exception as exc:
             return agent_slot_preview_error(
                 normalized_ref,
@@ -913,7 +928,30 @@ class MeetingAgentSlotService:
             )
         except MeetingBackendError as exc:
             message = str(exc)
-            if "Quorum-слот не найден" in message or "Свободный слот не найден" in message:
+            if is_no_slot_search_error(exc):
+                return await self._agent_slot_preview_no_slot(
+                    normalized_ref,
+                    duration=duration,
+                    attendees=attendees,
+                    missing_emails=missing_emails,
+                    backend=backend,
+                    resolved=resolved,
+                    attendee_roles=attendee_roles,
+                    attendee_weights=attendee_weights,
+                    leadership_emails=leadership_emails,
+                    planned_start=planned_start,
+                    current_user=current_user,
+                )
+            return agent_slot_preview_error(
+                normalized_ref,
+                message=format_calendar_error(exc),
+                duration_minutes=duration,
+                attendees=attendees,
+                missing_emails=missing_emails,
+                error_stage="calendar",
+            )
+        except RuntimeError as exc:
+            if is_no_slot_search_error(exc):
                 return await self._agent_slot_preview_no_slot(
                     normalized_ref,
                     duration=duration,
@@ -1200,6 +1238,7 @@ class MeetingAgentSlotService:
             attendees=len(attendee_payload),
             timeout_seconds=SLOT_DETAIL_TIMEOUT_SECONDS,
             reused_cache=False,
+            company_calendar_cache_id=payload.company_calendar_cache_id,
         )
         room = _resolve_room_email(detail)
         extra_freebusy_emails = [room["email"]] if room and room.get("email") else None
@@ -1213,7 +1252,9 @@ class MeetingAgentSlotService:
                     slot_end=slot_end_dt,
                     step_minutes=15,
                     include_company_calendar=True,
-                    light_reschedule_hints=True,
+                    manual_slot_check=True,
+                    company_calendar_cache_id=payload.company_calendar_cache_id,
+                    light_reschedule_hints=False,
                     verify_personal_calendars=False,
                     extra_freebusy_emails=extra_freebusy_emails,
                 ),
@@ -1264,6 +1305,11 @@ class MeetingAgentSlotService:
             participants,
             room=room,
         )
+        can_confirm, requires_reschedule = build_slot_confirm_state(
+            participants,
+            room=room,
+            slot_available=slot_available,
+        )
         # Детали слота: общий календарь уже в blocking_events (include_company_calendar).
         # Полный 30-дневный скан find_company_calendar_reschedule_candidates здесь не нужен —
         # он даёт ~180 EWS-запросов и таймаутится на медленном Exchange.
@@ -1276,7 +1322,10 @@ class MeetingAgentSlotService:
             participants=participants,
             room=room,
             slot_available=slot_available,
+            can_confirm=can_confirm,
+            requires_reschedule=requires_reschedule,
             reschedule_recommendations=reschedule_recommendations,
+            company_calendar_cache_id=raw.get("company_calendar_cache_id"),
         )
 
     async def get_agent_slot_detail_safe(
@@ -1408,7 +1457,8 @@ class MeetingAgentSlotService:
                     slot_end=slot_end_dt,
                     step_minutes=15,
                     include_company_calendar=True,
-                    light_reschedule_hints=True,
+                    manual_slot_check=True,
+                    light_reschedule_hints=False,
                     verify_personal_calendars=False,
                 ),
                 timeout=SLOT_DETAIL_TIMEOUT_SECONDS,
@@ -1495,6 +1545,11 @@ class MeetingAgentSlotService:
             participants,
             room=room_status,
         )
+        can_confirm, requires_reschedule = build_slot_confirm_state(
+            participants,
+            room=room_status,
+            slot_available=slot_available,
+        )
         return MeetingAgentSlotDetailRead(
             memo_ref_key=normalized_ref,
             slot_start=payload.slot_start,
@@ -1504,7 +1559,10 @@ class MeetingAgentSlotService:
             participants=participants,
             room=room_status,
             slot_available=slot_available,
+            can_confirm=can_confirm,
+            requires_reschedule=requires_reschedule,
             reschedule_recommendations=reschedule_recommendations,
+            company_calendar_cache_id=raw.get("company_calendar_cache_id"),
         )
 
     async def get_registry_slot_detail_safe(

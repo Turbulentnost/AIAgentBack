@@ -202,6 +202,7 @@ def dispatch_reschedule_meeting(
         start=start_dt,
         tolerance_minutes=max(tolerance_minutes, 0),
         attendee=attendee,
+        on_ambiguous="closest",
     )
     new_start_dt = parse_start(new_start, tz_name)
     new_end_dt = resolve_new_end(

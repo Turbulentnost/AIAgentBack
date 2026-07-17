@@ -60,6 +60,12 @@ def is_personal_calendar_access_error(exc: BaseException) -> bool:
     )
 
 
+def is_no_slot_search_error(exc: BaseException) -> bool:
+    """True, если поиск слота завершился штатно — просто не нашёл окно."""
+    message = _compact(str(exc))
+    return "Quorum-слот не найден" in message or "Свободный слот не найден" in message
+
+
 def format_calendar_error(exc: BaseException) -> str:
     network_error = _format_exchange_network_error(exc)
     if network_error:

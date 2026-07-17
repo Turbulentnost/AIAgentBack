@@ -364,6 +364,8 @@ def blocking_event_read(
     return MeetingSlotBlockingEventRead(
         event_start=normalized["event_start_label"],
         event_end=normalized["event_end_label"],
+        event_start_iso=str(raw_start) if raw_start else None,
+        event_end_iso=str(raw_end) if raw_end else None,
         event_subject=record.get("event_subject"),
         event_label=event_label_for_record(
             event_subject=record.get("event_subject"),

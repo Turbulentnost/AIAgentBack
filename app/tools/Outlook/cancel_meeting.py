@@ -283,6 +283,7 @@ def resolve_meeting(
     tolerance_minutes: int = 5,
     attendee: str = "",
     match_mode: str = "exact",
+    on_ambiguous: str = "error",
 ) -> Any:
     if item_id.strip():
         return get_meeting_by_id(config=config, item_id=item_id, changekey=changekey)
@@ -311,6 +312,16 @@ def resolve_meeting(
             f"Совещание не найдено: «{subject}», начало {start.isoformat()}"
         )
     if len(matches) > 1:
+        if on_ambiguous == "closest":
+            requested = to_local(start, config)
+            matches.sort(
+                key=lambda item: abs(
+                    (to_local(item.start, config) - requested).total_seconds()
+                )
+                if getattr(item, "start", None)
+                else float("inf")
+            )
+            return matches[0]
         details = [meeting_to_dict(item, config=config) for item in matches]
         raise RuntimeError(
             f"Найдено несколько совещаний ({len(matches)}), уточните subject, start или attendee. "

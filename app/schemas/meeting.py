@@ -207,6 +207,14 @@ class MeetingSlotConflictRead(BaseModel):
 class MeetingSlotBlockingEventRead(BaseModel):
     event_start: str | None = None
     event_end: str | None = None
+    event_start_iso: str | None = Field(
+        default=None,
+        description="Начало конфликта (ISO) для переноса в Outlook",
+    )
+    event_end_iso: str | None = Field(
+        default=None,
+        description="Окончание конфликта (ISO) для переноса в Outlook",
+    )
     event_subject: str | None = None
     event_label: str | None = None
     event_time_label: str | None = Field(
@@ -378,6 +386,10 @@ class MeetingAgentSlotDetailRequest(BaseModel):
         default=None,
         description="Снимок занятости из slot-preview; избегает повторного freebusy при ручной проверке",
     )
+    company_calendar_cache_id: str | None = Field(
+        default=None,
+        description="Кэш совещаний calendar@ на выбранный слот (повторная ручная проверка)",
+    )
 
     @field_validator("duration_minutes", mode="before")
     @classmethod
@@ -419,9 +431,21 @@ class MeetingAgentSlotDetailRead(BaseModel):
         default=None,
         description="Все участники и переговорная свободны в выбранном слоте",
     )
+    can_confirm: bool | None = Field(
+        default=None,
+        description="Можно нажать «Согласовать и утвердить» (слот свободен или есть альтернативы переноса)",
+    )
+    requires_reschedule: bool = Field(
+        default=False,
+        description="При утверждении конфликтующие встречи будут перенесены в альтернативные слоты",
+    )
     reschedule_recommendations: list[MeetingSlotRescheduleRecommendationRead] = Field(
         default_factory=list,
         description="Встречи, которые нужно перенести для освобождения слота",
+    )
+    company_calendar_cache_id: str | None = Field(
+        default=None,
+        description="ID кэша совещаний calendar@ на выбранный слот (TTL 10 мин)",
     )
     error: str | None = None
     error_stage: str | None = Field(
@@ -481,8 +505,20 @@ class MeetingAgentSlotApproveRequest(BaseModel):
     slot_end: str
     attendees: list[MeetingAttendeeRead] | None = None
     attendee_emails: list[str] | None = None
+    participants: list[MeetingSlotParticipantStatusRead] | None = Field(
+        default=None,
+        description="Статусы из slot-preview/details — для переноса конфликтов перед приглашением",
+    )
+    company_calendar_cache_id: str | None = Field(
+        default=None,
+        description="Кэш calendar@ из slot-preview/details (ускоряет повторную проверку слота)",
+    )
     subject: str | None = None
     location: str | None = None
+    reschedule_message: str | None = Field(
+        default=None,
+        description="Комментарий в уведомлении о переносе конфликтующих встреч",
+    )
 
     @model_validator(mode="after")
     def require_recipients(self) -> MeetingAgentSlotApproveRequest:
@@ -506,6 +542,10 @@ class MeetingAgentSlotApproveRead(BaseModel):
     outlook_item_id: str | None = None
     outlook_changekey: str | None = None
     outlook_meeting_url: str | None = None
+    rescheduled_events: list[str] = Field(
+        default_factory=list,
+        description="Темы встреч, перенесённых перед отправкой приглашения",
+    )
 
 
 class MeetingMemoRejectRequest(BaseModel):

@@ -491,25 +491,146 @@ def conflicting_company_calendar_items_at_slot(
         ):
             continue
 
-        subject = str(getattr(item, "subject", "") or "").strip()
-        busy_type = str(getattr(item, "legacy_free_busy_status", "") or "").strip()
-        organizer = None
-        organizer_obj = getattr(item, "organizer", None)
-        if organizer_obj is not None:
-            organizer = getattr(organizer_obj, "email_address", None) or str(organizer_obj)
+        records.append(
+            _company_calendar_conflict_record(
+                event_start=event_start,
+                event_end=event_end,
+                item=item,
+                config=config,
+            )
+        )
+    return records
+
+
+def _company_calendar_conflict_record(
+    *,
+    event_start: datetime,
+    event_end: datetime,
+    item: Any,
+    config: OutlookConfig,
+) -> dict[str, Any]:
+    subject = str(getattr(item, "subject", "") or "").strip()
+    busy_type = str(getattr(item, "legacy_free_busy_status", "") or "").strip()
+    organizer = None
+    organizer_obj = getattr(item, "organizer", None)
+    if organizer_obj is not None:
+        organizer = getattr(organizer_obj, "email_address", None) or str(organizer_obj)
+    return {
+        "event_start": event_start.isoformat(),
+        "event_end": event_end.isoformat(),
+        "event_subject": subject or None,
+        "busy_type": busy_type or None,
+        "organizer": organizer,
+        "event_attendees": calendar_item_attendee_emails(item),
+        "event_attendee_names": calendar_item_attendee_display_names(item),
+        "movability": movability_score(busy_type=busy_type, subject=subject),
+        "movability_reason": movability_reason(
+            busy_type=busy_type,
+            subject=subject,
+            source="company_calendar",
+        ),
+        "source": "company_calendar",
+    }
+
+
+def participant_involved_in_snapshot(
+    event: Any,
+    *,
+    attendee_email: str,
+    attendee_fio: str | None = None,
+) -> bool:
+    from app.services.company_calendar_slot_cache import CompanyCalendarSlotEvent
+
+    normalized_email = attendee_email.strip().lower()
+    if not normalized_email:
+        return False
+    if isinstance(event, CompanyCalendarSlotEvent):
+        involved_emails = {email.lower() for email in event.event_attendees if email}
+        if normalized_email in involved_emails:
+            return True
+        if event.organizer and event.organizer.strip().lower() == normalized_email:
+            return True
+        fio = (attendee_fio or "").strip()
+        if not fio:
+            return False
+        surname = fio.split()[0].casefold()
+        if not surname:
+            return False
+        for display_name in event.event_attendee_names:
+            if surname in display_name.casefold():
+                return True
+        return False
+    return participant_involved_in_calendar_item(
+        event,
+        attendee_email=normalized_email,
+        attendee_fio=attendee_fio,
+    )
+
+
+def conflicting_company_calendar_records_from_snapshots(
+    events: list[Any],
+    slot_start: datetime,
+    duration: timedelta,
+    config: OutlookConfig,
+    *,
+    attendee_email: str,
+    attendee_fio: str | None = None,
+) -> list[dict[str, Any]]:
+    from app.services.company_calendar_slot_cache import CompanyCalendarSlotEvent
+
+    normalized_email = attendee_email.strip().lower()
+    if not normalized_email:
+        return []
+
+    local_start = to_local(slot_start, config)
+    local_end = local_start + duration
+    records: list[dict[str, Any]] = []
+    for event in events:
+        if isinstance(event, CompanyCalendarSlotEvent):
+            event_start = to_local(event.event_start, config)
+            event_end = to_local(event.event_end, config)
+            subject = event.event_subject
+            busy_type = event.busy_type or ""
+            organizer = event.organizer
+            attendee_emails = list(event.event_attendees)
+            attendee_names = list(event.event_attendee_names)
+        else:
+            interval = event_interval(event, config)
+            if interval is None:
+                continue
+            event_start, event_end = interval
+            subject = str(getattr(event, "subject", "") or "").strip() or None
+            busy_type = str(getattr(event, "legacy_free_busy_status", "") or "").strip()
+            organizer_obj = getattr(event, "organizer", None)
+            organizer = (
+                getattr(organizer_obj, "email_address", None) or str(organizer_obj)
+                if organizer_obj is not None
+                else None
+            )
+            attendee_emails = calendar_item_attendee_emails(event)
+            attendee_names = calendar_item_attendee_display_names(event)
+
+        if not intervals_overlap(local_start, local_end, event_start, event_end):
+            continue
+        if not participant_involved_in_snapshot(
+            event,
+            attendee_email=normalized_email,
+            attendee_fio=attendee_fio,
+        ):
+            continue
         records.append(
             {
                 "event_start": event_start.isoformat(),
                 "event_end": event_end.isoformat(),
-                "event_subject": subject or None,
+                "event_subject": subject,
                 "busy_type": busy_type or None,
                 "organizer": organizer,
-                "event_attendees": calendar_item_attendee_emails(item),
-                "event_attendee_names": calendar_item_attendee_display_names(item),
-                "movability": movability_score(busy_type=busy_type, subject=subject),
+                "event_attendees": attendee_emails,
+                "event_attendee_names": attendee_names,
+                "movability": movability_score(busy_type=busy_type, subject=subject or ""),
                 "movability_reason": movability_reason(
                     busy_type=busy_type,
-                    subject=subject,
+                    subject=subject or "",
                     source="company_calendar",
                 ),
                 "source": "company_calendar",

@@ -110,6 +110,11 @@ from app.services.meeting_agent_approve import (
     build_approve_invite_body,
     resolve_approve_recipients,
 )
+from app.services.meeting_agent_slot_confirm import (
+    collect_slot_conflict_reschedule_targets,
+    fetch_reschedule_targets_for_approve_sync,
+    reschedule_slot_conflicts_sync,
+)
 from app.services.meeting_attendee_priority import (
     PRIORITY_INITIATOR,
     PRIORITY_MANAGER,
@@ -337,6 +342,48 @@ class MeetingService:
         if not emails:
             raise MeetingServiceError("Не указаны e-mail участников для отправки приглашения")
 
+        rescheduled_subjects: list[str] = []
+        try:
+            reschedule_targets = await asyncio.to_thread(
+                fetch_reschedule_targets_for_approve_sync,
+                payload,
+                attendee_details,
+            )
+        except Exception as exc:
+            raise MeetingServiceError(
+                f"Не удалось проверить конфликты перед приглашением: {exc}"
+            ) from exc
+
+        if reschedule_targets:
+            reschedule_message = (
+                (payload.reschedule_message or "").strip()
+                or "Встреча перенесена для освобождения слота по служебной записке"
+            )
+            try:
+                await asyncio.to_thread(
+                    reschedule_slot_conflicts_sync,
+                    reschedule_targets,
+                    message=reschedule_message,
+                )
+            except Exception as exc:
+                raise MeetingServiceError(
+                    f"Не удалось перенести конфликтующие встречи перед приглашением: {exc}"
+                ) from exc
+            rescheduled_subjects = [target.event_subject for target in reschedule_targets]
+        elif payload.participants:
+            from app.services.meeting_agent_slot_confirm import build_slot_confirm_state
+
+            _, requires_reschedule = build_slot_confirm_state(
+                payload.participants,
+                room=None,
+                slot_available=False,
+            )
+            if requires_reschedule:
+                raise MeetingServiceError(
+                    "Не удалось определить встречи для переноса. "
+                    "Обновите проверку слота и повторите утверждение."
+                )
+
         subject = resolve_invite_subject(memo_detail, override=payload.subject)
         location = format_invite_location_from_detail(memo_detail, override=payload.location)
         duration = slot_duration_minutes(payload.slot_start, payload.slot_end)
@@ -406,6 +453,7 @@ class MeetingService:
             outlook_item_id=sent_payload.get("outlook_item_id"),
             outlook_changekey=sent_payload.get("outlook_changekey"),
             outlook_meeting_url=sent_payload.get("outlook_meeting_url"),
+            rescheduled_events=rescheduled_subjects,
         )
 
     async def reject_memo(
