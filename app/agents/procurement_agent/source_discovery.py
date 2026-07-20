@@ -4,7 +4,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
@@ -71,6 +71,8 @@ class NormalizedSourceDocument(BaseModel):
     warehouse_to_1c_ref: str | None = None
     organization_1c_ref: str | None = None
     priority_1c_ref: str | None = None
+    production_order_1c_ref: str | None = None
+    production_order_type: str | None = None
     required_date: datetime | None = None
     positions: list[NormalizedNeedLine] = Field(default_factory=list)
     content_hash: str
@@ -249,7 +251,10 @@ def normalize_need_lines(raw_lines: Any) -> list[NormalizedNeedLine]:
                             "КодСтроки",
                             "Номенклатура_Key",
                             "Характеристика_Key",
+                            "Упаковка_Key",
                             "Количество",
+                            "Назначение_Key",
+                            "Этап_Key",
                             "МинимальноеКоличествоЗапаса_До",
                             "МаксимальноеКоличествоЗапаса_До",
                             "МинимальноеКоличествоЗапаса_После",
@@ -333,6 +338,15 @@ def normalize_source_document(
         warehouse_to_1c_ref=warehouse_to,
         organization_1c_ref=_optional_str(raw.get("Организация_Key")),
         priority_1c_ref=_optional_str(raw.get("Приоритет_Key")),
+        production_order_1c_ref=_optional_str(
+            raw.get("ЗаказНаПроизводство_Key")
+            or raw.get("ЗаказНаПроизводство")
+            or raw.get("ДокументОснование")
+        ),
+        production_order_type=_optional_str(
+            raw.get("ЗаказНаПроизводство_Type")
+            or raw.get("ДокументОснование_Type")
+        ),
         required_date=header_required_date,
         positions=active_positions,
         content_hash="",
@@ -373,7 +387,11 @@ def positions_to_agent_source_data(document: NormalizedSourceDocument) -> dict[s
                 "gross_quantity": str(line.quantity),
                 "required_date": line.required_date.isoformat() if line.required_date else None,
                 "characteristic_id": line.characteristic_id,
+                "unit_id": line.unit_id,
                 "supply_action": line.supply_action,
+                "project_id": line.raw_payload.get("Назначение_Key"),
+                "production_stage_id": line.raw_payload.get("Этап_Key"),
+                "raw_payload": line.raw_payload,
             }
             for line in document.positions
         ],
@@ -382,6 +400,10 @@ def positions_to_agent_source_data(document: NormalizedSourceDocument) -> dict[s
         "requested_date": document.required_date.isoformat() if document.required_date else None,
         "source_number": document.number,
         "source_status": document.status,
+        "source_date": document.date.isoformat() if document.date else None,
+        "source_data_version": document.data_version,
+        "production_order_1c_ref": document.production_order_1c_ref,
+        "production_order_type": document.production_order_type,
     }
 
 

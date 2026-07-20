@@ -253,6 +253,29 @@ async def test_role_agent_wait_blocks_duplicates_and_completed_resume_releases(
 
 
 @pytest.mark.asyncio
+async def test_engineer_dispatch_claims_only_five_cases(db_session: AsyncSession):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    for index in range(7):
+        await service._upsert_case_from_document(
+            _document(
+                str(uuid.uuid4()),
+                f"v-{index}",
+                source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+            )
+        )
+
+    claimed = await service.claim_engineer_dispatches(limit=5)
+    tasks = (await db_session.execute(select(Task))).scalars().all()
+
+    assert claimed == 5
+    assert len(service.pending_dispatches) == 5
+    assert sum(
+        bool((task.task_metadata or {}).get("dispatch_claimed"))
+        for task in tasks
+    ) == 5
+
+
+@pytest.mark.asyncio
 async def test_upsert_closes_case_when_line_is_not_for_supply(db_session: AsyncSession):
     ref = str(uuid.uuid4())
     service = ProcurementOrchestratorService(db_session, enqueue_case=False)

@@ -19,7 +19,11 @@ from app.agents.procurement_agent.source_discovery import (
     list_source_capabilities,
     normalize_source_document,
 )
-from app.agents.procurement_role_agents.config import agent_id_for_source, agent_label
+from app.agents.procurement_role_agents.config import (
+    PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+    agent_id_for_source,
+    agent_label,
+)
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
@@ -72,6 +76,8 @@ PROCUREMENT_DOCUMENT_FIELDS = [
     "СкладПолучатель_Key",
     "Организация_Key",
     "Приоритет_Key",
+    "ДокументОснование",
+    "ДокументОснование_Type",
     "ЖелаемаяДатаПоступления",
     "ДатаОтгрузки",
     "ДатаУтверждения",
@@ -182,6 +188,8 @@ class ProcurementOrchestratorService:
         backfilled = await self.ensure_active_case_assignments()
         summary["backfilled"] = backfilled
         summary["enqueued"] += backfilled
+        claimed = await self.claim_engineer_dispatches(limit=5)
+        summary["engineer_dispatched"] = claimed
         summary["finished_at"] = datetime.now(UTC).isoformat()
         return summary
 
@@ -926,6 +934,8 @@ class ProcurementOrchestratorService:
                 "source_label": get_source_capability(document.source_type).label_ru,
                 "initial_route": [agent_id_for_source(document.source_type.value)],
                 "deadline": document.required_date.isoformat() if document.required_date else None,
+                "production_order_1c_ref": document.production_order_1c_ref,
+                "production_order_type": document.production_order_type,
                 "route_stages": DEFAULT_ROUTE_STAGES,
             },
         )
@@ -973,6 +983,8 @@ class ProcurementOrchestratorService:
         case.deadline_at = document.required_date
         metadata = dict(case.case_metadata or {})
         metadata["deadline"] = document.required_date.isoformat() if document.required_date else None
+        metadata["production_order_1c_ref"] = document.production_order_1c_ref
+        metadata["production_order_type"] = document.production_order_type
         case.case_metadata = metadata
 
     async def _update_case_presentations(
@@ -1044,11 +1056,35 @@ class ProcurementOrchestratorService:
             or case.source_data_version
             or case.updated_at.isoformat()
         )
+        if (
+            agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+            and case.source_synced_at is not None
+        ):
+            source_revision = f"{source_revision}:{case.source_synced_at.isoformat()}"
         return f"{agent_id}:{source_revision}"
 
     @staticmethod
     def _role_source_data(case: ProcurementCase) -> dict[str, Any]:
+        metadata = case.case_metadata or {}
+        warehouse_ids = [
+            value
+            for value in (
+                case.warehouse_1c_ref,
+                case.warehouse_from_1c_ref,
+                case.warehouse_to_1c_ref,
+            )
+            if value
+        ]
         return {
+            "case_number": case.source_number or str(case.id),
+            "source_database": case.source_database,
+            "source_number": case.source_number,
+            "source_date": case.source_date.isoformat() if case.source_date else None,
+            "source_status": case.source_status,
+            "source_data_version": case.source_data_version,
+            "source_synced_at": (
+                case.source_synced_at.isoformat() if case.source_synced_at else None
+            ),
             "positions": [
                 {
                     "line_id": position.line_id,
@@ -1058,12 +1094,16 @@ class ProcurementOrchestratorService:
                     "characteristic_id": position.characteristic_id,
                     "unit": position.unit,
                     "quantity": str(position.quantity),
+                    "direct_quantity": str(position.quantity),
+                    "gross_quantity": str(position.quantity),
                     "required_date": (
                         position.required_date.isoformat()
                         if position.required_date
                         else None
                     ),
                     "raw_payload": position.raw_payload or {},
+                    "project_id": (position.raw_payload or {}).get("Назначение_Key"),
+                    "production_stage_id": (position.raw_payload or {}).get("Этап_Key"),
                 }
                 for position in case.positions or []
                 if not position.cancelled
@@ -1071,6 +1111,13 @@ class ProcurementOrchestratorService:
             "required_date": (
                 case.required_date.isoformat() if case.required_date else None
             ),
+            "requested_date": (
+                case.required_date.isoformat() if case.required_date else None
+            ),
+            "warehouse_ids": list(dict.fromkeys(warehouse_ids)),
+            "organization_id": case.organization_1c_ref,
+            "production_order_1c_ref": metadata.get("production_order_1c_ref"),
+            "production_order_type": metadata.get("production_order_type"),
         }
 
     async def _enqueue_role_agent(self, case: ProcurementCase) -> bool:
@@ -1085,7 +1132,19 @@ class ProcurementOrchestratorService:
         if case.current_task_id is not None:
             current_task = await self.db.get(Task, case.current_task_id)
             if current_task is not None and current_task.status in BLOCKING_TASK_STATUSES:
-                return False
+                task_key = (current_task.task_metadata or {}).get("role_completion_key")
+                if (
+                    current_task.status
+                    in {TaskStatus.WAITING_HUMAN, TaskStatus.WAITING_EXTERNAL}
+                    and task_key != completion_key
+                ):
+                    current_task.status = TaskStatus.CANCELLED
+                    current_task.finished_at = datetime.now(UTC)
+                    current_task.error_message = "Назначен повторный расчёт по свежему снимку 1С."
+                    case.current_task_id = None
+                    case.current_agent_id = None
+                else:
+                    return False
             case.current_task_id = None
 
         run_key = f"role:{case.id}:{completion_key}"[:255]
@@ -1105,6 +1164,14 @@ class ProcurementOrchestratorService:
                 "idempotency_key": run_key,
                 "source_data": self._role_source_data(case),
                 "role_context": {
+                    "case_number": case.source_number or str(case.id),
+                    "source_database": case.source_database,
+                    "source_date": case.source_date.isoformat() if case.source_date else None,
+                    "source_status": case.source_status,
+                    "source_data_version": case.source_data_version,
+                    "source_synced_at": (
+                        case.source_synced_at.isoformat() if case.source_synced_at else None
+                    ),
                     "initiator_1c_ref": case.initiator_1c_ref,
                     "initiator_name": case.initiator_name,
                     "department_1c_ref": case.department_1c_ref,
@@ -1114,6 +1181,16 @@ class ProcurementOrchestratorService:
                     "warehouse_from_1c_ref": case.warehouse_from_1c_ref,
                     "warehouse_to_1c_ref": case.warehouse_to_1c_ref,
                     "organization_1c_ref": case.organization_1c_ref,
+                    "priority_1c_ref": case.priority_1c_ref,
+                    "required_date": (
+                        case.required_date.isoformat() if case.required_date else None
+                    ),
+                    "production_order_1c_ref": (case.case_metadata or {}).get(
+                        "production_order_1c_ref"
+                    ),
+                    "production_order_type": (case.case_metadata or {}).get(
+                        "production_order_type"
+                    ),
                 },
             },
             task_metadata={
@@ -1143,8 +1220,55 @@ class ProcurementOrchestratorService:
         )
         await self.db.flush()
 
-        self.pending_dispatches.append((str(case.id), str(task.id)))
+        if agent_id != PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
+            self.pending_dispatches.append((str(case.id), str(task.id)))
         return True
+
+    async def claim_engineer_dispatches(self, *, limit: int = 1) -> int:
+        """Claim queued engineer calculations without exceeding five active slots."""
+        tasks = (
+            await self.db.execute(
+                select(Task)
+                .where(
+                    Task.task_type == "procurement_role_agent",
+                    Task.status.in_(
+                        [TaskStatus.PENDING, TaskStatus.PLANNING, TaskStatus.RUNNING]
+                    ),
+                )
+                .order_by(Task.created_at, Task.id)
+                .with_for_update(skip_locked=True)
+            )
+        ).scalars().all()
+        engineer_tasks = [
+            task
+            for task in tasks
+            if (task.task_metadata or {}).get("agent_slug")
+            == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+        ]
+        active = sum(
+            1
+            for task in engineer_tasks
+            if task.status in {TaskStatus.PLANNING, TaskStatus.RUNNING}
+            or bool((task.task_metadata or {}).get("dispatch_claimed"))
+        )
+        available = max(0, min(limit, 5 - active))
+        claimed = 0
+        for task in engineer_tasks:
+            if claimed >= available:
+                break
+            metadata = dict(task.task_metadata or {})
+            if task.status != TaskStatus.PENDING or metadata.get("dispatch_claimed"):
+                continue
+            metadata["dispatch_claimed"] = True
+            metadata["dispatch_claimed_at"] = datetime.now(UTC).isoformat()
+            task.task_metadata = metadata
+            case_id = str(metadata.get("procurement_case_id") or "")
+            if case_id:
+                self.pending_dispatches.append((case_id, str(task.id)))
+                claimed += 1
+        if claimed:
+            await self.db.flush()
+        return claimed
 
     async def ensure_active_case_assignments(self) -> int:
         if not self.enqueue_case:
@@ -1188,6 +1312,22 @@ class ProcurementOrchestratorService:
         result_payload.setdefault("case_id", str(case.id))
         result_payload.setdefault("correlation_id", case.correlation_id)
         case.latest_result = result_payload
+        task_metadata = dict(task.task_metadata or {})
+        task_metadata["dispatch_claimed"] = False
+        task.task_metadata = task_metadata
+        output_data = result_payload.get("output_data") or {}
+        if (
+            result_payload.get("agent_id")
+            == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+            and isinstance(output_data, dict)
+        ):
+            metadata = dict(case.case_metadata or {})
+            metadata["production_preparation_engineer_output"] = output_data
+            metadata["engineer_evidence_fingerprint"] = output_data.get(
+                "evidence_fingerprint"
+            )
+            metadata["engineer_calculated_at"] = output_data.get("calculated_at")
+            case.case_metadata = metadata
         task.final_result = result_payload
         task.requires_human_review = role_status == "waiting_human"
         wait_reason = str(
@@ -1218,6 +1358,17 @@ class ProcurementOrchestratorService:
             )
             metadata["role_agent_output"] = result_payload.get("output_data") or {}
             case.case_metadata = metadata
+            if result_payload.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
+                case.control_point = "coverage"
+                positions = output_data.get("positions") if isinstance(output_data, dict) else []
+                has_deficit = any(
+                    float(item.get("net_requirement") or 0) > 0
+                    for item in positions or []
+                    if isinstance(item, dict)
+                )
+                case.requested_operation = (
+                    "route_confirmed_deficit" if has_deficit else "coverage_confirmed"
+                )
             case.current_task_id = None
             case.current_agent_id = None
         else:
@@ -1312,18 +1463,26 @@ class ProcurementOrchestratorService:
             event_type="role_agent_resumed",
         )
 
-    async def list_dashboard(self, *, view: str = "active") -> dict[str, Any]:
+    async def list_dashboard(
+        self,
+        *,
+        view: str = "active",
+        source_type: str | None = None,
+    ) -> dict[str, Any]:
         normalized_view = view if view in {"active", "processing", "archive"} else "active"
         if normalized_view == "archive":
             status_filter = list(TERMINAL_CASE_STATUSES)
         else:
             status_filter = list(ACTIVE_CASE_STATUSES)
 
+        case_filters = [ProcurementCase.status.in_(status_filter)]
+        if source_type:
+            case_filters.append(ProcurementCase.source_type == source_type)
         cases = (
             await self.db.execute(
                 select(ProcurementCase)
                 .options(selectinload(ProcurementCase.positions))
-                .where(ProcurementCase.status.in_(status_filter))
+                .where(*case_filters)
                 .order_by(
                     ProcurementCase.source_date.desc().nullslast(),
                     ProcurementCase.source_number.desc().nullslast(),
@@ -1335,15 +1494,16 @@ class ProcurementOrchestratorService:
             # Same active cards, but presented as processing cases.
             cases = [case for case in cases if case.status in ACTIVE_CASE_STATUSES]
 
+        archive_filters = [ProcurementCase.status.in_(list(TERMINAL_CASE_STATUSES))]
+        processing_filters = [ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES))]
+        if source_type:
+            archive_filters.append(ProcurementCase.source_type == source_type)
+            processing_filters.append(ProcurementCase.source_type == source_type)
         archive_count = await self.db.scalar(
-            select(func.count()).select_from(ProcurementCase).where(
-                ProcurementCase.status.in_(list(TERMINAL_CASE_STATUSES))
-            )
+            select(func.count()).select_from(ProcurementCase).where(*archive_filters)
         )
         processing_count = await self.db.scalar(
-            select(func.count()).select_from(ProcurementCase).where(
-                ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES))
-            )
+            select(func.count()).select_from(ProcurementCase).where(*processing_filters)
         )
 
         sync_states = (
@@ -1351,6 +1511,8 @@ class ProcurementOrchestratorService:
         ).scalars().all()
         groups = []
         for capability in list_source_capabilities():
+            if source_type and capability.source_type.value != source_type:
+                continue
             group_cases = [
                 self._serialize_case_summary(case)
                 for case in cases
@@ -1519,7 +1681,56 @@ class ProcurementOrchestratorService:
             )
         )
 
+    @staticmethod
+    def _engineer_bucket(case: ProcurementCase) -> tuple[str | None, str | None]:
+        if case.source_type != ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value:
+            return None, None
+        result = case.latest_result or {}
+        output = result.get("output_data") or (case.case_metadata or {}).get(
+            "production_preparation_engineer_output"
+        )
+        output = output if isinstance(output, dict) else {}
+        role_status = str(result.get("role_status") or "")
+        validation_issues = output.get("validation_issues") or []
+        missing_data = output.get("missing_data") or []
+        unavailable = output.get("excluded_capabilities") or []
+        if (
+            role_status in {"failed", "waiting_human", "waiting_external"}
+            or validation_issues
+            or missing_data
+            or unavailable
+            or case.status in {
+                ProcurementCaseStatus.BLOCKED.value,
+                ProcurementCaseStatus.FAILED.value,
+            }
+        ):
+            reason = (
+                (validation_issues[0] or {}).get("message")
+                if validation_issues and isinstance(validation_issues[0], dict)
+                else None
+            )
+            return "critical", str(
+                reason
+                or (missing_data[0] if missing_data else None)
+                or (unavailable[0] if unavailable else None)
+                or case.error_message
+                or case.deviation_summary
+                or "ИИ-агент завершил обработку с ошибкой."
+            )
+        positions = output.get("positions")
+        if role_status == "completed" and isinstance(positions, list):
+            has_shortage = any(
+                float(position.get("net_requirement") or 0) > 0
+                for position in positions
+                if isinstance(position, dict)
+            )
+            if has_shortage:
+                return "attention", "Расчёт завершён: подтверждённого остатка недостаточно."
+            return "success", "Данные прочитаны, потребность рассчитана и полностью обеспечена."
+        return "attention", "ИИ-агент выполняет расчёт или кейс ожидает своей очереди."
+
     def _serialize_case_summary(self, case: ProcurementCase) -> dict[str, Any]:
+        engineer_bucket, engineer_bucket_reason = self._engineer_bucket(case)
         return {
             "id": str(case.id),
             "correlation_id": case.correlation_id,
@@ -1553,6 +1764,8 @@ class ProcurementOrchestratorService:
                 case.reactivated_at.isoformat() if case.reactivated_at else None
             ),
             "source_active": case.status in ACTIVE_CASE_STATUSES,
+            "engineer_bucket": engineer_bucket,
+            "engineer_bucket_reason": engineer_bucket_reason,
         }
 
     def _serialize_case_detail(self, case: ProcurementCase) -> dict[str, Any]:

@@ -1059,7 +1059,13 @@ def run_procurement_case_task(self, case_id: str, task_id: str) -> dict[str, Any
             service = ProcurementOrchestratorService(db, enqueue_case=False)
             try:
                 result = await service.execute_case_task(UUID(case_id), UUID(task_id))
+                await service.claim_engineer_dispatches(limit=1)
                 await db.commit()
+                for next_case_id, next_task_id in service.pending_dispatches:
+                    run_procurement_case_task.apply_async(
+                        args=[next_case_id, next_task_id],
+                        queue="agents",
+                    )
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "run_procurement_case_task",
@@ -1067,12 +1073,13 @@ def run_procurement_case_task(self, case_id: str, task_id: str) -> dict[str, Any
                     "task_id": task_id,
                     "status": "completed",
                     "result_status": result.get("status") or result.get("case_status"),
+                    "next_engineer_tasks": len(service.pending_dispatches),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
                 if self.request.retries < self.max_retries:
-                    raise self.retry(exc=exc, countdown=30)
+                    raise self.retry(exc=exc, countdown=30) from exc
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "run_procurement_case_task",

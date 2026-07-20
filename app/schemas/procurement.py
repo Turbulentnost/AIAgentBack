@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 
 class ProcurementPermissionsRead(BaseModel):
     can_access_orchestrator: bool
+    can_access_role_workspace: bool = False
+    accessible_role_agents: list[str] = Field(default_factory=list)
+    can_submit_role_result: bool = False
     can_refresh: bool
     is_superuser: bool
 
@@ -99,6 +102,8 @@ class ProcurementCaseSummary(BaseModel):
     closed_reason_label: str | None = None
     reactivated_at: datetime | None = None
     source_active: bool = False
+    engineer_bucket: Literal["success", "attention", "critical"] | None = None
+    engineer_bucket_reason: str | None = None
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):

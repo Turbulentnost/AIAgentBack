@@ -12,10 +12,12 @@ from app.tools.registry import register_tool
 from app.tools.schemas import (
     ProcurementNeedLinesInput,
     ProcurementOneCReadOutput,
+    ProcurementProductionSupplyInput,
+    ProcurementResourceSpecificationsInput,
+    ProcurementSupplyEvidenceItem,
     ProcurementSupplyReadInput,
     ToolContext,
 )
-
 
 MCP_CLIENT_FACTORY = OneCMCPClient
 _SENSITIVE_KEYS = {"password", "token", "secret", "authorization", "connection_string"}
@@ -27,13 +29,16 @@ class _ProcurementOneCReadTool(Tool):
     preview_safe = False
     object_type = "onec_business_data"
 
+    def _arguments(self, payload: BaseModel) -> dict[str, Any]:
+        return payload.model_dump(mode="json", exclude={"correlation_id"})
+
     async def execute(
         self,
         payload: BaseModel,
         context: ToolContext,
     ) -> ProcurementOneCReadOutput:
-        correlation_id = str(getattr(payload, "correlation_id"))
-        arguments = payload.model_dump(mode="json", exclude={"correlation_id"})
+        correlation_id = str(payload.correlation_id)
+        arguments = self._arguments(payload)
         retrieved_at = datetime.now(UTC)
         try:
             raw = await MCP_CLIENT_FACTORY().call_capability(self.name, arguments)
@@ -47,11 +52,21 @@ class _ProcurementOneCReadTool(Tool):
                 correlation_id=correlation_id,
                 error_code="capability_unavailable",
                 error_message=(
-                    "Необходимая read-only возможность отсутствует "
-                    "в подключённом MCP 1С."
+                    "Необходимая read-only возможность отсутствует в подключённом MCP 1С."
                 ),
             )
-        except MCPCallError:
+        except MCPCallError as exc:
+            if _is_capability_unavailable_error(exc):
+                return ProcurementOneCReadOutput(
+                    status="capability_unavailable",
+                    tool_name=self.name,
+                    object_type=self.object_type,
+                    retrieved_at=retrieved_at,
+                    freshness_status="unknown",
+                    correlation_id=correlation_id,
+                    error_code="capability_unavailable",
+                    error_message="Требуемые сущности не опубликованы в OData 1С.",
+                )
             return ProcurementOneCReadOutput(
                 status="failed",
                 tool_name=self.name,
@@ -75,6 +90,20 @@ class _ProcurementOneCReadTool(Tool):
                 error_message="Инструмент 1С вернул неподдерживаемый формат.",
             )
         envelope = raw if isinstance(raw, dict) else {"items": raw}
+        if envelope.get("status") == "capability_unavailable":
+            return ProcurementOneCReadOutput(
+                status="capability_unavailable",
+                tool_name=self.name,
+                object_type=self.object_type,
+                retrieved_at=retrieved_at,
+                data=_redact(envelope),
+                freshness_status="unknown",
+                correlation_id=correlation_id,
+                error_code="capability_unavailable",
+                error_message=str(
+                    envelope.get("reason") or "Требуемые сущности не опубликованы в OData 1С."
+                )[:1000],
+            )
         business_effective_at = _parse_datetime(envelope.get("business_effective_at"))
         freshness_status = envelope.get("freshness_status")
         if freshness_status not in {"fresh", "stale", "unknown"}:
@@ -143,6 +172,17 @@ class GetFreeStockTool(_ProcurementOneCReadTool):
                 error_message="Бухгалтерский остаток MCP недоступен.",
             )
         except MCPCallError as exc:
+            if _is_capability_unavailable_error(exc):
+                return ProcurementOneCReadOutput(
+                    status="capability_unavailable",
+                    tool_name=self.name,
+                    object_type=self.object_type,
+                    retrieved_at=retrieved_at,
+                    freshness_status="unknown",
+                    correlation_id=request.correlation_id,
+                    error_code="capability_unavailable",
+                    error_message="Требуемые сущности не опубликованы в OData 1С.",
+                )
             return ProcurementOneCReadOutput(
                 status="failed",
                 tool_name=self.name,
@@ -175,10 +215,8 @@ class GetFreeStockTool(_ProcurementOneCReadTool):
             retrieved_at=retrieved_at,
             business_effective_at=retrieved_at,
             data={
-                "normalized_items": [
-                    item.model_dump(mode="json")
-                    for item in normalized.records
-                ],
+                "items": [],
+                "excluded_items": [item.model_dump(mode="json") for item in normalized.records],
                 "normalization_errors": normalized.errors,
                 "normalization_warnings": warnings,
                 "pagination_complete": normalized.pagination_complete,
@@ -191,6 +229,85 @@ class GetFreeStockTool(_ProcurementOneCReadTool):
             freshness_status="fresh",
             correlation_id=request.correlation_id,
         )
+
+
+class GetActiveResourceSpecificationsTool(_ProcurementOneCReadTool):
+    name = "onec_get_active_resource_specifications"
+    description = (
+        "Пакетно получить действующие ресурсные спецификации, "
+        "выходные изделия и материалы/услуги из 1С (только чтение)."
+    )
+    agent_description = description
+    input_model = ProcurementResourceSpecificationsInput
+    output_model = ProcurementOneCReadOutput
+    object_type = "resource_specification"
+
+    def _arguments(self, payload: BaseModel) -> dict[str, Any]:
+        request = ProcurementResourceSpecificationsInput.model_validate(payload)
+        arguments: dict[str, Any] = {
+            "specificationRefs": request.specification_ids,
+            "productRefs": request.product_ids,
+            "limit": request.limit,
+        }
+        if request.database:
+            arguments["database"] = request.database
+        return arguments
+
+
+class GetProductionSupplyEvidenceTool(_ProcurementOneCReadTool):
+    name = "onec_get_production_supply_evidence"
+    description = (
+        "Пакетно получить подтверждённые производственные источники обеспечения; "
+        "неподтверждённые остатки исключаются (только чтение)."
+    )
+    agent_description = description
+    input_model = ProcurementProductionSupplyInput
+    output_model = ProcurementOneCReadOutput
+    object_type = "production_supply_evidence"
+
+    def _arguments(self, payload: BaseModel) -> dict[str, Any]:
+        request = ProcurementProductionSupplyInput.model_validate(payload)
+        arguments: dict[str, Any] = {
+            "entitySet": request.entity_set,
+            "nomenclatureRefs": request.nomenclature_ids,
+            "sourceType": request.source_type,
+            "limit": request.limit,
+        }
+        if request.database:
+            arguments["database"] = request.database
+        return arguments
+
+    async def execute(
+        self,
+        payload: BaseModel,
+        context: ToolContext,
+    ) -> ProcurementOneCReadOutput:
+        result = await super().execute(payload, context)
+        if result.status != "success":
+            return result
+        raw_items = result.data.get("items")
+        if not isinstance(raw_items, list):
+            result.status = "failed"
+            result.error_code = "invalid_mcp_response"
+            result.error_message = "Производственный источник не вернул список items."
+            result.data = {}
+            return result
+        items: list[dict[str, Any]] = []
+        rejected = 0
+        for raw_item in raw_items:
+            try:
+                item = ProcurementSupplyEvidenceItem.model_validate(raw_item)
+            except ValueError:
+                rejected += 1
+                continue
+            if not item.confirmed or not item.suitable:
+                rejected += 1
+                continue
+            items.append(item.model_dump(mode="json"))
+        result.data["items"] = items
+        if rejected:
+            result.data["python_excluded_count"] = rejected
+        return result
 
 
 def _supply_tool(
@@ -211,6 +328,8 @@ def _supply_tool(
 
 register_tool(GetProcurementNeedLinesTool())
 register_tool(GetFreeStockTool())
+register_tool(GetActiveResourceSpecificationsTool())
+register_tool(GetProductionSupplyEvidenceTool())
 register_tool(
     _supply_tool(
         name="onec_get_reservations",
@@ -250,8 +369,7 @@ register_tool(
     _supply_tool(
         name="onec_get_available_semifinished_goods",
         description=(
-            "Получить доступные полуфабрикаты из 1С, "
-            "если возможность поддержана (только чтение)."
+            "Получить доступные полуфабрикаты из 1С, если возможность поддержана (только чтение)."
         ),
         object_type="semifinished_goods",
     )
@@ -285,4 +403,17 @@ def _optional_string(value: Any) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
-__all__ = ["MCP_CLIENT_FACTORY"]
+def _is_capability_unavailable_error(exc: MCPCallError) -> bool:
+    message = str(exc).lower()
+    return (
+        "не опубликован" in message
+        or "операция недоступна" in message
+        or "not published" in message
+    )
+
+
+__all__ = [
+    "GetActiveResourceSpecificationsTool",
+    "GetProductionSupplyEvidenceTool",
+    "MCP_CLIENT_FACTORY",
+]

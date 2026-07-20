@@ -19,7 +19,9 @@ from app.schemas.procurement import (
 )
 from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
 from app.services.procurement_permission import (
+    PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG,
     can_access_procurement_orchestrator,
+    can_access_production_preparation_engineer,
     can_refresh_procurement_orchestrator,
 )
 
@@ -34,17 +36,106 @@ async def _require_superuser(db: DbSession, user: User) -> None:
         )
 
 
+async def _require_engineer_workspace(
+    db: DbSession,
+    user: User,
+    agent_id: str,
+) -> None:
+    if agent_id != PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ролевой агент не найден")
+    if not await can_access_production_preparation_engineer(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Рабочее место доступно только инженеру по подготовке производства",
+        )
+
+
 @router.get("/me/permissions", response_model=ProcurementPermissionsRead)
 async def get_procurement_permissions(
     db: DbSession,
     current_user: CurrentUser,
 ) -> ProcurementPermissionsRead:
     can_access = await can_access_procurement_orchestrator(db, current_user)
+    can_access_engineer = await can_access_production_preparation_engineer(db, current_user)
     return ProcurementPermissionsRead(
         can_access_orchestrator=can_access,
+        can_access_role_workspace=can_access_engineer,
+        accessible_role_agents=(
+            [PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG] if can_access_engineer else []
+        ),
+        can_submit_role_result=False,
         can_refresh=can_access and await can_refresh_procurement_orchestrator(db, current_user),
         is_superuser=bool(current_user.is_superuser),
     )
+
+
+@router.get(
+    "/role-agents/{agent_id}/dashboard",
+    response_model=ProcurementDashboardRead,
+)
+async def get_procurement_role_dashboard(
+    agent_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+    view: Literal["active", "processing", "archive"] = Query(default="active"),
+) -> ProcurementDashboardRead:
+    await _require_engineer_workspace(db, current_user, agent_id)
+    payload = await ProcurementOrchestratorService(db, enqueue_case=False).list_dashboard(
+        view=view,
+        source_type="production_material_order",
+    )
+    return ProcurementDashboardRead.model_validate(payload)
+
+
+@router.get(
+    "/role-agents/{agent_id}/cases/{case_id}",
+    response_model=ProcurementCaseDetail,
+)
+async def get_procurement_role_case(
+    agent_id: str,
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ProcurementCaseDetail:
+    await _require_engineer_workspace(db, current_user, agent_id)
+    payload = await ProcurementOrchestratorService(db, enqueue_case=False).get_case(case_id)
+    if payload is None or payload.get("source_type") != "production_material_order":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
+    metadata = payload.get("case_metadata") or {}
+    payload["case_metadata"] = {
+        "production_order_1c_ref": metadata.get("production_order_1c_ref"),
+        "production_order_type": metadata.get("production_order_type"),
+        "production_preparation_engineer_output": metadata.get(
+            "production_preparation_engineer_output"
+        ),
+        "engineer_evidence_fingerprint": metadata.get("engineer_evidence_fingerprint"),
+        "engineer_calculated_at": metadata.get("engineer_calculated_at"),
+    }
+    payload["assigned_agents"] = [PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG]
+    payload["route_stages"] = []
+    payload["events"] = [
+        event
+        for event in payload.get("events") or []
+        if event.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG
+        or event.get("event_type")
+        in {
+            "case_created_from_source",
+            "source_document_changed",
+            "case_archived_from_source",
+        }
+    ]
+    payload["timeline"] = [
+        item
+        for item in payload.get("timeline") or []
+        if item.get("actor_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG
+        or item.get("kind")
+        in {
+            "case_created_from_source",
+            "source_document_changed",
+            "case_archived_from_source",
+        }
+    ]
+    return ProcurementCaseDetail.model_validate(payload)
 
 
 @router.get("/dashboard", response_model=ProcurementDashboardRead)

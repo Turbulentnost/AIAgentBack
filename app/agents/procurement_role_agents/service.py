@@ -9,6 +9,9 @@ from app.agents.procurement_role_agents.schemas import (
     ProcurementRoleAgentRequest,
     ProcurementRoleAgentResult,
 )
+from app.agents.production_preparation_engineer_agent.service import (
+    ProductionPreparationEngineerService,
+)
 from app.models.enums import ConfidenceLevel
 
 
@@ -62,6 +65,24 @@ class ProductionPreparationEngineerAgent(_WaitingProcurementRoleAgent):
     agent_id = config.PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
     name = config.AGENT_LABELS[agent_id]
     purpose = "Обработка заказа материалов в производство."
+    allowed_tools = [
+        "onec_get_active_resource_specifications",
+        "onec_get_free_stock",
+        "onec_get_reservations",
+        "onec_get_store_room_stock",
+        "onec_get_open_supplier_orders",
+        "onec_get_goods_in_transit",
+        "onec_get_internal_transfers",
+        "onec_get_available_semifinished_goods",
+        "onec_get_work_in_progress",
+        "onec_get_quality_stock",
+    ]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await ProductionPreparationEngineerService().run(
+            payload,
+            agent_id=self.agent_id,
+        )
 
 
 @agent_registry.register
