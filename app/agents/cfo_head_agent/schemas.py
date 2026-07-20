@@ -36,6 +36,9 @@ class CfoCaseContext(BaseModel):
     project: str | None = None
     production_need_date: date | None = None
     delivery_days: int | None = None
+    expected_delivery_date: date | None = None
+    # ВВЗ (плечо подвоза) из карточки номенклатуры 1С — СТО-14-040 §6.9
+    lead_time_vvz_days: int | None = None
     payment_planned_date: date | None = None
     supplier_id: str | None = None
 

@@ -14,6 +14,7 @@ from app.agents.cfo_head_agent.schemas import (
 )
 from app.agents.cfo_head_agent.sto_dates import (
     calc_payment_planned_date,
+    check_lead_time_mismatch,
     validate_payment_date_not_before_next_workday,
 )
 
@@ -32,6 +33,7 @@ class CfoAssessment:
     risks: list[str]
     logs: list[str]
     missing_fields: list[str]
+    lead_time_mismatch: bool = False
 
 
 def check_staged_issue(ctx: CfoCaseContext, logs: list[str]) -> bool:
@@ -51,6 +53,17 @@ def resolve_delivery_days(request: CfoHeadAgentRequest, ctx: CfoCaseContext) -> 
     if ctx.delivery_days is not None:
         return int(ctx.delivery_days)
     raw = (request.payload or {}).get("delivery_days")
+    if raw is not None and raw != "":
+        return int(raw)
+    return None
+
+
+def resolve_lead_time_vvz_days(
+    request: CfoHeadAgentRequest, ctx: CfoCaseContext
+) -> int | None:
+    if ctx.lead_time_vvz_days is not None:
+        return int(ctx.lead_time_vvz_days)
+    raw = (request.payload or {}).get("lead_time_vvz_days")
     if raw is not None and raw != "":
         return int(raw)
     return None
@@ -85,9 +98,11 @@ def collect_payment_date_risks(
     request: CfoHeadAgentRequest,
     ctx: CfoCaseContext,
     logs: list[str],
-) -> list[str]:
+) -> tuple[list[str], bool]:
     risks: list[str] = []
-    if ctx.production_need_date and resolve_delivery_days(request, ctx) is None:
+    lead_time_mismatch = False
+    delivery_days = resolve_delivery_days(request, ctx)
+    if ctx.production_need_date and delivery_days is None:
         risks.append("MISSING_DELIVERY_DAYS")
         logs.append("§6.11.4: отсутствует срок поставки (delivery_days)")
     if ctx.payment_planned_date and not validate_payment_date_not_before_next_workday(
@@ -95,7 +110,22 @@ def collect_payment_date_risks(
     ):
         risks.append("PAYMENT_DATE_TOO_EARLY")
         logs.append("§6.11.3: дата оплаты раньше следующего рабочего дня")
-    return risks
+    vvz_days = resolve_lead_time_vvz_days(request, ctx)
+    if delivery_days is not None and vvz_days is not None:
+        lead_time_mismatch = check_lead_time_mismatch(delivery_days, vvz_days)
+        if lead_time_mismatch:
+            risks.append("LEAD_TIME_MISMATCH")
+            logs.append(
+                f"СТО-14-040 §6.9: delivery_days={delivery_days} vs ВВЗ={vvz_days} "
+                "(>14) — lead_time_mismatch; ВВЗ не изменяется"
+            )
+        else:
+            logs.append(
+                f"СТО-14-040 §6.9: delivery_days={delivery_days} vs ВВЗ={vvz_days} — ок"
+            )
+    elif delivery_days is not None and vvz_days is None:
+        logs.append("СТО-14-040 §6.9: lead_time_vvz_days отсутствует — сверка ВВЗ пропущена")
+    return risks, lead_time_mismatch
 
 
 def assess_case(request: CfoHeadAgentRequest) -> CfoAssessment:
@@ -120,6 +150,7 @@ def assess_case(request: CfoHeadAgentRequest) -> CfoAssessment:
             risks=[],
             logs=logs,
             missing_fields=missing,
+            lead_time_mismatch=False,
         )
 
     amount = Decimal(str(ctx.amount))
@@ -129,7 +160,7 @@ def assess_case(request: CfoHeadAgentRequest) -> CfoAssessment:
 
     staged_issue = check_staged_issue(ctx, logs)
     suggested_payment_date = compute_suggested_payment_date(request, ctx, logs)
-    risks = collect_payment_date_risks(request, ctx, logs)
+    risks, lead_time_mismatch = collect_payment_date_risks(request, ctx, logs)
     if not ds_ok:
         risks.append("LIMIT_EXCEEDED")
 
@@ -150,6 +181,7 @@ def assess_case(request: CfoHeadAgentRequest) -> CfoAssessment:
         risks=risks,
         logs=logs,
         missing_fields=[],
+        lead_time_mismatch=lead_time_mismatch,
     )
 
 
@@ -165,8 +197,17 @@ def build_awaiting_output(ctx: CfoCaseContext, assessment: CfoAssessment) -> dic
         "payment_request_id": ctx.payment_request_id,
         "payment_mode": ctx.payment_mode.value if ctx.payment_mode else None,
         "expense_article": ctx.expense_article,
+        "expected_delivery_date": (
+            str(ctx.expected_delivery_date) if ctx.expected_delivery_date else None
+        ),
+        "lead_time_vvz_days": ctx.lead_time_vvz_days,
+        "lead_time_mismatch": assessment.lead_time_mismatch,
         "risks": assessment.risks,
-        "norm_refs": ["СТО-28-020 §6.2", "СТО-28-020 §6.11.3–§6.11.5"],
+        "norm_refs": [
+            "СТО-28-020 §6.2",
+            "СТО-28-020 §6.11.3–§6.11.5",
+            "СТО-14-040 §6.9",
+        ],
         "logs": assessment.logs,
     }
     if assessment.suggested_payment_date:
@@ -246,4 +287,5 @@ __all__ = [
     "collect_payment_date_risks",
     "compute_suggested_payment_date",
     "resolve_delivery_days",
+    "resolve_lead_time_vvz_days",
 ]

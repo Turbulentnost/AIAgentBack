@@ -146,6 +146,74 @@ def test_assess_suggested_payment_date():
     assert assessment.suggested_payment_date is not None
 
 
+def test_lead_time_mismatch_when_delta_over_14():
+    request = CfoHeadAgentRequest.model_validate(
+        _base_payload(
+            case_context={
+                "amount": "100",
+                "ds_limit": "200",
+                "production_need_date": "2026-08-20",
+                "delivery_days": 30,
+                "lead_time_vvz_days": 10,
+                "expected_delivery_date": "2026-08-15",
+            }
+        )
+    )
+    assessment = assess_case(request)
+    assert assessment.lead_time_mismatch is True
+    assert "LEAD_TIME_MISMATCH" in assessment.risks
+
+
+def test_lead_time_ok_when_delta_14_or_less():
+    request = CfoHeadAgentRequest.model_validate(
+        _base_payload(
+            case_context={
+                "amount": "100",
+                "ds_limit": "200",
+                "delivery_days": 24,
+                "lead_time_vvz_days": 10,
+            }
+        )
+    )
+    assessment = assess_case(request)
+    assert assessment.lead_time_mismatch is False
+    assert "LEAD_TIME_MISMATCH" not in assessment.risks
+
+
+def test_lead_time_mismatch_absent_without_vvz():
+    request = CfoHeadAgentRequest.model_validate(
+        _base_payload(
+            case_context={
+                "amount": "100",
+                "ds_limit": "200",
+                "delivery_days": 30,
+            }
+        )
+    )
+    assessment = assess_case(request)
+    assert assessment.lead_time_mismatch is False
+    assert "LEAD_TIME_MISMATCH" not in assessment.risks
+
+
+@pytest.mark.asyncio
+async def test_run_exposes_lead_time_mismatch_flag():
+    agent_cls = agent_registry.get(CFO_HEAD_AGENT_ID)
+    result = await agent_cls().run(
+        _base_payload(
+            case_context={
+                "amount": "1000",
+                "ds_limit": "5000",
+                "delivery_days": 40,
+                "lead_time_vvz_days": 5,
+                "expected_delivery_date": "2026-09-01",
+            }
+        )
+    )
+    assert result.output_data["lead_time_mismatch"] is True
+    assert result.output_data["expected_delivery_date"] == "2026-09-01"
+    assert "LEAD_TIME_MISMATCH" in result.output_data["risks"]
+
+
 def test_system_prompt_has_sto_norm_refs():
     assert "СТО-28-020 §6.2" in SYSTEM_PROMPT
     assert "Для редакторов" not in SYSTEM_PROMPT

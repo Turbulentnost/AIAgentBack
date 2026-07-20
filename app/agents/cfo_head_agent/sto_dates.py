@@ -62,9 +62,23 @@ def validate_payment_date_not_before_next_workday(
     return payment_date >= min_date
 
 
+def check_lead_time_mismatch(
+    delivery_days: int,
+    lead_time_vvz_days: int,
+    *,
+    threshold_workdays: int = 14,
+) -> bool:
+    """
+    СТО-14-040 §6.9: сверка срока из счёта/КП с ВВЗ (плечо подвоза).
+    При расхождении более 14 рабочих дней — флаг; ВВЗ ассистент не меняет.
+    """
+    return abs(int(delivery_days) - int(lead_time_vvz_days)) > threshold_workdays
+
+
 __all__ = [
     "add_workdays",
     "calc_payment_planned_date",
+    "check_lead_time_mismatch",
     "parse_date",
     "validate_payment_date_not_before_next_workday",
 ]
