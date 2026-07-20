@@ -10,6 +10,7 @@ from app.agents.legal_specialist_agent.decisions import (
     assess_case,
     build_output_from_assessment,
 )
+from app.agents.legal_specialist_agent.prompts import recommend_with_llm
 from app.agents.legal_specialist_agent.schemas import (
     LegalSpecialistAgentRequest,
     LegalSpecialistAgentResult,
@@ -91,10 +92,17 @@ class LegalSpecialistAgent(BaseAgent):
                 next_roles_suggested=[],
             )
 
+        rag_text = str((request.payload or {}).get("rag_text") or "")
+        advice = await recommend_with_llm(request, assessment, rag_text=rag_text)
+        output_data["llm_recommendation"] = advice
+        # Deterministic code action remains primary; LLM advice is for the human.
         return LegalSpecialistAgentResult(
             agent_id=self.agent_id,
             status="waiting_human",
-            summary="Черновик претензии готов — требуется HITL юриста",
+            summary=str(
+                advice.get("recommendation")
+                or "Черновик претензии готов — требуется HITL юриста"
+            ),
             data_confidence=ConfidenceLevel.HIGH,
             requires_human_review=True,
             case_id=request.case_id,
