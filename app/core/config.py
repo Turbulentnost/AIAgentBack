@@ -43,10 +43,15 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "ai_agents"
 
     REDIS_HOST: str = "192.168.1.157"
-    REDIS_PORT: int = 6379
+    REDIS_PORT: int = 16379
     REDIS_DB: int = 0
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
+    CELERY_VISIBILITY_TIMEOUT_SECONDS: int = 60 * 60 * 24
+    KB_INDEXING_STALE_AFTER_SECONDS: int = 60 * 45
+    KB_INDEXING_RECOVERY_INTERVAL_SECONDS: int = 60 * 10
+    KB_INDEXING_RECOVERY_MAX_JOBS: int = 5
+    KB_DOCUMENT_PARSE_TIMEOUT_SECONDS: int = 60 * 10
 
     QDRANT_HOST: str = "192.168.1.157"
     QDRANT_PORT: int = 6333
@@ -73,6 +78,9 @@ class Settings(BaseSettings):
     )
 
     MINIO_ENDPOINT: str = "192.168.1.157:9000"
+    # Адрес MinIO для presigned URL в браузере (LAN/IP). В Docker backend использует minio:9000,
+    # а клиенту отдаём публичный host:port, иначе <img src> не загрузится.
+    MINIO_PUBLIC_ENDPOINT: str = ""
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "ai-documents"
@@ -97,6 +105,7 @@ class Settings(BaseSettings):
     # Общий LLM-шлюз (прочие задачи платформы).
     LLM_GATEWAY_BASE_URL: str = ""
     LLM_GATEWAY_API_KEY: str | None = None
+    CLAUDE_API_KEY: str | None = None
     OPENAI_API_KEY_CLAUDE: str | None = None
     OPENAI_API_KEY: str | None = None
     LLM_DEFAULT_MODEL: str = ""
@@ -105,9 +114,25 @@ class Settings(BaseSettings):
     AGENT_BUILDER_CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
     AGENT_BUILDER_FALLBACK_BASE_URL: str = ""
     AGENT_BUILDER_FALLBACK_MODEL: str = "openai/gpt-oss-120b"
+    # Procurement agent: Anthropic-compatible Claude endpoint.
+    PROCUREMENT_LLM_BASE_URL: str = "https://api.claudehub.fun"
+    PROCUREMENT_LLM_MODEL: str = "claude-sonnet-4-6"
+    PROCUREMENT_LLM_MODELS: str = "claude-sonnet-4-6,claude-opus-4-1"
+    PROCUREMENT_LLM_STYLE: str = "anthropic"
+    PROCUREMENT_LLM_SUPPORTS_REASONING: bool = True
+    PROCUREMENT_LLM_DISCOVER_MODELS: bool = True
+    # Procurement orchestrator Level 0 polling.
+    PROCUREMENT_ORCHESTRATOR_ENABLED: bool = True
+    PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED: bool = False
+    PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS: int = 1800
+    PROCUREMENT_ORCHESTRATOR_LOOKBACK_DAYS: int = 14
+    PROCUREMENT_ORCHESTRATOR_PAGE_LIMIT: int = 50
+    PROCUREMENT_ORCHESTRATOR_OVERLAP_HOURS: int = 6
+    PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS: int = 1700
     # Структурное извлечение nd_control (DocumentCard, анализ отдела).
     ND_CONTROL_EXTRACTION_MODEL: str = "openai/gpt-oss-120b"
     ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS: int = 1200
+    ND_TEMPLATE_CLASSIFICATION_MODEL: str | None = None
     ND_CONTROL_UML_MODEL: str | None = None
     ND_CONTROL_UML_LLM_TIMEOUT_SECONDS: int = 180
     # OCR / vision для PDF и изображений — всегда qwen в LM Studio.
@@ -134,6 +159,33 @@ class Settings(BaseSettings):
     # Внутренние/loopback/private IP, localhost, исполняемые файлы и запрещённые схемы блокируются всегда.
     # Задеплоенные production-агенты остаются на ограничительном allowlist (allow_open_web=False).
     BROWSER_SANDBOX_OPEN_WEB: bool = True
+
+    # 1С: ERP OData — значения только из .env (см. .env.example).
+    ONEC_ODATA_URL: str = ""
+    ONEC_ODATA_USER: str = ""
+    ONEC_ODATA_PASSWORD: str = ""
+    ONEC_ODATA_TIMEOUT: int = 120
+    ONEC_MEETING_MEMO_THEME: str = ""
+    ONEC_CORPORATE_EMAIL_DOMAIN: str = "turbo-don.ru"
+    ONEC_NOTIFICATION_DEFAULT_RECIPIENT_FIOS: str = ""
+    ONEC_NOTIFICATION_SOURCE_USER_FIO: str = ""
+    MEETING_DASHBOARD_CACHE_ENABLED: bool = True
+    MEETING_DASHBOARD_CACHE_TTL_SECONDS: int = 60 * 60 * 24
+    MEETING_DASHBOARD_CACHE_WARMUP_ENABLED: bool = True
+    MEETING_DASHBOARD_CACHE_WARMUP_HOURS: str = "10,15"
+    MEETING_DASHBOARD_CACHE_WARMUP_MINUTE: int = 0
+    MEETING_DASHBOARD_CACHE_WARMUP_TIMEZONE: str = "Europe/Moscow"
+
+    # Outlook / Exchange (COM-календарь, EWS, SMTP) — значения из .env.
+    OUTLOOK_EMAIL: str = ""
+    OUTLOOK_PASSWORD: str = ""
+    OUTLOOK_SERVER: str = ""
+    OUTLOOK_MAILBOX: str = ""
+    OUTLOOK_TIMEZONE: str = "Europe/Moscow"
+    OUTLOOK_SMTP_HOST: str = ""
+    OUTLOOK_SMTP_PORT: int = 587
+    OUTLOOK_SMTP_TLS: str = "true"
+    OUTLOOK_SMTP_FROM: str = ""
 
     @property
     def cors_origins(self) -> list[str]:
@@ -193,6 +245,19 @@ class Settings(BaseSettings):
                 path=self.POSTGRES_DB,
             )
         )
+
+    @computed_field
+    @property
+    def minio_presign_endpoint(self) -> str:
+        """Host:port для presigned URL в браузере."""
+        public = self.MINIO_PUBLIC_ENDPOINT.strip()
+        if public:
+            return public
+        internal_host = self.MINIO_ENDPOINT.split(":", 1)[0].strip()
+        if internal_host in {"minio", "localhost", "127.0.0.1"}:
+            # Backend в Docker: MinIO снаружи на POSTGRES_HOST:9000 (проброс порта compose).
+            return f"{self.POSTGRES_HOST}:9000"
+        return self.MINIO_ENDPOINT
 
     @computed_field
     @property

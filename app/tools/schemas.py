@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -154,3 +155,95 @@ class GetKnowledgeFragmentOutput(BaseModel):
     neighbors: list[KnowledgeFragmentNeighbor] = Field(default_factory=list)
     source: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcurementNeedLinesInput(BaseModel):
+    correlation_id: str = Field(..., min_length=1, max_length=128)
+    source_type: Literal[
+        "internal_consumption_order",
+        "production_material_order",
+        "transfer_order",
+        "reorder_point",
+    ]
+    source_1c_ref: str = Field(..., min_length=1, max_length=512)
+
+
+class ProcurementSupplyReadInput(BaseModel):
+    correlation_id: str = Field(..., min_length=1, max_length=128)
+    nomenclature_ids: list[str] = Field(..., min_length=1, max_length=500)
+    warehouse_ids: list[str] = Field(default_factory=list, max_length=100)
+    database: str | None = Field(default=None, max_length=128)
+    organization_id: str | None = Field(default=None, max_length=255)
+    required_at: datetime | None = None
+    limit: int = Field(default=1000, ge=1, le=1000)
+
+
+class ProcurementResourceSpecificationsInput(BaseModel):
+    correlation_id: str = Field(..., min_length=1, max_length=128)
+    specification_ids: list[str] = Field(default_factory=list, max_length=500)
+    product_ids: list[str] = Field(default_factory=list, max_length=500)
+    database: str | None = Field(default=None, max_length=128)
+    limit: int = Field(default=5000, ge=1, le=10000)
+
+
+class ProcurementProductionSupplyInput(ProcurementSupplyReadInput):
+    entity_set: Literal[
+        "AccumulationRegister_ЗапасыИПотребности",
+        "AccumulationRegister_МатериалыВПроизводстве",
+        "AccumulationRegister_НезавершенноеПроизводство",
+        "AccumulationRegister_ТоварыНаСкладах",
+        "AccumulationRegister_МатериалыИРаботыВПроизводстве_RecordType",
+        "AccumulationRegister_ПартииНезавершенногоПроизводства_RecordType",
+        "AccumulationRegister_РезервыТоваровОрганизаций_RecordType",
+        "AccumulationRegister_ЗаказыМатериаловВПроизводство_RecordType",
+        "AccumulationRegister_ПотребностьВМатериалахВПроизводстве_RecordType",
+        "AccumulationRegister_ОбеспечениеПроизводственныхПроцессов_RecordType",
+    ]
+    source_type: Literal[
+        "warehouse",
+        "store_room",
+        "semifinished",
+        "semifinished_production",
+    ]
+
+
+class ProcurementSupplyEvidenceItem(BaseModel):
+    supply_id: str
+    source_type: Literal[
+        "warehouse",
+        "store_room",
+        "semifinished",
+        "in_transit",
+        "supplier_order",
+        "internal_transfer",
+        "semifinished_production",
+    ]
+    nomenclature_id: str
+    unit: str
+    quantity: Decimal = Field(ge=0)
+    confirmed: bool = True
+    suitable: bool = True
+    reserved_for_other: bool = False
+    quarantine: bool = False
+    defective: bool = False
+    incoming_control_passed: bool = True
+    expired: bool = False
+    illiquid: bool = False
+    exact_match: bool = True
+    evidence_id: str
+
+
+class ProcurementOneCReadOutput(BaseModel):
+    status: Literal["success", "capability_unavailable", "failed"]
+    source_system: str = "1C_ERP"
+    tool_name: str
+    object_type: str
+    object_id: str | None = None
+    row_ids: list[str] = Field(default_factory=list)
+    retrieved_at: datetime
+    business_effective_at: datetime | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    freshness_status: Literal["fresh", "stale", "unknown"] = "unknown"
+    correlation_id: str
+    error_code: str | None = None
+    error_message: str | None = None

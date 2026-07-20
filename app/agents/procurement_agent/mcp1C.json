@@ -1,0 +1,23 @@
+{
+    "mcpServers": {
+      "1c-odata": {
+        "command": "${ONEC_MCP_NODE_COMMAND:-node}",
+        "args": [
+          "${ONEC_MCP_ENTRYPOINT:-/app/MCP/vendor/1c-odata-mcp/dist/index.js}"
+        ],
+        "capabilityMap": {
+          "onec_get_free_stock": "read_analytics_get_inventory",
+          "onec_get_active_resource_specifications": "read_production_get_active_resource_specifications",
+          "onec_get_production_supply_evidence": "read_production_get_supply_evidence"
+        },
+        "env": {
+          "ODATA_BASE_URL": "${ODATA_BASE_URL}",
+          "ODATA_USERNAME": "${ODATA_USERNAME}",
+          "ODATA_PASSWORD": "${ODATA_PASSWORD}",
+          "ODATA_TIMEOUT_MS": "${ODATA_TIMEOUT_MS:-600000}",
+          "ODATA_RETRIES": "${ODATA_RETRIES:-2}",
+          "READ_ONLY": "true"
+        }
+      }
+    }
+  }

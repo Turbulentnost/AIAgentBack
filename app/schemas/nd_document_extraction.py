@@ -68,6 +68,55 @@ class ActionExtraction(ExtractionBaseModel):
     evidence: Evidence | None = None
 
 
+class EffectivenessCriterionExtraction(ExtractionBaseModel):
+    name: str
+    measurement_method: str | None = None
+    reporting_period: str | None = None
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
+class ResourceExtraction(ExtractionBaseModel):
+    name: str
+    type: str | None = None
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
+class RiskExtraction(ExtractionBaseModel):
+    risk: str
+    consequence: str | None = None
+    control_measure: str | None = None
+    responsible: str | None = None
+    related_action: str | None = None
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
+class DocumentationArchiveExtraction(ExtractionBaseModel):
+    document: str
+    storage_place: str | None = None
+    responsible: str | None = None
+    retention_term: str | None = None
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
+class ApplicationExtraction(ExtractionBaseModel):
+    name: str
+    code: str | None = None
+    description: str | None = None
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
+class ChangeRegistrationExtraction(ExtractionBaseModel):
+    title: str
+    description: str | None = None
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
+class IssueAcquaintanceExtraction(ExtractionBaseModel):
+    title: str
+    description: str | None = None
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
 class OwnerCandidate(ExtractionBaseModel):
     name_or_role: str
     reason: str
@@ -85,9 +134,19 @@ class ProcessExtraction(ExtractionBaseModel):
     roles: list[str] = Field(default_factory=list)
     forms: list[str] = Field(default_factory=list)
     systems: list[str] = Field(default_factory=list)
-    resources: list[str] = Field(default_factory=list)
+    resources: list[ResourceExtraction] = Field(default_factory=list)
     related_departments: list[str] = Field(default_factory=list)
     owner_candidates: list[OwnerCandidate] = Field(default_factory=list)
+    effectiveness_criteria: list[EffectivenessCriterionExtraction] = Field(default_factory=list)
+    measurement_methods: list[str] = Field(default_factory=list)
+    risks: list[RiskExtraction] = Field(default_factory=list)
+    documentation_and_archive: list[DocumentationArchiveExtraction] = Field(default_factory=list)
+    applications: list[ApplicationExtraction] = Field(default_factory=list)
+    change_registration: list[ChangeRegistrationExtraction] = Field(default_factory=list)
+    issue_and_acquaintance: list[IssueAcquaintanceExtraction] = Field(default_factory=list)
+    storage_locations: list[str] = Field(default_factory=list)
+    retention_terms: list[str] = Field(default_factory=list)
+    responsible_for_storage: list[str] = Field(default_factory=list)
 
 
 class ResponsibilityExtraction(ExtractionBaseModel):
@@ -297,6 +356,111 @@ def _normalize_owner_candidate(value: Any) -> dict[str, Any]:
     return {key: candidate[key] for key in _OWNER_CANDIDATE_KEYS if key in candidate}
 
 
+def _normalize_evidence(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    return None
+
+
+def _normalize_evidence_list(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _normalize_structured_item(value: Any, *, name_keys: tuple[str, ...], default_name: str) -> dict[str, Any]:
+    if isinstance(value, str):
+        text = value.strip()
+        return {"name": text or default_name} if name_keys[0] == "name" else {name_keys[0]: text or default_name}
+    if not isinstance(value, dict):
+        return {name_keys[0]: str(value)}
+    item = dict(value)
+    if not any(item.get(key) for key in name_keys):
+        fallback = item.get("title") or item.get("text") or item.get("description") or default_name
+        item[name_keys[0]] = fallback
+    evidence = _normalize_evidence_list(item.get("evidence"))
+    if evidence:
+        item["evidence"] = evidence
+    elif "evidence" in item:
+        item["evidence"] = []
+    return item
+
+
+def _normalize_effectiveness_criterion(value: Any) -> dict[str, Any]:
+    item = _normalize_structured_item(value, name_keys=("name",), default_name="Критерий")
+    item["measurement_method"] = _coerce_text(item.get("measurement_method"))
+    item["reporting_period"] = _coerce_text(item.get("reporting_period"))
+    return {key: item[key] for key in ("name", "measurement_method", "reporting_period", "evidence") if key in item}
+
+
+def _normalize_resource(value: Any) -> dict[str, Any]:
+    item = _normalize_structured_item(value, name_keys=("name",), default_name="Ресурс")
+    item["type"] = _coerce_text(item.get("type"))
+    return {key: item[key] for key in ("name", "type", "evidence") if key in item}
+
+
+def _normalize_risk(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"risk": value.strip() or "Риск"}
+    if not isinstance(value, dict):
+        return {"risk": str(value)}
+    item = dict(value)
+    if not item.get("risk"):
+        item["risk"] = item.get("name") or item.get("title") or "Риск"
+    for field in ("consequence", "control_measure", "responsible", "related_action"):
+        item[field] = _coerce_text(item.get(field))
+    evidence = _normalize_evidence_list(item.get("evidence"))
+    if evidence:
+        item["evidence"] = evidence
+    elif "evidence" in item:
+        item["evidence"] = []
+    return {
+        key: item[key]
+        for key in ("risk", "consequence", "control_measure", "responsible", "related_action", "evidence")
+        if key in item
+    }
+
+
+def _normalize_documentation_archive(value: Any) -> dict[str, Any]:
+    item = _normalize_structured_item(value, name_keys=("document",), default_name="Документ")
+    for field in ("storage_place", "responsible", "retention_term"):
+        item[field] = _coerce_text(item.get(field))
+    return {
+        key: item[key]
+        for key in ("document", "storage_place", "responsible", "retention_term", "evidence")
+        if key in item
+    }
+
+
+def _normalize_application(value: Any) -> dict[str, Any]:
+    item = _normalize_structured_item(value, name_keys=("name",), default_name="Приложение")
+    item["code"] = _coerce_text(item.get("code"))
+    item["description"] = _coerce_text(item.get("description"))
+    return {key: item[key] for key in ("name", "code", "description", "evidence") if key in item}
+
+
+def _normalize_change_registration(value: Any) -> dict[str, Any]:
+    item = _normalize_structured_item(value, name_keys=("title",), default_name="Лист регистрации изменений")
+    item["description"] = _coerce_text(item.get("description"))
+    return {key: item[key] for key in ("title", "description", "evidence") if key in item}
+
+
+def _normalize_issue_acquaintance(value: Any) -> dict[str, Any]:
+    item = _normalize_structured_item(value, name_keys=("title",), default_name="Лист выдачи и ознакомления")
+    item["description"] = _coerce_text(item.get("description"))
+    return {key: item[key] for key in ("title", "description", "evidence") if key in item}
+
+
+def _normalize_structured_list(value: Any, normalizer) -> list[dict[str, Any]]:
+    return [normalizer(item) for item in _ensure_list(value)]
+
+
 def _normalize_process(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {"name": str(value), "actions": []}
@@ -304,12 +468,38 @@ def _normalize_process(value: Any) -> dict[str, Any]:
     process.setdefault("name", process.get("title") or "Процесс")
     for field in ("description", "goal"):
         process[field] = _coerce_text(process.get(field))
-    for field in ("inputs", "outputs", "roles", "forms", "systems", "resources", "related_departments"):
+    for field in (
+        "inputs",
+        "outputs",
+        "roles",
+        "forms",
+        "systems",
+        "related_departments",
+        "measurement_methods",
+        "storage_locations",
+        "retention_terms",
+        "responsible_for_storage",
+    ):
         process[field] = _ensure_str_list(process.get(field))
     process["actions"] = [_normalize_action(item) for item in _ensure_list(process.get("actions"))]
     process["owner_candidates"] = [
         _normalize_owner_candidate(item) for item in _ensure_list(process.get("owner_candidates"))
     ]
+    process["effectiveness_criteria"] = _normalize_structured_list(
+        process.get("effectiveness_criteria"), _normalize_effectiveness_criterion
+    )
+    process["resources"] = _normalize_structured_list(process.get("resources"), _normalize_resource)
+    process["risks"] = _normalize_structured_list(process.get("risks"), _normalize_risk)
+    process["documentation_and_archive"] = _normalize_structured_list(
+        process.get("documentation_and_archive"), _normalize_documentation_archive
+    )
+    process["applications"] = _normalize_structured_list(process.get("applications"), _normalize_application)
+    process["change_registration"] = _normalize_structured_list(
+        process.get("change_registration"), _normalize_change_registration
+    )
+    process["issue_and_acquaintance"] = _normalize_structured_list(
+        process.get("issue_and_acquaintance"), _normalize_issue_acquaintance
+    )
     return process
 
 

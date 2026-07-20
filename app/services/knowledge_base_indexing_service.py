@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import uuid
+import asyncio
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -302,12 +303,14 @@ class KnowledgeBaseIndexingService:
     ) -> list[KnowledgeBaseSource]:
         kb = kb or await self._load_kb(knowledge_base_id)
         eligible: list[KnowledgeBaseSource] = []
-        for source in kb.sources:
+        sources = [source for source in kb.sources if source.processing_status not in _SKIP_STATUSES]
+        if job is not None:
+            job.total_sources_count = len(sources)
+            await self._update_job_progress(job)
+        for index, source in enumerate(sources, start=1):
             if job is not None and started is not None:
                 if await self._abort_if_cancelled(job, kb, started):
                     break
-            if source.processing_status in _SKIP_STATUSES:
-                continue
             result = await self.precheck.precheck_source(source, user=user)
             if result.passed:
                 source.precheck_status = KnowledgeBaseSourcePrecheckStatus.PASSED
@@ -327,6 +330,11 @@ class KnowledgeBaseIndexingService:
                         user_message=result.user_message,
                         recommended_action=result.recommended_action,
                     )
+            if job is not None:
+                params = dict(job.processing_params or {})
+                params["prechecked_sources_count"] = index
+                job.processing_params = params
+                await self._update_job_progress(job)
         await self.db.flush()
         return eligible
 
@@ -364,6 +372,7 @@ class KnowledgeBaseIndexingService:
         if await self._abort_if_cancelled(job, kb, started):
             return self._job_result(job)
 
+        await self._resolve_indexing_errors(kb.id)
         await self._mark_job_running(job, kb)
         if await self._is_job_cancelled(job):
             return self._job_result(job)
@@ -384,7 +393,7 @@ class KnowledgeBaseIndexingService:
         )
         if await self._abort_if_cancelled(job, kb, started):
             return self._job_result(job)
-        job.total_sources_count = len(eligible)
+        job.total_sources_count = max(job.total_sources_count, len(eligible))
         if not await self._update_job_progress(job):
             return self._job_result(job)
 
@@ -663,7 +672,9 @@ class KnowledgeBaseIndexingService:
         version.qdrant_collection = kb.qdrant_collection
         version.qdrant_points_count = len(points)
         document.is_indexed = True
+        await self._resolve_indexing_errors(kb.id, source_id=source.id)
         await self.db.flush()
+        await self._enqueue_template_classification_for_source(source.id)
         return {
             "created_fragments_count": created,
             "updated_fragments_count": updated,
@@ -672,6 +683,21 @@ class KnowledgeBaseIndexingService:
             "qdrant_points_count": len(points),
             "fulltext_chunks_count": fts_count,
         }
+
+    async def _enqueue_template_classification_for_source(self, source_id: uuid.UUID) -> None:
+        from app.models.enums import NdTemplateClassificationStatus
+        from app.models.nd_control_templates import NdControlTemplateDocument
+        from app.workers.tasks import classify_template_document
+
+        result = await self.db.execute(
+            select(NdControlTemplateDocument).where(
+                NdControlTemplateDocument.knowledge_base_source_id == source_id
+            )
+        )
+        for link in result.scalars().all():
+            link.classification_status = NdTemplateClassificationStatus.PENDING
+            await self.db.flush()
+            classify_template_document.delay(str(link.id))
 
     async def _run_qc(self, kb: KnowledgeBase, job: KnowledgeBaseIndexingJob) -> None:
         empty_chunks = await self.db.scalar(
@@ -774,21 +800,30 @@ class KnowledgeBaseIndexingService:
             if "pdf" in content_type or filename.endswith(".pdf"):
                 from app.services.document_processing.parsers.pdf_parser import PdfParsingService
 
-                await PdfParsingService(self.db).parse_document(document_version_id=version.id)
+                parse_coro = PdfParsingService(self.db).parse_document(document_version_id=version.id)
             elif "word" in content_type or "docx" in content_type or filename.endswith((".docx", ".doc")):
                 from app.services.document_processing.parsers.docx_parser import DocxParsingService
 
-                await DocxParsingService(self.db).parse_document(document_version_id=version.id)
+                parse_coro = DocxParsingService(self.db).parse_document(document_version_id=version.id)
             elif "sheet" in content_type or "excel" in content_type or filename.endswith((".xlsx", ".xls")):
                 from app.services.document_processing.parsers.xlsx_parser import XlsxParsingService
 
-                await XlsxParsingService(self.db).parse_document(document_version_id=version.id)
+                parse_coro = XlsxParsingService(self.db).parse_document(document_version_id=version.id)
             elif content_type.startswith("image/"):
                 from app.services.document_processing.parsers.imageparser import ImageParsingService
 
-                await ImageParsingService(self.db).parse_document(document_version_id=version.id)
+                parse_coro = ImageParsingService(self.db).parse_document(document_version_id=version.id)
             else:
                 raise KnowledgeBaseIndexingError(f"Неподдерживаемый формат: {content_type or filename}")
+            await asyncio.wait_for(
+                parse_coro,
+                timeout=settings.KB_DOCUMENT_PARSE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise KnowledgeBaseIndexingError(
+                f"Обработка документа «{document.title}» превысила лимит "
+                f"{settings.KB_DOCUMENT_PARSE_TIMEOUT_SECONDS} сек."
+            ) from exc
         except KnowledgeBaseIndexingError:
             if existing:
                 # Перепарсить не получилось (например, формат не поддерживается),
@@ -1055,6 +1090,8 @@ class KnowledgeBaseIndexingService:
         job.processed_sources_count = processed_sources_count
         job.created_fragments_count = created_fragments_count
         job.updated_fragments_count = updated_fragments_count
+        if job.errors_count == 0:
+            await self._resolve_indexing_errors(job.knowledge_base_id)
         await self.db.flush()
         await self._emit_indexing_event(job, event="completed")
 
@@ -1125,6 +1162,24 @@ class KnowledgeBaseIndexingService:
             )
         )
         await self.db.flush()
+
+    async def _resolve_indexing_errors(
+        self,
+        knowledge_base_id: uuid.UUID,
+        *,
+        source_id: uuid.UUID | None = None,
+    ) -> None:
+        stmt = (
+            update(KnowledgeBaseIndexingErrorModel)
+            .where(
+                KnowledgeBaseIndexingErrorModel.knowledge_base_id == knowledge_base_id,
+                KnowledgeBaseIndexingErrorModel.is_resolved.is_(False),
+            )
+            .values(is_resolved=True)
+        )
+        if source_id is not None:
+            stmt = stmt.where(KnowledgeBaseIndexingErrorModel.source_id == source_id)
+        await self.db.execute(stmt)
 
     def _job_result(self, job: KnowledgeBaseIndexingJob) -> dict[str, Any]:
         return {

@@ -12,9 +12,12 @@ from app.api.v1.endpoints import (
     health,
     knowledge_base_indexing_ws,
     knowledge_bases,
+    meetings,
     nd_change_requests,
     nd_control,
+    porucheniya,
     positions,
+    procurement,
     roles,
     tasks,
     users,
@@ -31,6 +34,9 @@ api_router.include_router(tasks.router)
 api_router.include_router(documents.router)
 api_router.include_router(document_cards.router)
 api_router.include_router(knowledge_bases.router)
+api_router.include_router(meetings.router)
+api_router.include_router(porucheniya.router)
+api_router.include_router(procurement.router)
 api_router.include_router(knowledge_base_indexing_ws.router)
 api_router.include_router(roles.router)
 api_router.include_router(browser_runs.router)

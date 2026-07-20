@@ -7,11 +7,17 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+exports/
+_tmp_*
 .env
 .env.*
 !.env.example
 alembic/versions/*.py
 !alembic/versions/.gitkeep
+!alembic/versions/0051_procurement_role_waiting_status.py
+!alembic/versions/0052_procurement_source_synced_at.py
+!alembic/versions/0053_production_preparation_engineer_agent.py
+!alembic/versions/0054_omto_support_manager_agent.py
 
 # Build / coverage
 dist/
@@ -40,8 +46,6 @@ tools/tesseract/
 
 # Local documents & path notes (not repo content)
 /*.pdf
-*-путь.txt
-ескд-путь.txt
 
 # One-off / scratch scripts
 scripts/_*.py

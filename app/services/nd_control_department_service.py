@@ -6,7 +6,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.enums import DepartmentAnalysisRunStatus, KnowledgeBaseAccessType
+from app.models.enums import (
+    DepartmentAnalysisRunStatus,
+    KnowledgeBaseAccessType,
+    NdChangeJournalEventType,
+    NdChangeJournalSource,
+)
 from app.models.knowledge_base import KnowledgeBase
 from app.models.nd_control_analysis import DepartmentAnalysisRun
 from app.models.nd_control_registry import (
@@ -16,6 +21,7 @@ from app.models.nd_control_registry import (
 from app.models.nd_control_structural import DocumentCard
 from app.models.user import User
 from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
+from app.services.nd_change_journal_service import NdChangeJournalService
 from app.services.nd_control_permission import can_manage_nd_control_departments
 from app.services.nd_document_card_service import NdDocumentCardService
 
@@ -175,6 +181,15 @@ class NdControlDepartmentService:
 
         for kb_id in knowledge_base_ids:
             await self.card_service.backfill_cards_for_department_kb(dept, kb_id)
+        await NdChangeJournalService(self.db).log_event(
+            event_type=NdChangeJournalEventType.ND_CONTROL_DEPARTMENT_CREATED,
+            actor_user_id=current_user.id,
+            resource_type="nd_control_department",
+            resource_id=dept.id,
+            summary=f"Создан отдел агента НД «{dept.name}»",
+            source=NdChangeJournalSource.MANUAL,
+            payload={"knowledge_base_ids": [str(kb_id) for kb_id in knowledge_base_ids]},
+        )
         return dept
 
     async def update_department(
@@ -206,6 +221,14 @@ class NdControlDepartmentService:
             raise NdControlDepartmentServiceError("Недостаточно прав")
         dept = await self.get_department_or_raise(department_id)
         dept.is_active = False
+        await NdChangeJournalService(self.db).log_event(
+            event_type=NdChangeJournalEventType.ND_CONTROL_DEPARTMENT_DELETED,
+            actor_user_id=current_user.id,
+            resource_type="nd_control_department",
+            resource_id=dept.id,
+            summary=f"Удалён отдел агента НД «{dept.name}»",
+            source=NdChangeJournalSource.MANUAL,
+        )
         await self.db.flush()
 
     async def set_department_knowledge_bases(

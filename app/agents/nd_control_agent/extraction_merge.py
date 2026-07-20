@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from app.schemas.nd_document_extraction import (
     ActionExtraction,
+    ApplicationExtraction,
+    ChangeRegistrationExtraction,
+    DocumentationArchiveExtraction,
+    EffectivenessCriterionExtraction,
     DocumentExtractionResult,
     DocumentMetaExtraction,
     DocumentScopeExtraction,
     FormExtraction,
+    IssueAcquaintanceExtraction,
     Participant,
     ParticipantsExtraction,
     ProcessExtraction,
+    ResourceExtraction,
     ResponsibilityExtraction,
+    RiskExtraction,
     UnknownItem,
 )
 
@@ -85,6 +92,25 @@ def _merge_actions(current: list[ActionExtraction], incoming: list[ActionExtract
     return merged
 
 
+def _merge_structured_models(
+    current: list,
+    incoming: list,
+    *,
+    key_attr: str,
+) -> list:
+    merged: dict[str, object] = {}
+    for item in current:
+        key = _norm(getattr(item, key_attr, None))
+        if key:
+            merged[key] = item
+    for item in incoming:
+        key = _norm(getattr(item, key_attr, None))
+        if not key or key in merged:
+            continue
+        merged[key] = item
+    return list(merged.values())
+
+
 def _merge_processes(current: list[ProcessExtraction], incoming: list[ProcessExtraction]) -> list[ProcessExtraction]:
     by_name: dict[str, ProcessExtraction] = {_norm(process.name): process for process in current}
     for process in incoming:
@@ -103,9 +129,29 @@ def _merge_processes(current: list[ProcessExtraction], incoming: list[ProcessExt
             roles=_merge_unique_strings(existing.roles, process.roles),
             forms=_merge_unique_strings(existing.forms, process.forms),
             systems=_merge_unique_strings(existing.systems, process.systems),
-            resources=_merge_unique_strings(existing.resources, process.resources),
+            resources=_merge_structured_models(existing.resources, process.resources, key_attr="name"),
             related_departments=_merge_unique_strings(existing.related_departments, process.related_departments),
             owner_candidates=[*existing.owner_candidates, *process.owner_candidates],
+            effectiveness_criteria=_merge_structured_models(
+                existing.effectiveness_criteria, process.effectiveness_criteria, key_attr="name"
+            ),
+            measurement_methods=_merge_unique_strings(existing.measurement_methods, process.measurement_methods),
+            risks=_merge_structured_models(existing.risks, process.risks, key_attr="risk"),
+            documentation_and_archive=_merge_structured_models(
+                existing.documentation_and_archive, process.documentation_and_archive, key_attr="document"
+            ),
+            applications=_merge_structured_models(existing.applications, process.applications, key_attr="name"),
+            change_registration=_merge_structured_models(
+                existing.change_registration, process.change_registration, key_attr="title"
+            ),
+            issue_and_acquaintance=_merge_structured_models(
+                existing.issue_and_acquaintance, process.issue_and_acquaintance, key_attr="title"
+            ),
+            storage_locations=_merge_unique_strings(existing.storage_locations, process.storage_locations),
+            retention_terms=_merge_unique_strings(existing.retention_terms, process.retention_terms),
+            responsible_for_storage=_merge_unique_strings(
+                existing.responsible_for_storage, process.responsible_for_storage
+            ),
         )
     return list(by_name.values())
 

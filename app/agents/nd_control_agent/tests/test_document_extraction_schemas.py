@@ -117,6 +117,48 @@ def test_document_type_confidence_is_parsed() -> None:
     assert not hasattr(result, "document_level")
 
 
+def test_process_smk_sections_are_parsed_from_payload() -> None:
+    payload = _valid_payload()
+    payload["processes"][0]["effectiveness_criteria"] = [
+        {
+            "name": "Качество оформления документов",
+            "measurement_method": "Претензии работников к оформлению документов",
+            "reporting_period": "ежеквартально",
+            "evidence": [{"page": 12, "section": "6.1", "quote": "Критерий результативности"}],
+        }
+    ]
+    payload["processes"][0]["resources"] = [
+        {"name": "квалифицированный персонал", "type": "personnel", "evidence": []}
+    ]
+    payload["processes"][0]["risks"] = [
+        {
+            "risk": "Использование неактуальной документированной информации",
+            "consequence": "Неправильное оформление документов",
+            "control_measure": "Использовать один источник получения документированной информации",
+            "responsible": "Начальник Управления делами",
+        }
+    ]
+    payload["processes"][0]["documentation_and_archive"] = [
+        {
+            "document": "Оригинал СТО",
+            "storage_place": "Архив",
+            "responsible": "Специалист по процессному управлению",
+        }
+    ]
+
+    result = parse_document_extraction_result(payload)
+    process = result.processes[0]
+
+    assert len(process.effectiveness_criteria) == 1
+    assert process.effectiveness_criteria[0].measurement_method == "Претензии работников к оформлению документов"
+    assert len(process.resources) == 1
+    assert process.resources[0].type == "personnel"
+    assert len(process.risks) == 1
+    assert process.risks[0].responsible == "Начальник Управления делами"
+    assert len(process.documentation_and_archive) == 1
+    assert process.documentation_and_archive[0].storage_place == "Архив"
+
+
 def test_valid_json_passes() -> None:
     result = parse_document_extraction_result(_valid_payload())
 

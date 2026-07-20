@@ -303,9 +303,37 @@ class ConfirmProcessOwnerRequest(BaseModel):
     owner_name: str | None = None
 
 
+class ProcessUmlSchemaCompositionResponse(BaseModel):
+    start_end: int = 0
+    operations: int = 0
+    decisions: int = 0
+    documents: int = 0
+    roles: int = 0
+    forms: int = 0
+    systems: int = 0
+    related_processes: int = 0
+    effectiveness_criteria: int = 0
+    resources: int = 0
+    risks: int = 0
+    archive_items: int = 0
+
+
 class ProcessUmlResponse(BaseModel):
     process_id: uuid.UUID
     process_name: str
-    uml_type: str = "mermaid_activity"
+    uml_type: str = "mermaid_flowchart_sto"
     uml_code: str
     cached: bool = False
+    standard_profile: str = "STO-34-003_GOST-19.701-90"
+    generator_version: str = "2.2.0-sto"
+    detail_level: str = "standard"
+    source_document_type: str | None = None
+    source_document_type_label: str | None = None
+    qms_level: str | None = None
+    qms_level_label: str | None = None
+    diagram_profile_label: str | None = None
+    primary_document_type: str | None = None
+    validation_status: str = "valid"
+    validation_errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    schema_composition: ProcessUmlSchemaCompositionResponse | None = None

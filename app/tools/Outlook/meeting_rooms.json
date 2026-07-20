@@ -1,0 +1,54 @@
+{
+  "comment": "Переговорные Exchange (Room mailbox). email — для --resource при отправке приглашения.",
+  "pending_without_email": [
+    "малый конференц-зал",
+    "большой конференц-зал",
+    "малый зал"
+  ],
+  "rooms": [
+    {
+      "name": "Зал совещаний КБ",
+      "email": "konfzalkb@turbo-don.ru"
+    },
+    {
+      "name": "Конференц-зал (npo_konf)",
+      "email": "npo_konf@turbo-don.ru"
+    },
+    {
+      "name": "Кабинет директора МГС",
+      "email": "dir_mgs@turbo-don.ru"
+    },
+    {
+      "name": "Кабинет директора по сервисному обслуживанию",
+      "email": "dirservobslig@turbo-don.ru"
+    },
+    {
+      "name": "Кабинет зам. коммерческого директора",
+      "email": "zamkomdir@turbo-don.ru"
+    },
+    {
+      "name": "Кабинет Исполнительного директора",
+      "email": "ispolndir@turbo-don.ru"
+    },
+    {
+      "name": "Кабинет коммерческого директора",
+      "email": "komdir@turbo-don.ru"
+    },
+    {
+      "name": "Кабинет Председателя Совета директоров",
+      "email": "predsovdir@turbo-don.ru"
+    },
+    {
+      "name": "Кабинет Технического директора",
+      "email": "techdirNPO@turbo-don.ru"
+    },
+    {
+      "name": "Кабинет Финансового директора",
+      "email": "findirNPO@turbo-don.ru"
+    },
+    {
+      "name": "Производственный цех №1",
+      "email": "proizvodcheh1@turbo-don.ru"
+    }
+  ]
+}
