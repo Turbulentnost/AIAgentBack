@@ -134,6 +134,26 @@ async def test_human_return_blocks():
 
 
 @pytest.mark.asyncio
+async def test_human_set_priority_keeps_hitl():
+    agent_cls = agent_registry.get(EXECUTIVE_DIRECTOR_AGENT_ID)
+    priorities = [
+        {"payment_request_id": "PR-2", "priority": 1},
+        {"payment_request_id": "PR-1", "priority": 2},
+    ]
+    result = await agent_cls().run(
+        _base_payload(
+            human_action="set_priority",
+            human_payload={"line_priorities": priorities},
+        )
+    )
+    assert result.role_status == "waiting_human"
+    assert result.requires_human_review is True
+    assert result.output_data["priority_set_by_human"] is True
+    assert result.output_data["line_priorities"] == priorities
+    assert result.output_data["registry_resolution"] == "pending"
+
+
+@pytest.mark.asyncio
 async def test_validation_failed_payload():
     agent_cls = agent_registry.get(EXECUTIVE_DIRECTOR_AGENT_ID)
     result = await agent_cls().run({"task_id": "t1"})

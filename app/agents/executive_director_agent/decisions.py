@@ -203,6 +203,37 @@ def apply_human_action(
             [],
         )
 
+    if action in {"set_priority", "set_line_priorities", "приоритет"}:
+        overrides = (
+            request.human_payload.get("line_priorities")
+            or request.human_payload.get("priorities")
+        )
+        if not isinstance(overrides, list) or not overrides:
+            return (
+                "waiting_human",
+                "Для set_priority нужны line_priorities в human_payload",
+                {
+                    "registry_resolution": "pending",
+                    "line_priorities": assessment.priorities,
+                    "logs": logs + ["set_priority rejected: empty line_priorities"],
+                    "norm_refs": ["СТО-28-020 §6.2"],
+                },
+                [],
+            )
+        # Zone 2: приоритет платежа — явная резолюция человека; реестр ещё не утверждён
+        return (
+            "waiting_human",
+            "ИД зафиксировал приоритеты строк реестра — требуется утверждение реестра",
+            {
+                "registry_resolution": "pending",
+                "line_priorities": overrides,
+                "priority_set_by_human": True,
+                "logs": logs + ["human_action=set_priority"],
+                "norm_refs": ["СТО-28-020 §6.2", "Zone 2 приоритет платежа"],
+            },
+            [],
+        )
+
     return (
         "waiting_human",
         "Ожидается корректная резолюция исполнительного директора",
