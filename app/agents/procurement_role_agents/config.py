@@ -6,6 +6,7 @@ PRODUCTION_DISPATCHER_AGENT_ID = "production_dispatcher_agent"
 PRODUCTION_PREPARATION_ENGINEER_AGENT_ID = "production_preparation_engineer_agent"
 DEPARTMENT_INITIATOR_AGENT_ID = "department_initiator_agent"
 WAREHOUSE_MANAGER_AGENT_ID = "warehouse_manager_agent"
+OMTO_SUPPORT_MANAGER_AGENT_ID = "omto_support_manager_agent"
 
 AGENT_LABELS = {
     PRODUCTION_DISPATCHER_AGENT_ID: "Агент диспетчера производства",
@@ -14,6 +15,7 @@ AGENT_LABELS = {
     ),
     DEPARTMENT_INITIATOR_AGENT_ID: "Агент руководителя подразделения / инициатора",
     WAREHOUSE_MANAGER_AGENT_ID: "Агент начальника склада",
+    OMTO_SUPPORT_MANAGER_AGENT_ID: "Агент менеджера по сопровождению ОМТО",
 }
 
 SOURCE_AGENT_MAP = {
@@ -45,6 +47,7 @@ __all__ = [
     "AGENT_LABELS",
     "AGENT_VERSION",
     "DEPARTMENT_INITIATOR_AGENT_ID",
+    "OMTO_SUPPORT_MANAGER_AGENT_ID",
     "PRODUCTION_DISPATCHER_AGENT_ID",
     "PRODUCTION_PREPARATION_ENGINEER_AGENT_ID",
     "SOURCE_AGENT_MAP",

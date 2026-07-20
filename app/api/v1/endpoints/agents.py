@@ -25,6 +25,7 @@ from app.services.meeting_permission import append_meeting_agent_for_office_mana
 from app.services.nd_control_permission import append_nd_control_agent_for_quality_deputy
 from app.services.permission_service import PermissionService
 from app.services.procurement_permission import (
+    append_omto_support_manager_agent,
     append_production_preparation_engineer_agent,
 )
 from app.services.profile_image_service import AvatarValidationError
@@ -58,6 +59,7 @@ async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
     agents = await append_meeting_agent_for_office_management(db, current_user, agents)
     agents = await append_production_preparation_engineer_agent(db, current_user, agents)
+    agents = await append_omto_support_manager_agent(db, current_user, agents)
     return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 

@@ -19,13 +19,24 @@ from app.schemas.procurement import (
 )
 from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
 from app.services.procurement_permission import (
+    OMTO_SUPPORT_MANAGER_AGENT_SLUG,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG,
+    can_access_omto_support_manager,
     can_access_procurement_orchestrator,
     can_access_production_preparation_engineer,
     can_refresh_procurement_orchestrator,
 )
 
 router = APIRouter(prefix="/procurement", tags=["procurement"])
+
+_ROLE_WORKSPACE_FORBIDDEN = {
+    PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG: (
+        "Рабочее место доступно только инженеру по подготовке производства"
+    ),
+    OMTO_SUPPORT_MANAGER_AGENT_SLUG: (
+        "Рабочее место доступно только менеджеру по сопровождению ОМТО"
+    ),
+}
 
 
 async def _require_superuser(db: DbSession, user: User) -> None:
@@ -36,17 +47,21 @@ async def _require_superuser(db: DbSession, user: User) -> None:
         )
 
 
-async def _require_engineer_workspace(
+async def _require_role_workspace(
     db: DbSession,
     user: User,
     agent_id: str,
 ) -> None:
-    if agent_id != PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG:
+    if agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG:
+        allowed = await can_access_production_preparation_engineer(db, user)
+    elif agent_id == OMTO_SUPPORT_MANAGER_AGENT_SLUG:
+        allowed = await can_access_omto_support_manager(db, user)
+    else:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ролевой агент не найден")
-    if not await can_access_production_preparation_engineer(db, user):
+    if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Рабочее место доступно только инженеру по подготовке производства",
+            detail=_ROLE_WORKSPACE_FORBIDDEN[agent_id],
         )
 
 
@@ -57,12 +72,16 @@ async def get_procurement_permissions(
 ) -> ProcurementPermissionsRead:
     can_access = await can_access_procurement_orchestrator(db, current_user)
     can_access_engineer = await can_access_production_preparation_engineer(db, current_user)
+    can_access_omto = await can_access_omto_support_manager(db, current_user)
+    accessible: list[str] = []
+    if can_access_engineer:
+        accessible.append(PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG)
+    if can_access_omto:
+        accessible.append(OMTO_SUPPORT_MANAGER_AGENT_SLUG)
     return ProcurementPermissionsRead(
         can_access_orchestrator=can_access,
-        can_access_role_workspace=can_access_engineer,
-        accessible_role_agents=(
-            [PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG] if can_access_engineer else []
-        ),
+        can_access_role_workspace=bool(accessible),
+        accessible_role_agents=accessible,
         can_submit_role_result=False,
         can_refresh=can_access and await can_refresh_procurement_orchestrator(db, current_user),
         is_superuser=bool(current_user.is_superuser),
@@ -79,10 +98,15 @@ async def get_procurement_role_dashboard(
     current_user: CurrentUser,
     view: Literal["active", "processing", "archive"] = Query(default="active"),
 ) -> ProcurementDashboardRead:
-    await _require_engineer_workspace(db, current_user, agent_id)
+    await _require_role_workspace(db, current_user, agent_id)
+    source_type = (
+        "production_material_order"
+        if agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG
+        else None
+    )
     payload = await ProcurementOrchestratorService(db, enqueue_case=False).list_dashboard(
         view=view,
-        source_type="production_material_order",
+        source_type=source_type,
     )
     return ProcurementDashboardRead.model_validate(payload)
 
@@ -97,44 +121,78 @@ async def get_procurement_role_case(
     db: DbSession,
     current_user: CurrentUser,
 ) -> ProcurementCaseDetail:
-    await _require_engineer_workspace(db, current_user, agent_id)
+    await _require_role_workspace(db, current_user, agent_id)
     payload = await ProcurementOrchestratorService(db, enqueue_case=False).get_case(case_id)
-    if payload is None or payload.get("source_type") != "production_material_order":
+    if payload is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
-    metadata = payload.get("case_metadata") or {}
-    payload["case_metadata"] = {
-        "production_order_1c_ref": metadata.get("production_order_1c_ref"),
-        "production_order_type": metadata.get("production_order_type"),
-        "production_preparation_engineer_output": metadata.get(
-            "production_preparation_engineer_output"
-        ),
-        "engineer_evidence_fingerprint": metadata.get("engineer_evidence_fingerprint"),
-        "engineer_calculated_at": metadata.get("engineer_calculated_at"),
-    }
-    payload["assigned_agents"] = [PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG]
-    payload["route_stages"] = []
-    payload["events"] = [
-        event
-        for event in payload.get("events") or []
-        if event.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG
-        or event.get("event_type")
-        in {
-            "case_created_from_source",
-            "source_document_changed",
-            "case_archived_from_source",
+
+    if agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG:
+        if payload.get("source_type") != "production_material_order":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
+        metadata = payload.get("case_metadata") or {}
+        payload["case_metadata"] = {
+            "production_order_1c_ref": metadata.get("production_order_1c_ref"),
+            "production_order_type": metadata.get("production_order_type"),
+            "production_preparation_engineer_output": metadata.get(
+                "production_preparation_engineer_output"
+            ),
+            "engineer_evidence_fingerprint": metadata.get("engineer_evidence_fingerprint"),
+            "engineer_calculated_at": metadata.get("engineer_calculated_at"),
         }
-    ]
-    payload["timeline"] = [
-        item
-        for item in payload.get("timeline") or []
-        if item.get("actor_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG
-        or item.get("kind")
-        in {
-            "case_created_from_source",
-            "source_document_changed",
-            "case_archived_from_source",
+        payload["assigned_agents"] = [PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG]
+        payload["route_stages"] = []
+        payload["events"] = [
+            event
+            for event in payload.get("events") or []
+            if event.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG
+            or event.get("event_type")
+            in {
+                "case_created_from_source",
+                "source_document_changed",
+                "case_archived_from_source",
+            }
+        ]
+        payload["timeline"] = [
+            item
+            for item in payload.get("timeline") or []
+            if item.get("actor_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG
+            or item.get("kind")
+            in {
+                "case_created_from_source",
+                "source_document_changed",
+                "case_archived_from_source",
+            }
+        ]
+    else:
+        metadata = payload.get("case_metadata") or {}
+        payload["case_metadata"] = {
+            "omto_support_manager_output": metadata.get("omto_support_manager_output"),
+            "omto_calculated_at": metadata.get("omto_calculated_at"),
         }
-    ]
+        payload["assigned_agents"] = [OMTO_SUPPORT_MANAGER_AGENT_SLUG]
+        payload["route_stages"] = []
+        payload["events"] = [
+            event
+            for event in payload.get("events") or []
+            if event.get("agent_id") == OMTO_SUPPORT_MANAGER_AGENT_SLUG
+            or event.get("event_type")
+            in {
+                "case_created_from_source",
+                "source_document_changed",
+                "case_archived_from_source",
+            }
+        ]
+        payload["timeline"] = [
+            item
+            for item in payload.get("timeline") or []
+            if item.get("actor_id") == OMTO_SUPPORT_MANAGER_AGENT_SLUG
+            or item.get("kind")
+            in {
+                "case_created_from_source",
+                "source_document_changed",
+                "case_archived_from_source",
+            }
+        ]
     return ProcurementCaseDetail.model_validate(payload)
 
 

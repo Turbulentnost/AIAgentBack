@@ -9,6 +9,7 @@ from app.agents.procurement_role_agents.schemas import (
     ProcurementRoleAgentRequest,
     ProcurementRoleAgentResult,
 )
+from app.agents.omto_support_manager_agent.service import OmtoSupportManagerService
 from app.agents.production_preparation_engineer_agent.service import (
     ProductionPreparationEngineerService,
 )
@@ -99,8 +100,24 @@ class WarehouseManagerAgent(_WaitingProcurementRoleAgent):
     purpose = "Обработка заказа на перемещение."
 
 
+@agent_registry.register
+class OmtoSupportManagerAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.OMTO_SUPPORT_MANAGER_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Контроль обязательных полей и сопровождение поставки (DATA_CHECK / уточнение)."
+    )
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await OmtoSupportManagerService().run(
+            payload,
+            agent_id=self.agent_id,
+        )
+
+
 __all__ = [
     "DepartmentInitiatorAgent",
+    "OmtoSupportManagerAgent",
     "ProductionDispatcherAgent",
     "ProductionPreparationEngineerAgent",
     "WarehouseManagerAgent",
