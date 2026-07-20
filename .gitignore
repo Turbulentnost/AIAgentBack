@@ -20,3 +20,4 @@ alembic/versions/*.py
 !alembic/versions/0053_production_preparation_engineer_agent.py
 !alembic/versions/0054_cfo_head_agent.py
 !alembic/versions/0055_finance_director_agent.py
+!alembic/versions/0056_executive_director_agent.py
