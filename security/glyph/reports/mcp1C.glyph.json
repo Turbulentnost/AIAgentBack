@@ -1,0 +1,35 @@
+{
+  "metadata": {
+    "scan_count": 1,
+    "configs_scanned": [
+      {
+        "file_path": "app\\agents\\procurement_agent\\mcp1C.json",
+        "format": "claude_desktop",
+        "server_count": 1,
+        "scan_time": "2026-07-20T14:00:44.599796"
+      }
+    ],
+    "rules_applied": [
+      "command-injection",
+      "credential-exposure",
+      "data-exfiltration",
+      "prompt-injection",
+      "semantic-poisoning",
+      "tool-poisoning",
+      "transport-security"
+    ]
+  },
+  "findings": [],
+  "summary": {
+    "total_findings": 0,
+    "severity_counts": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "info": 0
+    },
+    "status": "PASS",
+    "exit_code": 0
+  }
+}

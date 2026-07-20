@@ -207,12 +207,24 @@ def build_awaiting_output(
     }
 
 
+def _cfo_already_resolved(request: FinanceDirectorAgentRequest) -> bool:
+    """True when bouncing back to cfo_head would create a cfo↔finance loop."""
+    ctx = request.case_context
+    payload = request.payload or {}
+    if ctx.cfo_approved is True or payload.get("cfo_approved") is True:
+        return True
+    prior = (ctx.financial_decision or payload.get("financial_decision") or "").lower()
+    return prior in {"allow", "deny", "defer"}
+
+
 def _next_roles_on_allow(request: FinanceDirectorAgentRequest) -> list[str]:
     ctx = request.case_context
     amount = Decimal(str(ctx.amount or 0))
     esc = (ctx.escalation_reason_code or request.trigger or "").upper()
     one_off = "ONE_OFF" in esc or "one_off" in (request.trigger or "").lower()
     roles = list(NEXT_ROLES_ON_ALLOW)
+    if _cfo_already_resolved(request):
+        roles = [r for r in roles if r != "cfo_head_agent"]
     if one_off and amount <= ONE_OFF_LIMIT:
         roles = [SECURITY_ROLE, *roles]
     return roles

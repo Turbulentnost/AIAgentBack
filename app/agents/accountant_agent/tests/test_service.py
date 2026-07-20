@@ -138,6 +138,32 @@ async def test_human_mark_paid():
 
 
 @pytest.mark.asyncio
+async def test_human_mark_paid_requires_fully_approved():
+    agent_cls = agent_registry.get(ACCOUNTANT_AGENT_ID)
+    result = await agent_cls().run(
+        _base_payload(
+            human_action="mark_paid",
+            case_context=_ok_context(fully_approved=False),
+        )
+    )
+    assert result.role_status == "waiting_human"
+    assert result.requires_human_review is True
+    assert result.output_data["block_payment"] is True
+    assert result.output_data["payment_status"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_human_escalate_overdue():
+    agent_cls = agent_registry.get(ACCOUNTANT_AGENT_ID)
+    result = await agent_cls().run(
+        _base_payload(human_action="escalate_overdue")
+    )
+    assert result.role_status == "escalated"
+    assert result.output_data["requires_escalation"] is True
+    assert result.output_data["escalation_reason_code"] == "PAYMENT_OVERDUE"
+
+
+@pytest.mark.asyncio
 async def test_human_defer():
     agent_cls = agent_registry.get(ACCOUNTANT_AGENT_ID)
     result = await agent_cls().run(_base_payload(human_action="defer"))

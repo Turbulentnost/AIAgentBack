@@ -1,0 +1,8 @@
+﻿cfo_head_agent: 19 passed
+finance_director_agent: 18 passed
+executive_director_agent: 17 passed
+chief_accountant_agent: 15 passed
+accountant_agent: 17 passed
+legal_specialist_agent: 19 passed
+TOTAL: 105 passed
+command: uv run pytest ... --import-mode=importlib

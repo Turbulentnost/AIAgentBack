@@ -71,3 +71,9 @@ testpaths = ["tests", "app/agents"]
 markers = [
   "integration: tests that use configured external infrastructure",
 ]
+
+[dependency-groups]
+dev = [
+    "memory-profiler>=0.61.0",
+    "objgraph>=3.6.2",
+]

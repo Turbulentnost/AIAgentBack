@@ -1,0 +1,23 @@
+🔒 Glyph — MCP Security Scanner
+
+Scanning: C:\Users\m.evtyugin\Desktop\Агент ролей про цен, проектных цен, оплаты и договоров — копия\AIAgentBack\security\glyph\generated\executive_director_agent.mcp.json
+Found 1 servers
+
+=== Findings ===
+
+🟡 HIGH: Command Injection: Java System Call
+   Rule: command-injection
+   Location: system_prompt
+
+🟡 HIGH: Command Injection: Java System Call
+   Rule: command-injection
+   Location: user_prompt_template
+
+🟡 HIGH: Command Injection: Java System Call
+   Rule: command-injection
+   Location: user_prompt_template
+
+=== Summary ===
+Scanned: 1 config, 1 server
+Findings: 0 critical, 3 high, 0 medium, 0 low
+Status: FAIL

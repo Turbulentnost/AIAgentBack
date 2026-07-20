@@ -1,0 +1,107 @@
+{
+  "generated_at": "2026-07-20T10:54:43.798900+00:00",
+  "engine": "glyph AnalysisEngine (tools attached)",
+  "note": "CLI `glyph scan` ignores tools[]; this runner attaches them from generated JSON.",
+  "agents": [
+    {
+      "agent": "cfo_head_agent",
+      "status": "PASS",
+      "exit_code": 0,
+      "findings": 0,
+      "by_severity": {},
+      "rules": [],
+      "titles": []
+    },
+    {
+      "agent": "finance_director_agent",
+      "status": "PASS",
+      "exit_code": 0,
+      "findings": 0,
+      "by_severity": {},
+      "rules": [],
+      "titles": []
+    },
+    {
+      "agent": "executive_director_agent",
+      "status": "FAIL",
+      "exit_code": 1,
+      "findings": 3,
+      "by_severity": {
+        "high": 3
+      },
+      "rules": [
+        "command-injection"
+      ],
+      "titles": [
+        {
+          "severity": "high",
+          "rule": "command-injection",
+          "title": "Command Injection: Java System Call",
+          "location": "system_prompt"
+        },
+        {
+          "severity": "high",
+          "rule": "command-injection",
+          "title": "Command Injection: Java System Call",
+          "location": "user_prompt_template"
+        },
+        {
+          "severity": "high",
+          "rule": "command-injection",
+          "title": "Command Injection: Java System Call",
+          "location": "user_prompt_template"
+        }
+      ]
+    },
+    {
+      "agent": "chief_accountant_agent",
+      "status": "PASS",
+      "exit_code": 0,
+      "findings": 0,
+      "by_severity": {},
+      "rules": [],
+      "titles": []
+    },
+    {
+      "agent": "accountant_agent",
+      "status": "FAIL",
+      "exit_code": 1,
+      "findings": 1,
+      "by_severity": {
+        "high": 1
+      },
+      "rules": [
+        "command-injection"
+      ],
+      "titles": [
+        {
+          "severity": "high",
+          "rule": "command-injection",
+          "title": "Command Injection: Java System Call",
+          "location": "system_prompt"
+        }
+      ]
+    },
+    {
+      "agent": "legal_specialist_agent",
+      "status": "FAIL",
+      "exit_code": 1,
+      "findings": 1,
+      "by_severity": {
+        "medium": 1
+      },
+      "rules": [
+        "command-injection"
+      ],
+      "titles": [
+        {
+          "severity": "medium",
+          "rule": "command-injection",
+          "title": "Command Injection: Shell Metacharacters",
+          "location": "system_prompt"
+        }
+      ]
+    }
+  ],
+  "worst_exit_code": 1
+}

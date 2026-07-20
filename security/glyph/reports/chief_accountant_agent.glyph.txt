@@ -1,0 +1,11 @@
+🔒 Glyph — MCP Security Scanner
+
+Scanning: C:\Users\m.evtyugin\Desktop\Агент ролей про цен, проектных цен, оплаты и договоров — копия\AIAgentBack\security\glyph\generated\chief_accountant_agent.mcp.json
+Found 1 servers
+
+✅ No security issues found
+
+=== Summary ===
+Scanned: 1 config, 1 server
+Findings: 0 critical, 0 high, 0 medium, 0 low
+Status: PASS

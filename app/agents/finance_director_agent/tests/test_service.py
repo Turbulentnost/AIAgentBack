@@ -59,6 +59,8 @@ async def test_run_awaits_human_when_s10_ok():
     assert result.output_data["s10_ok"] is True
     assert result.output_data["amount"] == "1000.00"
     assert "llm_recommendation" in result.output_data
+    # Zone2: no next_roles until human allow
+    assert result.next_roles_suggested == []
 
 
 @pytest.mark.asyncio
@@ -123,6 +125,27 @@ async def test_human_allow_completes():
     assert result.role_status == "completed"
     assert result.output_data["financial_decision"] == "allow"
     assert "cfo_head_agent" in result.next_roles_suggested
+    assert "executive_director_agent" in result.next_roles_suggested
+
+
+@pytest.mark.asyncio
+async def test_human_allow_skips_cfo_when_already_approved():
+    """Break cfo↔finance loop when case already has cfo_approved."""
+    agent_cls = agent_registry.get(FINANCE_DIRECTOR_AGENT_ID)
+    result = await agent_cls().run(
+        _base_payload(
+            human_action="allow",
+            case_context={
+                "payment_request_id": "PR-1",
+                "amount": "1000.00",
+                "s10_week_remaining": "5000.00",
+                "escalation_reason_code": "S10_EXCEEDED",
+                "cfo_approved": True,
+            },
+        )
+    )
+    assert result.role_status == "completed"
+    assert "cfo_head_agent" not in result.next_roles_suggested
     assert "executive_director_agent" in result.next_roles_suggested
 
 

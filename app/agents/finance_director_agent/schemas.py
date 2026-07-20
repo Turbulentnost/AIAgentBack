@@ -37,6 +37,9 @@ class FinanceCaseContext(BaseModel):
     payment_request_id: str | None = None
     cfo_code: str | None = None
     payment_date_status: Literal["project", "confirmed"] | None = None
+    # Orchestrator case patches — used to break cfo↔finance next_roles loops
+    cfo_approved: bool | None = None
+    financial_decision: str | None = None
     upstream: FinanceUpstreamContext = Field(default_factory=FinanceUpstreamContext)
 
     @model_validator(mode="after")

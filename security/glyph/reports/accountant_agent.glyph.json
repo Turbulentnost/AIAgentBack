@@ -1,0 +1,51 @@
+{
+  "metadata": {
+    "scan_count": 1,
+    "configs_scanned": [
+      {
+        "file_path": "C:\\Users\\m.evtyugin\\Desktop\\\u0410\u0433\u0435\u043d\u0442 \u0440\u043e\u043b\u0435\u0439 \u043f\u0440\u043e \u0446\u0435\u043d, \u043f\u0440\u043e\u0435\u043a\u0442\u043d\u044b\u0445 \u0446\u0435\u043d, \u043e\u043f\u043b\u0430\u0442\u044b \u0438 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u043e\u0432 \u2014 \u043a\u043e\u043f\u0438\u044f\\AIAgentBack\\security\\glyph\\generated\\accountant_agent.mcp.json",
+        "format": "claude_desktop",
+        "server_count": 1,
+        "scan_time": "2026-07-20T13:54:43.221914"
+      }
+    ],
+    "rules_applied": [
+      "command-injection",
+      "credential-exposure",
+      "data-exfiltration",
+      "prompt-injection",
+      "semantic-poisoning",
+      "tool-poisoning",
+      "transport-security"
+    ]
+  },
+  "findings": [
+    {
+      "rule_id": "command-injection",
+      "severity": "high",
+      "title": "Command Injection: Java System Call",
+      "description": "Detected java system call pattern that may enable command execution",
+      "location": "system_prompt",
+      "remediation": null,
+      "metadata": {
+        "attack_type": "Java System Call",
+        "pattern_category": "Shell Execution",
+        "matched_pattern": "\\b(?:Runtime\\.getRuntime|ProcessBuilder|exec)"
+      },
+      "config_file": "C:\\Users\\m.evtyugin\\Desktop\\\u0410\u0433\u0435\u043d\u0442 \u0440\u043e\u043b\u0435\u0439 \u043f\u0440\u043e \u0446\u0435\u043d, \u043f\u0440\u043e\u0435\u043a\u0442\u043d\u044b\u0445 \u0446\u0435\u043d, \u043e\u043f\u043b\u0430\u0442\u044b \u0438 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u043e\u0432 \u2014 \u043a\u043e\u043f\u0438\u044f\\AIAgentBack\\security\\glyph\\generated\\accountant_agent.mcp.json",
+      "scan_time": "2026-07-20T13:54:43.221914"
+    }
+  ],
+  "summary": {
+    "total_findings": 1,
+    "severity_counts": {
+      "critical": 0,
+      "high": 1,
+      "medium": 0,
+      "low": 0,
+      "info": 0
+    },
+    "status": "FAIL",
+    "exit_code": 1
+  }
+}

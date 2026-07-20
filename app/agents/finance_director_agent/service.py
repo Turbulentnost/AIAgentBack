@@ -101,9 +101,8 @@ class FinanceDirectorAgent(BaseAgent):
             wait_reason="HITL: allow / deny / defer по исключению финдиректора",
             suggested_action=assessment.suggested_action,
             output_data=output_data,
-            next_roles_suggested=(
-                assessment.next_on_allow if assessment.suggested_action == "allow" else []
-            ),
+            # Zone2: do not delegate until human allow (orchestrator must not race HITL)
+            next_roles_suggested=[],
         )
 
 

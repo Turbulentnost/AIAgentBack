@@ -236,6 +236,20 @@ def apply_human_action(
     pr_id = request.case_context.payment_request_id
 
     if action in {"mark_paid", "paid", "оплачено"}:
+        if request.case_context.fully_approved is not True:
+            return (
+                "waiting_human",
+                "Оплата запрещена: заявка не fully_approved",
+                {
+                    "payment_status": "blocked",
+                    "payment_request_id": pr_id,
+                    "fully_approved": False,
+                    "block_payment": True,
+                    "logs": logs + ["mark_paid rejected: fully_approved required"],
+                    "norm_refs": ["СТО-28-020 §6.11"],
+                },
+                [],
+            )
         return (
             "completed",
             "Оплата подтверждена человеком",
@@ -247,6 +261,22 @@ def apply_human_action(
                 "notify_contours": list(NOTIFY_CONTOURS_ON_PAID),
                 "logs": logs + ["human_action=mark_paid"],
                 "norm_refs": ["СТО-28-020 §6.11", "контур №5"],
+            },
+            [],
+        )
+
+    if action in {"escalate_overdue", "escalate", "эскалировать"}:
+        return (
+            "escalated",
+            "Просрочка оплаты эскалирована бухгалтером",
+            {
+                "payment_status": "overdue",
+                "payment_request_id": pr_id,
+                "block_payment": True,
+                "requires_escalation": True,
+                "escalation_reason_code": "PAYMENT_OVERDUE",
+                "logs": logs + ["human_action=escalate_overdue"],
+                "norm_refs": ["СТО-28-020 §6.11", "агент рисков №7"],
             },
             [],
         )

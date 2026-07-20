@@ -1,0 +1,8 @@
+﻿[
+  {"agent": "cfo_head_agent", "exit": 0, "passed": 19},
+  {"agent": "finance_director_agent", "exit": 0, "passed": 18},
+  {"agent": "executive_director_agent", "exit": 0, "passed": 17},
+  {"agent": "chief_accountant_agent", "exit": 0, "passed": 15},
+  {"agent": "accountant_agent", "exit": 0, "passed": 17},
+  {"agent": "legal_specialist_agent", "exit": 0, "passed": 19}
+]

@@ -1,0 +1,15 @@
+🔒 Glyph — MCP Security Scanner
+
+Scanning: C:\Users\m.evtyugin\Desktop\Агент ролей про цен, проектных цен, оплаты и договоров — копия\AIAgentBack\security\glyph\generated\legal_specialist_agent.mcp.json
+Found 1 servers
+
+=== Findings ===
+
+🟠 MEDIUM: Command Injection: Shell Metacharacters
+   Rule: command-injection
+   Location: system_prompt
+
+=== Summary ===
+Scanned: 1 config, 1 server
+Findings: 0 critical, 0 high, 1 medium, 0 low
+Status: WARN

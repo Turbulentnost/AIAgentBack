@@ -29,6 +29,7 @@ AccountantRoleStatus = Literal[
     "failed",
     "data_check",
     "blocked",
+    "escalated",
 ]
 
 
