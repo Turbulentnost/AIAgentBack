@@ -29,6 +29,7 @@ from app.services.finance_director_permission import append_finance_director_age
 from app.services.executive_director_permission import append_executive_director_agent
 from app.services.chief_accountant_permission import append_chief_accountant_agent
 from app.services.accountant_permission import append_accountant_agent
+from app.services.legal_specialist_permission import append_legal_specialist_agent
 from app.services.procurement_permission import (
     append_production_preparation_engineer_agent,
 )
@@ -68,6 +69,7 @@ async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await append_executive_director_agent(db, current_user, agents)
     agents = await append_chief_accountant_agent(db, current_user, agents)
     agents = await append_accountant_agent(db, current_user, agents)
+    agents = await append_legal_specialist_agent(db, current_user, agents)
     return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 
