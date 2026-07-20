@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from typing import Any, Literal
 
 from app.agents.accountant_agent.schemas import (
     AccountantAgentRequest,
     AccountantCaseContext,
 )
+from app.agents.cfo_head_agent.sto_dates import add_workdays
 
 NOTIFY_CONTOURS_ON_PAID = ("contour5",)
 OutcomeKind = Literal[
@@ -71,11 +72,12 @@ def resolve_delivery(
     planned: date | None,
     delay_days: int,
 ) -> str | None:
+    """СТО-28-020 §6.6: сдвиг даты поставки на дни просрочки оплаты (рабочие)."""
     if ctx.recalculated_delivery_date is not None:
         return ctx.recalculated_delivery_date.isoformat()
     if overdue and planned:
         base_need = ctx.production_need_date or planned
-        return (base_need + timedelta(days=delay_days)).isoformat()
+        return add_workdays(base_need, max(0, delay_days)).isoformat()
     return None
 
 

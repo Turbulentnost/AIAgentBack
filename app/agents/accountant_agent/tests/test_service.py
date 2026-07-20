@@ -164,17 +164,22 @@ async def test_validation_failed_payload():
 
 
 def test_assess_overdue_delivery():
+    from app.agents.cfo_head_agent.sto_dates import add_workdays
+
+    need = date.today()
     request = AccountantAgentRequest.model_validate(
         _base_payload(
             case_context=_ok_context(
                 payment_planned_date=str(date.today() - timedelta(days=5)),
-                production_need_date=str(date.today()),
+                production_need_date=str(need),
             )
         )
     )
     assessment = assess_case(request)
     assert assessment.overdue is True
     assert assessment.delivery is not None
+    # §6.6: сдвиг на рабочие дни (не календарные)
+    assert assessment.delivery == add_workdays(need, assessment.delay_days).isoformat()
 
 
 def test_system_prompt_has_sto_norm_refs():

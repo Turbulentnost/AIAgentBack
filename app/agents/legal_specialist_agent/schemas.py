@@ -17,6 +17,8 @@ class LegalCaseContext(BaseModel):
     """Minimal case snapshot for legal specialist claims (contour 4)."""
 
     open_advances: list[dict[str, Any]] = Field(default_factory=list)
+    # Zone 2: критические замечания по договору (ПЛ-34-048) — HITL юриста
+    contract_critical_remarks: list[str] = Field(default_factory=list)
     escalation_reason_code: str | None = None
     upstream: LegalUpstreamContext = Field(default_factory=LegalUpstreamContext)
 

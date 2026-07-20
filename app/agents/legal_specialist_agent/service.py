@@ -96,19 +96,24 @@ class LegalSpecialistAgent(BaseAgent):
         advice = await recommend_with_llm(request, assessment, rag_text=rag_text)
         output_data["llm_recommendation"] = advice
         # Deterministic code action remains primary; LLM advice is for the human.
+        if assessment.kind == "contract_review":
+            wait_reason = "HITL: критические замечания по договору (ПЛ-34-048)"
+            default_summary = (
+                "Критические замечания по договору — требуется резолюция юриста"
+            )
+        else:
+            wait_reason = "HITL: утвердить претензию / пакет иска / вернуть"
+            default_summary = "Черновик претензии готов — требуется HITL юриста"
         return LegalSpecialistAgentResult(
             agent_id=self.agent_id,
             status="waiting_human",
-            summary=str(
-                advice.get("recommendation")
-                or "Черновик претензии готов — требуется HITL юриста"
-            ),
+            summary=str(advice.get("recommendation") or default_summary),
             data_confidence=ConfidenceLevel.HIGH,
             requires_human_review=True,
             case_id=request.case_id,
             correlation_id=request.correlation_id,
             role_status="waiting_human",
-            wait_reason="HITL: утвердить претензию / пакет иска / вернуть",
+            wait_reason=wait_reason,
             suggested_action=assessment.suggested_action,
             output_data=output_data,
             next_roles_suggested=[],

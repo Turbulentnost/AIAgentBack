@@ -10,7 +10,12 @@ from typing import Any, Literal
 from app.agents.legal_specialist_agent.schemas import LegalSpecialistAgentRequest
 
 DEFAULT_STATE_FEE_THRESHOLD = Decimal("5000")
-OutcomeKind = Literal["data_check", "not_required", "awaiting_claim"]
+OutcomeKind = Literal[
+    "data_check",
+    "not_required",
+    "awaiting_claim",
+    "contract_review",
+]
 
 
 def add_workdays(start: date, days: int) -> date:
@@ -92,6 +97,26 @@ class LegalAssessment:
     suggested_action: str | None
     logs: list[str] = field(default_factory=list)
     missing_fields: list[str] = field(default_factory=list)
+    contract_critical_remarks: list[str] = field(default_factory=list)
+
+
+def resolve_contract_critical_remarks(
+    request: LegalSpecialistAgentRequest,
+) -> list[str]:
+    remarks = list(request.case_context.contract_critical_remarks or [])
+    raw = (request.payload or {}).get("contract_critical_remarks")
+    if isinstance(raw, list):
+        remarks.extend(str(item) for item in raw if item)
+    elif isinstance(raw, str) and raw.strip():
+        remarks.append(raw.strip())
+    # de-dupe preserving order
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in remarks:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
 
 
 def assess_case(request: LegalSpecialistAgentRequest) -> LegalAssessment:
@@ -111,9 +136,24 @@ def assess_case(request: LegalSpecialistAgentRequest) -> LegalAssessment:
         )
 
     advances = list(request.case_context.open_advances or [])
+    remarks = resolve_contract_critical_remarks(request)
     logs.append(f"Открытых авансов: {len(advances)}")
     if request.case_context.upstream.contract_status:
         logs.append(f"contract={request.case_context.upstream.contract_status}")
+    if remarks:
+        logs.append(f"Крит. замечания по договору (ПЛ-34-048): {len(remarks)}")
+
+    if not advances and remarks:
+        return LegalAssessment(
+            kind="contract_review",
+            supplier_id=supplier_id,
+            advances=[],
+            claim_draft=None,
+            claim_sla=None,
+            suggested_action="review_contract_remarks",
+            logs=logs,
+            contract_critical_remarks=remarks,
+        )
 
     if not advances:
         return LegalAssessment(
@@ -139,6 +179,7 @@ def assess_case(request: LegalSpecialistAgentRequest) -> LegalAssessment:
         claim_sla=sla,
         suggested_action="approve_claim_draft",
         logs=logs,
+        contract_critical_remarks=remarks,
     )
 
 
@@ -150,9 +191,25 @@ def build_output_from_assessment(assessment: LegalAssessment) -> dict[str, Any]:
             "claim_status": "not_required",
             "open_advances_count": 0,
             "supplier_id": assessment.supplier_id,
+            "contract_critical_remarks": assessment.contract_critical_remarks,
             "norm_refs": ["СТО-28-020 претензии"],
             "logs": assessment.logs,
         }
+    if assessment.kind == "contract_review":
+        return {
+            "claim_draft": None,
+            "lawsuit_pack": None,
+            "claim_status": "contract_review",
+            "open_advances_count": 0,
+            "supplier_id": assessment.supplier_id,
+            "contract_critical_remarks": assessment.contract_critical_remarks,
+            "risks": ["CONTRACT_CRITICAL_REMARKS"],
+            "norm_refs": ["ПЛ-34-048", "Zone 2 критические замечания по договору"],
+            "logs": assessment.logs,
+        }
+    risks = ["CLAIM_REQUIRED"]
+    if assessment.contract_critical_remarks:
+        risks.append("CONTRACT_CRITICAL_REMARKS")
     return {
         "claim_draft": assessment.claim_draft,
         "claim_sla": assessment.claim_sla,
@@ -160,7 +217,8 @@ def build_output_from_assessment(assessment: LegalAssessment) -> dict[str, Any]:
         "claim_status": "draft",
         "open_advances_count": len(assessment.advances),
         "supplier_id": assessment.supplier_id,
-        "risks": ["CLAIM_REQUIRED"],
+        "contract_critical_remarks": assessment.contract_critical_remarks,
+        "risks": risks,
         "requires_escalation": True,
         "escalation_reason_code": "CLAIM_REQUIRED",
         "norm_refs": ["СТО-28-020 претензии", "CLAIM_REQUIRED"],
@@ -285,6 +343,24 @@ def apply_human_action(
             [],
         )
 
+    if action in {
+        "review_contract_remarks",
+        "acknowledge_contract_remarks",
+        "contract_remarks_ok",
+    }:
+        remarks = resolve_contract_critical_remarks(request)
+        return (
+            "completed",
+            "Юрист зафиксировал резолюцию по критическим замечаниям договора",
+            {
+                "claim_status": "contract_remarks_reviewed",
+                "contract_critical_remarks": remarks,
+                "logs": logs + ["human_action=review_contract_remarks"],
+                "norm_refs": ["ПЛ-34-048"],
+            },
+            [],
+        )
+
     if action in {"return", "reject"}:
         return (
             "blocked",
@@ -321,4 +397,5 @@ __all__ = [
     "build_claim_draft",
     "build_output_from_assessment",
     "extract_claim_draft",
+    "resolve_contract_critical_remarks",
 ]

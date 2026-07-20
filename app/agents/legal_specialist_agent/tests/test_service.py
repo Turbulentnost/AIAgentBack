@@ -79,6 +79,40 @@ async def test_run_not_required_without_advances():
 
 
 @pytest.mark.asyncio
+async def test_run_contract_critical_remarks_requires_hitl():
+    agent_cls = agent_registry.get(LEGAL_SPECIALIST_AGENT_ID)
+    result = await agent_cls().run(
+        _base_payload(
+            case_context=_claim_context(
+                open_advances=[],
+                contract_critical_remarks=["штраф >10%", "нет форс-мажора"],
+            )
+        )
+    )
+    assert result.role_status == "waiting_human"
+    assert result.requires_human_review is True
+    assert result.suggested_action == "review_contract_remarks"
+    assert result.output_data["claim_status"] == "contract_review"
+    assert "CONTRACT_CRITICAL_REMARKS" in result.output_data["risks"]
+
+
+@pytest.mark.asyncio
+async def test_human_review_contract_remarks():
+    agent_cls = agent_registry.get(LEGAL_SPECIALIST_AGENT_ID)
+    result = await agent_cls().run(
+        _base_payload(
+            human_action="review_contract_remarks",
+            case_context=_claim_context(
+                open_advances=[],
+                contract_critical_remarks=["штраф >10%"],
+            ),
+        )
+    )
+    assert result.role_status == "completed"
+    assert result.output_data["claim_status"] == "contract_remarks_reviewed"
+
+
+@pytest.mark.asyncio
 async def test_run_data_check_without_supplier():
     agent_cls = agent_registry.get(LEGAL_SPECIALIST_AGENT_ID)
     result = await agent_cls().run(
