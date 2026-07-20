@@ -149,6 +149,22 @@ def test_assess_suggested_payment_date():
 def test_system_prompt_has_sto_norm_refs():
     assert "СТО-28-020 §6.2" in SYSTEM_PROMPT
     assert "Для редакторов" not in SYSTEM_PROMPT
+    assert "SYSTEM_PROMPT" not in SYSTEM_PROMPT
+
+
+def test_prompts_loaded_from_markdown_files():
+    from app.agents.cfo_head_agent.prompts import (
+        get_system_prompt,
+        get_user_prompt_template,
+    )
+
+    system = get_system_prompt()
+    user_tpl = get_user_prompt_template()
+    assert system.startswith("You are an AI assistant")
+    assert "{rag}" in user_tpl
+    assert "<case>" in user_tpl
+    assert "Для редакторов" not in system
+    assert "Для редакторов" not in user_tpl
 
 
 def test_build_messages_uses_rag_default():

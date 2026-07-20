@@ -50,6 +50,9 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["app*"]
 
+[tool.setuptools.package-data]
+"app.agents.cfo_head_agent" = ["prompts/*.md"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
