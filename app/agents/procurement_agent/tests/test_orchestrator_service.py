@@ -318,6 +318,9 @@ async def test_engineer_purchase_confirmation_hands_off_and_archives_workspace(
     assert case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
     assert case.control_point == "chief_dispatcher"
     assert case.case_metadata["engineer_archived_bucket"] == "attention"
+    case.source_synced_at = datetime.now(UTC)
+    assert await service._enqueue_role_agent(case) is False
+    assert case.case_metadata["engineer_workspace_status"] == "archived"
     archive = await service.list_dashboard(
         view="archive",
         source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value,

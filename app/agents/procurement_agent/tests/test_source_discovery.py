@@ -239,7 +239,7 @@ def test_cancelled_document_is_skipped_even_with_active_lines() -> None:
     assert cancelled.skip_reason == "cancelled"
 
 
-def test_document_requires_all_non_cancelled_lines_to_be_for_supply() -> None:
+def test_document_keeps_only_non_cancelled_lines_for_supply() -> None:
     base = {
         "Ref_Key": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
         "DataVersion": "v-action",
@@ -264,23 +264,24 @@ def test_document_requires_all_non_cancelled_lines_to_be_for_supply() -> None:
             },
         ],
     }
-    inactive = normalize_source_document(
+    mixed = normalize_source_document(
         source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
         database="erp_pm",
         entity_set="Document_ЗаказНаВнутреннееПотребление",
         raw=base,
     )
-    assert inactive.skip_reason == "inactive_supply_action"
+    assert mixed.skip_reason is None
+    assert [line.nomenclature_id for line in mixed.positions] == ["item-active"]
 
-    base["Товары"][1]["Отменено"] = True
-    active = normalize_source_document(
+    base["Товары"][0]["Отменено"] = True
+    without_supply = normalize_source_document(
         source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
         database="erp_pm",
         entity_set="Document_ЗаказНаВнутреннееПотребление",
         raw=base,
     )
-    assert active.skip_reason is None
-    assert [line.nomenclature_id for line in active.positions] == ["item-active"]
+    assert without_supply.skip_reason == "inactive_supply_action"
+    assert without_supply.positions == []
 
 
 def test_reorder_point_capability_is_published() -> None:

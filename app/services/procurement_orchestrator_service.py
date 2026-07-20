@@ -1128,6 +1128,14 @@ class ProcurementOrchestratorService:
             return False
 
         agent_id = agent_id_for_source(case.source_type)
+        metadata = case.case_metadata or {}
+        if (
+            agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+            and metadata.get("engineer_handoff_agent_id")
+            == PRODUCTION_DISPATCHER_AGENT_ID
+            and case.control_point == "chief_dispatcher"
+        ):
+            return False
         completion_key = self._role_completion_key(case, agent_id)
         if (case.case_metadata or {}).get("role_agent_completion_key") == completion_key:
             return False
