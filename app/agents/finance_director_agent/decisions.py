@@ -179,17 +179,20 @@ def build_awaiting_output(
     ctx: FinanceCaseContext,
     assessment: FinanceAssessment,
 ) -> dict[str, Any]:
+    up = ctx.upstream
     return {
         "financial_decision": "pending",
         "s10_ok": assessment.s10_ok,
         "amount": str(assessment.amount),
         "s10_week_remaining": str(assessment.remaining),
+        "procurement_limit_week_remaining": str(assessment.remaining),
         "escalation_reason_code": assessment.esc_code,
-        "contract_status": assessment.contract_status or ctx.upstream.contract_status,
+        "contract_status": assessment.contract_status or up.contract_status,
+        "invoice_verified": up.invoice_verified,
+        "price_match": up.price_match,
+        "sz_required": up.sz_required,
         "project_price_valid_until": (
-            str(ctx.upstream.project_price_valid_until)
-            if ctx.upstream.project_price_valid_until
-            else None
+            str(up.project_price_valid_until) if up.project_price_valid_until else None
         ),
         "payment_date_status": ctx.payment_date_status or "project",
         "one_off": assessment.one_off,

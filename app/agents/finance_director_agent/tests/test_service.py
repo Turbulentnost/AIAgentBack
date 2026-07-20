@@ -79,6 +79,34 @@ async def test_run_suggests_deny_when_s10_exceeded():
 
 
 @pytest.mark.asyncio
+async def test_procurement_limit_alias_syncs_to_s10():
+    agent_cls = agent_registry.get(FINANCE_DIRECTOR_AGENT_ID)
+    result = await agent_cls().run(
+        _base_payload(
+            case_context={
+                "amount": "1000",
+                "procurement_limit_week_remaining": "5000",
+                "escalation_reason_code": "S10_EXCEEDED",
+                "upstream": {
+                    "invoice_verified": True,
+                    "price_match": True,
+                    "sz_required": False,
+                },
+            }
+        )
+    )
+    assert result.role_status == "waiting_human"
+    assert result.output_data["s10_ok"] is True
+    assert str(result.output_data["procurement_limit_week_remaining"]) in {
+        "5000",
+        "5000.00",
+    }
+    assert result.output_data["invoice_verified"] is True
+    assert result.output_data["price_match"] is True
+    assert result.output_data["sz_required"] is False
+
+
+@pytest.mark.asyncio
 async def test_run_data_check_when_amount_missing():
     agent_cls = agent_registry.get(FINANCE_DIRECTOR_AGENT_ID)
     result = await agent_cls().run(
