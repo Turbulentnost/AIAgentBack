@@ -8,6 +8,7 @@ from app.agents.accountant_agent.decisions import (
     assess_case,
     build_output_from_assessment,
 )
+from app.agents.accountant_agent.prompts import recommend_with_llm
 from app.agents.accountant_agent.schemas import (
     AccountantAgentRequest,
     AccountantAgentResult,
@@ -118,10 +119,17 @@ class AccountantAgent(BaseAgent):
             "overdue": "Просрочка оплаты — требуется действие бухгалтера",
             "queue": "Заявка в очереди — требуется подтверждение бухгалтера",
         }
+        rag_text = str((request.payload or {}).get("rag_text") or "")
+        advice = await recommend_with_llm(request, assessment, rag_text=rag_text)
+        output_data["llm_recommendation"] = advice
+        # Deterministic code action remains primary; LLM advice is for the human.
         return AccountantAgentResult(
             agent_id=self.agent_id,
             status="waiting_human",
-            summary=summaries.get(assessment.kind, "Требуется действие бухгалтера"),
+            summary=str(
+                advice.get("recommendation")
+                or summaries.get(assessment.kind, "Требуется действие бухгалтера")
+            ),
             data_confidence=ConfidenceLevel.HIGH,
             requires_human_review=True,
             case_id=request.case_id,

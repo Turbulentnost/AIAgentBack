@@ -55,6 +55,7 @@ include = ["app*"]
 "app.agents.finance_director_agent" = ["prompts/*.md"]
 "app.agents.executive_director_agent" = ["prompts/*.md"]
 "app.agents.chief_accountant_agent" = ["prompts/*.md"]
+"app.agents.accountant_agent" = ["prompts/*.md"]
 
 [tool.ruff]
 line-length = 100
