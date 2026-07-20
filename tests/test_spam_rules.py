@@ -50,3 +50,13 @@ def test_supply_email_with_components_not_spam():
         _email(body_text="Просим счёт на комплектующих для промышленного оборудования по договору.")
     )
     assert result is None
+
+
+def test_discount_in_commercial_negotiation_is_not_spam():
+    result = check_rule_spam(
+        _email(
+            subject="Запрос ТКП",
+            body_text="Заказчик просит скидку по коммерческому предложению на поставку.",
+        )
+    )
+    assert result is None

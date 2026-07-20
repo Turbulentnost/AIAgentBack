@@ -46,7 +46,7 @@ def test_build_department_records_for_db():
     codes = {record.code for record in records}
     assert len(records) == 139
     assert "00-999999" not in codes
-    assert "00-000037" in codes
+    assert "00-000163" in codes
 
     buh = next(record for record in records if record.code == "00-000002")
     assert buh.name == "Бухгалтерия"

@@ -9,6 +9,7 @@ from pathlib import Path
 from agent_pochta.config import PROJECT_ROOT
 from agent_pochta.routing.confidence import calculate_confidence
 from agent_pochta.routing.corrections import find_correction_match
+from agent_pochta.routing.deterministic_sales import match_deterministic_sales
 from agent_pochta.routing.models import ConfidenceLevel, RoutingDecision, ServiceRoute
 from agent_pochta.routing.normalize import (
     contains_claim_marker,
@@ -172,27 +173,15 @@ class RouteEngine:
         return found
 
     def _sales_rules(self, subject: str, body: str, partner: str | None) -> list[_Candidate]:
+        """Legacy soft sales — fallback, если детерминированный каскад не сработал."""
         text = normalize_text(f"{subject} {body} {partner or ''}")
         found: list[_Candidate] = []
-        for holding in self.rules.get("sales_orkk_holdings", []):
-            if holding in text:
-                found.append(
-                    _Candidate(
-                        code="00-000076",
-                        name=self._dept_name("00-000076", "ОРКК"),
-                        direction="КС",
-                        source="sales_orkk",
-                        reasoning="Холдинг/ВИНК нефтегазового сектора",
-                        matched_keywords=[holding],
-                    )
-                )
-                return found
         for marker in self.rules.get("sales_gazprom", []):
             if marker in text:
                 found.append(
                     _Candidate(
                         code="00-000076",
-                        name=self._dept_name("00-000076", "ОРКК / ПАО Газпром"),
+                        name=self._dept_name("00-000076", "Отдел по работе с ПАО Газпром"),
                         direction="КС",
                         source="sales_gazprom",
                         reasoning="ПАО Газпром / дочерние общества",
@@ -200,20 +189,63 @@ class RouteEngine:
                     )
                 )
                 return found
+        for holding in self.rules.get("sales_orkk_holdings", []):
+            if holding in text:
+                found.append(
+                    _Candidate(
+                        code="00-000042",
+                        name=self._dept_name("00-000042", "ОРКК"),
+                        direction="КС",
+                        source="sales_orkk",
+                        reasoning="Холдинг/ВИНК → ОРКК",
+                        matched_keywords=[holding],
+                    )
+                )
+                return found
         for marker in self.rules.get("sales_odp", []):
             if marker in text:
                 found.append(
                     _Candidate(
-                        code="00-000075",
-                        name=self._dept_name("00-000075", "ОДП"),
+                        code="00-000155",
+                        name=self._dept_name("00-000155", "ОДП"),
                         direction="КС",
                         source="sales_odp",
-                        reasoning="Региональный/дилерский/низкое давление",
+                        reasoning="Дилерский/региональный контур → ОДП",
                         matched_keywords=[marker],
                     )
                 )
                 return found
         return found
+
+    def _deterministic_candidate(
+        self,
+        subject: str,
+        body: str,
+        partner: str | None,
+        sender_email: str = "",
+    ) -> _Candidate | None:
+        hit = match_deterministic_sales(
+            subject=subject,
+            body=body,
+            sender_email=sender_email,
+            partner=partner,
+        )
+        if hit is None:
+            return None
+        keywords = list(hit.matched_keywords)
+        if hit.organization:
+            keywords.append(f"org:{hit.organization}")
+        return _Candidate(
+            code=hit.code,
+            name=self._dept_name(hit.code, hit.name),
+            direction=hit.direction,
+            source=hit.source,
+            reasoning=hit.reasoning,
+            topic_hits=max(2, len(hit.matched_keywords)),
+            content_hits=max(1, len(hit.matched_keywords)),
+            organization=hit.organization,
+            matched_keywords=keywords,
+        )
 
     def _reserve_route(self) -> _Candidate:
         code = self.rules.get("reserve_code", "00-000066")
@@ -288,7 +320,7 @@ class RouteEngine:
                 hits=hits,
                 reasoning=(
                     f"info@ strict {rule_code}: Амураль/Газпром/Водоканал → "
-                    f"УД (Ильченко); {', '.join(hits[:5])}"
+                    f"Председатель Совета Директоров; {', '.join(hits[:5])}"
                 ),
             )
 
@@ -310,6 +342,78 @@ class RouteEngine:
                 ),
             )
         return None
+
+    def _institution_chairman_match(
+        self,
+        subject: str,
+        body: str,
+        partner: str | None = None,
+    ) -> _Candidate | None:
+        """ТПП / АПГО и аналоги → Председатель СД (все ящики, до keyword/RAG)."""
+        cfg = self.rules.get("institution_chairman_rules")
+        if not cfg or not cfg.get("code"):
+            return None
+        text = normalize_text(f"{subject} {body} {partner or ''}")
+        hits = [
+            str(pattern)
+            for pattern in (cfg.get("content_patterns") or [])
+            if keyword_in_text(str(pattern), text)
+        ]
+        if not hits:
+            return None
+        rule_code = cfg.get("rule_code", "INSTITUTION_CHAIRMAN")
+        return _Candidate(
+            code=str(cfg["code"]),
+            name=cfg.get("name") or self._dept_name(str(cfg["code"])),
+            direction=cfg.get("direction", "КС"),
+            source="institution_chairman",
+            reasoning=(
+                f"{rule_code}: ТПП/АПГО → Председатель Совета Директоров; "
+                f"{', '.join(hits[:5])}"
+            ),
+            topic_hits=max(2, len(hits)),
+            content_hits=max(1, len(hits)),
+            matched_keywords=hits,
+        )
+
+    def _institution_operational_director_match(
+        self,
+        subject: str,
+        body: str,
+        partner: str | None = None,
+        sender_email: str = "",
+    ) -> _Candidate | None:
+        """Министерство / администрация → Операционный директор (все ящики)."""
+        cfg = self.rules.get("institution_operational_director_rules")
+        if not cfg or not cfg.get("code"):
+            return None
+        text = normalize_text(f"{subject} {body} {partner or ''}")
+        hits = [
+            str(pattern)
+            for pattern in (cfg.get("content_patterns") or [])
+            if keyword_in_text(str(pattern), text)
+        ]
+        for pattern in cfg.get("sender_domain_patterns") or []:
+            marker = str(pattern).lower().strip()
+            sender_norm = (sender_email or "").lower().strip()
+            if marker and marker in sender_norm:
+                hits.append(marker)
+        if not hits:
+            return None
+        rule_code = cfg.get("rule_code", "INSTITUTION_MINISTRY_ADMIN")
+        return _Candidate(
+            code=str(cfg["code"]),
+            name=cfg.get("name") or self._dept_name(str(cfg["code"])),
+            direction=cfg.get("direction", "КС"),
+            source="institution_operational_director",
+            reasoning=(
+                f"{rule_code}: министерство/администрация → Операционный директор; "
+                f"{', '.join(hits[:5])}"
+            ),
+            topic_hits=max(2, len(hits)),
+            content_hits=max(1, len(hits)),
+            matched_keywords=hits,
+        )
 
     def _info_unclear_route(self) -> _Candidate:
         cfg = (self.rules.get("info_strict_rules") or {}).get("unclear") or {}
@@ -369,6 +473,17 @@ class RouteEngine:
         info_strict = self._info_strict_match(recipient, subject, body, sender_email)
         if info_strict is not None:
             return [info_strict]
+        institution = self._institution_chairman_match(subject, body, partner)
+        if institution is not None:
+            return [institution]
+        institution_od = self._institution_operational_director_match(
+            subject, body, partner, sender_email
+        )
+        if institution_od is not None:
+            return [institution_od]
+        det = self._deterministic_candidate(subject, body, partner, sender_email)
+        if det is not None:
+            return [det]
         routes = self._exact_email_match(recipient, subject, body)
         if not routes:
             routes = self._email_keyword_match(recipient)
@@ -471,12 +586,15 @@ class RouteEngine:
                 "exact_email",
                 "human_correction",
                 "info_strict",
-            },
+                "institution_chairman",
+                "institution_operational_director",
+            }
+            or primary.source.startswith("det_"),
             topic_matches=primary.topic_hits,
             email_keyword=primary.source in {"email_keyword", "info_strict_unclear"},
             content_keyword_hits=primary.content_hits,
             org_confirmed=organization != "НП",
-            holding_found=primary.source.startswith("sales"),
+            holding_found=primary.source.startswith(("sales", "det_")),
             has_conflict=has_conflict and primary.source != "human_correction",
             info_mailbox_no_topic=info_no_topic,
             unknown_route=primary.source == "reserve",

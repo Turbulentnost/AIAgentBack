@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from agent_pochta.config import PROJECT_ROOT
-from agent_pochta.routing.corrections import extract_correction_keywords
+from agent_pochta.routing.corrections import extract_spam_learning_keywords
 from agent_pochta.schemas import EmailMessage, SpamResult
 
 LearnedEntryLabel = Literal["spam", "not_spam"]
@@ -29,10 +29,17 @@ _NOT_SPAM_REASON_MARKERS = (
     "деловой запрос",
     "деловая переписка",
     "деловое уведомление",
+    "деловое письмо",
+    "легитимн",
+    "легитимное",
     "не реклам",
     "не фишинг",
     "отсутствуют признаки",
     "отсутствие признаков",
+    "ошибка 1с",
+    "ошибка odata",
+    "нарушение прав доступа",
+    "erp",
 )
 
 _DEFAULT_LEARNING_PATH = PROJECT_ROOT / "data" / "spam_learning_patterns.json"
@@ -179,7 +186,7 @@ def save_learning_entry(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "message_id": message_id,
         "sender_email": sender_email.lower().strip(),
-        "keywords": extract_correction_keywords(subject, body),
+        "keywords": extract_spam_learning_keywords(subject, body, sender_email=sender_email),
         "label": label,
         "reason": normalized_reason,
     }
@@ -348,13 +355,21 @@ def _find_first_learned_match(
     path: Path | str | None = None,
 ) -> tuple[LearnedEntryLabel, dict] | None:
     for entry in _collect_learned_entries(path=path):
-        if _entry_matches_email(
+        if not _entry_matches_email(
             sender_email=sender_email,
             subject=subject,
             body=body,
             entry=entry,
         ):
-            return _normalize_label(entry.get("label")), entry
+            continue
+        label = _reconcile_label_with_reason(
+            _normalize_label(entry.get("label")),
+            str(entry.get("reason") or ""),
+        )
+        # Противоречивые spam-метки с «легитимным» reason не считаем спамом.
+        if label == "spam" and reason_indicates_not_spam(str(entry.get("reason") or "")):
+            continue
+        return label, entry
     return None
 
 

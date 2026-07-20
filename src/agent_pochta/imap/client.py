@@ -10,6 +10,7 @@ from imapclient import IMAPClient
 
 from agent_pochta.config import Settings, get_settings
 from agent_pochta.imap.parser import parse_raw_email
+from agent_pochta.imap.attachment_parts import ImapAttachmentPart, list_attachment_parts
 from agent_pochta.schemas import EmailMessage
 from agent_pochta.services.vault import VaultClient
 
@@ -170,6 +171,115 @@ class ImapMailboxClient:
                 client.logout()
             except Exception:
                 pass
+    def _find_uid_by_message_id(self, client: IMAPClient, message_id: str, *, folder: str) -> int | None:
+        header_id = imap_header_message_id(message_id)
+        bare_id = header_id.strip("<>")
+        client.select_folder(folder, readonly=True)
+        for candidate in (header_id, bare_id):
+            uids = client.search(["HEADER", "Message-ID", candidate])
+            if uids:
+                return max(uids)
+        return None
+
+    @staticmethod
+    def _extract_fetch_bytes(fetch_item: dict, needle: str) -> bytes | None:
+        needle_upper = needle.upper()
+        for key, value in fetch_item.items():
+            key_text = key.decode("utf-8", errors="replace") if isinstance(key, bytes) else str(key)
+            if needle_upper not in key_text.upper():
+                continue
+            if isinstance(value, (bytes, bytearray)):
+                return bytes(value)
+            if isinstance(value, tuple) and value:
+                first = value[0]
+                if isinstance(first, (bytes, bytearray)):
+                    return bytes(first)
+        return None
+
+    def _fetch_bodystructure(self, client: IMAPClient, uid: int) -> object | None:
+        fetch_data = client.fetch([uid], ["BODYSTRUCTURE"])
+        item = fetch_data.get(uid) or {}
+        for key, value in item.items():
+            key_text = key.decode("utf-8", errors="replace") if isinstance(key, bytes) else str(key)
+            if "BODYSTRUCTURE" in key_text.upper():
+                return value
+        return item.get(b"BODYSTRUCTURE") or item.get("BODYSTRUCTURE")
+
+    def _fetch_body_part(self, client: IMAPClient, uid: int, part_id: str) -> bytes | None:
+        fetch_data = client.fetch([uid], [f"BODY.PEEK[{part_id}]"])
+        item = fetch_data.get(uid) or {}
+        return self._extract_fetch_bytes(item, f"BODY[{part_id}]") or self._extract_fetch_bytes(item, "BODY")
+
+    @staticmethod
+    def _pick_attachment_part(
+        parts: list[ImapAttachmentPart],
+        *,
+        filename: str,
+        index: int,
+    ) -> ImapAttachmentPart | None:
+        if not parts:
+            return None
+        normalized = filename.strip().lower()
+        for part in parts:
+            if part.filename and part.filename.strip().lower() == normalized:
+                return part
+        if 0 <= index < len(parts):
+            return parts[index]
+        return parts[0]
+
+    def fetch_attachment_bytes(
+        self,
+        message_id: str,
+        *,
+        filename: str,
+        attachment_index: int = 0,
+        folder: str = "INBOX",
+        timeout_sec: int | None = None,
+    ) -> tuple[bytes, str, str] | None:
+        """Загружает одно вложение: сначала BODY.PEEK[part], иначе полный RFC822."""
+        client = self._connect(timeout_sec=timeout_sec)
+        try:
+            uid = self._find_uid_by_message_id(client, message_id, folder=folder)
+            if uid is None:
+                return None
+
+            settings = self.settings
+            if settings.attachment_imap_partial_fetch:
+                structure = self._fetch_bodystructure(client, uid)
+                if structure is not None:
+                    parts = list_attachment_parts(structure)
+                    chosen = self._pick_attachment_part(
+                        parts,
+                        filename=filename,
+                        index=attachment_index,
+                    )
+                    if chosen is not None:
+                        content = self._fetch_body_part(client, uid, chosen.part_id)
+                        if content:
+                            mime_type = chosen.mime_type or "application/octet-stream"
+                            resolved_name = chosen.filename or filename
+                            return content, mime_type, resolved_name
+
+            fetch_data = client.fetch([uid], ["RFC822"])
+            raw = fetch_data[uid][b"RFC822"]
+            email = parse_raw_email(raw, self.mailbox, load_oversized_attachments=True)
+            by_name = {a.filename: a for a in email.attachments if a.filename}
+            matched = by_name.get(filename)
+            if matched is None and 0 <= attachment_index < len(email.attachments):
+                matched = email.attachments[attachment_index]
+            if matched is None or not matched.content:
+                return None
+            return (
+                matched.content,
+                matched.mime_type or "application/octet-stream",
+                matched.filename or filename,
+            )
+        finally:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
     def fetch_by_message_id(
         self,
         message_id: str,

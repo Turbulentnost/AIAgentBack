@@ -2,11 +2,17 @@
 
 Соответствие (код ТЗ → активный код 1С):
   00-000034 → 00-000152  ОПЕРАЦИОННЫЙ ДИРЕКТОР
-  00-000037 → 00-000104  Сервисная служба
+  00-000037 → 00-000163  ТЕХНИЧЕСКИЙ ДИРЕКТОР
+  00-000109 → 00-000163  ТЕХНИЧЕСКИЙ ДИРЕКТОР
+  00-000122 → 00-000163  ТЕХНИЧЕСКИЙ ДИРЕКТОР
+  00-000139 → 00-000042  ОРКК
+  00-000140 → 00-000042  ОРКК
+  00-000141 → 00-000042  ОРКК
   00-000075 → 00-000155  Отдел дилерских продаж
   00-000105 → 00-000155  (тот же)
-  00-000109 → 00-000174  Цех БМИ
   00-000131 → 00-000128  Отдел продаж БМИ
+
+Удаляются строки departments без замены: 00-000016, 00-000045, 00-000081
 
 Обновляет email_messages, classification_events, change_events, erp_departments,
 erp_contractors, XML в raw_payload_json; удаляет строки departments с устаревшими кодами.
@@ -45,12 +51,18 @@ from agent_pochta.schemas import EmailMessage  # noqa: E402
 # Код ТЗ (ликвидирован в 1С) → актуальный код в Catalog_СтруктураПредприятия.
 DEPARTMENT_CODE_ALIASES: dict[str, str] = {
     "00-000034": "00-000152",
-    "00-000037": "00-000104",
+    "00-000037": "00-000163",
+    "00-000109": "00-000163",
+    "00-000122": "00-000163",
+    "00-000139": "00-000042",
+    "00-000140": "00-000042",
+    "00-000141": "00-000042",
     "00-000075": "00-000155",
     "00-000105": "00-000155",
-    "00-000109": "00-000174",
     "00-000131": "00-000128",
 }
+
+DELETE_DEPARTMENT_CODES = frozenset({"00-000016", "00-000045", "00-000081"})
 
 OLD_CODES = frozenset(DEPARTMENT_CODE_ALIASES)
 
@@ -277,6 +289,15 @@ def migrate(*, apply: bool) -> None:
                     f"Нельзя удалить {old_code}: нет целевого отдела {new_code} в departments"
                 )
             stats["departments.deleted"] += 1
+            if apply:
+                session.delete(dept)
+
+        for delete_code in sorted(DELETE_DEPARTMENT_CODES):
+            dept = session.query(DepartmentRow).filter(DepartmentRow.code == delete_code).first()
+            if dept is None:
+                stats["departments.skip_missing_delete"] += 1
+                continue
+            stats["departments.deleted_no_alias"] += 1
             if apply:
                 session.delete(dept)
 

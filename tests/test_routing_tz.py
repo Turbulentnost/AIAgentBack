@@ -63,8 +63,8 @@ def test_t03_info_mailbox_tkp_by_content(engine):
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code != "00-000066" or decision.match_source == "content"
-    assert "ткп" in " ".join(decision.matching_keywords).lower() or decision.match_source == "content"
+    assert decision.services[0].code != "00-000066"
+    assert decision.match_source in {"content", "det_sales_industrial", "sales_odp", "sales_orkk"}
 
 
 def test_t04_noreply_spam():
@@ -121,7 +121,7 @@ def test_t08_service_repair(engine):
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000037"
+    assert decision.services[0].code == "00-000163"
     assert decision.direction == "СС"
 
 
@@ -143,7 +143,7 @@ def test_t10_bmi_direction(engine):
         engine=engine,
     )
     assert decision.direction == "БМ"
-    assert decision.services[0].code == "00-000109"
+    assert decision.services[0].code == "00-000163"
 
 
 def test_t11_orkk_holding(engine):
@@ -153,7 +153,7 @@ def test_t11_orkk_holding(engine):
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000076"
+    assert decision.services[0].code == "00-000042"
 
 
 def test_t13_multiple_recipients():

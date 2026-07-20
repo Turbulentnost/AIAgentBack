@@ -16,7 +16,11 @@ from qdrant_client.models import (
 )
 
 from agent_pochta.routing.normalize import normalize_text
-from agent_pochta.rules.spam_learning import SPAM_LEARNING_COLLECTION, _normalize_entry
+from agent_pochta.rules.spam_learning import (
+    SPAM_LEARNING_COLLECTION,
+    _normalize_entry,
+    reason_indicates_not_spam,
+)
 
 DUMMY_VECTOR_SIZE = 4
 
@@ -194,5 +198,9 @@ def find_spam_learning_match(
             score += 3
         score += keyword_hits
         if score > 0:
+            label = entry.get("label")
+            reason = str(entry.get("reason") or "")
+            if label == "spam" and reason_indicates_not_spam(reason):
+                continue
             return entry
     return None

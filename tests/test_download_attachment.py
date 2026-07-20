@@ -138,21 +138,7 @@ def test_fetch_attachment_for_download_restores_from_imap(mock_creds, mock_clien
     repo.get_by_id.return_value = row
 
     mock_client = MagicMock()
-    mock_client.fetch_by_message_id.return_value = EmailMessage(
-        message_id="<imap-att@mail.ru>",
-        mailbox="info@turbo-don.ru",
-        sender_email="client@mail.ru",
-        subject="Test",
-        received_at=datetime.now(timezone.utc),
-        attachments=[
-            Attachment(
-                filename="scan.pdf",
-                mime_type="application/pdf",
-                size_bytes=3,
-                content=b"PDF",
-            )
-        ],
-    )
+    mock_client.fetch_attachment_bytes.return_value = (b"PDF", "application/pdf", "scan.pdf")
     mock_client_cls.return_value = mock_client
     mock_creds.return_value = MagicMock()
 
@@ -164,9 +150,10 @@ def test_fetch_attachment_for_download_restores_from_imap(mock_creds, mock_clien
     assert result.ok is True
     assert result.content == b"PDF"
     assert result.filename == "scan.pdf"
-    mock_client.fetch_by_message_id.assert_called_once()
-    kwargs = mock_client.fetch_by_message_id.call_args.kwargs
-    assert kwargs.get("load_oversized_attachments") is True
+    mock_client.fetch_attachment_bytes.assert_called_once()
+    kwargs = mock_client.fetch_attachment_bytes.call_args.kwargs
+    assert kwargs.get("filename") == "scan.pdf"
+    assert kwargs.get("attachment_index") == 0
     assert kwargs.get("timeout_sec") == 120
 
 
@@ -202,20 +189,10 @@ def test_fetch_attachment_falls_back_to_payload_when_db_empty(mock_creds, mock_c
     repo.get_by_id.return_value = row
 
     mock_client = MagicMock()
-    mock_client.fetch_by_message_id.return_value = EmailMessage(
-        message_id="<payload-att@mail.ru>",
-        mailbox="info@turbo-don.ru",
-        sender_email="client@mail.ru",
-        subject="Test",
-        received_at=datetime.now(timezone.utc),
-        attachments=[
-            Attachment(
-                filename="from-payload.pdf",
-                mime_type="application/pdf",
-                size_bytes=3,
-                content=b"PDF",
-            )
-        ],
+    mock_client.fetch_attachment_bytes.return_value = (
+        b"PDF",
+        "application/pdf",
+        "from-payload.pdf",
     )
     mock_client_cls.return_value = mock_client
     mock_creds.return_value = MagicMock()

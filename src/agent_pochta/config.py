@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Корень репозитория (…/agent-pochta), не зависит от cwd процесса Celery
@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     imap_catchup_days: int = Field(default=7, alias="IMAP_CATCHUP_DAYS")
     imap_fetch_batch_size: int = Field(default=20, alias="IMAP_FETCH_BATCH_SIZE")
     imap_catchup_max_uids: int = Field(default=400, alias="IMAP_CATCHUP_MAX_UIDS")
+    attachment_cache_ttl_sec: int = Field(default=1800, alias="ATTACHMENT_CACHE_TTL_SEC")
+    attachment_cache_max_mb: int = Field(default=256, alias="ATTACHMENT_CACHE_MAX_MB")
+    attachment_imap_partial_fetch: bool = Field(default=True, alias="ATTACHMENT_IMAP_PARTIAL_FETCH")
 
     # Повторы 1С (раздел 5.2)
     erp_retry_max: int = Field(default=5, alias="ERP_RETRY_MAX")
@@ -113,9 +116,25 @@ class Settings(BaseSettings):
     )
 
     # Внешние сервисы платформы (при use_stubs=false)
+    # openai_compat | gigachat | auto (gigachat при заданном GIGACHAT_API_PERS)
+    llm_provider: str = Field(default="auto", alias="LLM_PROVIDER")
     llm_gateway_url: str = Field(default="", alias="LLM_GATEWAY_URL")
     llm_gateway_api_key: str = Field(default="", alias="LLM_GATEWAY_API_KEY")
     llm_default_model: str = Field(default="qwen/qwen3.5-9b", alias="LLM_DEFAULT_MODEL")
+    gigachat_credentials: str = Field(
+        default="",
+        validation_alias=AliasChoices("GIGACHAT_API_PERS", "GIGACHAT_CREDENTIALS"),
+    )
+    gigachat_scope: str = Field(default="GIGACHAT_API_PERS", alias="GIGACHAT_SCOPE")
+    gigachat_auth_url: str = Field(
+        default="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+        alias="GIGACHAT_AUTH_URL",
+    )
+    gigachat_base_url: str = Field(
+        default="https://gigachat.devices.sberbank.ru/api/v1",
+        alias="GIGACHAT_BASE_URL",
+    )
+    gigachat_verify_ssl: bool = Field(default=False, alias="GIGACHAT_VERIFY_SSL")
     document_service_url: str = Field(default="", alias="DOCUMENT_SERVICE_URL")
     integration_service_url: str = Field(default="", alias="INTEGRATION_SERVICE_URL")
     vault_addr: str = Field(default="", alias="VAULT_ADDR")
@@ -158,6 +177,35 @@ class Settings(BaseSettings):
         return merged
 
     @property
+    def effective_llm_provider(self) -> str:
+        """gigachat | openai_compat."""
+        explicit = (self.llm_provider or "auto").strip().lower()
+        if explicit in {"gigachat", "openai_compat"}:
+            return explicit
+        if self.gigachat_credentials:
+            return "gigachat"
+        if "gigachat.devices.sberbank.ru" in (self.llm_gateway_url or "").lower():
+            return "gigachat"
+        return "openai_compat"
+
+    @property
+    def effective_gigachat_credentials(self) -> str:
+        return (self.gigachat_credentials or self.llm_gateway_api_key or "").strip()
+
+    @property
+    def effective_llm_base_url(self) -> str:
+        if self.effective_llm_provider == "gigachat":
+            return self.gigachat_base_url or self.llm_gateway_url
+        return self.llm_gateway_url
+
+    @property
+    def llm_configured(self) -> bool:
+        """Есть реальный LLM (GigaChat credentials или OpenAI-compatible URL)."""
+        if self.effective_llm_provider == "gigachat":
+            return bool(self.effective_gigachat_credentials)
+        return bool(self.llm_gateway_url)
+
+    @property
     def erp_integration_mode(self) -> str:
         """Режим интеграции с 1С: odata | http | stub."""
         explicit = (self.erp_mode or "").strip().lower()
@@ -187,9 +235,16 @@ class Settings(BaseSettings):
             integration = f"http({self.integration_service_url})"
         else:
             integration = "stub(no ERP URL)"
+        llm_url = self.effective_llm_base_url
+        if self.effective_llm_provider == "gigachat" and self.effective_gigachat_credentials:
+            llm_label = f"gigachat({llm_url}, scope={self.gigachat_scope})"
+        elif llm_url:
+            llm_label = f"real({llm_url})"
+        else:
+            llm_label = "stub(no URL)"
         return {
             "mode": "production",
-            "llm": f"real({self.llm_gateway_url})" if self.llm_gateway_url else "stub(no URL)",
+            "llm": llm_label,
             "rag": f"qdrant({self.qdrant_url})" if self.rag_backend == "qdrant" else "stub",
             "documents": f"http({self.document_service_url})"
             if self.document_service_url

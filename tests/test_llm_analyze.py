@@ -7,8 +7,11 @@ from datetime import datetime, timezone
 from agent_pochta.schemas import EmailMessage
 from agent_pochta.services.llm_analyze import (
     build_analyze_messages,
+    extract_partner_from_summary,
     infer_partner_from_domain,
     infer_partner_from_email,
+    looks_like_job_title,
+    looks_like_org_name,
     looks_like_person_name,
     normalize_partner_name,
     parse_analyze_response,
@@ -37,13 +40,20 @@ def test_analyze_system_prompt_forbids_chat_replies():
         [{"department_id": "SALES", "department_name": "Продажи"}],
     )
     assert "внутренний классификатор" in system
-    assert "ЗАПРЕЩЕНО" in system
+    assert "только JSON" in system
     assert "Здравствуйте" in system
     assert "Спасибо за ваше сообщение" in system
-    assert "не веди диалог" in system.lower() or "Не веди диалог" in system
+    assert "не веди диалог" in system.lower()
+    assert "allowlist" in system
     assert "действие, требуемое в письме" in system
     assert "Действие требуемое в письме: краткая тема" in system
     assert "не ставь шаблонное «Действие»" in system
+    assert "partner_name" in system
+    assert "Не человек и не должность" in system
+    assert "БелГИМ" in system
+    assert "process_type" in system
+    # код организации (НП/АЛ/…) не в схеме ответа LLM
+    assert '"organization"' not in system
 
 
 def test_parse_rejects_chat_style_summary_ru():
@@ -56,7 +66,7 @@ def test_parse_rejects_chat_style_summary_ru():
             "dept_confidence": 0.9,
             "reasoning": "тест",
             "summary_ru": (
-                "Здравствуйте, Роман! Спасибо за ваше сообщение. "
+                "Здравствуйте, Имя! Спасибо за ваше сообщение. "
                 "Вам может потребоваться обратиться к руководителю отдела персонала."
             ),
         },
@@ -162,6 +172,38 @@ def test_parse_analyze_process_type_claim_default():
         subject="Письмо без явных маркеров",
         combined_text="Текст без ключевых слов.",
         claim=True,
+    )
+    assert analysis.process_type == "рассмотрение"
+
+
+def test_parse_analyze_process_type_heuristic_default_rassmotreniye():
+    analysis = parse_analyze_response(
+        {
+            "department_id": "SALES",
+            "department_name": "Продажи",
+            "dept_confidence": 0.7,
+            "reasoning": "Общий запрос",
+            "summary_ru": "Контрагент уточняет условия поставки.",
+        },
+        candidates=[{"department_id": "SALES", "department_name": "Продажи"}],
+        subject="Re: условия поставки",
+        combined_text="Добрый день, подскажите сроки и условия поставки оборудования.",
+    )
+    assert analysis.process_type == "рассмотрение"
+
+
+def test_parse_analyze_process_type_act_sverki_rassmotreniye():
+    analysis = parse_analyze_response(
+        {
+            "department_id": "FINANCE",
+            "department_name": "Финансы",
+            "dept_confidence": 0.8,
+            "reasoning": "Акт сверки",
+            "summary_ru": "Акт сверки за квартал.",
+        },
+        candidates=[{"department_id": "FINANCE", "department_name": "Финансы"}],
+        subject="Акт сверки",
+        combined_text="Направляем акт сверки за квартал во вложении.",
     )
     assert analysis.process_type == "рассмотрение"
 
@@ -310,6 +352,51 @@ def test_looks_like_person_name():
     assert looks_like_person_name("Оксана Попова") is True
     assert looks_like_person_name("ООО «Ромашка»") is False
     assert looks_like_person_name("H-Energy") is False
+
+
+def test_looks_like_job_title_not_org():
+    title = "Инженер 1 категории НИЦИСИиТ, БелГИМ"
+    assert looks_like_job_title(title) is True
+    assert looks_like_org_name(title) is False
+    assert looks_like_org_name("БелГИМ") is True
+    assert looks_like_org_name("ООО МедТрансСервис") is True
+
+
+def test_extract_partner_from_summary_iz_ooo():
+    assert (
+        extract_partner_from_summary(
+            "Валентина Рыжих из ООО МедТрансСервис просит согласовать счёт."
+        )
+        == "ООО МедТрансСервис"
+    )
+
+
+def test_resolve_partner_prefers_summary_over_wrong_llm_org():
+    email = _email(sender_email="user@gmail.com", sender_name="Валентина Рыжих")
+    assert (
+        resolve_partner_name(
+            llm_partner='ООО "ИТЦ"',
+            rag_partner=None,
+            email=email,
+            summary_ru=(
+                "Валентина Рыжих из ООО МедТрансСервис просит выставить закрывающие документы."
+            ),
+        )
+        == "ООО МедТрансСервис"
+    )
+
+
+def test_resolve_partner_rejects_llm_job_title():
+    email = _email(sender_email="user@gmail.com", sender_name="")
+    assert (
+        resolve_partner_name(
+            llm_partner="Инженер 1 категории НИЦИСИиТ, БелГИМ",
+            rag_partner=None,
+            email=email,
+            summary_ru="Сотрудник от компании БелГИМ запрашивает документы.",
+        )
+        == "БелГИМ"
+    )
 
 
 def test_infer_partner_from_domain_h_energy():

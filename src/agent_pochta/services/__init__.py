@@ -9,6 +9,7 @@ from agent_pochta.services.document_service import DocumentService
 from agent_pochta.services.http_document import HttpDocumentService
 from agent_pochta.services.local_document import LocalDocumentService
 from agent_pochta.services.http_integration import HttpIntegrationService
+from agent_pochta.services.gigachat_llm import GigaChatLLMGateway
 from agent_pochta.services.http_llm import ChatCompletionsLLMGateway
 from agent_pochta.services.integration_service import IntegrationService, StubIntegrationService
 from agent_pochta.services.odata_integration import ODataIntegrationService
@@ -28,6 +29,17 @@ class ServiceContainer:
 
 
 def _build_llm(settings: Settings) -> LLMGateway:
+    if settings.effective_llm_provider == "gigachat":
+        credentials = settings.effective_gigachat_credentials
+        if credentials:
+            return GigaChatLLMGateway(
+                credentials,
+                scope=settings.gigachat_scope,
+                auth_url=settings.gigachat_auth_url,
+                base_url=settings.effective_llm_base_url,
+                model=settings.llm_default_model,
+                verify_ssl=settings.gigachat_verify_ssl,
+            )
     if settings.llm_gateway_url:
         return ChatCompletionsLLMGateway(
             settings.llm_gateway_url,

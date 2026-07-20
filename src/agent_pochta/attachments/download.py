@@ -9,6 +9,11 @@ from urllib.parse import quote
 
 import structlog
 
+from agent_pochta.attachments.cache import (
+    attachment_cache_key,
+    get_cached_attachment,
+    put_cached_attachment,
+)
 from agent_pochta.config import get_settings
 from agent_pochta.db.repository import EmailRepository
 from agent_pochta.db.session import get_session_factory
@@ -131,13 +136,31 @@ def fetch_attachment_for_download(
         mailbox = row.mailbox
         imap_message_id = resolve_imap_message_id(row)
 
+    cache_key = attachment_cache_key(mailbox, imap_message_id, index, filename)
+    cached = get_cached_attachment(cache_key)
+    if cached is not None:
+        logger.info(
+            "attachment_cache_hit",
+            row_id=str(row_id),
+            filename=cached.filename,
+            size_bytes=len(cached.content),
+        )
+        return AttachmentDownloadResult(
+            ok=True,
+            row_id=str(row_id),
+            filename=cached.filename,
+            mime_type=cached.mime_type,
+            content=cached.content,
+        )
+
     try:
         settings = get_settings()
         credentials = resolve_imap_credentials(mailbox, vault)
         client = ImapMailboxClient(mailbox, credentials, settings=settings)
-        fresh = client.fetch_by_message_id(
+        fetched = client.fetch_attachment_bytes(
             imap_message_id,
-            load_oversized_attachments=True,
+            filename=filename,
+            attachment_index=index,
             timeout_sec=settings.imap_download_timeout_sec,
         )
     except Exception as exc:
@@ -156,7 +179,7 @@ def fetch_attachment_for_download(
             reason=f"imap_error: {exc}",
         )
 
-    if fresh is None:
+    if fetched is None:
         logger.info(
             "attachment_download_not_in_mailbox",
             row_id=str(row_id),
@@ -171,18 +194,13 @@ def fetch_attachment_for_download(
             reason="not_in_mailbox",
         )
 
-    by_name = {a.filename: a for a in fresh.attachments if a.filename}
-    matched = by_name.get(filename)
-    if matched is None and 0 <= index < len(fresh.attachments):
-        matched = fresh.attachments[index]
-
-    if matched is None or not matched.content:
+    content, resolved_mime, resolved_name = fetched
+    if not content:
         logger.warning(
             "attachment_download_no_content",
             row_id=str(row_id),
             filename=filename,
-            imap_files=[a.filename for a in fresh.attachments],
-            imap_sizes=[a.size_bytes for a in fresh.attachments],
+            mailbox=mailbox,
         )
         return AttachmentDownloadResult(
             ok=False,
@@ -192,16 +210,22 @@ def fetch_attachment_for_download(
             reason="attachment_unavailable",
         )
 
+    put_cached_attachment(
+        cache_key,
+        content=content,
+        mime_type=resolved_mime or mime_type,
+        filename=resolved_name or filename,
+    )
     logger.info(
         "attachment_imap_fetch_restored",
-        filename=matched.filename or filename,
-        size_bytes=len(matched.content),
+        filename=resolved_name or filename,
+        size_bytes=len(content),
         row_id=str(row_id),
     )
     return AttachmentDownloadResult(
         ok=True,
         row_id=str(row_id),
-        filename=matched.filename or filename,
-        mime_type=matched.mime_type or mime_type,
-        content=matched.content,
+        filename=resolved_name or filename,
+        mime_type=resolved_mime or mime_type,
+        content=content,
     )

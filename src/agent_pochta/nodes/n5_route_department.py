@@ -111,16 +111,20 @@ def _rag_department_candidates(
     subject: str = "",
     top_k: int = 5,
 ) -> list[dict]:
+    from agent_pochta.services.routing_departments import filter_departments_for_ui_llm
+
     search_text = build_routing_search_text(
         recipient=recipient,
         subject=subject,
         combined_text=text,
     )
+    # Берём запас: после allowlist (без директоров) список может сжаться.
     departments = container.rag.search_departments(
         search_text,
-        top_k=top_k,
+        top_k=max(top_k * 4, 20),
         recipient=recipient,
     )
+    departments = filter_departments_for_ui_llm(departments)
     if sender and sender.allowed_departments:
         filtered = [d for d in departments if d.department_id in sender.allowed_departments]
         if filtered:
@@ -131,7 +135,7 @@ def _rag_department_candidates(
             "department_name": d.department_name,
             "responsibility": d.responsibility,
         }
-        for d in departments
+        for d in departments[:top_k]
     ]
 
 
@@ -243,7 +247,7 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             trace = trace + ["route_department_rag"]
 
     routing = rule_routing
-    use_llm_analyze = bool(settings.llm_gateway_url and not settings.use_stubs)
+    use_llm_analyze = bool(settings.llm_configured and not settings.use_stubs)
     xml_theme: str | None = None
     llm_partner: str | None = None
     resolved_process: str | None = None

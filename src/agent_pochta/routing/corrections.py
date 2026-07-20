@@ -351,6 +351,61 @@ def extract_correction_keywords(
     return _dedupe_substring_keywords(keywords)
 
 
+_GENERIC_LOCAL_PARTS = frozenset(
+    {
+        "info",
+        "mail",
+        "office",
+        "noreply",
+        "no-reply",
+        "support",
+        "admin",
+        "postmaster",
+        "sales",
+        "contact",
+    }
+)
+
+
+def extract_spam_learning_keywords(
+    subject: str,
+    body: str,
+    *,
+    sender_email: str | None = None,
+    content_limit: int = _CONTENT_KEYWORD_LIMIT,
+) -> list[str]:
+    """Keywords для spam_learning: без force полной темы и без generic local-part."""
+    keywords: list[str] = []
+    seen: set[str] = set()
+
+    def _add(value: str) -> None:
+        token = _clean_token(value.strip().lower())
+        if not token or token in seen:
+            return
+        if token in _GENERIC_LOCAL_PARTS:
+            return
+        if not _is_useful_keyword(token):
+            return
+        # Не тащим целиком длинные темы (шум для substring-match).
+        if " " in token and len(token) > 48:
+            return
+        seen.add(token)
+        keywords.append(token)
+
+    for token, _priority in _collect_candidate_tokens(subject, body):
+        if len(keywords) >= content_limit:
+            break
+        _add(token)
+
+    local = None
+    if sender_email and "@" in sender_email:
+        local = sender_email.split("@", 1)[0].strip().lower()
+    if local and local not in _GENERIC_LOCAL_PARTS and len(local) >= 4:
+        _add(local)
+
+    return _dedupe_substring_keywords(keywords)
+
+
 def resolve_corrections_path(path: Path | str | None = None) -> Path:
     if path:
         return Path(path)

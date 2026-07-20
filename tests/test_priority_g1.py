@@ -182,7 +182,7 @@ def test_g1_primary_department_hints():
     )
     assert classify_document_kind(
         "Предписание ГИТ", "государственная инспекция труда"
-    ).primary_department_codes[0] == "00-000034"
+    ).primary_department_codes[0] == "00-000152"
     assert classify_document_kind("УПД", "универсальный передаточный документ").primary_department_codes[
         0
     ] == "00-000002"

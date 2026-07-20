@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RAG-разметка — Входящая корреспонденция</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="headerRow">
+        <div>
+          <div class="eyebrow">Агент · офлайн-разметка</div>
+          <h1>Входящая корреспонденция</h1>
+          <p>RAG-проверка спама и маршрута: выберите подходящий вариант из кандидатов или укажите свой. Сохранение сразу в JSONL.</p>
+        </div>
+        <div class="agentBadge">RAG labeling UI</div>
+      </div>
+    </header>
+
+    <section class="statsRow" id="statsRow"></section>
+
+    <section class="toolbar">
+      <div class="tabs" id="filterTabs"></div>
+      <div class="toolbarRow">
+        <input id="searchInput" class="searchInput" type="search" placeholder="Поиск: отправитель, тема, отдел…" />
+        <button type="button" class="tab infoToggle" id="infoOnlyBtn" aria-pressed="false" title="Показать письма, где получатель содержит info (info@turbo-don.ru и т.п.)">
+          Только info
+        </button>
+      </div>
+    </section>
+
+    <section class="layout">
+      <aside class="listCard">
+        <div class="cardTitle">Письма <span id="listCount" class="muted"></span></div>
+        <div class="list" id="cardList"></div>
+      </aside>
+
+      <main class="detailCard" id="detailPanel">
+        <div class="emptyState">Выберите письмо слева</div>
+      </main>
+    </section>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <div id="attachmentModal" class="attachmentModal hidden" aria-hidden="true">
+    <div class="attachmentModalBackdrop" id="attachmentModalBackdrop"></div>
+    <div class="attachmentModalPanel" role="dialog" aria-labelledby="attachmentModalTitle" aria-modal="true">
+      <div class="attachmentModalHeader">
+        <div id="attachmentModalTitle" class="attachmentModalTitle"></div>
+        <button type="button" class="btn" id="attachmentModalClose">Закрыть</button>
+      </div>
+      <div class="attachmentModalBody" id="attachmentModalBody">
+        <div class="attachmentModalLoading">Загружаем из IMAP…</div>
+      </div>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

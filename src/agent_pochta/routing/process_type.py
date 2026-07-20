@@ -29,6 +29,7 @@ _OZNAKOMLENIYE_MARKERS = (
     "информация о срок",
     "информирование",
     "для сведения",
+    "для информации",
     "к сведению",
     "информируем",
     "сообщаем вам",
@@ -54,6 +55,20 @@ _RASSMOTRENIYE_MARKERS = (
     "рассмотрение",
     "утвердить",
     "утвержден",
+    "коммерческ",
+    "ткп",
+    "коммерческое предлож",
+    "на проверку",
+    "для проверки",
+)
+
+_INFO_SEND_MARKERS = (
+    "направляем",
+    "направляем вам",
+    "во вложении",
+    "в приложении",
+    "приложен",
+    "прилагаем",
 )
 
 _ISPOLNENIYE_MARKERS = (
@@ -111,15 +126,15 @@ def infer_process_type_heuristic(
     if _ACTION_INVOICE_RE.search(combined):
         return PROCESS_ISPOLNENIYE
 
-    if "акт свер" in combined or re.search(r"\bакт\b", combined):
-        return PROCESS_ISPOLNENIYE
+    if "акт свер" in combined:
+        return PROCESS_RASSMOTRENIYE
 
-    if re.search(r"\bзапрос\b", combined):
-        return PROCESS_ISPOLNENIYE
+    if any(marker in combined for marker in _INFO_SEND_MARKERS):
+        return PROCESS_RASSMOTRENIYE
 
     if claim:
         return PROCESS_RASSMOTRENIYE
-    return PROCESS_ISPOLNENIYE
+    return PROCESS_RASSMOTRENIYE
 
 
 def resolve_process_type(
@@ -129,7 +144,7 @@ def resolve_process_type(
     combined_text: str = "",
     claim: bool = False,
 ) -> str:
-    """LLM — основной источник; эвристики — запасной; default — исполнение (или рассмотрение для претензий)."""
+    """LLM — основной источник; эвристики — запасной; default — рассмотрение."""
     normalized = normalize_process_type(llm_process)
     if normalized:
         return normalized

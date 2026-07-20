@@ -31,14 +31,14 @@ def engine():
     return RouteEngine.load()
 
 
-def test_info_amural_routes_to_ud_ilchenko(engine):
+def test_info_amural_routes_to_chairman(engine):
     decision = route_email(
         _email(subject="Обращение", sender_email="secretary@region.gov.ru"),
         combined_text="Письмо на имя Амураль Игорь Борисович",
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000066"
+    assert decision.services[0].code == "00-000001"
     assert decision.direction == "КС"
     assert decision.match_source == "info_strict"
     assert decision.confidence_level == ConfidenceLevel.HIGH
@@ -54,11 +54,11 @@ def test_info_amural_in_attachments_text(engine):
         recipient="INFO@TURBO-DON.RU",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000066"
+    assert decision.services[0].code == "00-000001"
     assert decision.match_source == "info_strict"
 
 
-def test_info_gazprom_company_routes_to_ud(engine):
+def test_info_gazprom_company_routes_to_chairman(engine):
     decision = route_email(
         _email(
             subject="Приглашение",
@@ -68,19 +68,19 @@ def test_info_gazprom_company_routes_to_ud(engine):
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000066"
+    assert decision.services[0].code == "00-000001"
     assert decision.match_source == "info_strict"
     assert decision.confidence_level == ConfidenceLevel.HIGH
 
 
-def test_info_vodokanal_routes_to_ud(engine):
+def test_info_vodokanal_routes_to_chairman(engine):
     decision = route_email(
         _email(subject="Запрос"),
         combined_text="МП Водоканал направляет документы на согласование",
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000066"
+    assert decision.services[0].code == "00-000001"
     assert decision.match_source == "info_strict"
 
 
@@ -137,6 +137,34 @@ def test_info_strong_content_not_overridden_by_unclear(engine):
     assert decision.match_source == "content"
 
 
+def test_tpp_routes_to_chairman_on_any_mailbox(engine):
+    decision = route_email(
+        _email(
+            mailbox="sales@turbo-don.ru",
+            routing_recipient="sales@turbo-don.ru",
+            subject="Приглашение",
+        ),
+        combined_text="Торгово-промышленная палата Ростовской области направляет приглашение",
+        recipient="sales@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code == "00-000001"
+    assert decision.match_source == "institution_chairman"
+    assert decision.confidence_level == ConfidenceLevel.HIGH
+    assert not _needs_rag_fallback(decision)
+
+
+def test_apgo_routes_to_chairman(engine):
+    decision = route_email(
+        _email(subject="Документы АПГО"),
+        combined_text="АПГО направляет материалы для рассмотрения",
+        recipient="info@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code == "00-000001"
+    assert decision.match_source == "institution_chairman"
+
+
 def test_other_mailbox_amural_not_forced_to_info_rules(engine):
     decision = route_email(
         _email(
@@ -152,7 +180,7 @@ def test_other_mailbox_amural_not_forced_to_info_rules(engine):
     assert decision.services[0].code == "00-000044"
 
 
-def test_other_mailbox_ministry_not_forced_to_od(engine):
+def test_ministry_routes_to_operational_director_on_any_mailbox(engine):
     decision = route_email(
         _email(
             mailbox="officemanager@turbo-don.ru",
@@ -163,9 +191,25 @@ def test_other_mailbox_ministry_not_forced_to_od(engine):
         recipient="officemanager@turbo-don.ru",
         engine=engine,
     )
-    assert decision.match_source == "exact_email"
-    assert decision.services[0].code == "00-000066"
-    assert decision.match_source != "info_strict"
+    assert decision.services[0].code == "00-000152"
+    assert decision.match_source == "institution_operational_director"
+    assert decision.confidence_level == ConfidenceLevel.HIGH
+    assert not _needs_rag_fallback(decision)
+
+
+def test_administration_routes_to_operational_director(engine):
+    decision = route_email(
+        _email(
+            mailbox="sales@turbo-don.ru",
+            routing_recipient="sales@turbo-don.ru",
+            subject="Запрос",
+        ),
+        combined_text="Администрация города Ростова-на-Дону направляет документы",
+        recipient="sales@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code == "00-000152"
+    assert decision.match_source == "institution_operational_director"
 
 
 def test_amural_beats_ministry_on_info(engine):
@@ -175,5 +219,5 @@ def test_amural_beats_ministry_on_info(engine):
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000066"
+    assert decision.services[0].code == "00-000001"
     assert decision.match_source == "info_strict"

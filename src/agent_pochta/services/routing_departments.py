@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from agent_pochta.config import PROJECT_ROOT
+from agent_pochta.routing.deterministic_sales import load_deterministic_sales_rules
 from agent_pochta.schemas import Department, DepartmentRecord
 
 _PACKAGE_RULES_PATH = Path(__file__).resolve().parent.parent / "routing" / "data" / "routing_rules.json"
@@ -16,6 +17,8 @@ _DEFAULT_RULES_PATH = PROJECT_ROOT / "data" / "routing_rules.json"
 _DEFAULT_ENTERPRISE_PATH = PROJECT_ROOT / "data" / "enterprise_positions.json"
 _DEFAULT_COMPARISON_PATH = PROJECT_ROOT / "data" / "departments_comparison_report.json"
 _DEFAULT_TZ_TOPICS_PATH = PROJECT_ROOT / "data" / "tz_department_topics.json"
+_DEFAULT_UI_ALLOWLIST_PATH = PROJECT_ROOT / "data" / "ui_department_allowlist.json"
+_UI_EXCLUDED_CODES = frozenset({"00-000007", "00-000149"})
 
 _SPECIAL_SKIP_CODES = frozenset({"00-999997", "00-999998", "00-999999"})
 _LEADER_POSITION_MARKERS = ("начальник", "директор", "главный", "руководитель", "заместитель директора")
@@ -127,11 +130,28 @@ def build_departments_from_rules(rules: dict) -> list[Department]:
             responsibility_by_code.setdefault(code, set()).add(about.strip())
 
     for keyword in rules.get("sales_orkk_holdings", []):
-        _add_keywords(keywords_by_code, "00-000076", str(keyword))
+        _add_keywords(keywords_by_code, "00-000042", str(keyword))
     for keyword in rules.get("sales_gazprom", []):
         _add_keywords(keywords_by_code, "00-000076", str(keyword))
     for keyword in rules.get("sales_odp", []):
-        _add_keywords(keywords_by_code, "00-000075", str(keyword))
+        _add_keywords(keywords_by_code, "00-000155", str(keyword))
+
+    deterministic_rules = load_deterministic_sales_rules()
+    for rule in deterministic_rules.get("product_rules") or []:
+        code = str(rule.get("department_id") or "")
+        if code:
+            for keyword in rule.get("keywords") or []:
+                _add_keywords(keywords_by_code, code, str(keyword))
+    for department_id, markers_key in (
+        (deterministic_rules.get("foreign_department_id"), "foreign_markers"),
+        (deterministic_rules.get("dealer_department_id"), "dealer_markers"),
+        (deterministic_rules.get("gazprom_department_id"), "gazprom_markers"),
+        (deterministic_rules.get("orkk_department_id"), "orkk_holdings"),
+        (deterministic_rules.get("orkk_department_id"), "industrial_markers"),
+    ):
+        if department_id:
+            for keyword in deterministic_rules.get(markers_key) or []:
+                _add_keywords(keywords_by_code, str(department_id), str(keyword))
 
     departments: list[Department] = []
     for code, name in sorted(dept_names.items()):
@@ -525,19 +545,83 @@ def build_departments_from_structure(
     return sorted(departments, key=lambda d: d.department_id)
 
 
+def resolve_ui_department_allowlist_path(path: Path | str | None = None) -> Path | None:
+    """Путь к ui_department_allowlist.json (Excel-службы + 00-000001 без директоров)."""
+    if path:
+        candidate = Path(path)
+        return candidate if candidate.is_file() else None
+    return _DEFAULT_UI_ALLOWLIST_PATH if _DEFAULT_UI_ALLOWLIST_PATH.is_file() else None
+
+
+@lru_cache(maxsize=4)
+def load_ui_department_allowlist(path: str = "") -> dict[str, str]:
+    """Код → имя служб, доступных в UI picker и как LLM/RAG-кандидаты."""
+    file = resolve_ui_department_allowlist_path(path or None)
+    if not file:
+        return {}
+    data = json.loads(file.read_text(encoding="utf-8"))
+    excluded = {str(code).strip() for code in (data.get("excluded_ui_codes") or [])}
+    excluded.update(_UI_EXCLUDED_CODES)
+    result: dict[str, str] = {}
+    for row in data.get("departments") or []:
+        code = str(row.get("code") or "").strip()
+        name = str(row.get("name") or "").strip()
+        if code and re.match(r"00-\d{6}", code) and code not in excluded:
+            result[code] = name or code
+    return result
+
+
+def is_ui_department_allowed(
+    code: str,
+    *,
+    allowlist_path: Path | str | None = None,
+) -> bool:
+    """True, если код есть в allowlist UI/LLM (или allowlist не задан — всё разрешено)."""
+    path_key = str(resolve_ui_department_allowlist_path(allowlist_path) or "")
+    allowlist = load_ui_department_allowlist(path_key)
+    if not allowlist:
+        return True
+    return str(code or "").strip() in allowlist
+
+
+def filter_departments_for_ui_llm(
+    departments: list[Department],
+    *,
+    allowlist_path: Path | str | None = None,
+) -> list[Department]:
+    """Оставляет только службы из allowlist (для RAG→LLM candidates)."""
+    path_key = str(resolve_ui_department_allowlist_path(allowlist_path) or "")
+    allowlist = load_ui_department_allowlist(path_key)
+    if not allowlist:
+        return departments
+    return [d for d in departments if d.department_id in allowlist]
+
+
 def list_active_departments_for_ui(
     rules: dict | None = None,
     *,
     enterprise_path: Path | str | None = None,
+    allowlist_path: Path | str | None = None,
 ) -> list[dict[str, str]]:
-    """Активные отделы для UI: код 1С и полное имя из структуры (без spam/ликвид.)."""
+    """Активные отделы для UI: Excel-allowlist (+ 00-000001), без директоров/spam."""
     rules = rules or load_routing_rules()
     enterprise_file = resolve_enterprise_positions_path(enterprise_path)
     enterprise = json.loads(enterprise_file.read_text(encoding="utf-8"))
     tz_routing_codes = _tz_routing_codes(enterprise, rules)
     onec_names = load_onec_department_names_map(str(enterprise_file))
 
+    path_key = str(resolve_ui_department_allowlist_path(allowlist_path) or "")
+    allowlist = load_ui_department_allowlist(path_key)
+
     items: list[dict[str, str]] = []
+    if allowlist:
+        for code, allowlist_name in sorted(allowlist.items()):
+            if _should_skip_code(code, tz_routing_codes):
+                continue
+            name = onec_names.get(code) or allowlist_name or code
+            items.append({"id": code, "name": name})
+        return items
+
     for code, name in sorted(onec_names.items()):
         if _should_skip_code(code, tz_routing_codes):
             continue

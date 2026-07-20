@@ -327,7 +327,7 @@
         "не удается доставить: приглашение на пмгф-2026 ооо \"нпо турбулентность-дон",
         "доставить приглашение на"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Уведомление о неудачной доставке легитимного письма от контрагента (ООО НПО Турбулентность-ДОН). Домен отправителя проверен (SPF/DKIM прошли)."
     },
     {
@@ -443,7 +443,7 @@
         "*** spam *** публикация изменений по процедуре 2136517/1",
         "spam публикация изменений"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Деловое письмо от известного промышленного партнера (СИБУР) по закупочной процедуре, несмотря на слово SPAM в теме, которое является частью шаблона уведомления о тендере."
     },
     {
@@ -882,7 +882,7 @@
         "новая закупка пао \"ростелеком\" - \"вок в ростовскую область",
         "закупка пао ростелеком"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Легитимное уведомление от платформы ЭТП ГПБ о тендере, не является фишингом или вредоносным спамом."
     },
     {
@@ -894,7 +894,7 @@
         "новая закупка гбу по \"рцит\" - \"поставка аккумуляторной батареи для ибп, псковская область",
         "гбу по рцит"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Легитимное уведомление от Электронного Торгового Портала, не содержит признаков фишинга или рекламы."
     },
     {
@@ -920,7 +920,7 @@
         "высылаем просьбой",
         "день высылаем"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Деловое письмо от благотворительной организации с реквизитами и просьбой о финансовой помощи."
     },
     {
@@ -1023,7 +1023,7 @@
       "keywords": [
         "⚡️задерживается вылет рейса u6-146 по маршруту сочи — самара"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
     },
     {
@@ -1266,7 +1266,7 @@
       "keywords": [
         "напоминание о необходимости рассмотреть документ"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Деловое письмо от контрагента по договору поставки"
     },
     {
@@ -1582,7 +1582,7 @@
       "keywords": [
         "автоматическое уведомление.предварительное оповещение об отправлении груза"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
     },
     {
@@ -1594,7 +1594,7 @@
         "примите участие в закупке №1117519",
         "в закупке 1117519"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Сбой интеграции с 1С: Client error '403 Forbidden' for url 'http://192.168.2.229:81/erp_pm/odata/standard.odata/Document_%D0%A2%D0%94_%D0%92%D1%85%D0%BE%D0%B4%D1%8F%D1%89%D0%B0%D1%8F%D0%9A%D0%BE%D1%80%D1%80%D0%B5%D1%81%D0%BF%D0%BE%D0%BD%D0%B4%D0%B5%D0%BD%D1%86%D0%B8%D1%8F?$format=json'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
     },
     {
@@ -1607,7 +1607,7 @@
         "132391-тт выполнение монтажных",
         "ао богословское рудоуправление"
       ],
-      "label": "spam",
+      "label": "not_spam",
       "reason": "Сбой интеграции с 1С: Client error '403 Forbidden' for url 'http://192.168.2.229:81/erp_pm/odata/standard.odata/Document_%D0%A2%D0%94_%D0%92%D1%85%D0%BE%D0%B4%D1%8F%D1%89%D0%B0%D1%8F%D0%9A%D0%BE%D1%80%D1%80%D0%B5%D1%81%D0%BF%D0%BE%D0%BD%D0%B4%D0%B5%D0%BD%D1%86%D0%B8%D1%8F?$format=json'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
     },
     {
@@ -1655,6 +1655,2552 @@
         "*** spam *** you have a new buyer ;- 1 new notice to check 7/15/2026 8:20:48 a.m",
         "7/15/2026 8 20",
         "buyer 1 new"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "968aa9d2-b10f-41c0-ab3d-d0b189d2095a",
+      "created_at": "2026-07-16T06:54:11.335510+00:00",
+      "message_id": "<e679a650509856daf2ceac20f5df523e@haensch.ru>#info@haensch.ru",
+      "sender_email": "info@haensch.ru",
+      "keywords": [
+        "приглашаем на обучение нефте-газовым стандартам инти. 1й модуль бесплатно",
+        "инти 1й модуль"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "9ea6fa4e-fe9a-46bd-ad45-4c1b5d2f051b",
+      "created_at": "2026-07-16T07:02:34.402856+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#metrologia@ngs.ru",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "bb0f5ea9-e596-463a-8f3a-5ffc72716be6",
+      "created_at": "2026-07-16T07:02:36.132514+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#tr-labs@yandex.ru",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "3341bda4-53b3-44ab-a165-33bbae5cd7ae",
+      "created_at": "2026-07-16T07:02:37.238517+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#metrolog@cit-td.ru",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "5e9f7a3e-7022-4eb9-8896-bb41d5260bcc",
+      "created_at": "2026-07-16T07:02:38.222506+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#office@vniir.org",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "184e2d96-d922-462c-8fd2-6788c4850925",
+      "created_at": "2026-07-16T07:02:39.093147+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#konovalovda@gmail.com",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "0fca2c66-afac-497d-821c-fed5e7d86de0",
+      "created_at": "2026-07-16T07:02:40.143702+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#golubenko@novatek.ru",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "22cbca5d-5674-47d1-a26f-41b1c17b4522",
+      "created_at": "2026-07-16T07:02:41.144942+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#info@cetrt.ru",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "62e61fa6-0ce4-4278-9bbc-8cfc0cb119a2",
+      "created_at": "2026-07-16T07:02:42.355386+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#ooo.ms@list.ru",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "b17e92b4-232d-43f1-a84e-7e912c26c5ac",
+      "created_at": "2026-07-16T07:02:43.311926+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#m.varnavsky@gidro73.ru",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "a54d4fb4-9e2f-4374-8af3-ceff39b11e8c",
+      "created_at": "2026-07-16T07:02:44.705441+00:00",
+      "message_id": "<1784185249.275522282@f341.i.mail.ru>#secretar@graz.sura.ru",
+      "sender_email": "obrazovanie1@internet.ru",
+      "keywords": [
+        "конфигуратор областей 19-20.08.pdf, отбор проб 12-13.08.pdf, требования к испыт лабор 17-18.08.pdf и ещё 1 файл",
+        "12-13.08.pdf требования к",
+        "19-20.08.pdf отбор проб"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "c59e614f-7035-4c59-ab07-b07c49548b42",
+      "created_at": "2026-07-16T07:02:46.906145+00:00",
+      "message_id": "<280521784184986@mail.yandex.ru>#uk_omto4@turbo-don.ru",
+      "sender_email": "oleg-ingenegr@yandex.ru",
+      "keywords": [
+        "закупка на мгс_10",
+        "возможность заказа",
+        "для закупки"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "3b943658-cb8e-4c79-a3cc-fbc317812f56",
+      "created_at": "2026-07-16T07:07:54.114229+00:00",
+      "message_id": "<178418000035.195.18387495780007585786@backend3-mailsend-system-worker-5d555c45fc-46bwg>#td_asutp@turbo-don.ru",
+      "sender_email": "magic@huntflow.ru",
+      "keywords": [
+        "ваша заявка на подбор: начальник отдела",
+        "на подбор начальник"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "63282b8d-4845-4a49-a8ec-70ab5aad3086",
+      "created_at": "2026-07-16T08:35:15.123146+00:00",
+      "message_id": "<a1ed1d7df6c24d1f8d654fed9daa4d8a@MAIL.turbo-don.ru>#mgs_metrolog@turbo-don.ru",
+      "sender_email": "shyshkou@belgim.by",
+      "keywords": [
+        "заявление",
+        "375-17-378-98-13 shyshkou",
+        "shyshkou belgim.by",
+        "андреевич тел",
+        "белгим шишков",
+        "будет в",
+        "бумаге с"
+      ],
+      "label": "not_spam",
+      "reason": "Ручная проверка: деловая переписка БелГИМ по метрологии, не спам."
+    },
+    {
+      "id": "b2097650-04a6-4b4f-acbe-432dc3c7bf7d",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<eba33382-8363-4ce7@81d5-04b0f8f0a641>",
+      "sender_email": "hello@1cbit.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "d1d1d10a-8688-466d-9488-f13e0576fc3b",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<70294.20596479975.sktb_razvitie2=turbo-don.ru@smartgopro.info>",
+      "sender_email": "digest@smartgopro.info",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "2bd38a6b-77b0-44cc-a489-a40c6eae5bb4",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<643739879@mx102.rusender-mail-100.ru>",
+      "sender_email": "zakaz1@p-i-group.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "d67cd2c9-d1a3-4963-b270-c7c1fea8da4b",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<E1wkJNx-0000000CcWf-3cwH@mta-ru-r9-550.bitrix24.com>",
+      "sender_email": "no-reply@npo-silat.bitrix24.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "fc29cef2-6c04-4cf6-8db9-9e8305852a37",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716130713.0.20260716130713_eui_@25627291.128911.87971599.masssending.actionmedia>",
+      "sender_email": "reply@mail.fss-market2-24.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "65ded3b8-88d1-47a1-89b2-1774604370c6",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<vmime.6a58a967.737c.771e60006b30a000@sbis-sbis-notice-sender-aa-00g-7dbcd5d778-vq4d6>",
+      "sender_email": "6141021685@sabylink.ru",
+      "keywords": [
+        "spam для пользователя",
+        "6141021685"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "164257f5-f4ce-47cf-9e52-160a212c89a9",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<6a58b19fb72d8fd710b2bc52@mail.kontur.ru>",
+      "sender_email": "noreply@kontur.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_noreply"
+    },
+    {
+      "id": "282a563a-6e86-4043-8e3a-8b5ebf5ad081",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716090846.0.20260716090846_eui_@25623543.333.87971613.masssending.actionmedia>",
+      "sender_email": "reply@mail.glavbukh-client-2023.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "bd2a0979-acda-453e-a448-9d1835b381aa",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<4638280004000080ea7d8303@mta4.directcrm.ru>",
+      "sender_email": "info@e.roseltorg.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "c54b2992-4933-43ac-85db-1978156970eb",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<d1a15edacf8bfe093d4a0f9ec.c52c7ac774.20260716100419.d2777bc7d9.deab1de3@mail221.atl81.rsgsv.net>",
+      "sender_email": "noreplay@italtronic.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "d8b05f7e-9d6d-468c-8a12-3c98ff1046ed",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716125632.0.20260716125632_eui_@677.15235.34428.pl74745.x_1758663213548919>",
+      "sender_email": "org@info.cc-cb.ru",
+      "keywords": [
+        "строительство ндс и",
+        "ндс и налог",
+        "и налог на",
+        "налог на прибыль"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "f27e5ed8-60bd-44f5-a1e6-0ac2b7ba0acb",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<596004574.994728.1784195545148.JavaMail.zimbra@cdek.ru>",
+      "sender_email": "b.globa@cdek.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "aea0376f-09f6-4831-aeaf-279fbf4def4a",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716124939.1.20260716125039_eui_@2262.495.5079.pl9002.ppa>",
+      "sender_email": "ot@1pa-center.ru",
+      "keywords": [
+        "изменения в порядке"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "2712e002-d7b2-4324-a859-30aff363c62c",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<92b735348dbf44f59f73abf060093c61@rusregister.ru>",
+      "sender_email": "pda@rusregister.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_education"
+    },
+    {
+      "id": "3765ba6f-c992-4d7b-8197-04c1a3c78cae",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<e43639fa266566c96554619997054faa@diva-nedv.ru>",
+      "sender_email": "info@diva-nedv.ru",
+      "keywords": [
+        "изготовление деталей из",
+        "деталей из металла",
+        "из металла по",
+        "металла по чертежам"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "7e09f24a-4fc5-464f-a186-5631f6035706",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<50eedb2ca4e1faf7bd3d46c70f14cd4e@1inknet.ru>",
+      "sender_email": "info@1inknet.ru",
+      "keywords": [
+        "изделия из металла",
+        "из металла по",
+        "металла по чертежам",
+        "по чертежам и",
+        "чертежам и эскизам"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "ecad8c8d-120a-4bd2-94d6-22921d276bc2",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<ef558b21a005ff5eff20af1fc89ee09e@cfo-russia.ru>",
+      "sender_email": "info@cfo-russia.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "44bc2d89-7315-4e7a-81b9-d40d6e68c6ed",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<CAEaeugJcVAJcqJnm8BvafQ--ghqfJgjoMA0Vax_o74TUt3gCpg@mail.gmail.com>",
+      "sender_email": "spectrbc364@gmail.com",
+      "keywords": [
+        "тарифы на выпуск",
+        "на выпуск независимой",
+        "выпуск независимой гарантии",
+        "независимой гарантии по",
+        "гарантии по закупке",
+        "по закупке 0572100005326000095"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:gov_procurement_repair"
+    },
+    {
+      "id": "dd4a8de7-ab8b-4c27-a923-d2d5d1ac3d40",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716092009.6093CC1CB6@forward101b.mail.yandex.net>",
+      "sender_email": "mailer-daemon@yandex.ru",
+      "keywords": [
+        "mailer-daemon"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_noreply"
+    },
+    {
+      "id": "d870091b-f88a-4255-a005-1388bcbb7393",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716091136.B01D0C02C3@mx1.hms-it.ru>",
+      "sender_email": "mailwebportal@hms-neftemash.ru",
+      "keywords": [
+        "cбор ткп по",
+        "ткп по конкурсу",
+        "по конкурсу ид",
+        "mailwebportal"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "2871d3c3-031e-477f-8800-70782cd4ed30",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1005680252.2229033.1784193032534@global-services-notify-ms-mail-adapter-5955694554-l4lgq>",
+      "sender_email": "noreply.bid@gazprom-neft.ru",
+      "keywords": [
+        "noreply.bid"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "c61eac31-011d-4614-a149-60952b5ba0e8",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1784192970.366782.2631989.nullmailer@6eb1fa933cf2>",
+      "sender_email": "vsamigulina@tender.pro",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "292c5566-9451-4f6d-a686-e47a34eba1f7",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<0e4cc3e473778564d1ab0782c129061b@etpgpb.ru>",
+      "sender_email": "passport@etpgpb.ru",
+      "keywords": [
+        "новые коммерческие закупки",
+        "коммерческие закупки по",
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "passport"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "2c5b28bc-14cd-4f95-9e3b-81064f3347a1",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716085935.7B19B51CEA5@mail.turbo-don.ru>",
+      "sender_email": "mailer-daemon@turbo-don.ru",
+      "keywords": [
+        "successful mail delivery",
+        "mail delivery report",
+        "mailer-daemon"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "677ee132-d1f1-41c4-9d29-37eb4df95fe1",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<310241784192047@mail.yandex.ru>",
+      "sender_email": "tehnomer-m@yandex.ru",
+      "keywords": [
+        "опросный лист 30579",
+        "лист 30579 от",
+        "от 16.06 ufg",
+        "16.06 ufg для",
+        "ufg для ооо",
+        "для ооо нестле"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "59515517-925d-4cb7-b8c2-4a27f69c2be4",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<6a589c10b72d8fd710ac8da1@mail.kontur.ru>",
+      "sender_email": "kontur-invites@mail.kontur.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "f187d333-e299-4b54-b5ac-4e84c302493e",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1784191834.804756330@f485.i.mail.ru>",
+      "sender_email": "koblova.n@valeria.ru.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "993872b8-f5e1-4047-8ccb-dc754f50994e",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716100233.0.20260716100233_eui_@25624089.99043.87971613.masssending.actionmedia>",
+      "sender_email": "reply@mail.bss-vip.ru",
+      "keywords": [
+        "налоговые риски 2026",
+        "риски 2026 узнайте",
+        "узнайте к чему",
+        "к чему готовиться",
+        "чему готовиться заранее",
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "c0edd004-db98-4cd1-98e1-a0e57291d90c",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716113706.0.20260716113706_eui_@1229.1242.58650.pl17940.x_1757667216454145>",
+      "sender_email": "sendbox@gmtorg.ru",
+      "keywords": [
+        "только в выходные",
+        "в выходные скидки",
+        "выходные скидки до",
+        "скидки до 20",
+        "sendbox"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "5f7282bd-bd4b-4463-858c-af402f9cc703",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<bcR7RiR3H7hG1T1mtJF05im6B9ZPPaSJ9ElBmypBtkU@supervisor-events-api-ixc2-2>",
+      "sender_email": "invitation@mts-link.ru",
+      "keywords": [
+        "как проверить бюджет",
+        "проверить бюджет до",
+        "invitation"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "8ac18e5a-6421-4dc6-b64f-4ecb9e006349",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<43222a0000006ac60100c1f1@s1.mbx-sender-01.ru>",
+      "sender_email": "info@news.courson.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "05b2e422-da38-482b-bab3-5bb3e0ae8463",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716102345.0.20260716102345_eui_@68784.704900.1754821.pl12006.crpt>",
+      "sender_email": "lecture@crpt.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "d259bafd-cd2e-4ddd-8923-e043eaf89960",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716090232.0.20260716090232_eui_@25623380.195580.87971613.masssending.actionmedia>",
+      "sender_email": "reply@mail.glavbukh-sch-2023.ru",
+      "keywords": [
+        "так изменился главбух",
+        "изменился главбух подумав",
+        "главбух подумав о",
+        "подумав о будущем",
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "3798e228-68a9-4c2c-a42d-9a7bf8735ba2",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<DAqYe4UVVYrVMoSDLYeGegjFjYkUxntdr2VwTeq86Q@email.xn----8sbbilafpyxcf8a.xn--p1ai>",
+      "sender_email": "mail@xn----8sbbilafpyxcf8a.xn--p1ai",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "ffcf39d6-a488-4ed3-b685-27787628c94f",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716080506.76D196A005E@id.eoil.ru>",
+      "sender_email": "support@mail.eoil.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "f2cd3130-1c33-4f7d-a3cf-ede5106c67eb",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<2b877d08-9efa-484c-93ee-2607188e42a2@baikalsr-mailer.ru>",
+      "sender_email": "info@baikalsr-mailer.ru",
+      "keywords": [
+        "счет на оплату",
+        "на оплату рст00041226"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "1b93a568-f8f3-4e3b-8048-170d00769813",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716105726.0.20260716105726_eui_@442.18205.93630.pl32641.x_1602475819906006>",
+      "sender_email": "zakaz2@uralenergotel.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "61482398-e79e-43be-9e79-d477978f7ffa",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<E1wkGTw-hxAgMF-Ox@ucs701-ucs-11.msgpanel.com>",
+      "sender_email": "journal@sibstroyekspert.pro",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "ed73ead5-c093-4eaa-b3f9-d078ddf486fc",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<3f4f4ad6-e0d5-5a48-8f2c-8f9d698ec2a1@profitcon.online>",
+      "sender_email": "info@profitcon.online",
+      "keywords": [
+        "о повышении квалификации",
+        "повышении квалификации руководителей",
+        "квалификации руководителей конструкторских",
+        "руководителей конструкторских отделов"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "07f1c2d8-467b-4527-bb67-421d7b3bc637",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<10389580.20260716105458@smart-ek.ru>",
+      "sender_email": "rostov@smart-ek.ru",
+      "keywords": [
+        "ua-20pmfp-sc8001 отгрузка",
+        "rostov"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_education"
+    },
+    {
+      "id": "52482951-c033-4330-9ff0-dc3c1a393fae",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<124748.20589480352.uk_omto4=turbo-don.ru@pochta.ru>",
+      "sender_email": "news@pochta.ru",
+      "keywords": [
+        "news"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "ca941e66-f540-4ee7-a6fd-87e5fa1279ce",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<d5d6428f5e8b4e12bdcf141802ddcdbf@tpp.ru>",
+      "sender_email": "lisenkova@tpp.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "be057611-f00a-4005-81dc-1aab86970e53",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<vmime.6a588a4d.4cea.31fadd8e4ce795a2@sbis-sbis-notice-sender-aa-00g-7dbcd5d778-wdt7z>",
+      "sender_email": "noreply@mail-report.saby.ru",
+      "keywords": [
+        "письмо от госоргана",
+        "от госоргана о",
+        "госоргана о предоставлении",
+        "о предоставлении отчета",
+        "предоставлении отчета п-2",
+        "отчета п-2 за"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:gov_procurement_repair"
+    },
+    {
+      "id": "ccce0cd5-7854-4fb8-9f9d-d1e4dac3cf1c",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<34081876-60ea-4077-a2dc-56e0ae2d2c1a@tpp.ru>",
+      "sender_email": "oper@tpp.ru",
+      "keywords": [
+        "автоматическая рассылка по",
+        "рассылка по заявке",
+        "по заявке 260703041",
+        "oper"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "2e4a2d43-b691-4440-8d6b-87247f978d9a",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<70545-2282367326080732967-53b7f7c6-ad9c-4007-a39d-5dcf23b1009c@carrotquest-mail.io>",
+      "sender_email": "news@smartway.today",
+      "keywords": [
+        "автобусы онлайн и",
+        "онлайн и еще",
+        "и еще 6",
+        "еще 6 обновлений",
+        "news"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "9a463c03-e888-437d-a54c-bb7992d66b33",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<178418742283.1.9337461289596028548@MOWHUB.office.mow>",
+      "sender_email": "noreply@dpd.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_noreply"
+    },
+    {
+      "id": "b25b8b0c-7b35-4046-8b4b-6f0e2e68cb6b",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<018901dd14f1$38a69ce0$a9f3d6a0$@actionmedia.ru>",
+      "sender_email": "akrivtsova@actionmedia.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_education"
+    },
+    {
+      "id": "c128344b-78a2-4841-9c9a-7c636fda9642",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<a2642050-9ebd-522d-b0c8-078b8eeb05fa@profitcon-msk.online>",
+      "sender_email": "info@profitcon-msk.online",
+      "keywords": [
+        "о повышении квалификации"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "9c9a0b59-7ae6-4052-a0b9-0eda7618e32d",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716094639.4.20260716102639_eui_@119718.90053.5318709.pf16399.webinargroup>",
+      "sender_email": "pr@mts-link.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "70056e86-531d-4ba6-b77f-228ca44c8f3f",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<e3b29a0f8745cbd003e85d8b01e2c21f@b2b-center.ru>",
+      "sender_email": "marketplace@b2b-center.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "6465a374-2c2a-433c-860b-43155eb36b1b",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<bf40bd03f203dfb9e1651e8ce5e67a04@rosslovo.ru>",
+      "sender_email": "mailer@rosslovo.ru",
+      "keywords": [
+        "приглашение на выставку",
+        "на выставку полимеры",
+        "выставку полимеры и",
+        "полимеры и композиты",
+        "и композиты 2026",
+        "композиты 2026 номинанты"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "ac4790a1-7172-4e89-bc80-f57306ef2bcf",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716101703.0.20260716101703_eui_@25624645.20181.4960429.masssending.actionmedia>",
+      "sender_email": "reply@mail.action-pravo1.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "4a907e41-5cc7-4ed8-ac9c-83d051bfe6b1",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1784186387.229731679@f729.i.mail.ru>",
+      "sender_email": "info@termopribor.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "c8dab1d8-8a7e-4046-a8e1-a16ccec07df8",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<2f433fb9-48b5-41fa-878e-32c91d59f7af@camozzi.ru>",
+      "sender_email": "rostov@camozzi.ru",
+      "keywords": [
+        "rostov"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "1029770e-a85c-4884-af9f-79b113185a17",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<bx.mail.6a588231.3b8c13@priborkomplekt.bitrix24.ru>",
+      "sender_email": "morozova@pk46.ru",
+      "keywords": [
+        "день марина"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_education"
+    },
+    {
+      "id": "a7e7ec05-71bb-43f0-9a81-4691a87c8644",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716100142.0.20260716100142_eui_@592.3830.42094.import20260121173542.itland>",
+      "sender_email": "marketing@itland.ru",
+      "keywords": [
+        "вебинар itland проектное",
+        "itland проектное и",
+        "проектное и длинноцикловое",
+        "и длинноцикловое производство",
+        "marketing"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "4ceaa3b2-631e-4334-9dcb-44ae997c53b7",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<2KT7KURPSTU4.5Z6UL0AX5QQ11@email-service-api-85b4fb4fd7-wkhvp>",
+      "sender_email": "notifications@lahta-spb.ru",
+      "keywords": [
+        "закончен сбор предложений",
+        "сбор предложений закупке",
+        "предложений закупке 125779",
+        "notifications"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:gov_procurement_repair"
+    },
+    {
+      "id": "16518db1-fc50-453a-9fc3-dfa3cd99dd28",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<E1wkFqp-0000000HF7L-1Tvh@mta-ru-r9-088.bitrix24.com>",
+      "sender_email": "no-reply@energiya2022.bitrix24.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "22a633f9-4e6a-4d5b-b8f3-eab20c822330",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<106077719325@getcourse.ru>",
+      "sender_email": "info@nko-asot.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "be1412d2-36b4-4d0d-99fd-8cfd97f4d14c",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716093333.0.20260716093333_eui_@25623930.52600.87971603.masssending.actionmedia>",
+      "sender_email": "reply@mail.action-digital-school.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "ad436e7e-1ca1-45a0-898d-e427a5c54080",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<bb752a3bf7a94614839882c49badd78a@crm.yandex.ru>",
+      "sender_email": "welcome_adv@yandex-team.ru",
+      "keywords": [
+        "message 59511422 яндекс",
+        "яндекс реклама",
+        "welcome_adv"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "60e58151-6e29-465a-a014-61607c88632f",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716080333.0.20260716080333_eui_@25621236.388801.87971599.masssending.actionmedia>",
+      "sender_email": "reply@jur.mail.glavbukh.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:stop_word"
+    },
+    {
+      "id": "fcf38f00-4064-4e75-8b74-bd0cb8571c3c",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716092448.0.20260716092448_eui_@21794197.1314.10770430.masssending.alfabank>",
+      "sender_email": "inf@alfabank.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "c3fb67ac-ce79-4559-a94a-1a25493f85ef",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "ctY69qRz/qgAAAAACQlG6wAAAAAAAAup",
+      "sender_email": "noreply@sender.ozon.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "4fdda711-fe6f-455f-a5df-7f5bbed13c6c",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<vmime.6a587848.4c91.4410dcff2f1ce95a@sbis-sbis-notice-sender-00g-7ddc78797b-8jvk5>",
+      "sender_email": "noreply@sbis.ru",
+      "keywords": [
+        "для пользователя ефименко",
+        "пользователя ефименко светлана"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "c7248b6d-831e-447d-b08f-5c68bccdf48e",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<cab3eac3-b5bd-4a79@bb32-ec55c91f76bb>",
+      "sender_email": "n.yagudin@finasst.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "ff45426d-29f4-4e5f-a835-47ba27735e4b",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716083221.0.20260716083221_eui_@25622332.6713.4960429.masssending.actionmedia>",
+      "sender_email": "reply@mail.action-pravo2.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "c26428d5-8719-456c-9ed5-3ecceb62d144",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<E1wkFPz-0000000AtA0-3bnz@server312.hosting.reg.ru>",
+      "sender_email": "sales@stpchel.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "3ca2ddd8-03ca-4694-b814-18b689c11d6c",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716090230.0.20260716090230_eui_@13769.170491.612656.pf32601.etp>",
+      "sender_email": "info@mail1.mailetpgpb.ru",
+      "keywords": [
+        "как изменились электронные",
+        "изменились электронные закупки",
+        "электронные закупки в",
+        "закупки в 2025",
+        "в 2025 2026"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "481f3193-4a1b-45c2-8558-c8cc65e9cee7",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716090202.0.20260716090202_eui_@25623353.50304.87971603.masssending.actionmedia>",
+      "sender_email": "reply@mail.rnk-client-2023.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "ffd3fb2a-8ab9-4c85-8e1d-9678cd168989",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716090204.0.20260716090204_eui_@25623352.22351.2754619.masssending.actionmedia>",
+      "sender_email": "reply@mail.upr-client-2023.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "d18d54ef-8fcc-42be-b391-276e552356f1",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<124001dd14e9$fca6aca0$f5f405e0$@groupintech.ru>",
+      "sender_email": "info@groupintech.ru",
+      "keywords": [
+        "договор поставки"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:stop_word"
+    },
+    {
+      "id": "67195f1f-c3ba-476b-8d73-57f231c334e6",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "ctYrauR/IZAAAAAACNbQRgAAAAAAAA6K",
+      "sender_email": "news@news.ozon.ru",
+      "keywords": [
+        "news"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "398d2f7c-a33c-4503-a5ff-48ecebb17644",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716082128.0.20260716082128_eui_@25621950.1435.4960429.masssending.actionmedia>",
+      "sender_email": "reply@mail.xsud-mail.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "e75aa3a8-e833-406c-af2c-ae4ac126b763",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716083229.0.20260716083229_eui_@25622341.11240.4960429.masssending.actionmedia>",
+      "sender_email": "reply@mail.vshu-school.ru",
+      "keywords": [
+        "spam топ-5 вопросов",
+        "топ-5 вопросов по",
+        "вопросов по юридической",
+        "по юридической работе",
+        "юридической работе с",
+        "работе с нейросетями"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "4a1bafed-1ebf-40db-8d6a-f955157a51e2",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "385dbcdb-7aef-4fdf-8e12-fa598e296321-0",
+      "sender_email": "global-seller@email.alibaba.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "d925acab-4a0a-4a35-b8a7-818a66cc3069",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<E1wkF4m-008a93-2s@srv-01.gendalf.ru>",
+      "sender_email": "newsletter@gendalf.ru",
+      "keywords": [
+        "newsletter"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "0918af35-4827-4dc8-8d29-c78946230e4f",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716082143.0.20260716082143_eui_@25621976.20216.2754619.masssending.actionmedia>",
+      "sender_email": "reply@mail.fd-event2025.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "b48de61c-b5e4-4c18-aacf-27a8f289119e",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716084222.0.20260716084222_eui_@25622443.22179.2754619.masssending.actionmedia>",
+      "sender_email": "reply@mail.upr-client-3.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "6d277d6d-bebc-4ec6-912f-b5534a1a89cd",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<20260716084216.0.20260716084216_eui_@25622441.30027.87971603.masssending.actionmedia>",
+      "sender_email": "reply@mail.rnk-client-3.ru",
+      "keywords": [
+        "сфр с 1",
+        "с 1 июля",
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "a06f7029-2ce6-4955-9b83-6029bf244be8",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<57943d3428414ecd96ad87ab24c001f5@nipi-mb3.tomsknipi.ru>",
+      "sender_email": "suleymanovma@rn-pd.rosneft.ru",
+      "keywords": [
+        "запрос стоимости расходомер",
+        "стоимости расходомер вычислитель",
+        "расходомер вычислитель расхода",
+        "вычислитель расхода ш.8708"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "8098fa31-c032-45cc-8813-dd390dcc072c",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<61db0778b8f081ed0d0b3179fb2c45b4@roseltorg.ru>",
+      "sender_email": "lk.soft@roseltorg.ru",
+      "keywords": [
+        "в росэлторг.эдо поступил",
+        "росэлторг.эдо поступил входящий",
+        "поступил входящий документ",
+        "lk.soft"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "8ef7dc4d-a560-4133-bc18-7cec787f7c98",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<4d4b02274e7786ce636e759dc090152b99f4dd14.camel@yamburg.gazprom.ru>",
+      "sender_email": "a.sonin@yamburg.gazprom.ru",
+      "keywords": [
+        "опросной лист",
+        "день согласно",
+        "согласно присланного",
+        "присланного коммерческого"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "877b7d88-0f95-426a-9fed-3d82ded10469",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<26c9e02e8f288ded5e6e43a41656e80b6f4009f0.camel@y.uf.energo.gazprom.ru>",
+      "sender_email": "s.korovin@y.uf.energo.gazprom.ru",
+      "keywords": [
+        "кп на расходомеры",
+        "на расходомеры газа",
+        "s.korovin"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "db414da0-5f8f-4259-9e4d-ab09610f315a",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<c0019a4691424750ba71d5df3f921405@gazprombank.ru>",
+      "sender_email": "anna.uvarova@gazprombank.ru",
+      "keywords": [
+        "гпб_запрос документов в",
+        "документов в рамках",
+        "в рамках мониторинга_2",
+        "рамках мониторинга_2 кв"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "0d5f93d6-7653-4b1f-9880-d0c41ea5dc99",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1507193f9d576d3230b06ecabb2fb54b85167c1e.camel@interrao.ru>",
+      "sender_email": "sheremet_ya@interrao.ru",
+      "keywords": [
+        "ufg-f зав 90686",
+        "день nbsp",
+        "sheremet_ya"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "911642b0-5240-42bc-80bf-6596737213c9",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<75239892-25a0-4f9f-9946-d52c22f500c9@tmn.gazprom-neft.ru>",
+      "sender_email": "kulkov.vv@tmn.gazprom-neft.ru",
+      "keywords": [
+        "порядок и сроки",
+        "и сроки поставки",
+        "сроки поставки уирг",
+        "поставки уирг для"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "63ef7c0c-9260-430e-8e48-140b36348276",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<30892955.1784189773372.JavaMail.oebs_r12@mts.ru>",
+      "sender_email": "oebs_r12@mts.ru",
+      "keywords": [
+        "требуется действие вы",
+        "действие вы приглашены",
+        "вы приглашены зак",
+        "приглашены зак 229864"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "37b68ca4-fbbe-4e7c-8a73-7b530896b27d",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "$null",
+      "sender_email": "espichak@komplekt.gazprom.ru",
+      "keywords": [
+        "запрос ткп 338",
+        "ткп 338 расходомер",
+        "расходомер уз грс",
+        "уз грс выселковская"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "a2be70cf-ac34-4462-bfcc-cd0b33ac758f",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1784182412.645034843@fmail2.qdit>",
+      "sender_email": "ssolomennikov@invest.gazprom.ru",
+      "keywords": [
+        "2026_07_16_ 15314_грц в",
+        "15314_грц в гэк",
+        "в гэк и",
+        "гэк и турб"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "beb1ab5a-16ab-4bde-b973-31f54cc82b1f",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<cf33c8fdfb074612bacbd4caabcabf59@udn.rosneft.ru>",
+      "sender_email": "aamahminov@udn.rosneft.ru",
+      "keywords": [
+        "ол на узпр",
+        "на узпр и",
+        "узпр и жидкости",
+        "aamahminov"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "f61a286a-60db-45ac-96d5-d0e0a308af55",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<6A589AC9020000F600072563@gwia.vniigaz.gazprom.ru>",
+      "sender_email": "s_kondrashova@tez.vniigaz.gazprom.ru",
+      "keywords": [
+        "договор 523374 расходомер",
+        "расходомер 12.1-т143.00.09.018 ол_v9",
+        "12.1-т143.00.09.018 ол_v9 уирг",
+        "ол_v9 уирг 2"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "6b42816c-94e8-42f4-8391-e9222f057968",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "$null",
+      "sender_email": "mkolobanova@komplekt.gazprom.ru",
+      "keywords": [
+        "прямой договор",
+        "дарья и",
+        "ещё одна",
+        "одна просьба-замечание"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "a3d4fbe3-6d27-4bc8-83b4-1bc8a58cebbb",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<197145ebfeea49f98302458d7fc5a10b@roseltorg.ru>",
+      "sender_email": "rodionova.ve@roseltorg.ru",
+      "keywords": [
+        "приглашение от ао",
+        "от ао дальневосточная",
+        "ао дальневосточная генерирующая",
+        "дальневосточная генерирующая компания"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "f0cbf81e-4abc-4e81-9666-3748e1da2229",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1daca1d5220749729c115c5bbbeffdfd@alfabank.ru>",
+      "sender_email": "alobyshev@alfabank.ru",
+      "keywords": [
+        "ао альфа-банк",
+        "день мы",
+        "мы заинтересованы",
+        "заинтересованы в"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "de8b13a7-aba9-432b-a026-f2a09ed4fc6b",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<97c4e54b-1edb-49b1-ac23-4bc5431fbd8f@rnc.rosneft.ru>",
+      "sender_email": "noreply@rnc.rosneft.ru",
+      "keywords": [
+        "оплата по топливным",
+        "по топливным картам",
+        "топливным картам на",
+        "картам на кассах"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "b635ecd6-1905-491c-96ad-3fda90db02fc",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "191C3649CF654AA49067E921C119292B",
+      "sender_email": "sberbusiness@sberbank.ru",
+      "keywords": [
+        "сбербизнес уведомление об",
+        "уведомление об исполнении",
+        "об исполнении платежа",
+        "sberbusiness"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "31802b6d-8395-4c9c-86ec-2ebf1c8f78ac",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1568caaaa837434999daf7bfa020380d@01-vm-02-01.gazauto.loc>",
+      "sender_email": "ia.liuliaev@gazprom-auto.ru",
+      "keywords": [
+        "спецификация 3 к",
+        "к дог мпг00008387",
+        "дог мпг00008387 от",
+        "мпг00008387 от 03.06.2024"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "bfa2d63a-3537-4353-8b93-f8552abade76",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<e1f3e8faa74c4f19abd2182c5841b6ab@01-vm-02-01.gazauto.loc>",
+      "sender_email": "o.lebedeva@gazprom-auto.ru",
+      "keywords": [
+        "спецификация 3 к",
+        "к дог мпг00008387",
+        "дог мпг00008387 от",
+        "мпг00008387 от 03.06.2024"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "cbc5e17b-7705-48a0-a2d8-d2b46d75a3ae",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "$null",
+      "sender_email": "bgorobenko@komplekt.gazprom.ru",
+      "keywords": [
+        "запрос ткп турбулентность-дон",
+        "прошу предоставить",
+        "bgorobenko"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "98157eba-aa33-4096-9e6a-ff69fc05ffb8",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<17caa406f10a452aa91a04fe4d8f7ab7@01-vm-02-01.gazauto.loc>",
+      "sender_email": "s.khapilin@gazprom-auto.ru",
+      "keywords": [
+        "заявка кдо-4584-1-26/2026",
+        "прошу оказать",
+        "оказать содействие",
+        "содействие в"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "afd04344-b367-4ddb-b0cc-c657327afb57",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<07ede945661a41758cdb10bc1e50f37c@gazprom-neft.ru>",
+      "sender_email": "mayer.yas@gazprom-neft.ru",
+      "keywords": [
+        "строительство системы очистки",
+        "системы очистки газов",
+        "очистки газов г-43-107",
+        "газов г-43-107 и"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "ccc7c537-0088-4fbc-b6b6-45bc2dff50f1",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "$null",
+      "sender_email": "triabtseva@komplekt.gazprom.ru",
+      "keywords": [
+        "отправка протокол_зп_58544",
+        "день проект",
+        "проект договора",
+        "договора на"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "6685d42a-3f44-4b47-98b2-457907be94e0",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<bca3b85c-1473-ac5a-a544-67f4c7a591f5@ktg.gazprom.ru>",
+      "sender_email": "gorlachev@ktg.gazprom.ru",
+      "keywords": [
+        "dkim 15179 гтставрополь",
+        "гтставрополь пи нтц",
+        "пи нтц ответ",
+        "нтц ответ вымпел"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "acd4109e-072f-4e5e-9923-ac5112d3f550",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<a6613d38237c4e72815536ef02f8e69b@mail.turbo-don.ru>",
+      "sender_email": "zaydullin.da@gazprom-neft.ru",
+      "keywords": [
+        "порядок и сроки",
+        "и сроки поставки",
+        "сроки поставки уирг",
+        "поставки уирг для"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "74a493e3-cdf7-4df6-a9e7-37a214f1ac1e",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<F41739444EFC3E4E8ACD38143111CC2501C7032A61@sng-sam-mbx01n2.rosneft.ru>",
+      "sender_email": "sng_upr_admdog@samng.rosneft.ru",
+      "keywords": [
+        "зашифровано исх снг",
+        "исх снг 70/3-",
+        "снг 70/3- 2521",
+        "70/3- 2521 от"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "2f2476e2-11b2-4bd3-8f29-d9eebbc54b70",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<DAD4EAEE562ED541AE52CF39CA2E443F01979A4507@sng-sam-mbx01n1.rosneft.ru>",
+      "sender_email": "as_sharonova@samng.rosneft.ru",
+      "keywords": [
+        "лот 2600128782 газорегуляторный",
+        "газорегуляторный пункт шкафной",
+        "пункт шкафной ао",
+        "шкафной ао самаранефтегаз"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "df801589-4a2a-416b-b080-2194d43ba41b",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<1784107936.751079124@fmail3.qdit>",
+      "sender_email": "a.razumov@adm.gazprom.ru",
+      "keywords": [
+        "повестка совещания 01.07.2026.docx",
+        "a.razumov"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "0311bc47-93a8-4649-aaa8-18a3c1b8ef68",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<ZNk5ADiH0JrFx5AZBp7zDWPoJHCfd4W19sg4UZVbAo@job.job.mailing-55f5d465cc-x4tcm>",
+      "sender_email": "notice@roseltorg.ru",
+      "keywords": [
+        "уведомление о подаче",
+        "о подаче заявки",
+        "подаче заявки на",
+        "заявки на участие"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "d11eda79-46de-4a97-8ceb-06e69c89cc9f",
+      "created_at": "2026-07-16T10:59:06.113916+00:00",
+      "message_id": "<9a44d178-034d-a082-5874-eb6a1242f251@priv.ktg.gazprom.ru>",
+      "sender_email": "shevcov_a_a@priv.ktg.gazprom.ru",
+      "keywords": [
+        "по поставке",
+        "тут отсутствуют",
+        "отсутствуют необходимые",
+        "необходимые документы"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern"
+    },
+    {
+      "id": "6f85c472-2523-4161-9846-46a6ac8ff05a",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<HCD2YKPRSTU4.222VTE711MTH3@srv-dockerhost-01>",
+      "sender_email": "contacts@europlan.ru",
+      "keywords": [
+        "подборка автомобилей с",
+        "автомобилей с пробегом",
+        "с пробегом для",
+        "пробегом для лизинга",
+        "для лизинга и",
+        "лизинга и прямой"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "3770bbc0-e4d3-4425-89d5-c6fb32c25569",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716140137.0.20260716140137_eui_@5721.40602.58717.p522.elcon>",
+      "sender_email": "news@elcon.ru",
+      "keywords": [
+        "news"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "7f740761-588e-4c1c-884e-f8b4b8b92107",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<1122111784199260@mail.yandex.ru>",
+      "sender_email": "mikhail@bmptek.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "57323231-034a-445a-b7f3-6d92161a2e55",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<199061784198742@mail.yandex.ru>",
+      "sender_email": "lanservicekhv@yandex.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "Ручная проверка: деловая переписка по ТКП, не спам."
+    },
+    {
+      "id": "0812cd8a-95e2-45da-a732-f1e3af0e3b30",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<14628f68629d9bf10c3b564f14ad43ef@localhost.localdomain>",
+      "sender_email": "coksender@mediatechnology.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "8afd90a4-7c04-43f5-afab-51a8c2d59c21",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<1784180608.918555526@f480.i.mail.ru>",
+      "sender_email": "dsa.kaz@mail.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "0fa08e25-238b-4da8-bce7-9f4f24484761",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<642799604@mx108.rusender-mail-100.ru>",
+      "sender_email": "info@tlsolutions.ru",
+      "keywords": [
+        "из китая в"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "6c6c45c6-0bb4-4ff5-8b9b-03ea31e19fc5",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<70b8fa82692f42879a354c5c46dba7a9@MAIL.turbo-don.ru>",
+      "sender_email": "promo@sbisinfo.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "4002c133-6832-44d0-817b-3ffc2b3cedf7",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716080123.0.20260716080123_eui_@25622344.16938.31132106.pfl51_86800.actionmedia>",
+      "sender_email": "reply@mail.gd-clients.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "882cefa9-3768-42f9-9900-3d8225c4b402",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716081528.0.20260716081528_eui_@1289.48420.1205936.pl45221.souzsert>",
+      "sender_email": "sales@souzsert.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "7df37bf9-f510-4cfb-acea-7cc1b6b2ce62",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716080243.0.20260716080243_eui_@25621193.86339.87971599.masssending.actionmedia>",
+      "sender_email": "reply@mail.kdelo-client7.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "9162fdf6-1b1d-46ba-9420-e5a38b2c34f3",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716082133.0.20260716082133_eui_@1588.74459.766833.pl11967.vsktest>",
+      "sender_email": "sales@vsktest.info",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "c9472323-0364-41d7-9ef5-c51f1b23dfb3",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<u4539647.ed989a1120791973639b5663bf1014f8dfd182ae4.t0001.b4da95f25fba3d96289f69dc0cafe37ac9748ac7a.ts20260716@fabrikant.ru>",
+      "sender_email": "nobody@hamailsender.fabrikant.ru",
+      "keywords": [
+        "закрытый мониторинг цен",
+        "мониторинг цен гк",
+        "цен гк росатом",
+        "гк росатом 3477200",
+        "росатом 3477200 приглашение",
+        "приглашение к участию"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "e0525982-6c02-43c4-809a-60005e139eb2",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716080258.0.20260716080258_eui_@25621196.48702.87971599.masssending.actionmedia>",
+      "sender_email": "reply@mail.rnk-client-1.ru",
+      "keywords": [
+        "как учесть сервисный",
+        "учесть сервисный сбор",
+        "сервисный сбор по",
+        "сбор по налогу",
+        "по налогу на",
+        "налогу на прибыль"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "6073383e-2fc0-4047-baa1-b1288d3c1390",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<115116.20586586059.td_odppo=turbo-don.ru@academiagoz.org>",
+      "sender_email": "info@academiagoz.org",
+      "keywords": [
+        "spam гоз вся",
+        "гоз вся цепочка",
+        "вся цепочка поставок",
+        "цепочка поставок под",
+        "поставок под контролем"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "8405a3d6-72e9-42a1-af79-dbe3144ba19d",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<3a142a000000078e000019e3@mta10-1.directcrm.ru>",
+      "sender_email": "info@mail.tektorg.ru",
+      "keywords": [
+        "nbsp nbsp"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "33e9f301-525d-4cda-847f-8d09839a30e8",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<alhnOy5Hs6wtIkE+@steel-abrasives.ru>",
+      "sender_email": "public@steel-abrasives.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "b9a44713-6775-4677-8022-aa9b37d6ae05",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716050658.822919FC32@mail2.sberbank-ast.ru>",
+      "sender_email": "utp-noreply@sberbank-ast.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "83376d60-83b7-4f66-9e3b-a88893b17d8d",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716080327.0.20260716080327_eui_@25621211.15565.4960429.masssending.actionmedia>",
+      "sender_email": "reply@mail.action-goszakaz-ss4.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "3d3b19a6-d06b-48e6-b93f-596366cb5a00",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716075136.0.20260716075136_eui_@25620566.54652.87971599.masssending.actionmedia>",
+      "sender_email": "reply@mail.fss-event2025.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "8c4c8353-ae45-4ef5-9842-ebf1cefb6f18",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716074956.0.20260716074956_eui_@4617.8042.66614.pl35518.x_1707295484938503>",
+      "sender_email": "aseev@i-tenders.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "e04e95c7-e1f9-46a1-86f4-6d1c5c35a104",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<0de05bb6-6908-40de-a27c-e738f7ba46db@MSE-MB16.hq.corp.mmk.chel.su>",
+      "sender_email": "oracle_r12@mmk.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "fad7565e-f4c1-45c6-8ca0-a4851c7b42e5",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716070744.0.20260716070744_eui_@25619761.88131.87971599.masssending.actionmedia>",
+      "sender_email": "reply@mail.fss-demo2-24.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "19f53fd4-3e32-4d49-a81f-f296f7e6a4f5",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716070243.0.20260716070243_eui_@25619552.76240.87971613.masssending.actionmedia>",
+      "sender_email": "reply@mail.buhsoft-client-2023.ru",
+      "keywords": [
+        "в середине года",
+        "середине года изменили",
+        "года изменили правила",
+        "изменили правила для",
+        "правила для налога",
+        "для налога на"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "7a0854fb-a19f-4f5f-8b88-fd2f05ba9fe2",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716064636.0.20260716064636_eui_@25619439.11473.4960429.masssending.actionmedia>",
+      "sender_email": "reply@mail.action-goszakaz-per2.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "7df70633-9754-4619-bd63-4bf63204c6ce",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<257369c904434516bb44e024a07f1f0c@01-vm-02-01.gazauto.loc>",
+      "sender_email": "s.khapilin@gazprom-auto.ru",
+      "keywords": [
+        "заявка кдо-4584-1-26/2026",
+        "s.khapilin"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "ebb2ea50-0e72-4dfd-8952-69550246ef4e",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<BC_MSG_ID_342601547@bico.su>",
+      "sender_email": "sevostyanova@bico.su",
+      "keywords": [
+        "тендеров по этому",
+        "по этому запросу",
+        "sevostyanova"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "25aace8a-a9d1-4782-b829-02d469f6e943",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<1784174370.877874636@f741.i.mail.ru>",
+      "sender_email": "sgm@augustprom.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "53f7aa3d-7214-4c76-af1c-f67d6c478c5d",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<u507032.fine.reporter@shtrafovnet.ru>",
+      "sender_email": "noreply@shtrafovnet.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "a9104efa-d8dc-42ff-af49-a2efc8597511",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<1784169263.319381.1747641.nullmailer@6eb1fa933cf2>",
+      "sender_email": "client@tender.pro",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "296d17a1-f789-4bd3-bd01-b0e087c12386",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<!&!AAAAAAAAAAAuAAAAAAAAAIBPk0hEonhMuyYfGQ6iusoBAMO2jhD3dRHOtM0AqgC7tuYAAAAAAA4AABAAAAA53hsGyCZsQ6+gQ/hKNVE9AQAAAAA=@mail.ru>",
+      "sender_email": "tehsouz64@mail.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "0e775f73-cc85-4889-93e0-0d17d255a389",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716040226.0.20260716040226_eui_@25617922.40405.4960429.masssending.actionmedia>",
+      "sender_email": "reply@mail.action-goszakaz-per1.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "cb51e900-8295-4f34-90d3-875cdba855cb",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260716024444.0.20260716024444_eui_@25617335.501557296.81154890.personal.actionmedia>",
+      "sender_email": "reply@mail.prombez-client.ru",
+      "keywords": [
+        "reply"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "cc7df064-6138-42a8-9253-2dc53bf6915f",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<92f8d71e3b39cfe4854568db6c9f61d3@batch.immo-facile.com>",
+      "sender_email": "no-reply@ac3-groupe.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_noreply"
+    },
+    {
+      "id": "1d0cff24-6fec-472e-ad3d-2ebb9ea731b9",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<AFIAUwBHKrWGlU0t2LfGi4qY.1.1784140341212.9156410.andre@abesttradeltd.com>",
+      "sender_email": "andre@abesttradeltd.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:stop_word"
+    },
+    {
+      "id": "df535fc5-685a-4cda-844b-859dec4c8bab",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<7e4ddfff-718e-4da7-98b5-95ea183fcee5@fluid-line.ru>",
+      "sender_email": "lnm@fluid-line.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "e11e76ae-0dd8-4286-9233-0f2835875585",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<106055456924@getcourse.ru>",
+      "sender_email": "care@zerocoder.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "c4dc024f-1be8-4df5-b111-9ace5c7ba0a9",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<b5ab7a18-bf13-4863@930c-351a5606e79b>",
+      "sender_email": "rassilka@owen-russia.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:stop_word"
+    },
+    {
+      "id": "aa6ed941-2e64-4e09-a3aa-b90ef4874657",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260715172801.0.20260715172801_eui_@2048.191.625.pl48933.fcongress>",
+      "sender_email": "congress@forbes.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "9c53fa1e-468e-4958-9041-2fe5a1c94c7d",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<1551442081.344138.1784125553488@manage-notifications-667b4989fc-56vw6>",
+      "sender_email": "noreply@cdek.ru",
+      "keywords": [
+        "заказ 10291753123 81-471260021551607"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "b3a4508c-f2a0-4fe3-b447-097372ee73dd",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<a668f1adde28a3591f64091fe8032b495d91a9e1@wllgrouptransport.ru>",
+      "sender_email": "otvet@wllgrouptransport.ru",
+      "keywords": [
+        "из китая в"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "6e19918f-bcda-497a-ae25-0025fb963b2a",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260715172246.0.20260715172246_eui_@152117.1869560222.31938860.masssending.bmru>",
+      "sender_email": "email@send.vtb.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "edea43af-b74f-4c4f-a2ff-eec04b41467d",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<4ff8fac9ca444c7ea6d06400cc996854@MAIL.turbo-don.ru>",
+      "sender_email": "iso@haensch.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_education"
+    },
+    {
+      "id": "ca9a80d7-8bfa-4447-ab9a-be9a49cd4127",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<112461784123165@mail.yandex.ru>",
+      "sender_email": "aro-minprom@yandex.ru",
+      "keywords": [
+        "nbsp nbsp",
+        "nbsp министерство",
+        "министерство промышленности",
+        "промышленности и",
+        "и энергетики",
+        "энергетики ростовской"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "040b7ef9-d9a3-447f-88bf-13af331efc67",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<281521784123946@mail.yandex.ru>",
+      "sender_email": "gtv0709@yandex.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:stop_word"
+    },
+    {
+      "id": "9105d6c8-f53f-4731-8e61-1ce4535b307d",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "cs7X6ZxpxKAAAAAACNbQRgAAAAAAAAR3",
+      "sender_email": "mailer@sender.ozon.ru",
+      "keywords": [
+        "заказ принят",
+        "готовим товары",
+        "товары к",
+        "к отправке",
+        "mailer"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "8228639b-2093-481a-a6a4-ceef581710a7",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<a6dc66846bee4bb54289ee90b17bf1a6@swift.generated>",
+      "sender_email": "no-reply@researchgatemail.net",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "48c0c35a-5068-42e3-b090-bece8b51fc09",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<822491a4-9708-2f99-16f2-5b004d9afd59@sberbank-ast.ru>",
+      "sender_email": "narukshinas@sberbank-ast.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "24f48de4-8f80-4c98-a38f-ddf9c03cb08a",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<1724065878.20260715155339@mail.ru>",
+      "sender_email": "pselectro@mail.ru",
+      "keywords": [
+        "счет 13777 документы",
+        "документы от ооо",
+        "от ооо электроконнект",
+        "pselectro"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "480ac02d-01f0-40b3-a3a1-be1b4ac0a93c",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<E1wjyzG-FdffOQ-Ox@ucs732-ucs-8.msgpanel.com>",
+      "sender_email": "no-reply@account.2gis.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "a5b2da7a-b379-43a1-8342-ce355930c925",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<1784119495.67d691d0-47a6-4096-860c-c6f91d31c8d2@mos.ru>",
+      "sender_email": "portalmarket@mos.ru",
+      "keywords": [
+        "уважаемые пользователи",
+        "portalmarket"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "959225af-77d9-4e91-8a62-b93220e81a60",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<12065485.71096598.1784119420556@lor1-app138276.prod.linkedin.com>",
+      "sender_email": "messages-noreply@linkedin.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "31e517a3-16da-451f-bca6-0697327dab3a",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260715153540.0.20260715153540_eui_@3864.43038.88009.pf72169.raifcorporate>",
+      "sender_email": "corporate@email.raiffeisen.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "3ceb46b7-ebd3-4953-8e09-7132c01e2f07",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<a489f1cf7059420a9dfcc0a08057d278@lukoil.com>",
+      "sender_email": "anna.a.gorbunova@lukoil.com",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "d326b05a-b85d-4b8d-9b29-46908f7b62d6",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<E1wjyt6-0007RA-32@sender122.mlgnr.com>",
+      "sender_email": "info@lider-3d.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "20756997-ffe9-42a4-a80b-961efcd6f877",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<60046400.7694771.1784118014229@service-6>",
+      "sender_email": "events@globuc.co.uk",
+      "keywords": [
+        "events"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "557cbe00-8603-4d37-a564-394396ec62ad",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<454921969.259021.1784117029697@iib-smsgate-1-prd-66-9848fc645-98qx9>",
+      "sender_email": "noreply@pecom.ru",
+      "keywords": [
+        "пэк груз 5012",
+        "груз 5012 9998",
+        "оформлен к перевозке",
+        "к перевозке по",
+        "перевозке по маршруту",
+        "по маршруту москва"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "60ba20da-8720-4267-80e1-e3dd6d2a9348",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260715144054.0.20260715144054_eui_@770591.17103.329809.masssending.nic>",
+      "sender_email": "noreply@nic.ru",
+      "keywords": [
+        "страхование ответственности администратора",
+        "ответственности администратора домена"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "c007ffaf-1349-4774-8e7d-e1fadef6fea5",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<3f45657d45463751d28b158e2bcaf26d@b2bglobal.ru>",
+      "sender_email": "info@bbgl.ru",
+      "keywords": [
+        "новости промышленного строительства",
+        "промышленного строительства за",
+        "строительства за 08",
+        "за 08 15"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "3fe4ae30-d441-4b5f-b853-a86b78ede5e6",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<413106397.109080079.1784115715689@elnservapp7>",
+      "sender_email": "noreply@fss.ru",
+      "keywords": [
+        "новая информация в",
+        "информация в лк"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_noreply"
+    },
+    {
+      "id": "c5b201a3-3662-46c0-b1da-8a966c167776",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<4h0Z1n0v6tzCbJwB7@email-out2-6.notify.vk.company>",
+      "sender_email": "no-reply@promo.aliexpress.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "5b25f6e3-4be9-4858-bedd-815e66a70925",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<a50213b643044ed8e60307df3805afa7@ba2c89567593>",
+      "sender_email": "no-reply@tektorg.ru",
+      "keywords": [
+        "уведомление о публикации",
+        "о публикации изменений",
+        "публикации изменений в",
+        "изменений в извещении",
+        "в извещении о",
+        "извещении о проведении"
+      ],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:gov_procurement_repair"
+    },
+    {
+      "id": "afaa674f-c04e-40ac-9872-df561b05b8d3",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<aaba609e68cd4a10bc153ce4122025b4@spectr-rs.ru>",
+      "sender_email": "elena@spectr-rs.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "0d4019da-a715-4925-85a9-24d7f8cbc5e9",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<winpqUYAmhR9Z0TYVZsAJ0dWy34Eflocm4xzqzk6Q@site-cron-5fd4b6d5df-g2rqk>",
+      "sender_email": "mail@vseinstrumenti.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "389033d7-9a46-4c29-bc5c-ef37d76ce183",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<01dd01dd144a$3d5a5ad0$b80f1070$@rec3d.ru>",
+      "sender_email": "potok@rec3d.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "38075660-558a-4ef2-9bd1-d15cf0fed463",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<E1wjxIc-b8NFiJ-Ox@ucs731-ucs-2.msgpanel.com>",
+      "sender_email": "info@oilgasforum.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "84f42d6c-b83a-4e66-ab69-467fff054ae5",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260715133637.486347.75751.4966.875894@mail-fan-back-production-schedule-40.vla.yp-c.yandex.net>",
+      "sender_email": "info@airo61.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "b37f43b6-bce1-4263-a690-5d882460dee9",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<105831784111861@mail.yandex.ru>",
+      "sender_email": "info@neftegazday-group.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "74ab56bb-0385-4408-b5b9-9e166d6a2df0",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<91142a000000e43f0000c814@mta11-2.directcrm.ru>",
+      "sender_email": "sale@dyatkovo.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "0d42d0a2-7a39-45f7-bcf3-f6eb8c627806",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<33111784111605@mail.360.yandex.by>",
+      "sender_email": "265@mircli.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "43f427f5-9161-4e45-967c-4120bfc83132",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<c04a2be3-2f0c-4e78-bae1-f59f23e2fa24@gazprom-neft.ru>",
+      "sender_email": "zaikin.ea@gazprom-neft.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "bulk_imap_1000:business_sender_antipattern_repair"
+    },
+    {
+      "id": "d397e6c3-eb9a-4737-94d3-e5d88d2c172c",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<6f320e29d3eb4f509da8ecdcc936c95d@MBX2.snos.ru>",
+      "sender_email": "06sep@snos.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "73b8391c-4bd0-4d8a-8004-e3a7b5859d31",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<adf88f1e7b09af2c2869f085b632bc0454bddea7@finconfs.ru>",
+      "sender_email": "e.p@finconfs.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "3f4ec58b-8267-4f96-92c2-9610cb1be74a",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<20260715120439.814066.15189.5406.541979@mail-fan-back-production-schedule-31.iva.yp-c.yandex.net>",
+      "sender_email": "mail@onlineuniver.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "1c6bcdb3-ae42-4c0d-a741-dafbc76b688e",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<E1wjvgO-NkiDfM-Ox@ucs761-ucs-6.msgpanel.com>",
+      "sender_email": "news@infoete.ru",
+      "keywords": [
+        "переводы поставщикам от",
+        "поставщикам от 0",
+        "от 0 3",
+        "news"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "6c6a598c-84cf-4cce-b770-234228b3af0f",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<ce00999a83e34637a04049d7d1475309@gpbl.ru>",
+      "sender_email": "chubarovard@gpbl.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:appendix_a"
+    },
+    {
+      "id": "0c68c851-01f4-4d0b-8c4f-801fcacf3c93",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<4h0VT63Bqxz3F2c3@mail.owen.ru>",
+      "sender_email": "mailer-daemon@mail.owen.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_noreply"
+    },
+    {
+      "id": "2478545f-dfda-4898-916a-8f16dbea6908",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<ADR510000343398543000050569EF8921FE1A0856268A14DEF6E@SRP.SUEK.RU>",
+      "sender_email": "wf-batch@digtp.com",
+      "keywords": [
+        "wf-batch"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:tz_education"
+    },
+    {
+      "id": "627448e2-b925-489f-8948-373d030056c0",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<5301ff632b1b41fc958384a4c02b76c7@MAIL.turbo-don.ru>",
+      "sender_email": "eov@uch-info.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "011db700-6c64-4e0b-9794-baf5785c4cf0",
+      "created_at": "2026-07-16T11:15:05.581959+00:00",
+      "message_id": "<e30b6b4446df20f7dc84209bc8148e1bbf68d5a2@vseinstrumenti.ru>",
+      "sender_email": "noreply@vseinstrumenti.ru",
+      "keywords": [
+        "не забудьте подтвердить",
+        "забудьте подтвердить заказ"
+      ],
+      "label": "spam",
+      "reason": "bulk_imap_1000:rules:list_unsubscribe"
+    },
+    {
+      "id": "4cd45146-a597-4ffc-92eb-e37402c0b7db",
+      "created_at": "2026-07-17T12:00:51.168608+00:00",
+      "message_id": "<6cef0642e742485db25aa6355df6802e@eurochem.ru>#test_ii@turbo-don.ru",
+      "sender_email": "yuliya.matanova@eurochem.ru",
+      "keywords": [
+        "запрос кп на стенд ремонта и контроля предохранительно-впускных клапанов котлов вагонов-цистерн для ооо «врз «депо нтк» г. невинномысск",
+        "врз депо нтк",
+        "г невинномысск"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "acdbc532-c7c6-4b27-98ad-04bcd30e385d",
+      "created_at": "2026-07-17T12:00:51.343739+00:00",
+      "message_id": "<6cef0642e742485db25aa6355df6802e@eurochem.ru>#test_ii@turbo-don.ru",
+      "sender_email": "yuliya.matanova@eurochem.ru",
+      "keywords": [
+        "запрос кп на стенд ремонта и контроля предохранительно-впускных клапанов котлов вагонов-цистерн для ооо «врз «депо нтк» г. невинномысск",
+        "врз депо нтк",
+        "г невинномысск"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "efa12d6d-6d44-4e9e-8948-9583379739d9",
+      "created_at": "2026-07-20T05:31:54.095654+00:00",
+      "message_id": "<E1wlZmf-Ur7Kqd-Ox@ucs762-ucs-1.msgpanel.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 19.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "7b2be0ac-d763-4734-a094-22fb6a53724c",
+      "created_at": "2026-07-20T05:31:59.435630+00:00",
+      "message_id": "<E1wlZlx-G8CGQ0-Ox@ucs762-ucs-15.msgpanel.com>#sktb_std1@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 19.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "be235740-6d02-4b8e-a5a0-a8c5a55d797e",
+      "created_at": "2026-07-20T05:32:01.470629+00:00",
+      "message_id": "<E1wlZlm-MVWFKy-Ox@ucs702-ucs-14.msgpanel.com>#sktb_razvitie2@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 19.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "fe1c635b-4edd-41d0-9586-159f9fed9e7c",
+      "created_at": "2026-07-20T05:32:03.262371+00:00",
+      "message_id": "<E1wlZkm-xR9IKV-Ox@ucs762-ucs-10.msgpanel.com>#npo_service@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 19.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "ee664b86-d23b-41c7-b66e-2d6e5c8922a1",
+      "created_at": "2026-07-20T05:32:04.932613+00:00",
+      "message_id": "<E1wlZle-pnKeb4-Ox@ucs702-ucs-14.msgpanel.com>#sktb_lvov@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 19.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "1a69beec-bc22-4075-9628-4341221a49df",
+      "created_at": "2026-07-20T05:32:07.203883+00:00",
+      "message_id": "<E1wlZkb-t8Xi0i-Ox@ucs762-ucs-2.msgpanel.com>#npo_dirpr@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 19.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "79ad9409-b1ee-4481-9e33-d41b85ac4d21",
+      "created_at": "2026-07-20T05:32:11.311259+00:00",
+      "message_id": "<E1wkrhz-K53KTi-Ox@ucs732-ucs-11.msgpanel.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 17.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "5fa2c29b-65ea-4bc2-ae00-ea89eb521445",
+      "created_at": "2026-07-20T05:32:13.519754+00:00",
+      "message_id": "<E1wkrhB-95zck0-Ox@ucs762-ucs-7.msgpanel.com>#sktb_razvitie2@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 17.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "bc1e4c8a-0a50-4e35-839e-b3e0a3770f51",
+      "created_at": "2026-07-20T05:32:16.358191+00:00",
+      "message_id": "<E1wkrhJ-SaxC0L-Ox@ucs762-ucs-7.msgpanel.com>#sktb_std1@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 17.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "8a530c05-2ddd-4898-b7ca-fcdd69030a1e",
+      "created_at": "2026-07-20T05:32:23.426591+00:00",
+      "message_id": "<E1wkrgz-1fgXUu-Ox@ucs732-ucs-10.msgpanel.com>#sktb_lvov@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 17.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "4f0b6852-2f1d-4e33-8fad-7998ecd01b95",
+      "created_at": "2026-07-20T05:32:28.943846+00:00",
+      "message_id": "<E1wkrg8-cqaDY6-Ox@ucs732-ucs-5.msgpanel.com>#npo_service@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 17.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "6c6eef2f-f64d-47d1-b28c-9d1bfc62d446",
+      "created_at": "2026-07-20T05:32:31.233246+00:00",
+      "message_id": "<E1wkrfw-1BSrbq-Ox@ucs762-ucs-10.msgpanel.com>#npo_dirpr@turbo-don.ru",
+      "sender_email": "help@smartway.today",
+      "keywords": [
+        "закрывающие документы за 17.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "49c1fcec-8481-40d9-962f-4dbcfcb272ba",
+      "created_at": "2026-07-20T05:35:06.855507+00:00",
+      "message_id": "<1784288671.253255727@f530.i.mail.ru>#uk_omto6@turbo-don.ru",
+      "sender_email": "e.vishnyakova@cable.ru",
+      "keywords": [
+        "*** spam *** счет на оплату №эп117832_20260716",
+        "spam счет на",
+        "на оплату эп117832_20260716"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "5f565e18-1e59-43a3-90cf-07ae844bf124",
+      "created_at": "2026-07-20T05:35:10.265385+00:00",
+      "message_id": "<1784285068.60758287@f378.i.mail.ru>#uk_omto6@turbo-don.ru",
+      "sender_email": "e.vishnyakova@cable.ru",
+      "keywords": [
+        "*** spam *** счет на оплату №эп117832_20260716",
+        "spam счет на",
+        "на оплату эп117832_20260716"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "9975383b-8467-4be3-8200-1deded85605a",
+      "created_at": "2026-07-20T05:35:39.022143+00:00",
+      "message_id": "<af7eecbf-7791-4821-857f-acbe1e82a2f1@wbi.ru>#uk_omto1@turbo-don.ru",
+      "sender_email": "a.larionov@wbi.ru",
+      "keywords": [
+        "бизнес инжиниринг ооо",
+        "a.larionov wbi.ru",
+        "friday july"
       ],
       "label": "spam",
       "reason": "Отмечено офис-менеджером"
