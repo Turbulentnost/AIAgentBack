@@ -11,6 +11,7 @@ from app.schemas.procurement import (
     ProcurementCaseDetail,
     ProcurementCaseEventRead,
     ProcurementDashboardRead,
+    ProcurementEngineerActionRead,
     ProcurementPermissionsRead,
     ProcurementRefreshResult,
     ProcurementRoleAgentResultRead,
@@ -63,7 +64,7 @@ async def get_procurement_permissions(
         accessible_role_agents=(
             [PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG] if can_access_engineer else []
         ),
-        can_submit_role_result=False,
+        can_submit_role_result=can_access_engineer,
         can_refresh=can_access and await can_refresh_procurement_orchestrator(db, current_user),
         is_superuser=bool(current_user.is_superuser),
     )
@@ -83,6 +84,7 @@ async def get_procurement_role_dashboard(
     payload = await ProcurementOrchestratorService(db, enqueue_case=False).list_dashboard(
         view=view,
         source_type="production_material_order",
+        engineer_workspace=True,
     )
     return ProcurementDashboardRead.model_validate(payload)
 
@@ -102,6 +104,11 @@ async def get_procurement_role_case(
     if payload is None or payload.get("source_type") != "production_material_order":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
     metadata = payload.get("case_metadata") or {}
+    if not (
+        metadata.get("engineer_invoked_at")
+        or metadata.get("production_preparation_engineer_output")
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
     payload["case_metadata"] = {
         "production_order_1c_ref": metadata.get("production_order_1c_ref"),
         "production_order_type": metadata.get("production_order_type"),
@@ -110,6 +117,15 @@ async def get_procurement_role_case(
         ),
         "engineer_evidence_fingerprint": metadata.get("engineer_evidence_fingerprint"),
         "engineer_calculated_at": metadata.get("engineer_calculated_at"),
+        "engineer_decision_kind": metadata.get("engineer_decision_kind"),
+        "engineer_invoked_at": metadata.get("engineer_invoked_at"),
+        "engineer_workspace_archived_at": metadata.get(
+            "engineer_workspace_archived_at"
+        ),
+        "engineer_action_at": metadata.get("engineer_action_at"),
+        "engineer_critical_acknowledged_at": metadata.get(
+            "engineer_critical_acknowledged_at"
+        ),
     }
     payload["assigned_agents"] = [PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG]
     payload["route_stages"] = []
@@ -136,6 +152,52 @@ async def get_procurement_role_case(
         }
     ]
     return ProcurementCaseDetail.model_validate(payload)
+
+
+@router.post(
+    "/role-agents/{agent_id}/cases/{case_id}/confirm-purchase",
+    response_model=ProcurementEngineerActionRead,
+)
+async def confirm_engineer_purchase(
+    agent_id: str,
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ProcurementEngineerActionRead:
+    await _require_engineer_workspace(db, current_user, agent_id)
+    result = await ProcurementOrchestratorService(
+        db, enqueue_case=False
+    ).confirm_engineer_purchase(case_id, user_id=str(current_user.id))
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Кейс не ожидает подтверждения закупки",
+        )
+    await db.commit()
+    return ProcurementEngineerActionRead.model_validate(result)
+
+
+@router.post(
+    "/role-agents/{agent_id}/cases/{case_id}/acknowledge-critical",
+    response_model=ProcurementEngineerActionRead,
+)
+async def acknowledge_engineer_critical(
+    agent_id: str,
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ProcurementEngineerActionRead:
+    await _require_engineer_workspace(db, current_user, agent_id)
+    result = await ProcurementOrchestratorService(
+        db, enqueue_case=False
+    ).acknowledge_engineer_critical(case_id, user_id=str(current_user.id))
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Кейс не ожидает ознакомления с критической ошибкой",
+        )
+    await db.commit()
+    return ProcurementEngineerActionRead.model_validate(result)
 
 
 @router.get("/dashboard", response_model=ProcurementDashboardRead)

@@ -106,6 +106,7 @@ class ProductionPreparationEngineerService:
         )
         output = assessment.model_dump(mode="json")
         if assessment.validation_issues or assessment.missing_data:
+            output["decision_kind"] = "critical_acknowledgement"
             reason = "; ".join(assessment.missing_data[:3]) or assessment.summary
             return ProcurementRoleAgentResult(
                 agent_id=agent_id,
@@ -119,6 +120,26 @@ class ProductionPreparationEngineerService:
                 wait_reason=reason,
                 output_data=output,
             )
+        has_deficit = any(position.net_requirement > 0 for position in assessment.positions)
+        if has_deficit:
+            output["decision_kind"] = "purchase_confirmation"
+            return ProcurementRoleAgentResult(
+                agent_id=agent_id,
+                status="waiting_human",
+                summary=assessment.summary,
+                data_confidence=(
+                    ConfidenceLevel.MEDIUM
+                    if assessment.excluded_capabilities
+                    else ConfidenceLevel.HIGH
+                ),
+                requires_human_review=True,
+                case_id=request.case_id,
+                correlation_id=request.correlation_id,
+                role_status="waiting_human",
+                wait_reason="Требуется подтверждение закупки рассчитанного дефицита.",
+                output_data=output,
+            )
+        output["decision_kind"] = "none"
         return ProcurementRoleAgentResult(
             agent_id=agent_id,
             status="completed",

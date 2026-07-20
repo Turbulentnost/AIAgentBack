@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.ext.compiler import compiles
 
 from app.agents.procurement_agent.source_discovery import normalize_source_document
-from app.agents.procurement_role_agents.config import SOURCE_AGENT_MAP
+from app.agents.procurement_role_agents.config import (
+    PRODUCTION_DISPATCHER_AGENT_ID,
+    PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+    SOURCE_AGENT_MAP,
+)
 from app.db.base import Base
 from app.models.enums import ProcurementSourceType, TaskStatus
 from app.models.procurement import (
@@ -273,6 +277,91 @@ async def test_engineer_dispatch_claims_only_five_cases(db_session: AsyncSession
         bool((task.task_metadata or {}).get("dispatch_claimed"))
         for task in tasks
     ) == 5
+
+
+@pytest.mark.asyncio
+async def test_engineer_purchase_confirmation_hands_off_and_archives_workspace(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    task = (await db_session.execute(select(Task))).scalar_one()
+    output = {
+        "decision_kind": "purchase_confirmation",
+        "positions": [{"net_requirement": "12"}],
+    }
+    task.status = TaskStatus.WAITING_HUMAN
+    task.final_result = {
+        "agent_id": PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+        "role_status": "waiting_human",
+        "output_data": output,
+    }
+    case.case_metadata = {
+        **(case.case_metadata or {}),
+        "engineer_decision_kind": "purchase_confirmation",
+        "production_preparation_engineer_output": output,
+    }
+    await db_session.flush()
+
+    result = await service.confirm_engineer_purchase(case.id, user_id="engineer-1")
+
+    assert result is not None
+    assert task.status is TaskStatus.COMPLETED
+    assert case.current_task_id is None
+    assert case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
+    assert case.control_point == "chief_dispatcher"
+    assert case.case_metadata["engineer_archived_bucket"] == "attention"
+    archive = await service.list_dashboard(
+        view="archive",
+        source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value,
+        engineer_workspace=True,
+    )
+    assert archive["total_cases"] == 1
+
+
+@pytest.mark.asyncio
+async def test_engineer_critical_acknowledgement_keeps_waiting(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    task = (await db_session.execute(select(Task))).scalar_one()
+    task.status = TaskStatus.WAITING_HUMAN
+    case.case_metadata = {
+        **(case.case_metadata or {}),
+        "engineer_decision_kind": "critical_acknowledgement",
+    }
+    await db_session.flush()
+
+    result = await service.acknowledge_engineer_critical(
+        case.id,
+        user_id="engineer-1",
+    )
+
+    assert result is not None
+    assert task.status is TaskStatus.WAITING_HUMAN
+    assert case.current_task_id == task.id
+    assert case.case_metadata["engineer_critical_acknowledged_by"] == "engineer-1"
+    active = await service.list_dashboard(
+        view="active",
+        source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value,
+        engineer_workspace=True,
+    )
+    assert active["total_cases"] == 1
 
 
 @pytest.mark.asyncio

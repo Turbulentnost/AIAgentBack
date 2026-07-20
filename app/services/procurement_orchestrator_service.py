@@ -20,6 +20,7 @@ from app.agents.procurement_agent.source_discovery import (
     normalize_source_document,
 )
 from app.agents.procurement_role_agents.config import (
+    PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     agent_id_for_source,
     agent_label,
@@ -1207,6 +1208,21 @@ class ProcurementOrchestratorService:
         case.current_task_id = task.id
         case.current_agent_id = agent_id
         case.assigned_agents = [agent_id]
+        if agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
+            metadata = dict(case.case_metadata or {})
+            metadata.setdefault("engineer_invoked_at", datetime.now(UTC).isoformat())
+            metadata["engineer_workspace_status"] = "processing"
+            for key in (
+                "engineer_workspace_archived_at",
+                "engineer_archived_bucket",
+                "engineer_decision_kind",
+                "engineer_action_at",
+                "engineer_action_by",
+                "engineer_critical_acknowledged_at",
+                "engineer_critical_acknowledged_by",
+            ):
+                metadata.pop(key, None)
+            case.case_metadata = metadata
         await self._append_event(
             case,
             event_type="role_agent_task_enqueued",
@@ -1329,6 +1345,7 @@ class ProcurementOrchestratorService:
                 "evidence_fingerprint"
             )
             metadata["engineer_calculated_at"] = output_data.get("calculated_at")
+            metadata["engineer_decision_kind"] = output_data.get("decision_kind")
             case.case_metadata = metadata
         task.final_result = result_payload
         task.requires_human_review = role_status == "waiting_human"
@@ -1344,6 +1361,10 @@ class ProcurementOrchestratorService:
             task.finished_at = None
             case.status = ProcurementCaseStatus.AGENT_WAITING.value
             case.deviation_summary = wait_reason
+            if result_payload.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
+                metadata = dict(case.case_metadata or {})
+                metadata["engineer_workspace_status"] = "awaiting_action"
+                case.case_metadata = metadata
         elif role_status == "waiting_external":
             task.status = TaskStatus.WAITING_EXTERNAL
             task.finished_at = None
@@ -1373,6 +1394,32 @@ class ProcurementOrchestratorService:
                 )
             case.current_task_id = None
             case.current_agent_id = None
+            if result_payload.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
+                metadata = dict(case.case_metadata or {})
+                archived_bucket = "attention" if has_deficit else "success"
+                archived_at = datetime.now(UTC)
+                metadata["engineer_workspace_status"] = "archived"
+                metadata["engineer_workspace_archived_at"] = archived_at.isoformat()
+                metadata["engineer_archived_bucket"] = archived_bucket
+                metadata["engineer_handoff_agent_id"] = PRODUCTION_DISPATCHER_AGENT_ID
+                case.case_metadata = metadata
+                case.control_point = "chief_dispatcher"
+                case.requested_operation = "route_to_chief_dispatcher"
+                case.current_agent_id = PRODUCTION_DISPATCHER_AGENT_ID
+                case.assigned_agents = [PRODUCTION_DISPATCHER_AGENT_ID]
+                await self._append_event(
+                    case,
+                    event_type="engineer_handoff_to_chief_dispatcher",
+                    idempotency_key=f"engineer-handoff:{case.id}:{task.id}"[:255],
+                    previous_status=previous_status,
+                    new_status=case.status,
+                    payload={
+                        "engineer_bucket": archived_bucket,
+                        "next_agent_id": PRODUCTION_DISPATCHER_AGENT_ID,
+                        "archived_at": archived_at.isoformat(),
+                    },
+                    agent_id=PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+                )
         else:
             task.status = TaskStatus.FAILED
             task.finished_at = datetime.now(UTC)
@@ -1465,22 +1512,130 @@ class ProcurementOrchestratorService:
             event_type="role_agent_resumed",
         )
 
+    async def confirm_engineer_purchase(
+        self,
+        case_id: uuid.UUID,
+        *,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        case = await self.db.get(ProcurementCase, case_id)
+        if case is None:
+            return None
+        metadata = dict(case.case_metadata or {})
+        if (
+            metadata.get("engineer_workspace_status") == "archived"
+            and metadata.get("engineer_archived_bucket") == "attention"
+        ):
+            return {
+                "status": "completed",
+                "action": "purchase_confirmed",
+                "case_id": str(case.id),
+            }
+        if (
+            metadata.get("engineer_decision_kind") != "purchase_confirmation"
+            or case.current_task_id is None
+        ):
+            return None
+        task = await self.db.get(Task, case.current_task_id)
+        if task is None or task.status != TaskStatus.WAITING_HUMAN:
+            return None
+        action_at = datetime.now(UTC)
+        metadata["engineer_action_at"] = action_at.isoformat()
+        metadata["engineer_action_by"] = user_id
+        case.case_metadata = metadata
+        await self._append_event(
+            case,
+            event_type="engineer_purchase_confirmed",
+            idempotency_key=f"engineer-purchase-confirmed:{task.id}"[:255],
+            previous_status=case.status,
+            new_status=case.status,
+            payload={"user_id": user_id, "confirmed_at": action_at.isoformat()},
+            agent_id=PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+        )
+        payload = dict(task.final_result or {})
+        payload.update(
+            {
+                "role_status": "completed",
+                "status": "completed",
+                "summary": "Закупка рассчитанного дефицита подтверждена инженером.",
+                "requires_human_review": False,
+            }
+        )
+        payload.setdefault(
+            "output_data",
+            metadata.get("production_preparation_engineer_output") or {},
+        )
+        await self._apply_role_agent_result(
+            case,
+            task,
+            payload,
+            event_type="role_agent_resumed",
+        )
+        return {
+            "status": "completed",
+            "action": "purchase_confirmed",
+            "case_id": str(case.id),
+        }
+
+    async def acknowledge_engineer_critical(
+        self,
+        case_id: uuid.UUID,
+        *,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        case = await self.db.get(ProcurementCase, case_id)
+        if case is None:
+            return None
+        metadata = dict(case.case_metadata or {})
+        if metadata.get("engineer_decision_kind") != "critical_acknowledgement":
+            return None
+        if metadata.get("engineer_critical_acknowledged_at"):
+            return {
+                "status": "waiting_for_source_update",
+                "action": "critical_acknowledged",
+                "case_id": str(case.id),
+            }
+        acknowledged_at = datetime.now(UTC)
+        metadata["engineer_critical_acknowledged_at"] = acknowledged_at.isoformat()
+        metadata["engineer_critical_acknowledged_by"] = user_id
+        case.case_metadata = metadata
+        await self._append_event(
+            case,
+            event_type="engineer_critical_acknowledged",
+            idempotency_key=f"engineer-critical-ack:{case.current_task_id or case.id}"[:255],
+            previous_status=case.status,
+            new_status=case.status,
+            payload={"user_id": user_id, "acknowledged_at": acknowledged_at.isoformat()},
+            agent_id=PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+        )
+        await self.db.flush()
+        return {
+            "status": "waiting_for_source_update",
+            "action": "critical_acknowledged",
+            "case_id": str(case.id),
+        }
+
     async def list_dashboard(
         self,
         *,
         view: str = "active",
         source_type: str | None = None,
+        engineer_workspace: bool = False,
     ) -> dict[str, Any]:
         normalized_view = view if view in {"active", "processing", "archive"} else "active"
-        if normalized_view == "archive":
+        if engineer_workspace:
+            status_filter = None
+        elif normalized_view == "archive":
             status_filter = list(TERMINAL_CASE_STATUSES)
         else:
             status_filter = list(ACTIVE_CASE_STATUSES)
 
-        case_filters = [ProcurementCase.status.in_(status_filter)]
+        case_filters = []
+        if status_filter is not None:
+            case_filters.append(ProcurementCase.status.in_(status_filter))
         if source_type:
             case_filters.append(ProcurementCase.source_type == source_type)
-        cases = (
+        loaded_cases = (
             await self.db.execute(
                 select(ProcurementCase)
                 .options(selectinload(ProcurementCase.positions))
@@ -1492,21 +1647,52 @@ class ProcurementOrchestratorService:
                 )
             )
         ).scalars().all()
+        if engineer_workspace:
+            engineer_cases = [
+                case
+                for case in loaded_cases
+                if (case.case_metadata or {}).get("engineer_invoked_at")
+                or (case.case_metadata or {}).get("production_preparation_engineer_output")
+            ]
+
+            def is_engineer_archived(case: ProcurementCase) -> bool:
+                metadata = case.case_metadata or {}
+                return bool(metadata.get("engineer_workspace_archived_at")) or (
+                    case.status in TERMINAL_CASE_STATUSES
+                )
+
+            active_engineer_cases = [
+                case for case in engineer_cases if not is_engineer_archived(case)
+            ]
+            archived_engineer_cases = [
+                case for case in engineer_cases if is_engineer_archived(case)
+            ]
+            cases = (
+                archived_engineer_cases
+                if normalized_view == "archive"
+                else active_engineer_cases
+            )
+        else:
+            cases = loaded_cases
         if normalized_view == "processing":
             # Same active cards, but presented as processing cases.
             cases = [case for case in cases if case.status in ACTIVE_CASE_STATUSES]
 
-        archive_filters = [ProcurementCase.status.in_(list(TERMINAL_CASE_STATUSES))]
-        processing_filters = [ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES))]
-        if source_type:
-            archive_filters.append(ProcurementCase.source_type == source_type)
-            processing_filters.append(ProcurementCase.source_type == source_type)
-        archive_count = await self.db.scalar(
-            select(func.count()).select_from(ProcurementCase).where(*archive_filters)
-        )
-        processing_count = await self.db.scalar(
-            select(func.count()).select_from(ProcurementCase).where(*processing_filters)
-        )
+        if engineer_workspace:
+            archive_count = len(archived_engineer_cases)
+            processing_count = len(active_engineer_cases)
+        else:
+            archive_filters = [ProcurementCase.status.in_(list(TERMINAL_CASE_STATUSES))]
+            processing_filters = [ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES))]
+            if source_type:
+                archive_filters.append(ProcurementCase.source_type == source_type)
+                processing_filters.append(ProcurementCase.source_type == source_type)
+            archive_count = await self.db.scalar(
+                select(func.count()).select_from(ProcurementCase).where(*archive_filters)
+            )
+            processing_count = await self.db.scalar(
+                select(func.count()).select_from(ProcurementCase).where(*processing_filters)
+            )
 
         sync_states = (
             await self.db.execute(select(ProcurementSourceSyncState))
@@ -1688,7 +1874,11 @@ class ProcurementOrchestratorService:
         if case.source_type != ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value:
             return None, None
         result = case.latest_result or {}
-        output = result.get("output_data") or (case.case_metadata or {}).get(
+        metadata = case.case_metadata or {}
+        archived_bucket = metadata.get("engineer_archived_bucket")
+        if archived_bucket in {"success", "attention", "critical"}:
+            return str(archived_bucket), "Состояние сохранено при передаче оркестратору."
+        output = result.get("output_data") or metadata.get(
             "production_preparation_engineer_output"
         )
         output = output if isinstance(output, dict) else {}
@@ -1696,6 +1886,11 @@ class ProcurementOrchestratorService:
         validation_issues = output.get("validation_issues") or []
         missing_data = output.get("missing_data") or []
         unavailable = output.get("excluded_capabilities") or []
+        decision_kind = str(
+            metadata.get("engineer_decision_kind") or output.get("decision_kind") or ""
+        )
+        if decision_kind == "purchase_confirmation":
+            return "attention", "Расчёт завершён: требуется подтвердить закупку дефицита."
         if (
             role_status in {"failed", "waiting_human", "waiting_external"}
             or validation_issues
@@ -1737,9 +1932,12 @@ class ProcurementOrchestratorService:
     def _serialize_case_summary(self, case: ProcurementCase) -> dict[str, Any]:
         engineer_bucket, engineer_bucket_reason = self._engineer_bucket(case)
         role_status = str((case.latest_result or {}).get("role_status") or "")
+        metadata = case.case_metadata or {}
         if engineer_bucket is None:
             engineer_work_status = None
-        elif case.status in TERMINAL_CASE_STATUSES:
+        elif metadata.get("engineer_workspace_archived_at") or (
+            case.status in TERMINAL_CASE_STATUSES
+        ):
             engineer_work_status = "archived"
         elif role_status in {"waiting_human", "waiting_external", "failed"}:
             engineer_work_status = "awaiting_action"
@@ -1785,6 +1983,15 @@ class ProcurementOrchestratorService:
             "engineer_bucket": engineer_bucket,
             "engineer_bucket_reason": engineer_bucket_reason,
             "engineer_work_status": engineer_work_status,
+            "engineer_decision_kind": metadata.get("engineer_decision_kind"),
+            "engineer_invoked_at": metadata.get("engineer_invoked_at"),
+            "engineer_workspace_archived_at": metadata.get(
+                "engineer_workspace_archived_at"
+            ),
+            "engineer_action_at": metadata.get("engineer_action_at"),
+            "engineer_critical_acknowledged_at": metadata.get(
+                "engineer_critical_acknowledged_at"
+            ),
         }
 
     def _serialize_case_detail(self, case: ProcurementCase) -> dict[str, Any]:
