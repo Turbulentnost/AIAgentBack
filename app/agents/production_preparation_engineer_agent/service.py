@@ -25,24 +25,10 @@ from app.agents.production_preparation_engineer_agent.schemas import (
 )
 from app.models.enums import ConfidenceLevel, ProcurementSourceType
 
-SUPPLY_CAPABILITIES = (
-    "onec_get_reservations",
-    "onec_get_store_room_stock",
-    "onec_get_open_supplier_orders",
-    "onec_get_goods_in_transit",
-    "onec_get_internal_transfers",
-    "onec_get_available_semifinished_goods",
-    "onec_get_work_in_progress",
-    "onec_get_quality_stock",
-)
 PRODUCTION_SUPPLY_REGISTERS = (
-    ("AccumulationRegister_ТоварыНаСкладах", "warehouse"),
+    ("AccumulationRegister_ТоварыНаСкладах_RecordType", "warehouse"),
     (
         "AccumulationRegister_МатериалыИРаботыВПроизводстве_RecordType",
-        "semifinished_production",
-    ),
-    (
-        "AccumulationRegister_ПартииНезавершенногоПроизводства_RecordType",
         "semifinished_production",
     ),
 )
@@ -133,20 +119,6 @@ class ProductionPreparationEngineerService:
                 wait_reason=reason,
                 output_data=output,
             )
-        if assessment.excluded_capabilities:
-            reason = "; ".join(assessment.excluded_capabilities[:3])
-            return ProcurementRoleAgentResult(
-                agent_id=agent_id,
-                status="waiting_external",
-                summary="Расчёт подготовлен предварительно, но обязательные данные 1С недоступны.",
-                data_confidence=ConfidenceLevel.LOW,
-                requires_human_review=False,
-                case_id=request.case_id,
-                correlation_id=request.correlation_id,
-                role_status="waiting_external",
-                wait_reason=reason,
-                output_data=output,
-            )
         return ProcurementRoleAgentResult(
             agent_id=agent_id,
             status="completed",
@@ -171,6 +143,9 @@ class ProductionPreparationEngineerService:
         database = str(source_data.get("source_database") or "default")
         production_order_ref = source_data.get("production_order_1c_ref")
         production_order_type = source_data.get("production_order_type")
+        direct_positions = [
+            value for value in source_data.get("positions") or [] if isinstance(value, dict)
+        ]
         resolution_issues: list[str] = []
         if not production_order_ref:
             (
@@ -184,57 +159,86 @@ class ProductionPreparationEngineerService:
             if production_order_ref:
                 source_data["production_order_1c_ref"] = production_order_ref
                 source_data["production_order_type"] = production_order_type
-        product_rows, issues = await self._load_production_order_products(
-            database=database,
-            production_order_ref=production_order_ref,
-            production_order_type=production_order_type,
-        )
-        issues = [*resolution_issues, *issues]
-        products = _normalize_products(product_rows)
-        if products:
-            source_data["production_order_number"] = products[0].get("production_order_number")
-            source_data["production_order_status"] = products[0].get("production_order_status")
-        if not products:
-            products = [
-                value for value in source_data.get("products") or [] if isinstance(value, dict)
-            ]
-        product_ids = [
-            str(value.get("nomenclature_id")) for value in products if value.get("nomenclature_id")
-        ]
-        if not product_ids:
-            issues.append(
-                "Не получены изделия производственного заказа для поиска ресурсной спецификации."
-            )
-            return {"products": products}, issues
-        try:
-            response = await self.mcp.call_capability(
-                "onec_get_active_resource_specifications",
+        if not production_order_ref and direct_positions:
+            # A production material order may be an independent, explicitly quantified
+            # material request. In that case its lines are already the gross requirement:
+            # there is no production product to explode through a resource specification.
+            products = direct_positions
+            specifications = _direct_requirement_specifications(direct_positions)
+            material_ids = sorted(
                 {
-                    "database": database,
-                    "specificationRefs": [],
-                    "productRefs": list(dict.fromkeys(product_ids)),
-                    "limit": 5000,
-                },
+                    str(value.get("nomenclature_id"))
+                    for value in direct_positions
+                    if value.get("nomenclature_id")
+                }
             )
-        except MCPUnavailableError:
-            issues.append("Чтение действующих ресурсных спецификаций недоступно в MCP 1С.")
-            return {"products": products}, issues
-        except MCPCallError as exc:
-            issues.append(f"Ошибка чтения действующих ресурсных спецификаций: {exc}")
-            return {"products": products}, issues
-        if response.get("status") == "capability_unavailable":
-            issues.append(
-                str(response.get("reason") or "Ресурсные спецификации не опубликованы в OData 1С.")
+            issues: list[str] = []
+            if not source_data.get("required_date"):
+                source_data["required_date"] = (
+                    source_data.get("requested_date") or source_data.get("source_date")
+                )
+        else:
+            product_rows, product_issues = await self._load_production_order_products(
+                database=database,
+                production_order_ref=production_order_ref,
+                production_order_type=production_order_type,
             )
-        specifications = _normalize_specifications(response.get("specifications") or [])
-        material_ids = sorted(
-            {
-                str(material.get("nomenclature_id"))
-                for spec in specifications
-                for material in spec.get("materials") or []
-                if material.get("nomenclature_id")
-            }
-        )
+            issues = [*resolution_issues, *product_issues]
+            products = _normalize_products(product_rows)
+            if products:
+                source_data["production_order_number"] = products[0].get(
+                    "production_order_number"
+                )
+                source_data["production_order_status"] = products[0].get(
+                    "production_order_status"
+                )
+            if not products:
+                products = [
+                    value for value in source_data.get("products") or [] if isinstance(value, dict)
+                ]
+            product_ids = [
+                str(value.get("nomenclature_id"))
+                for value in products
+                if value.get("nomenclature_id")
+            ]
+            if not product_ids:
+                issues.append(
+                    "Не получены изделия производственного заказа "
+                    "для поиска ресурсной спецификации."
+                )
+                return {"products": products}, issues
+            try:
+                response = await self.mcp.call_capability(
+                    "onec_get_active_resource_specifications",
+                    {
+                        "database": database,
+                        "specificationRefs": [],
+                        "productRefs": list(dict.fromkeys(product_ids)),
+                        "limit": 5000,
+                    },
+                )
+            except MCPUnavailableError:
+                issues.append("Чтение действующих ресурсных спецификаций недоступно в MCP 1С.")
+                return {"products": products}, issues
+            except MCPCallError as exc:
+                issues.append(f"Ошибка чтения действующих ресурсных спецификаций: {exc}")
+                return {"products": products}, issues
+            if response.get("status") == "capability_unavailable":
+                issues.append(
+                    str(
+                        response.get("reason")
+                        or "Ресурсные спецификации не опубликованы в OData 1С."
+                    )
+                )
+            specifications = _normalize_specifications(response.get("specifications") or [])
+            material_ids = sorted(
+                {
+                    str(material.get("nomenclature_id"))
+                    for spec in specifications
+                    for material in spec.get("materials") or []
+                    if material.get("nomenclature_id")
+                }
+            )
         if not material_ids:
             issues.append("В действующих ресурсных спецификациях не получены материалы.")
             return {
@@ -309,12 +313,6 @@ class ProductionPreparationEngineerService:
                 read_register(entity_set, source_type)
                 for entity_set, source_type in PRODUCTION_SUPPLY_REGISTERS
             ),
-        )
-        issues.extend(
-            f"Возможность 1С «{capability}» недоступна."
-            for capability in SUPPLY_CAPABILITIES
-            if capability
-            not in {"onec_get_open_supplier_orders", "onec_get_internal_transfers"}
         )
         return {
             "products": products,
@@ -450,6 +448,50 @@ def _normalize_products(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return products
 
 
+def _direct_requirement_specifications(
+    positions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    specifications: list[dict[str, Any]] = []
+    for index, position in enumerate(positions, start=1):
+        nomenclature_id = str(position.get("nomenclature_id") or "")
+        if not nomenclature_id:
+            continue
+        line_id = str(position.get("line_id") or index)
+        name = str(position.get("nomenclature_name") or nomenclature_id)
+        stage_id = position.get("production_stage_id") or "direct_material_order"
+        specifications.append(
+            {
+                "specification_id": f"direct-material-order:{line_id}",
+                "name": "Прямая потребность заказа материалов",
+                "version": "1C",
+                "status": "Действует",
+                "approved": True,
+                "product_id": nomenclature_id,
+                "product_characteristic_id": _optional_ref(position.get("characteristic_id")),
+                "completeness_score": 100,
+                "production_stage_id": stage_id,
+                "materials": [
+                    {
+                        "line_id": line_id,
+                        "nomenclature_id": nomenclature_id,
+                        "nomenclature_name": name,
+                        "characteristic_id": _optional_ref(position.get("characteristic_id")),
+                        "unit_id": _optional_ref(position.get("unit_id")),
+                        "unit": position.get("unit") or "шт",
+                        "consumption_rate": "1",
+                        "technological_loss_percent": "0",
+                        "production_stage_id": stage_id,
+                        "production_stage_name": "Прямая потребность заказа материалов",
+                        "warehouse_id": position.get("warehouse_id"),
+                        "use_conditions": "Количество явно задано в заказе материалов 1С",
+                    }
+                ],
+                "evidence_id": f"material-order-line:{line_id}",
+            }
+        )
+    return specifications
+
+
 def _normalize_specifications(values: list[Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for value in values:
@@ -539,7 +581,9 @@ def _normalize_supply_item(value: dict[str, Any]) -> dict[str, Any]:
         "supply_id": str(value.get("supply_id") or value.get("Ref_Key") or ""),
         "source_type": source_type,
         "nomenclature_id": str(value.get("nomenclature_id") or value.get("Номенклатура_Key") or ""),
-        "characteristic_id": value.get("characteristic_id") or value.get("Характеристика_Key"),
+        "characteristic_id": _optional_ref(
+            value.get("characteristic_id") or value.get("Характеристика_Key")
+        ),
         "unit": str(
             value.get("unit")
             or value.get("ЕдиницаИзмерения")
@@ -586,7 +630,11 @@ def _build_case_input(request: ProcurementRoleAgentRequest) -> EngineerCaseInput
         warehouse_1c_ref=context.get("warehouse_1c_ref"),
         warehouse_name=context.get("warehouse_name"),
         priority_1c_ref=context.get("priority_1c_ref"),
-        required_date=source.get("required_date") or context.get("required_date"),
+        required_date=(
+            source.get("required_date")
+            or source.get("requested_date")
+            or context.get("required_date")
+        ),
         production_order_1c_ref=(
             source.get("production_order_1c_ref") or context.get("production_order_1c_ref")
         ),
@@ -600,7 +648,7 @@ def _parse_needs(
     case: EngineerCaseInput,
 ) -> tuple[list[EngineerNeedLine], list[str]]:
     raw_values = source.get("products")
-    if not isinstance(raw_values, list):
+    if not isinstance(raw_values, list) or not raw_values:
         raw_values = source.get("positions") or []
     needs: list[EngineerNeedLine] = []
     issues: list[str] = []

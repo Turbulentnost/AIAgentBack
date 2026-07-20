@@ -129,6 +129,36 @@ def test_calculates_gross_net_and_excludes_foreign_reserve():
     assert {item.reason for item in line.excluded_supply} == {"reserved_for_other_order"}
 
 
+def test_direct_material_order_does_not_require_production_order():
+    case = _case().model_copy(update={"production_order_1c_ref": None})
+    need = _need(product_quantity=None, direct_quantity="20", nomenclature_id="steel")
+    specification = _spec(
+        product_id="steel",
+        materials=[
+            ResourceSpecificationMaterial(
+                line_id="direct-line",
+                nomenclature_id="steel",
+                nomenclature_name="Сталь",
+                unit="кг",
+                consumption_rate=Decimal("1"),
+                production_stage_id="direct_material_order",
+            )
+        ],
+    )
+
+    result = calculate_engineer_assessment(
+        case=case,
+        needs=[need],
+        specifications=[specification],
+        supplies=[],
+        calculated_at=NOW,
+    )
+
+    assert not result.validation_issues
+    assert result.positions[0].gross_requirement == Decimal("20")
+    assert result.positions[0].net_requirement == Decimal("20")
+
+
 def test_open_order_cover_does_not_request_new_procurement():
     result = calculate_engineer_assessment(
         case=_case(),

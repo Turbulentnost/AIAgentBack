@@ -34,6 +34,10 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _aware_datetime(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def _is_active_spec(spec: ResourceSpecification, production_date: datetime) -> bool:
     if spec.deletion_mark or not spec.approved:
         return False
@@ -96,7 +100,10 @@ def validate_case(
                 "1c",
             )
         )
-    if not case.production_order_1c_ref:
+    is_direct_material_order = bool(needs) and all(
+        need.direct_quantity is not None for need in needs
+    )
+    if not case.production_order_1c_ref and not is_direct_material_order:
         issues.append(
             _issue(
                 "production_order_missing",
@@ -259,11 +266,13 @@ def _exclusion_reason(
         return "use_not_allowed"
     if not supply.exact_match:
         return "analogue_not_approved"
-    if supply.unit != material.unit:
+    if supply.unit != material.unit and supply.unit != "base_unit":
         return "unit_mismatch"
     if material.characteristic_id and supply.characteristic_id != material.characteristic_id:
         return "characteristic_mismatch"
-    if supply.available_at and supply.available_at > required_date:
+    if supply.available_at and _aware_datetime(supply.available_at) > _aware_datetime(
+        required_date
+    ):
         return "available_after_required_date"
     return None
 
@@ -474,7 +483,11 @@ def calculate_engineer_assessment(
             included: list[tuple[EngineerSupplyItem, Decimal]] = []
             excluded: list[EngineerExcludedSupply] = []
             for supply in sorted(
-                supplies, key=lambda value: (value.available_at or now, value.supply_id)
+                supplies,
+                key=lambda value: (
+                    _aware_datetime(value.available_at) if value.available_at else now,
+                    value.supply_id,
+                ),
             ):
                 if supply.nomenclature_id != material.nomenclature_id:
                     continue

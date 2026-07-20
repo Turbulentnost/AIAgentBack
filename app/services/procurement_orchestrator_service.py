@@ -982,7 +982,9 @@ class ProcurementOrchestratorService:
         case.required_date = document.required_date
         case.deadline_at = document.required_date
         metadata = dict(case.case_metadata or {})
-        metadata["deadline"] = document.required_date.isoformat() if document.required_date else None
+        metadata["deadline"] = (
+            document.required_date.isoformat() if document.required_date else None
+        )
         metadata["production_order_1c_ref"] = document.production_order_1c_ref
         metadata["production_order_type"] = document.production_order_type
         case.case_metadata = metadata
@@ -1698,7 +1700,6 @@ class ProcurementOrchestratorService:
             role_status in {"failed", "waiting_human", "waiting_external"}
             or validation_issues
             or missing_data
-            or unavailable
             or case.status in {
                 ProcurementCaseStatus.BLOCKED.value,
                 ProcurementCaseStatus.FAILED.value,
@@ -1727,6 +1728,10 @@ class ProcurementOrchestratorService:
             if has_shortage:
                 return "attention", "Расчёт завершён: подтверждённого остатка недостаточно."
             return "success", "Данные прочитаны, потребность рассчитана и полностью обеспечена."
+        if unavailable:
+            return "critical", str(
+                unavailable[0] or "Обязательный источник данных 1С недоступен."
+            )
         return "attention", "ИИ-агент выполняет расчёт или кейс ожидает своей очереди."
 
     def _serialize_case_summary(self, case: ProcurementCase) -> dict[str, Any]:
@@ -1942,7 +1947,9 @@ class ProcurementOrchestratorService:
                 else capability.unavailable_reason
             ),
             "database_name": state.database_name if state is not None else None,
-            "last_polled_at": state.last_polled_at.isoformat() if state and state.last_polled_at else None,
+            "last_polled_at": (
+                state.last_polled_at.isoformat() if state and state.last_polled_at else None
+            ),
             "last_success_at": (
                 state.last_success_at.isoformat() if state and state.last_success_at else None
             ),
