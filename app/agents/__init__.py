@@ -4,6 +4,7 @@ from app.agents.finance_director_agent import service as _finance_director_servi
 from app.agents.executive_director_agent import service as _executive_director_service  # noqa: F401,E402
 from app.agents.chief_accountant_agent import service as _chief_accountant_service  # noqa: F401,E402
 from app.agents.accountant_agent import service as _accountant_service  # noqa: F401,E402
+from app.agents.legal_specialist_agent import service as _legal_specialist_service  # noqa: F401,E402
 from app.agents.meeting_agent import service as _meeting_service  # noqa: F401,E402
 from app.agents.nd_control_agent import service as _nd_control_service  # noqa: F401,E402
 from app.agents.procurement_agent import service as _procurement_service  # noqa: F401,E402
