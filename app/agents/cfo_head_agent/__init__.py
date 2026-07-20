@@ -8,12 +8,14 @@ from app.agents.cfo_head_agent.schemas import (
     CfoHeadAgentRequest,
     CfoHeadAgentResult,
 )
+from app.agents.cfo_head_agent.service import CfoHeadAgent
 
 __all__ = [
     "CFO_HEAD_AGENT_ID",
     "CFO_HEAD_AGENT_NAME",
     "CFO_HEAD_AGENT_PURPOSE",
     "CfoCaseContext",
+    "CfoHeadAgent",
     "CfoHeadAgentRequest",
     "CfoHeadAgentResult",
 ]
