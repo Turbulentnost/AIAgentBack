@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.user import AdminUserCreate, UserRead
@@ -67,6 +67,35 @@ async def deactivate_admin_user(db: DbSession, current_user: CurrentUser, user_i
         resource_id=str(user.id),
     )
     return await _user_read(db, user)
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin_user(
+    db: DbSession,
+    current_user: CurrentUser,
+    user_id: uuid.UUID,
+) -> Response:
+    _require_admin(current_user)
+    if user_id == current_user.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Нельзя удалить собственную учётную запись",
+        )
+
+    service = UserService(db)
+    user = await service.get(user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+
+    await service.soft_delete(user)
+    await AuditService(db).log(
+        action="admin.users.delete",
+        actor_id=current_user.id,
+        resource_type="user",
+        resource_id=str(user.id),
+        payload={"email": user.email, "soft_delete": True},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _require_admin(user) -> None:

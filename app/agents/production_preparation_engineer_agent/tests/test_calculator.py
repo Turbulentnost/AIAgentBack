@@ -150,13 +150,25 @@ def test_direct_material_order_does_not_require_production_order():
         case=case,
         needs=[need],
         specifications=[specification],
-        supplies=[],
+        supplies=[
+            EngineerSupplyItem(
+                supply_id="warehouse-stock",
+                source_type="warehouse",
+                nomenclature_id="steel",
+                unit="кг",
+                quantity=Decimal("30"),
+                warehouse_id="warehouse-main",
+            )
+        ],
         calculated_at=NOW,
     )
 
     assert not result.validation_issues
     assert result.positions[0].gross_requirement == Decimal("20")
-    assert result.positions[0].net_requirement == Decimal("20")
+    assert result.positions[0].net_requirement == Decimal("0")
+    assert result.positions[0].warehouse_stock_before == Decimal("30")
+    assert result.positions[0].warehouse_stock_used == Decimal("20")
+    assert result.positions[0].warehouse_stock_remaining == Decimal("10")
 
 
 def test_open_order_cover_does_not_request_new_procurement():

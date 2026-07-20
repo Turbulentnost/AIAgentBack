@@ -104,6 +104,9 @@ class ProcurementCaseSummary(BaseModel):
     source_active: bool = False
     engineer_bucket: Literal["success", "attention", "critical"] | None = None
     engineer_bucket_reason: str | None = None
+    engineer_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):

@@ -480,6 +480,21 @@ def calculate_engineer_assessment(
                 * material.consumption_rate
                 * (Decimal("1") + material.technological_loss_percent / Decimal("100"))
             )
+            warehouse_stock_before = sum(
+                (
+                    remaining.get(supply.supply_id, Decimal("0"))
+                    for supply in supplies
+                    if supply.nomenclature_id == material.nomenclature_id
+                    and supply.source_type in OTHER_WAREHOUSE_TYPES
+                    and _exclusion_reason(
+                        supply,
+                        material=material,
+                        required_date=required_date,
+                    )
+                    is None
+                ),
+                Decimal("0"),
+            )
             included: list[tuple[EngineerSupplyItem, Decimal]] = []
             excluded: list[EngineerExcludedSupply] = []
             for supply in sorted(
@@ -556,6 +571,11 @@ def calculate_engineer_assessment(
                 and supply.warehouse_id
                 and supply.warehouse_id != case.warehouse_1c_ref
             )
+            warehouse_stock_used = free_stock + other_stock
+            warehouse_stock_remaining = max(
+                Decimal("0"),
+                warehouse_stock_before - warehouse_stock_used,
+            )
             confirmed_arrivals = sum(
                 breakdown.get(value, Decimal("0")) for value in FUTURE_SUPPLY_TYPES
             )
@@ -592,6 +612,9 @@ def calculate_engineer_assessment(
                     gross_requirement=gross,
                     free_stock=free_stock,
                     available_other_warehouses=other_stock,
+                    warehouse_stock_before=warehouse_stock_before,
+                    warehouse_stock_used=warehouse_stock_used,
+                    warehouse_stock_remaining=warehouse_stock_remaining,
                     confirmed_arrivals=confirmed_arrivals,
                     total_available_supply=available,
                     net_requirement=net,

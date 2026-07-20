@@ -1736,6 +1736,19 @@ class ProcurementOrchestratorService:
 
     def _serialize_case_summary(self, case: ProcurementCase) -> dict[str, Any]:
         engineer_bucket, engineer_bucket_reason = self._engineer_bucket(case)
+        role_status = str((case.latest_result or {}).get("role_status") or "")
+        if engineer_bucket is None:
+            engineer_work_status = None
+        elif case.status in TERMINAL_CASE_STATUSES:
+            engineer_work_status = "archived"
+        elif role_status in {"waiting_human", "waiting_external", "failed"}:
+            engineer_work_status = "awaiting_action"
+        elif case.current_task_id and role_status != "completed":
+            engineer_work_status = "processing"
+        elif engineer_bucket == "success":
+            engineer_work_status = "completed"
+        else:
+            engineer_work_status = "awaiting_action"
         return {
             "id": str(case.id),
             "correlation_id": case.correlation_id,
@@ -1771,6 +1784,7 @@ class ProcurementOrchestratorService:
             "source_active": case.status in ACTIVE_CASE_STATUSES,
             "engineer_bucket": engineer_bucket,
             "engineer_bucket_reason": engineer_bucket_reason,
+            "engineer_work_status": engineer_work_status,
         }
 
     def _serialize_case_detail(self, case: ProcurementCase) -> dict[str, Any]:
