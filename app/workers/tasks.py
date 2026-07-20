@@ -979,7 +979,7 @@ def poll_procurement_sources(self) -> dict[str, Any]:
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
-            service = ProcurementOrchestratorService(db, enqueue_case=False)
+            service = ProcurementOrchestratorService(db, enqueue_case=True)
             try:
                 summary = await service.poll_once()
                 await db.commit()
@@ -993,6 +993,14 @@ def poll_procurement_sources(self) -> dict[str, Any]:
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
 
+        dispatched = 0
+        for case_id, task_id in service.pending_dispatches:
+            run_procurement_case_task.apply_async(
+                args=[case_id, task_id],
+                queue="agents",
+            )
+            dispatched += 1
+        summary["dispatched"] = dispatched
         summary["celery_task_id"] = self.request.id
         summary["task_name"] = "poll_procurement_sources"
         summary["status"] = "completed"
@@ -1018,13 +1026,16 @@ def run_procurement_case_task(self, case_id: str, task_id: str) -> dict[str, Any
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
-            if not settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED:
-                task = await db.get(Task, UUID(task_id))
+            task = await db.get(Task, UUID(task_id))
+            if (
+                task is not None
+                and task.task_type != "procurement_role_agent"
+                and not settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
+            ):
                 case = await db.get(ProcurementCase, UUID(case_id))
-                if task is not None:
-                    task.status = TaskStatus.CANCELLED
-                    task.finished_at = datetime.now(timezone.utc)
-                    task.error_message = "Планирование оркестратора отключено."
+                task.status = TaskStatus.CANCELLED
+                task.finished_at = datetime.now(timezone.utc)
+                task.error_message = "Планирование оркестратора отключено."
                 if case is not None and case.current_task_id == UUID(task_id):
                     case.current_task_id = None
                     case.current_agent_id = None

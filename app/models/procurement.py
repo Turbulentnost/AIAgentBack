@@ -44,6 +44,10 @@ class ProcurementCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_status: Mapped[str | None] = mapped_column(String(128), index=True)
     source_data_version: Mapped[str | None] = mapped_column(String(128))
     source_content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    source_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+    )
     initiator_1c_ref: Mapped[str | None] = mapped_column(String(64))
     initiator_name: Mapped[str | None] = mapped_column(String(255))
     department_1c_ref: Mapped[str | None] = mapped_column(String(64), index=True)

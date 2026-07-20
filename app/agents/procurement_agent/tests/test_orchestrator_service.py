@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import event, select
@@ -9,15 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.ext.compiler import compiles
 
 from app.agents.procurement_agent.source_discovery import normalize_source_document
+from app.agents.procurement_role_agents.config import SOURCE_AGENT_MAP
 from app.db.base import Base
-from app.models.enums import ProcurementSourceType
+from app.models.enums import ProcurementSourceType, TaskStatus
 from app.models.procurement import (
     ProcurementCase,
     ProcurementCaseEvent,
     ProcurementCasePosition,
     ProcurementSourceSyncState,
 )
-from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
+from app.models.task import Task
+from app.services.procurement_orchestrator_service import (
+    ProcurementOrchestratorService,
+    _source_date_cutoff,
+)
 
 
 @compiles(JSONB, "sqlite")
@@ -43,6 +49,7 @@ async def db_session():
                     ProcurementCasePosition.__table__,
                     ProcurementCaseEvent.__table__,
                     ProcurementSourceSyncState.__table__,
+                    Task.__table__,
                 ],
             )
         )
@@ -65,16 +72,18 @@ def _document(
     *,
     action: str = "КОбеспечению",
     cancelled: bool = False,
+    source_date: str = "2026-07-16T10:00:00",
+    source_type: ProcurementSourceType = ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
 ):
     return normalize_source_document(
-        source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
+        source_type=source_type,
         database="erp_pm",
         entity_set="Document_ЗаказНаВнутреннееПотребление",
         raw={
             "Ref_Key": ref,
             "DataVersion": version,
             "Number": "НП-1",
-            "Date": "2026-07-16T10:00:00",
+            "Date": source_date,
             "DeletionMark": False,
             "Posted": True,
             "Статус": "КВыполнению",
@@ -106,6 +115,7 @@ async def test_upsert_creates_then_skips_unchanged(db_session: AsyncSession):
     assert second == "skipped"
     cases = (await db_session.execute(select(ProcurementCase))).scalars().all()
     assert len(cases) == 1
+    assert cases[0].source_synced_at is not None
     positions = (await db_session.execute(select(ProcurementCasePosition))).scalars().all()
     assert len(positions) == 1
 
@@ -121,6 +131,125 @@ async def test_upsert_updates_on_version_change(db_session: AsyncSession):
     assert case.source_data_version == "v2"
     position = (await db_session.execute(select(ProcurementCasePosition))).scalar_one()
     assert str(position.quantity) in {"5", "5.000000"}
+
+
+def test_source_date_cutoff_uses_two_calendar_months():
+    assert _source_date_cutoff(datetime(2026, 4, 30, 12, tzinfo=UTC)) == datetime(
+        2026, 2, 28, tzinfo=UTC
+    )
+
+
+@pytest.mark.asyncio
+async def test_upsert_skips_old_document_without_existing_case(db_session: AsyncSession):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=False)
+
+    result = await service._upsert_case_from_document(
+        _document(ref, "v1", source_date="2026-01-01T10:00:00")
+    )
+
+    assert result == "skipped"
+    assert (await db_session.execute(select(ProcurementCase))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_upsert_keeps_tracking_active_case_after_it_ages(db_session: AsyncSession):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=False)
+    await service._upsert_case_from_document(_document(ref, "v1"))
+
+    result = await service._upsert_case_from_document(
+        _document(ref, "v2", quantity=5, source_date="2026-01-01T10:00:00")
+    )
+
+    assert result == "updated"
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    assert case.status == "new"
+    assert case.source_date.replace(tzinfo=UTC) == datetime(2026, 1, 1, 7, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_upsert_does_not_reactivate_old_archived_case(db_session: AsyncSession):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=False)
+    await service._upsert_case_from_document(_document(ref, "v1"))
+    await service._upsert_case_from_document(_document(ref, "v2", action="КПроизводству"))
+
+    result = await service._upsert_case_from_document(
+        _document(ref, "v3", source_date="2026-01-01T10:00:00")
+    )
+
+    assert result == "skipped"
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    assert case.status == "closed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_type", list(ProcurementSourceType))
+async def test_role_agent_is_routed_by_source_type(
+    db_session: AsyncSession,
+    source_type: ProcurementSourceType,
+):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+
+    result = await service._upsert_case_from_document(
+        _document(ref, "v1", source_type=source_type)
+    )
+
+    assert result == "enqueued"
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    task = (await db_session.execute(select(Task))).scalar_one()
+    expected_agent = SOURCE_AGENT_MAP[source_type.value]
+    assert case.current_agent_id == expected_agent
+    assert case.assigned_agents == [expected_agent]
+    assert task.task_metadata["agent_slug"] == expected_agent
+    assert task.task_type == "procurement_role_agent"
+
+
+@pytest.mark.asyncio
+async def test_role_agent_wait_blocks_duplicates_and_completed_resume_releases(
+    db_session: AsyncSession,
+):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(_document(ref, "v1"))
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    task = (await db_session.execute(select(Task))).scalar_one()
+
+    result = await service.execute_case_task(case.id, task.id)
+    assert result["role_status"] == "waiting_external"
+    assert case.status == "agent_waiting"
+    assert task.status is TaskStatus.WAITING_EXTERNAL
+    assert await service._enqueue_role_agent(case) is False
+
+    waiting_human = await service.resume_case_agent(
+        case.id,
+        {
+            "role_status": "waiting_human",
+            "summary": "Нужно решение инициатора",
+            "wait_reason": "Нужно решение инициатора",
+            "output_data": {},
+        },
+    )
+    assert waiting_human is not None
+    assert task.status is TaskStatus.WAITING_HUMAN
+    assert case.current_task_id == task.id
+
+    completed = await service.resume_case_agent(
+        case.id,
+        {
+            "role_status": "completed",
+            "summary": "Данные собраны",
+            "output_data": {"decision": "continue"},
+        },
+    )
+    assert completed is not None
+    assert task.status is TaskStatus.COMPLETED
+    assert case.current_task_id is None
+    assert case.current_agent_id is None
+    assert case.case_metadata["role_agent_output"] == {"decision": "continue"}
+    assert await service._enqueue_role_agent(case) is False
 
 
 @pytest.mark.asyncio

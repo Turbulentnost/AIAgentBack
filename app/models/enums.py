@@ -16,6 +16,7 @@ class TaskStatus(str, enum.Enum):
     PLANNING = "planning"
     RUNNING = "running"
     WAITING_HUMAN = "waiting_human"
+    WAITING_EXTERNAL = "waiting_external"
     COMPLETED = "completed"
     COMPLETED_WITH_ISSUES = "completed_with_issues"
     FAILED = "failed"
@@ -496,6 +497,7 @@ class ProcurementSourceType(str, enum.Enum):
 
 class ProcurementCaseStatus(str, enum.Enum):
     NEW = "new"
+    AGENT_WAITING = "agent_waiting"
     DATA_CHECK = "data_check"
     COVERAGE_CHECK = "coverage_check"
     HUMAN_REQUIRED = "human_required"

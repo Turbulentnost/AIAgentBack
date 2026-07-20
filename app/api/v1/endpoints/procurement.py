@@ -13,6 +13,8 @@ from app.schemas.procurement import (
     ProcurementDashboardRead,
     ProcurementPermissionsRead,
     ProcurementRefreshResult,
+    ProcurementRoleAgentResultRead,
+    ProcurementRoleAgentResumeRequest,
     ProcurementSyncStatusRead,
 )
 from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
@@ -93,6 +95,31 @@ async def list_procurement_case_events(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
     events = await service.list_case_events(case_id)
     return [ProcurementCaseEventRead.model_validate(item) for item in events]
+
+
+@router.post(
+    "/cases/{case_id}/agent-result",
+    response_model=ProcurementRoleAgentResultRead,
+)
+async def resume_procurement_role_agent(
+    case_id: uuid.UUID,
+    data: ProcurementRoleAgentResumeRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ProcurementRoleAgentResultRead:
+    await _require_superuser(db, current_user)
+    service = ProcurementOrchestratorService(db, enqueue_case=False)
+    result = await service.resume_case_agent(
+        case_id,
+        data.model_dump(mode="json"),
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="У кейса нет ожидающей задачи ролевого агента",
+        )
+    await db.commit()
+    return ProcurementRoleAgentResultRead.model_validate(result)
 
 
 @router.get("/sync-status", response_model=list[ProcurementSyncStatusRead])

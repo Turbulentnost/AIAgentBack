@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -17,8 +18,8 @@ from app.agents.procurement_agent.source_discovery import (
     get_source_capability,
     list_source_capabilities,
     normalize_source_document,
-    positions_to_agent_source_data,
 )
+from app.agents.procurement_role_agents.config import agent_id_for_source, agent_label
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
@@ -35,10 +36,21 @@ logger = get_logger(__name__)
 ACTIVE_CASE_STATUSES = frozenset(
     {
         ProcurementCaseStatus.NEW.value,
+        ProcurementCaseStatus.AGENT_WAITING.value,
         ProcurementCaseStatus.DATA_CHECK.value,
         ProcurementCaseStatus.COVERAGE_CHECK.value,
         ProcurementCaseStatus.HUMAN_REQUIRED.value,
         ProcurementCaseStatus.BLOCKED.value,
+    }
+)
+BLOCKING_TASK_STATUSES = frozenset(
+    {
+        TaskStatus.PENDING,
+        TaskStatus.PLANNING,
+        TaskStatus.RUNNING,
+        TaskStatus.WAITING_HUMAN,
+        TaskStatus.WAITING_EXTERNAL,
+        TaskStatus.FAILED,
     }
 )
 PROCUREMENT_DOCUMENT_FIELDS = [
@@ -79,6 +91,7 @@ CLOSED_REASON_LABELS = {
     "inactive_supply_action": "Действие строк больше не «К обеспечению»",
     "terminal_status": "Документ закрыт или завершён в 1С",
     "inactive_supply_action_or_cancelled": "Основание больше не актуально в 1С",
+    "source_too_old": "Документ старше двух календарных месяцев",
 }
 DEFAULT_ROUTE_STAGES = [
     {"stage_id": "basis", "label": "Основание", "order": 1},
@@ -89,6 +102,29 @@ DEFAULT_ROUTE_STAGES = [
     {"stage_id": "delivery", "label": "Поставка", "order": 6},
     {"stage_id": "receipt", "label": "Оприходование", "order": 7},
 ]
+
+
+def _source_date_cutoff(now: datetime | None = None) -> datetime:
+    current = now or datetime.now(UTC)
+    target_month = current.month - 2
+    target_year = current.year
+    if target_month <= 0:
+        target_month += 12
+        target_year -= 1
+    target_day = min(current.day, calendar.monthrange(target_year, target_month)[1])
+    return current.replace(
+        year=target_year,
+        month=target_month,
+        day=target_day,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+
+def _is_recent_source_document(document: NormalizedSourceDocument) -> bool:
+    return document.date is not None and document.date >= _source_date_cutoff()
 
 
 class ProcurementOrchestratorService:
@@ -143,6 +179,9 @@ class ProcurementOrchestratorService:
                     summary["errors"].append(
                         f"{capability.source_type.value}:{source_summary['error']}"
                     )
+        backfilled = await self.ensure_active_case_assignments()
+        summary["backfilled"] = backfilled
+        summary["enqueued"] += backfilled
         summary["finished_at"] = datetime.now(UTC).isoformat()
         return summary
 
@@ -358,6 +397,7 @@ class ProcurementOrchestratorService:
             refs=[case.source_1c_ref for case in inactive_cases],
         )
         for case in inactive_cases:
+            case.source_synced_at = datetime.now(UTC)
             reason = reasons.get(case.source_1c_ref.lower()) or {
                 "closed_reason": "inactive_supply_action_or_cancelled",
                 "skip_reason": "inactive_supply_action_or_cancelled",
@@ -496,11 +536,15 @@ class ProcurementOrchestratorService:
             TaskStatus.PENDING,
             TaskStatus.PLANNING,
             TaskStatus.RUNNING,
+            TaskStatus.WAITING_HUMAN,
+            TaskStatus.WAITING_EXTERNAL,
+            TaskStatus.FAILED,
         }:
             task.status = TaskStatus.CANCELLED
             task.finished_at = datetime.now(UTC)
             task.error_message = reason
         case.current_task_id = None
+        case.current_agent_id = None
 
     async def _reactivate_case(
         self,
@@ -764,26 +808,6 @@ class ProcurementOrchestratorService:
         self,
         document: NormalizedSourceDocument,
     ) -> str:
-        if document.skip_reason:
-            existing = await self.db.scalar(
-                select(ProcurementCase).where(
-                    ProcurementCase.correlation_id == document.correlation_id
-                )
-            )
-            if existing is not None and existing.status not in TERMINAL_CASE_STATUSES:
-                await self._archive_case(
-                    existing,
-                    closed_reason=self._closed_reason_from_skip(document.skip_reason),
-                    event_type="case_archived_from_source",
-                    idempotency_key=f"{document.poll_idempotency_key}:closed",
-                    payload={"skip_reason": document.skip_reason},
-                    source_status=document.status,
-                    source_data_version=document.data_version,
-                    source_content_hash=document.content_hash,
-                )
-                return "updated"
-            return "skipped"
-
         case = await self.db.scalar(
             select(ProcurementCase)
             .options(selectinload(ProcurementCase.positions))
@@ -799,9 +823,35 @@ class ProcurementOrchestratorService:
                     ProcurementCase.source_1c_ref == document.ref_key,
                 )
             )
+        if case is not None:
+            case.source_synced_at = datetime.now(UTC)
+
+        # New and archived source documents outside the rolling two-calendar-month
+        # window must not appear as active cases. An already active case remains
+        # tracked until its source closes, even after it crosses the cutoff.
+        if not _is_recent_source_document(document) and (
+            case is None or case.status in TERMINAL_CASE_STATUSES
+        ):
+            return "skipped"
+
+        if document.skip_reason:
+            if case is not None and case.status not in TERMINAL_CASE_STATUSES:
+                await self._archive_case(
+                    case,
+                    closed_reason=self._closed_reason_from_skip(document.skip_reason),
+                    event_type="case_archived_from_source",
+                    idempotency_key=f"{document.poll_idempotency_key}:closed",
+                    payload={"skip_reason": document.skip_reason},
+                    source_status=document.status,
+                    source_data_version=document.data_version,
+                    source_content_hash=document.content_hash,
+                )
+                return "updated"
+            return "skipped"
+
         if case is None:
             case = await self._create_case(document)
-            enqueued = await self._enqueue_kt1(case, document)
+            enqueued = await self._enqueue_role_agent(case)
             return "enqueued" if enqueued else "created"
 
         was_terminal = case.status in TERMINAL_CASE_STATUSES
@@ -812,6 +862,9 @@ class ProcurementOrchestratorService:
         )
         if unchanged:
             presentations_updated = await self._update_case_presentations(case, document)
+            enqueued = await self._enqueue_role_agent(case)
+            if enqueued:
+                return "enqueued"
             return "updated" if presentations_updated else "skipped"
 
         await self._update_case_card(case, document)
@@ -830,7 +883,7 @@ class ProcurementOrchestratorService:
         )
         if was_terminal or case.status == ProcurementCaseStatus.HUMAN_REQUIRED.value:
             await self._reactivate_case(case, document)
-        enqueued = await self._enqueue_kt1(case, document)
+        enqueued = await self._enqueue_role_agent(case)
         return "enqueued" if enqueued else "updated"
 
     async def _create_case(self, document: NormalizedSourceDocument) -> ProcurementCase:
@@ -845,6 +898,7 @@ class ProcurementOrchestratorService:
             source_status=document.status,
             source_data_version=document.data_version,
             source_content_hash=document.content_hash,
+            source_synced_at=datetime.now(UTC),
             initiator_1c_ref=document.initiator_1c_ref,
             initiator_name=document.initiator_name,
             department_1c_ref=document.department_1c_ref,
@@ -856,26 +910,12 @@ class ProcurementOrchestratorService:
             organization_1c_ref=document.organization_1c_ref,
             priority_1c_ref=document.priority_1c_ref,
             required_date=document.required_date,
-            assigned_agents=(
-                [procurement_config.AGENT_ID]
-                if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
-                else []
-            ),
-            current_agent_id=(
-                procurement_config.AGENT_ID
-                if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
-                else None
-            ),
+            assigned_agents=[],
+            current_agent_id=None,
             current_human_role="procurement_orchestrator",
             autonomy_level=0,
-            control_point=(
-                "KT1" if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED else "basis"
-            ),
-            requested_operation=(
-                "assess_need"
-                if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
-                else "monitor_source"
-            ),
+            control_point="basis",
+            requested_operation="route_source_role",
             status=ProcurementCaseStatus.NEW.value,
             idempotency_key=document.poll_idempotency_key,
             graph_version=procurement_config.GRAPH_VERSION,
@@ -884,11 +924,7 @@ class ProcurementOrchestratorService:
             reactivated_at=None,
             case_metadata={
                 "source_label": get_source_capability(document.source_type).label_ru,
-                "initial_route": (
-                    [procurement_config.AGENT_ID]
-                    if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
-                    else []
-                ),
+                "initial_route": [agent_id_for_source(document.source_type.value)],
                 "deadline": document.required_date.isoformat() if document.required_date else None,
                 "route_stages": DEFAULT_ROUTE_STAGES,
             },
@@ -1001,68 +1037,216 @@ class ProcurementOrchestratorService:
         await self.db.flush()
         await self.db.refresh(case, attribute_names=["positions"])
 
-    async def _enqueue_kt1(
-        self,
-        case: ProcurementCase,
-        document: NormalizedSourceDocument,
-    ) -> bool:
-        if (
-            not self.enqueue_case
-            or not settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
-        ):
+    @staticmethod
+    def _role_completion_key(case: ProcurementCase, agent_id: str) -> str:
+        source_revision = (
+            case.source_content_hash
+            or case.source_data_version
+            or case.updated_at.isoformat()
+        )
+        return f"{agent_id}:{source_revision}"
+
+    @staticmethod
+    def _role_source_data(case: ProcurementCase) -> dict[str, Any]:
+        return {
+            "positions": [
+                {
+                    "line_id": position.line_id,
+                    "line_number": position.line_number,
+                    "nomenclature_id": position.nomenclature_id,
+                    "nomenclature_name": position.nomenclature_name,
+                    "characteristic_id": position.characteristic_id,
+                    "unit": position.unit,
+                    "quantity": str(position.quantity),
+                    "required_date": (
+                        position.required_date.isoformat()
+                        if position.required_date
+                        else None
+                    ),
+                    "raw_payload": position.raw_payload or {},
+                }
+                for position in case.positions or []
+                if not position.cancelled
+            ],
+            "required_date": (
+                case.required_date.isoformat() if case.required_date else None
+            ),
+        }
+
+    async def _enqueue_role_agent(self, case: ProcurementCase) -> bool:
+        if not self.enqueue_case or case.status in TERMINAL_CASE_STATUSES:
             return False
+
+        agent_id = agent_id_for_source(case.source_type)
+        completion_key = self._role_completion_key(case, agent_id)
+        if (case.case_metadata or {}).get("role_agent_completion_key") == completion_key:
+            return False
+
         if case.current_task_id is not None:
             current_task = await self.db.get(Task, case.current_task_id)
-            if current_task is not None and current_task.status in {
-                TaskStatus.PENDING,
-                TaskStatus.PLANNING,
-                TaskStatus.RUNNING,
-            }:
+            if current_task is not None and current_task.status in BLOCKING_TASK_STATUSES:
                 return False
+            case.current_task_id = None
 
-        run_key = document.poll_idempotency_key
-        source_data = positions_to_agent_source_data(document)
+        run_key = f"role:{case.id}:{completion_key}"[:255]
         task = Task(
             id=uuid.uuid4(),
-            title=f"КТ1: {document.number or document.ref_key}",
-            description=get_source_capability(document.source_type).label_ru,
+            title=f"{agent_label(agent_id)}: {case.source_number or case.source_1c_ref}",
+            description=f"Ролевая обработка: {case.source_type}",
             status=TaskStatus.PENDING,
-            task_type="procurement",
+            task_type="procurement_role_agent",
             input_payload={
                 "correlation_id": case.correlation_id,
                 "case_id": str(case.id),
-                "source_type": document.source_type.value,
-                "source_1c_ref": document.ref_key,
-                "human_role": "procurement_orchestrator",
-                "autonomy_level": 0,
-                "requested_operation": "assess_need",
+                "source_type": case.source_type,
+                "source_1c_ref": case.source_1c_ref,
+                "source_number": case.source_number,
+                "caller_agent_id": "procurement_orchestrator",
                 "idempotency_key": run_key,
-                "source_data": source_data,
+                "source_data": self._role_source_data(case),
+                "role_context": {
+                    "initiator_1c_ref": case.initiator_1c_ref,
+                    "initiator_name": case.initiator_name,
+                    "department_1c_ref": case.department_1c_ref,
+                    "department_name": case.department_name,
+                    "warehouse_1c_ref": case.warehouse_1c_ref,
+                    "warehouse_name": case.warehouse_name,
+                    "warehouse_from_1c_ref": case.warehouse_from_1c_ref,
+                    "warehouse_to_1c_ref": case.warehouse_to_1c_ref,
+                    "organization_1c_ref": case.organization_1c_ref,
+                },
             },
             task_metadata={
                 "procurement_case_id": str(case.id),
-                "source_type": document.source_type.value,
-                "agent_slug": procurement_config.AGENT_ID,
+                "source_type": case.source_type,
+                "agent_slug": agent_id,
+                "role_completion_key": completion_key,
             },
         )
         self.db.add(task)
         await self.db.flush()
         case.current_task_id = task.id
-        case.current_agent_id = procurement_config.AGENT_ID
-        case.assigned_agents = [procurement_config.AGENT_ID]
+        case.current_agent_id = agent_id
+        case.assigned_agents = [agent_id]
         await self._append_event(
             case,
-            event_type="kt1_task_enqueued",
-            idempotency_key=f"{run_key}:enqueued",
+            event_type="role_agent_task_enqueued",
+            idempotency_key=f"{run_key}:enqueued"[:255],
             previous_status=case.status,
             new_status=case.status,
-            payload={"task_id": str(task.id)},
+            payload={
+                "task_id": str(task.id),
+                "agent_id": agent_id,
+                "agent_label": agent_label(agent_id),
+                "source_type": case.source_type,
+            },
         )
         await self.db.flush()
 
-        if self.enqueue_case:
-            self.pending_dispatches.append((str(case.id), str(task.id)))
+        self.pending_dispatches.append((str(case.id), str(task.id)))
         return True
+
+    async def ensure_active_case_assignments(self) -> int:
+        if not self.enqueue_case:
+            return 0
+        cases = (
+            await self.db.execute(
+                select(ProcurementCase)
+                .options(selectinload(ProcurementCase.positions))
+                .where(ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES)))
+            )
+        ).scalars().all()
+        enqueued = 0
+        for case in cases:
+            if await self._enqueue_role_agent(case):
+                enqueued += 1
+        return enqueued
+
+    async def _apply_role_agent_result(
+        self,
+        case: ProcurementCase,
+        task: Task,
+        result_payload: dict[str, Any],
+        *,
+        event_type: str,
+    ) -> dict[str, Any]:
+        role_status = str(
+            result_payload.get("role_status")
+            or result_payload.get("status")
+            or "failed"
+        )
+        if role_status not in {
+            "waiting_human",
+            "waiting_external",
+            "completed",
+            "failed",
+        }:
+            raise ValueError(f"Неизвестный статус ролевого агента: {role_status}")
+
+        result_payload["role_status"] = role_status
+        result_payload.setdefault("agent_id", case.current_agent_id)
+        result_payload.setdefault("case_id", str(case.id))
+        result_payload.setdefault("correlation_id", case.correlation_id)
+        case.latest_result = result_payload
+        task.final_result = result_payload
+        task.requires_human_review = role_status == "waiting_human"
+        wait_reason = str(
+            result_payload.get("wait_reason")
+            or result_payload.get("summary")
+            or ""
+        ) or None
+
+        previous_status = case.status
+        if role_status == "waiting_human":
+            task.status = TaskStatus.WAITING_HUMAN
+            task.finished_at = None
+            case.status = ProcurementCaseStatus.AGENT_WAITING.value
+            case.deviation_summary = wait_reason
+        elif role_status == "waiting_external":
+            task.status = TaskStatus.WAITING_EXTERNAL
+            task.finished_at = None
+            case.status = ProcurementCaseStatus.AGENT_WAITING.value
+            case.deviation_summary = wait_reason
+        elif role_status == "completed":
+            task.status = TaskStatus.COMPLETED
+            task.finished_at = datetime.now(UTC)
+            case.status = ProcurementCaseStatus.NEW.value
+            case.deviation_summary = None
+            metadata = dict(case.case_metadata or {})
+            metadata["role_agent_completion_key"] = (task.task_metadata or {}).get(
+                "role_completion_key"
+            )
+            metadata["role_agent_output"] = result_payload.get("output_data") or {}
+            case.case_metadata = metadata
+            case.current_task_id = None
+            case.current_agent_id = None
+        else:
+            task.status = TaskStatus.FAILED
+            task.finished_at = datetime.now(UTC)
+            task.error_message = wait_reason or "Ролевой агент завершился с ошибкой."
+            case.status = ProcurementCaseStatus.BLOCKED.value
+            case.deviation_summary = task.error_message
+
+        event_hash = hashlib.sha256(
+            repr(sorted(result_payload.items())).encode("utf-8")
+        ).hexdigest()[:20]
+        await self._append_event(
+            case,
+            event_type=event_type,
+            idempotency_key=f"role-result:{task.id}:{role_status}:{event_hash}",
+            previous_status=previous_status,
+            new_status=case.status,
+            agent_id=str(result_payload.get("agent_id") or "") or None,
+            payload={
+                "task_id": str(task.id),
+                "agent_id": result_payload.get("agent_id"),
+                "role_status": role_status,
+                "wait_reason": wait_reason,
+                "output_data": result_payload.get("output_data") or {},
+            },
+        )
+        await self.db.flush()
+        return result_payload
 
     async def execute_case_task(self, case_id: uuid.UUID, task_id: uuid.UUID) -> dict[str, Any]:
         case = await self.db.scalar(
@@ -1073,6 +1257,8 @@ class ProcurementOrchestratorService:
         task = await self.db.get(Task, task_id)
         if case is None or task is None:
             return {"status": "failed", "error": "case_or_task_not_found"}
+        if case.current_task_id != task.id:
+            return {"status": "failed", "error": "task_is_not_current_for_case"}
 
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now(UTC)
@@ -1083,51 +1269,48 @@ class ProcurementOrchestratorService:
         payload["case_id"] = str(case.id)
         payload["db"] = self.db
 
-        from app.agents.procurement_agent.service import ProcurementAgent
+        from app.agents import agent_registry
 
-        result = await ProcurementAgent().run(payload)
+        agent_id = str((task.task_metadata or {}).get("agent_slug") or "")
+        agent_cls = agent_registry.get(agent_id)
+        if agent_cls is None:
+            raise ValueError(f"Ролевой агент {agent_id!r} не зарегистрирован")
+        result = await agent_cls().run(payload)
         result_payload = (
             result.model_dump(mode="json")
             if hasattr(result, "model_dump")
             else dict(result)
         )
-        case.latest_result = result_payload
-        case.status = str(
-            result_payload.get("case_status")
-            or case.status
-            or ProcurementCaseStatus.FAILED.value
-        )
-        case.control_point = result_payload.get("control_point") or case.control_point
-        if case.status in TERMINAL_CASE_STATUSES:
-            case.closed_at = datetime.now(UTC)
-        if result_payload.get("requires_human_review"):
-            case.deviation_summary = result_payload.get("summary")
-
-        task.status = (
-            TaskStatus.COMPLETED
-            if result_payload.get("status") != "failed"
-            else TaskStatus.FAILED
-        )
-        task.finished_at = datetime.now(UTC)
-        task.final_result = result_payload
-        task.requires_human_review = bool(result_payload.get("requires_human_review"))
-        if task.status is TaskStatus.FAILED:
-            task.error_message = result_payload.get("summary")
-
-        await self._append_event(
+        return await self._apply_role_agent_result(
             case,
-            event_type="kt1_task_completed",
-            idempotency_key=f"{payload.get('idempotency_key')}:completed",
-            previous_status=None,
-            new_status=case.status,
-            payload={
-                "task_id": str(task.id),
-                "agent_status": result_payload.get("status"),
-                "case_status": case.status,
-            },
+            task,
+            result_payload,
+            event_type="role_agent_result_received",
         )
-        await self.db.flush()
-        return result_payload
+
+    async def resume_case_agent(
+        self,
+        case_id: uuid.UUID,
+        result_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        case = await self.db.get(ProcurementCase, case_id)
+        if case is None or case.current_task_id is None:
+            return None
+        task = await self.db.get(Task, case.current_task_id)
+        if task is None or task.status not in {
+            TaskStatus.WAITING_HUMAN,
+            TaskStatus.WAITING_EXTERNAL,
+            TaskStatus.FAILED,
+        }:
+            return None
+        payload = dict(result_payload)
+        payload.setdefault("agent_id", case.current_agent_id)
+        return await self._apply_role_agent_result(
+            case,
+            task,
+            payload,
+            event_type="role_agent_resumed",
+        )
 
     async def list_dashboard(self, *, view: str = "active") -> dict[str, Any]:
         normalized_view = view if view in {"active", "processing", "archive"} else "active"
@@ -1213,6 +1396,11 @@ class ProcurementOrchestratorService:
         )
         if case is None:
             return None
+        current_task = (
+            await self.db.get(Task, case.current_task_id)
+            if case.current_task_id
+            else None
+        )
         detail = self._serialize_case_detail(case)
         detail["events"] = await self.list_case_events(case_id)
         detail["route_stages"] = self._serialize_route_stages(case)
@@ -1224,11 +1412,17 @@ class ProcurementOrchestratorService:
             "current_agent_label": (
                 "Агент закупок и логистики"
                 if case.current_agent_id == procurement_config.AGENT_ID
-                else case.current_agent_id
+                else agent_label(case.current_agent_id)
             ),
             "requires_human_review": bool((case.latest_result or {}).get("requires_human_review")),
             "summary": (case.latest_result or {}).get("summary") or case.deviation_summary,
             "task_id": str(case.current_task_id) if case.current_task_id else None,
+            "task_status": (
+                current_task.status.value if current_task is not None else None
+            ),
+            "wait_status": (case.latest_result or {}).get("role_status"),
+            "wait_reason": (case.latest_result or {}).get("wait_reason")
+            or case.deviation_summary,
             "closed_reason": case.closed_reason,
             "closed_reason_label": CLOSED_REASON_LABELS.get(case.closed_reason or ""),
             "source_active": case.status in ACTIVE_CASE_STATUSES,
@@ -1301,6 +1495,7 @@ class ProcurementOrchestratorService:
         previous_status: str | None,
         new_status: str | None,
         payload: dict[str, Any] | None = None,
+        agent_id: str | None = None,
     ) -> None:
         exists = await self.db.scalar(
             select(ProcurementCaseEvent.id).where(
@@ -1315,7 +1510,7 @@ class ProcurementOrchestratorService:
                 case_id=case.id,
                 correlation_id=case.correlation_id,
                 event_type=event_type,
-                agent_id=procurement_config.AGENT_ID,
+                agent_id=agent_id or case.current_agent_id or procurement_config.AGENT_ID,
                 actor_role="procurement_orchestrator",
                 previous_status=previous_status,
                 new_status=new_status,
@@ -1333,13 +1528,16 @@ class ProcurementOrchestratorService:
             "source_number": case.source_number,
             "source_date": case.source_date.isoformat() if case.source_date else None,
             "source_status": case.source_status,
+            "source_synced_at": (
+                case.source_synced_at.isoformat() if case.source_synced_at else None
+            ),
             "status": case.status,
             "control_point": case.control_point,
             "current_agent_id": case.current_agent_id,
             "current_agent_name": (
                 "Агент закупок и логистики"
                 if case.current_agent_id == procurement_config.AGENT_ID
-                else case.current_agent_id
+                else agent_label(case.current_agent_id)
             ),
             "current_task_id": str(case.current_task_id) if case.current_task_id else None,
             "required_date": case.required_date.isoformat() if case.required_date else None,
@@ -1420,6 +1618,7 @@ class ProcurementOrchestratorService:
         configured = (case.case_metadata or {}).get("route_stages") or DEFAULT_ROUTE_STAGES
         status_map = {
             ProcurementCaseStatus.NEW.value: "basis",
+            ProcurementCaseStatus.AGENT_WAITING.value: "basis",
             ProcurementCaseStatus.DATA_CHECK.value: "data",
             ProcurementCaseStatus.COVERAGE_CHECK.value: "coverage",
             ProcurementCaseStatus.HUMAN_REQUIRED.value: "coverage",
@@ -1474,6 +1673,9 @@ class ProcurementOrchestratorService:
                 "case_reactivated_from_source": "Кейс возвращён в работу",
                 "kt1_task_enqueued": "Запущен этап агента",
                 "kt1_task_completed": "Этап агента завершён",
+                "role_agent_task_enqueued": "Назначен ролевой агент",
+                "role_agent_result_received": "Получен результат ролевого агента",
+                "role_agent_resumed": "Состояние ролевого агента обновлено",
             }.get(event_type, event_type)
             timeline.append(
                 {

@@ -66,6 +66,9 @@ class ProcurementCurrentStateRead(BaseModel):
     requires_human_review: bool = False
     summary: str | None = None
     task_id: str | None = None
+    task_status: str | None = None
+    wait_status: str | None = None
+    wait_reason: str | None = None
     closed_reason: str | None = None
     closed_reason_label: str | None = None
     source_active: bool = False
@@ -79,6 +82,7 @@ class ProcurementCaseSummary(BaseModel):
     source_number: str | None = None
     source_date: datetime | None = None
     source_status: str | None = None
+    source_synced_at: datetime | None = None
     status: str
     control_point: str | None = None
     current_agent_id: str | None = None
@@ -171,6 +175,24 @@ class ProcurementRefreshResult(BaseModel):
     summary: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProcurementRoleAgentResumeRequest(BaseModel):
+    role_status: Literal[
+        "waiting_human",
+        "waiting_external",
+        "completed",
+        "failed",
+    ]
+    summary: str | None = None
+    wait_reason: str | None = None
+    output_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcurementRoleAgentResultRead(ProcurementRoleAgentResumeRequest):
+    agent_id: str | None = None
+    case_id: str
+    correlation_id: str
+
+
 __all__ = [
     "ProcurementCaseDetail",
     "ProcurementCaseEventRead",
@@ -181,6 +203,8 @@ __all__ = [
     "ProcurementDashboardRead",
     "ProcurementPermissionsRead",
     "ProcurementRefreshResult",
+    "ProcurementRoleAgentResumeRequest",
+    "ProcurementRoleAgentResultRead",
     "ProcurementRouteStageRead",
     "ProcurementSourceGroupRead",
     "ProcurementSyncStatusRead",
