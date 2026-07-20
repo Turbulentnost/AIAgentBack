@@ -5,6 +5,11 @@ from pydantic import ValidationError
 from app.agents.common.base import BaseAgent
 from app.agents.common.registry import agent_registry
 from app.agents.executive_director_agent import config
+from app.agents.executive_director_agent.decisions import (
+    apply_human_action,
+    assess_case,
+    build_awaiting_output,
+)
 from app.agents.executive_director_agent.schemas import (
     ExecutiveDirectorAgentRequest,
     ExecutiveDirectorAgentResult,
@@ -36,21 +41,59 @@ class ExecutiveDirectorAgent(BaseAgent):
                 output_data={"validation_errors": exc.errors()},
             )
 
-        wait_reason = (
-            f"Правила для «{self.name}» ещё не настроены. "
-            "Оркестратор удерживает кейс у этого агента."
-        )
+        if request.human_action:
+            role_status, summary, output_data, next_roles = apply_human_action(request)
+            return ExecutiveDirectorAgentResult(
+                agent_id=self.agent_id,
+                status=role_status,
+                summary=summary,
+                data_confidence=ConfidenceLevel.HIGH,
+                requires_human_review=role_status == "waiting_human",
+                case_id=request.case_id,
+                correlation_id=request.correlation_id,
+                role_status=role_status,  # type: ignore[arg-type]
+                suggested_action=(request.human_action or "").lower(),
+                output_data=output_data,
+                next_roles_suggested=next_roles,
+            )
+
+        assessment = assess_case(request)
+        if assessment.missing_fields:
+            return ExecutiveDirectorAgentResult(
+                agent_id=self.agent_id,
+                status="data_check",
+                summary="Неполный case_context: нет registry_id и/или registry_lines.",
+                data_confidence=ConfidenceLevel.LOW,
+                requires_human_review=False,
+                case_id=request.case_id,
+                correlation_id=request.correlation_id,
+                role_status="data_check",
+                wait_reason=(
+                    "Требуются registry_id и registry_lines в case_context "
+                    "(или чтение реестра из 1С позже)."
+                ),
+                suggested_action=assessment.suggested_action,
+                output_data={
+                    "missing_fields": assessment.missing_fields,
+                    "logs": assessment.logs,
+                    "block_payment": True,
+                },
+            )
+
+        output_data = build_awaiting_output(request.case_context, assessment)
         return ExecutiveDirectorAgentResult(
             agent_id=self.agent_id,
-            status="waiting_external",
-            summary=wait_reason,
-            data_confidence=ConfidenceLevel.MEDIUM,
-            requires_human_review=False,
+            status="waiting_human",
+            summary="Требуется резолюция ИД по реестру (≤12:00)",
+            data_confidence=ConfidenceLevel.HIGH,
+            requires_human_review=True,
             case_id=request.case_id,
             correlation_id=request.correlation_id,
             role_status="waiting_human",
-            wait_reason=wait_reason,
-            output_data={},
+            wait_reason="HITL: утвердить реестр / вернуть ОМТО",
+            suggested_action=assessment.suggested_action,
+            output_data=output_data,
+            next_roles_suggested=[],
         )
 
 
