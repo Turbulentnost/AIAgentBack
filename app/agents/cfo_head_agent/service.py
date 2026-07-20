@@ -8,6 +8,7 @@ from app.agents.cfo_head_agent.decisions import (
     assess_case,
     build_awaiting_output,
 )
+from app.agents.cfo_head_agent.prompts import recommend_with_llm
 from app.agents.cfo_head_agent.schemas import CfoHeadAgentRequest, CfoHeadAgentResult
 from app.agents.common.base import BaseAgent
 from app.agents.common.registry import agent_registry
@@ -74,10 +75,14 @@ class CfoHeadAgent(BaseAgent):
             )
 
         output_data = build_awaiting_output(request.case_context, assessment)
+        rag_text = str((request.payload or {}).get("rag_text") or "")
+        advice = await recommend_with_llm(request, assessment, rag_text=rag_text)
+        output_data["llm_recommendation"] = advice
+        # Deterministic code action remains primary; LLM advice is for the human.
         return CfoHeadAgentResult(
             agent_id=self.agent_id,
             status="waiting_human",
-            summary="Требуется решение руководителя ЦФО",
+            summary=str(advice.get("recommendation") or "Требуется решение руководителя ЦФО"),
             data_confidence=ConfidenceLevel.HIGH,
             requires_human_review=True,
             case_id=request.case_id,

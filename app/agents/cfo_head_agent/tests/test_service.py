@@ -5,6 +5,12 @@ import pytest
 from app.agents import agent_registry
 from app.agents.cfo_head_agent.config import CFO_HEAD_AGENT_ID
 from app.agents.cfo_head_agent.decisions import assess_case
+from app.agents.cfo_head_agent.prompts import (
+    RAG_EMPTY_DEFAULT,
+    SYSTEM_PROMPT,
+    build_messages,
+    parse_recommendation,
+)
 from app.agents.cfo_head_agent.schemas import CfoHeadAgentRequest
 from app.services.cfo_head_permission import is_cfo_head_position
 
@@ -49,6 +55,9 @@ async def test_run_awaits_human_when_within_limit():
     assert result.suggested_action == "approve"
     assert result.output_data["ds_limit_ok"] is True
     assert result.output_data["amount"] == "1000.00"
+    assert "llm_recommendation" in result.output_data
+    # Without gateway URL code path stays primary
+    assert result.suggested_action == "approve"
 
 
 @pytest.mark.asyncio
@@ -135,3 +144,36 @@ def test_assess_suggested_payment_date():
     )
     assessment = assess_case(request)
     assert assessment.suggested_payment_date is not None
+
+
+def test_system_prompt_has_sto_norm_refs():
+    assert "СТО-28-020 §6.2" in SYSTEM_PROMPT
+    assert "Для редакторов" not in SYSTEM_PROMPT
+
+
+def test_build_messages_uses_rag_default():
+    request = CfoHeadAgentRequest.model_validate(_base_payload())
+    assessment = assess_case(request)
+    messages = build_messages(request, assessment, rag_text="")
+    assert messages[0]["role"] == "system"
+    assert RAG_EMPTY_DEFAULT in messages[1]["content"]
+    assert "{{RAG" not in messages[1]["content"]
+
+
+def test_parse_recommendation_json():
+    parsed = parse_recommendation(
+        '{"recommendation":"Ок","rationale":"amount<=ds_limit",'
+        '"suggested_action":"approve","needs_hitl":true,'
+        '"norm_refs":["СТО-28-020 §6.2"]}'
+    )
+    assert parsed["suggested_action"] == "approve"
+    assert parsed["needs_hitl"] is True
+    assert "СТО-28-020 §6.2" in parsed["norm_refs"]
+
+
+def test_parse_recommendation_strips_fence():
+    parsed = parse_recommendation(
+        '```json\n{"recommendation":"Текст","rationale":"x",'
+        '"suggested_action":"return","needs_hitl":true,"norm_refs":[]}\n```'
+    )
+    assert parsed["suggested_action"] == "return"
