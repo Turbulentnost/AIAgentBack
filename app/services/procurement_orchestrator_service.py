@@ -1,0 +1,1965 @@
+from __future__ import annotations
+
+import asyncio
+import calendar
+import hashlib
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.agents.procurement_agent import config as procurement_config
+from app.agents.procurement_agent.mcp_client import MCPCallError, MCPUnavailableError, OneCMCPClient
+from app.agents.procurement_agent.source_discovery import (
+    NormalizedSourceDocument,
+    get_source_capability,
+    list_source_capabilities,
+    normalize_source_document,
+)
+from app.agents.procurement_role_agents.config import (
+    PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+    agent_id_for_source,
+    agent_label,
+)
+from app.core.config import settings
+from app.core.logging import get_logger
+from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
+from app.models.procurement import (
+    ProcurementCase,
+    ProcurementCaseEvent,
+    ProcurementCasePosition,
+    ProcurementSourceSyncState,
+)
+from app.models.task import Task
+
+logger = get_logger(__name__)
+
+ACTIVE_CASE_STATUSES = frozenset(
+    {
+        ProcurementCaseStatus.NEW.value,
+        ProcurementCaseStatus.AGENT_WAITING.value,
+        ProcurementCaseStatus.DATA_CHECK.value,
+        ProcurementCaseStatus.COVERAGE_CHECK.value,
+        ProcurementCaseStatus.HUMAN_REQUIRED.value,
+        ProcurementCaseStatus.BLOCKED.value,
+    }
+)
+BLOCKING_TASK_STATUSES = frozenset(
+    {
+        TaskStatus.PENDING,
+        TaskStatus.PLANNING,
+        TaskStatus.RUNNING,
+        TaskStatus.WAITING_HUMAN,
+        TaskStatus.WAITING_EXTERNAL,
+        TaskStatus.FAILED,
+    }
+)
+PROCUREMENT_DOCUMENT_FIELDS = [
+    "DataVersion",
+    "Number",
+    "Date",
+    "Posted",
+    "DeletionMark",
+    "Отменен",
+    "Отменён",
+    "Отменено",
+    "Статус",
+    "Автор_Key",
+    "Ответственный_Key",
+    "Подразделение_Key",
+    "Склад_Key",
+    "ЦеховаяКладовая_Key",
+    "СкладОтправитель_Key",
+    "СкладПолучатель_Key",
+    "Организация_Key",
+    "Приоритет_Key",
+    "ДокументОснование",
+    "ДокументОснование_Type",
+    "ЖелаемаяДатаПоступления",
+    "ДатаОтгрузки",
+    "ДатаУтверждения",
+    "Товары",
+]
+TERMINAL_CASE_STATUSES = frozenset(
+    {
+        ProcurementCaseStatus.CLOSED.value,
+        ProcurementCaseStatus.FAILED.value,
+    }
+)
+ZERO_1C_REF = "00000000-0000-0000-0000-000000000000"
+CLOSED_REASON_LABELS = {
+    "cancelled": "Документ отменён в 1С",
+    "deletion_mark": "Документ помечен на удаление",
+    "no_active_positions": "Нет активных строк потребности",
+    "inactive_supply_action": "Действие строк больше не «К обеспечению»",
+    "terminal_status": "Документ закрыт или завершён в 1С",
+    "inactive_supply_action_or_cancelled": "Основание больше не актуально в 1С",
+    "source_too_old": "Документ старше двух календарных месяцев",
+}
+DEFAULT_ROUTE_STAGES = [
+    {"stage_id": "basis", "label": "Основание", "order": 1},
+    {"stage_id": "data", "label": "Данные", "order": 2},
+    {"stage_id": "coverage", "label": "Обеспечение", "order": 3},
+    {"stage_id": "purchase", "label": "Закупка", "order": 4},
+    {"stage_id": "payment", "label": "Оплата", "order": 5},
+    {"stage_id": "delivery", "label": "Поставка", "order": 6},
+    {"stage_id": "receipt", "label": "Оприходование", "order": 7},
+]
+
+
+def _source_date_cutoff(now: datetime | None = None) -> datetime:
+    current = now or datetime.now(UTC)
+    target_month = current.month - 2
+    target_year = current.year
+    if target_month <= 0:
+        target_month += 12
+        target_year -= 1
+    target_day = min(current.day, calendar.monthrange(target_year, target_month)[1])
+    return current.replace(
+        year=target_year,
+        month=target_month,
+        day=target_day,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+
+def _is_recent_source_document(document: NormalizedSourceDocument) -> bool:
+    return document.date is not None and document.date >= _source_date_cutoff()
+
+
+class ProcurementOrchestratorService:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        mcp_client: OneCMCPClient | None = None,
+        enqueue_case: bool = True,
+    ) -> None:
+        self.db = db
+        self.mcp = mcp_client or OneCMCPClient(
+            timeout_seconds=650,
+            max_attempts=2,
+        )
+        self.enqueue_case = enqueue_case
+        self.pending_dispatches: list[tuple[str, str]] = []
+
+    async def poll_once(self) -> dict[str, Any]:
+        started = datetime.now(UTC)
+        summary: dict[str, Any] = {
+            "started_at": started.isoformat(),
+            "databases": [],
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "enqueued": 0,
+            "errors": [],
+            "sources": [],
+        }
+        try:
+            health = await self.mcp.call_capability("read_system_health_check", {})
+        except (MCPUnavailableError, MCPCallError) as exc:
+            summary["errors"].append(f"health_check:{exc}")
+            summary["finished_at"] = datetime.now(UTC).isoformat()
+            return summary
+
+        databases = await self._resolve_databases(health)
+        summary["databases"] = databases
+        for database in databases:
+            for capability in list_source_capabilities():
+                source_summary = await self._poll_source(
+                    database=database,
+                    source_type=capability.source_type,
+                )
+                summary["sources"].append(source_summary)
+                summary["created"] += source_summary.get("created", 0)
+                summary["updated"] += source_summary.get("updated", 0)
+                summary["skipped"] += source_summary.get("skipped", 0)
+                summary["enqueued"] += source_summary.get("enqueued", 0)
+                if source_summary.get("error"):
+                    summary["errors"].append(
+                        f"{capability.source_type.value}:{source_summary['error']}"
+                    )
+        backfilled = await self.ensure_active_case_assignments()
+        summary["backfilled"] = backfilled
+        summary["enqueued"] += backfilled
+        claimed = await self.claim_engineer_dispatches(limit=5)
+        summary["engineer_dispatched"] = claimed
+        summary["finished_at"] = datetime.now(UTC).isoformat()
+        return summary
+
+    async def _resolve_databases(self, health: dict[str, Any]) -> list[str]:
+        default_name = str(health.get("database") or "default")
+        try:
+            listed = await self.mcp.call_capability("read_system_list_databases", {})
+        except (MCPUnavailableError, MCPCallError):
+            return [default_name]
+        names = [
+            str(item.get("name"))
+            for item in listed.get("databases") or []
+            if isinstance(item, dict) and item.get("name")
+        ]
+        return names or [default_name]
+
+    async def _poll_source(
+        self,
+        *,
+        database: str,
+        source_type: ProcurementSourceType,
+    ) -> dict[str, Any]:
+        capability = get_source_capability(source_type)
+        state = await self._get_or_create_sync_state(database, source_type, capability.entity_set)
+        state.last_polled_at = datetime.now(UTC)
+        result = {
+            "database": database,
+            "source_type": source_type.value,
+            "entity_set": capability.entity_set,
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "enqueued": 0,
+            "error": None,
+        }
+
+        if not capability.available or not capability.entity_set:
+            state.capability_status = "capability_unavailable"
+            state.capability_message = capability.unavailable_reason
+            state.last_error = capability.unavailable_reason
+            await self.db.flush()
+            result["error"] = capability.unavailable_reason
+            return result
+
+        state.capability_status = "available"
+        state.capability_message = None
+        try:
+            documents = await self._discover_documents(
+                database=database,
+                source_type=source_type,
+                entity_set=capability.entity_set,
+                state=state,
+            )
+            for document in documents:
+                action = await self._upsert_case_from_document(document)
+                if action == "created":
+                    result["created"] += 1
+                    state.cases_created += 1
+                elif action == "updated":
+                    result["updated"] += 1
+                    state.cases_updated += 1
+                elif action == "enqueued":
+                    result["enqueued"] += 1
+                else:
+                    result["skipped"] += 1
+                    state.cases_skipped += 1
+            state.documents_seen += len(documents)
+            state.last_success_at = datetime.now(UTC)
+            state.last_error = None
+            await self._advance_watermark(state, documents)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "procurement.orchestrator.poll_source_failed",
+                source_type=source_type.value,
+                database=database,
+            )
+            state.last_error = str(exc)
+            state.capability_status = "error"
+            state.capability_message = str(exc)
+            result["error"] = str(exc)
+        await self.db.flush()
+        return result
+
+    async def _discover_documents(
+        self,
+        *,
+        database: str,
+        source_type: ProcurementSourceType,
+        entity_set: str,
+        state: ProcurementSourceSyncState,
+    ) -> list[NormalizedSourceDocument]:
+        capability = get_source_capability(source_type)
+        if not capability.lines_entity_set:
+            raise MCPUnavailableError(
+                f"Табличная часть для {source_type.value} не настроена"
+            )
+        selection = await self.mcp.call_capability(
+            "read_procurement_get_active_document_refs",
+            {
+                "database": database,
+                "linesEntitySet": capability.lines_entity_set,
+            },
+        )
+        candidate_refs = {
+            str(value).lower()
+            for value in (selection.get("activeRefs") or [])
+            if value
+        }
+        await self._close_cases_outside_active_refs(
+            database=database,
+            source_type=source_type,
+            active_refs=candidate_refs,
+        )
+        selected_documents = {
+            str(raw.get("Ref_Key") or raw.get("ref")).lower(): raw
+            for raw in (selection.get("documents") or [])
+            if isinstance(raw, dict) and (raw.get("Ref_Key") or raw.get("ref"))
+        }
+        raw_documents = [
+            selected_documents[ref]
+            for ref in sorted(candidate_refs)
+            if ref in selected_documents
+        ]
+        sorted_refs = sorted(candidate_refs - set(selected_documents))
+        ref_chunks = [
+            sorted_refs[index:index + 50]
+            for index in range(0, len(sorted_refs), 50)
+        ]
+        semaphore = asyncio.Semaphore(2)
+
+        async def fetch_chunk(refs: list[str]) -> list[dict[str, Any]]:
+            async with semaphore:
+                response = await self.mcp.call_capability(
+                    "read_document_get_documents",
+                    {
+                        "database": database,
+                        "entitySet": entity_set,
+                        "refs": refs,
+                        "fields": PROCUREMENT_DOCUMENT_FIELDS,
+                    },
+                )
+            return [
+                item
+                for item in (response.get("items") or [])
+                if isinstance(item, dict)
+            ]
+
+        batches = await asyncio.gather(*(fetch_chunk(refs) for refs in ref_chunks))
+        documents = [
+            normalize_source_document(
+                source_type=source_type,
+                database=database,
+                entity_set=entity_set,
+                raw=raw,
+            )
+            for batch in [raw_documents, *batches]
+            for raw in batch
+        ]
+        existing_hashes = {
+            str(ref).lower(): content_hash
+            for ref, content_hash in (
+                await self.db.execute(
+                    select(
+                        ProcurementCase.source_1c_ref,
+                        ProcurementCase.source_content_hash,
+                    ).where(
+                        ProcurementCase.source_database == database,
+                        ProcurementCase.source_type == source_type.value,
+                        ProcurementCase.source_1c_ref.in_(candidate_refs),
+                    )
+                )
+            ).all()
+        }
+        state.watermark_refs = []
+        await self._enrich_document_presentations(
+            database,
+            [
+                document
+                for document in documents
+                if not document.skip_reason
+                and existing_hashes.get(document.ref_key.lower()) != document.content_hash
+            ],
+        )
+        return documents
+
+    async def _close_cases_outside_active_refs(
+        self,
+        *,
+        database: str,
+        source_type: ProcurementSourceType,
+        active_refs: set[str],
+    ) -> None:
+        cases = (
+            await self.db.execute(
+                select(ProcurementCase).where(
+                    ProcurementCase.source_database == database,
+                    ProcurementCase.source_type == source_type.value,
+                    ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES)),
+                )
+            )
+        ).scalars().all()
+        inactive_cases = [
+            case for case in cases if case.source_1c_ref.lower() not in active_refs
+        ]
+        if not inactive_cases:
+            return
+
+        capability = get_source_capability(source_type)
+        reasons = await self._probe_inactive_reasons(
+            database=database,
+            entity_set=capability.entity_set or "",
+            source_type=source_type,
+            refs=[case.source_1c_ref for case in inactive_cases],
+        )
+        for case in inactive_cases:
+            case.source_synced_at = datetime.now(UTC)
+            reason = reasons.get(case.source_1c_ref.lower()) or {
+                "closed_reason": "inactive_supply_action_or_cancelled",
+                "skip_reason": "inactive_supply_action_or_cancelled",
+            }
+            await self._archive_case(
+                case,
+                closed_reason=str(reason["closed_reason"]),
+                event_type="case_archived_from_source",
+                idempotency_key=(
+                    f"archive:{case.source_content_hash or case.source_data_version or 'unknown'}:"
+                    f"{reason['closed_reason']}"
+                )[:255],
+                payload={
+                    "skip_reason": reason.get("skip_reason"),
+                    "closed_reason": reason["closed_reason"],
+                    "source_status": reason.get("source_status"),
+                },
+                source_status=reason.get("source_status"),
+                source_data_version=reason.get("source_data_version"),
+                source_content_hash=reason.get("source_content_hash"),
+            )
+
+    async def _probe_inactive_reasons(
+        self,
+        *,
+        database: str,
+        entity_set: str,
+        source_type: ProcurementSourceType,
+        refs: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        unique_refs = sorted({value.lower() for value in refs if value})
+        if not unique_refs or not entity_set:
+            return {}
+        reasons: dict[str, dict[str, Any]] = {}
+        chunks = [unique_refs[index:index + 50] for index in range(0, len(unique_refs), 50)]
+        for chunk in chunks:
+            try:
+                response = await self.mcp.call_capability(
+                    "read_document_get_documents",
+                    {
+                        "database": database,
+                        "entitySet": entity_set,
+                        "refs": chunk,
+                        "fields": PROCUREMENT_DOCUMENT_FIELDS,
+                    },
+                )
+            except (MCPUnavailableError, MCPCallError):
+                for ref in chunk:
+                    reasons[ref] = {
+                        "closed_reason": "inactive_supply_action_or_cancelled",
+                        "skip_reason": "inactive_supply_action_or_cancelled",
+                    }
+                continue
+            found: set[str] = set()
+            for raw in response.get("items") or []:
+                if not isinstance(raw, dict):
+                    continue
+                document = normalize_source_document(
+                    source_type=source_type,
+                    database=database,
+                    entity_set=entity_set,
+                    raw=raw,
+                )
+                found.add(document.ref_key.lower())
+                closed_reason = self._closed_reason_from_skip(document.skip_reason)
+                reasons[document.ref_key.lower()] = {
+                    "closed_reason": closed_reason,
+                    "skip_reason": document.skip_reason or closed_reason,
+                    "source_status": document.status,
+                    "source_data_version": document.data_version,
+                    "source_content_hash": document.content_hash,
+                }
+            for ref in chunk:
+                if ref not in found:
+                    reasons[ref] = {
+                        "closed_reason": "deletion_mark",
+                        "skip_reason": "missing_in_1c",
+                    }
+        return reasons
+
+    @staticmethod
+    def _closed_reason_from_skip(skip_reason: str | None) -> str:
+        if not skip_reason:
+            return "inactive_supply_action_or_cancelled"
+        if skip_reason.startswith("terminal_status:"):
+            return "terminal_status"
+        if skip_reason in CLOSED_REASON_LABELS:
+            return skip_reason
+        return "inactive_supply_action_or_cancelled"
+
+    async def _archive_case(
+        self,
+        case: ProcurementCase,
+        *,
+        closed_reason: str,
+        event_type: str,
+        idempotency_key: str,
+        payload: dict[str, Any] | None = None,
+        source_status: str | None = None,
+        source_data_version: str | None = None,
+        source_content_hash: str | None = None,
+    ) -> None:
+        if case.status in TERMINAL_CASE_STATUSES:
+            return
+        previous = case.status
+        case.status = ProcurementCaseStatus.CLOSED.value
+        case.closed_at = datetime.now(UTC)
+        case.closed_reason = closed_reason
+        case.deviation_summary = CLOSED_REASON_LABELS.get(
+            closed_reason,
+            "Основание больше не актуально в 1С.",
+        )
+        if source_status is not None:
+            case.source_status = source_status
+        if source_data_version is not None:
+            case.source_data_version = source_data_version
+        if source_content_hash is not None:
+            case.source_content_hash = source_content_hash
+        await self._cancel_current_task(case, reason=case.deviation_summary)
+        await self._append_event(
+            case,
+            event_type=event_type,
+            idempotency_key=idempotency_key,
+            previous_status=previous,
+            new_status=case.status,
+            payload=payload or {"closed_reason": closed_reason},
+        )
+        # Session uses autoflush=False; persist terminal transition before any refresh().
+        await self.db.flush()
+
+    async def _cancel_current_task(self, case: ProcurementCase, *, reason: str) -> None:
+        if case.current_task_id is None:
+            return
+        task = await self.db.get(Task, case.current_task_id)
+        if task is not None and task.status in {
+            TaskStatus.PENDING,
+            TaskStatus.PLANNING,
+            TaskStatus.RUNNING,
+            TaskStatus.WAITING_HUMAN,
+            TaskStatus.WAITING_EXTERNAL,
+            TaskStatus.FAILED,
+        }:
+            task.status = TaskStatus.CANCELLED
+            task.finished_at = datetime.now(UTC)
+            task.error_message = reason
+        case.current_task_id = None
+        case.current_agent_id = None
+
+    async def _reactivate_case(
+        self,
+        case: ProcurementCase,
+        document: NormalizedSourceDocument,
+    ) -> None:
+        previous = case.status
+        case.status = ProcurementCaseStatus.NEW.value
+        case.closed_at = None
+        case.closed_reason = None
+        case.reactivated_at = datetime.now(UTC)
+        case.deviation_summary = None
+        case.error_message = None
+        case.control_point = (
+            "KT1" if settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED else "basis"
+        )
+        await self._append_event(
+            case,
+            event_type="case_reactivated_from_source",
+            idempotency_key=f"{document.poll_idempotency_key}:reactivated",
+            previous_status=previous,
+            new_status=case.status,
+            payload={
+                "source_data_version": document.data_version,
+                "content_hash": document.content_hash,
+            },
+        )
+        # Session uses autoflush=False; persist reactivation before any refresh().
+        await self.db.flush()
+
+    async def _enrich_document_presentations(
+        self,
+        database: str,
+        documents: list[NormalizedSourceDocument],
+    ) -> None:
+        if not documents:
+            return
+
+        initiator_refs = {
+            document.initiator_1c_ref
+            for document in documents
+            if self._is_real_1c_ref(document.initiator_1c_ref)
+        }
+        department_refs = {
+            document.department_1c_ref
+            for document in documents
+            if self._is_real_1c_ref(document.department_1c_ref)
+        }
+        warehouse_refs = {
+            value
+            for document in documents
+            for value in (
+                document.warehouse_1c_ref,
+                document.warehouse_from_1c_ref,
+                document.warehouse_to_1c_ref,
+            )
+            if self._is_real_1c_ref(value)
+        }
+        nomenclature_refs = {
+            line.nomenclature_id
+            for document in documents
+            for line in document.positions
+            if self._is_real_1c_ref(line.nomenclature_id)
+        }
+
+        results = await asyncio.gather(
+            self._read_presentations(
+                database,
+                "Catalog_Пользователи",
+                initiator_refs,
+            ),
+            self._read_presentations(
+                database,
+                "Catalog_СтруктураПредприятия",
+                department_refs,
+            ),
+            self._read_presentations(
+                database,
+                "Catalog_Склады",
+                warehouse_refs,
+            ),
+            self._read_presentations(
+                database,
+                "Catalog_Номенклатура",
+                nomenclature_refs,
+                fields=["ЕдиницаИзмерения_Key"],
+            ),
+            return_exceptions=True,
+        )
+        maps: list[dict[str, dict[str, Any]]] = [
+            result if isinstance(result, dict) else {}
+            for result in results
+        ]
+        initiators, departments, warehouses, nomenclature = maps
+
+        unit_refs = {
+            str(item.get("attributes", {}).get("ЕдиницаИзмерения_Key"))
+            for item in nomenclature.values()
+            if self._is_real_1c_ref(
+                str(item.get("attributes", {}).get("ЕдиницаИзмерения_Key") or "")
+            )
+        }
+        try:
+            units = await self._read_presentations(
+                database,
+                "Catalog_УпаковкиЕдиницыИзмерения",
+                unit_refs,
+            )
+        except (MCPUnavailableError, MCPCallError):
+            units = {}
+
+        for document in documents:
+            document.initiator_name = self._presentation_name(
+                initiators,
+                document.initiator_1c_ref,
+            )
+            document.department_name = self._presentation_name(
+                departments,
+                document.department_1c_ref,
+            )
+            document.warehouse_name = self._presentation_name(
+                warehouses,
+                document.warehouse_1c_ref,
+            )
+            for line in document.positions:
+                item = nomenclature.get(line.nomenclature_id.lower(), {})
+                line.nomenclature_name = str(item.get("name") or "") or None
+                unit_ref = str(
+                    item.get("attributes", {}).get("ЕдиницаИзмерения_Key")
+                    or line.unit_id
+                    or ""
+                )
+                line.unit_id = unit_ref or None
+                line.unit = self._presentation_name(units, unit_ref) or line.unit
+
+    async def _read_presentations(
+        self,
+        database: str,
+        entity_set: str,
+        refs: set[str],
+        *,
+        fields: list[str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        values = sorted(
+            {
+                value.lower()
+                for value in refs
+                if self._is_real_1c_ref(value)
+            }
+        )
+        if not values:
+            return {}
+        chunks = [values[index:index + 20] for index in range(0, len(values), 20)]
+        semaphore = asyncio.Semaphore(4)
+
+        async def fetch_chunk(chunk: list[str]) -> Any:
+            async with semaphore:
+                return await self.mcp.call_capability(
+                    "read_reference_get_presentations",
+                    {
+                        "database": database,
+                        "entitySet": entity_set,
+                        "refs": chunk,
+                        "fields": fields or [],
+                    },
+                )
+
+        responses = await asyncio.gather(
+            *(fetch_chunk(chunk) for chunk in chunks)
+        )
+        return {
+            str(item["ref"]).lower(): item
+            for response in responses
+            for item in (response.get("items") or [])
+            if isinstance(item, dict) and item.get("ref")
+        }
+
+    @staticmethod
+    def _is_real_1c_ref(value: str | None) -> bool:
+        return bool(value and value != ZERO_1C_REF)
+
+    @staticmethod
+    def _presentation_name(
+        presentations: dict[str, dict[str, Any]],
+        ref: str | None,
+    ) -> str | None:
+        if not ref:
+            return None
+        item = presentations.get(ref.lower()) or {}
+        return str(item.get("name") or "") or None
+
+    async def _search_documents_window(
+        self,
+        *,
+        database: str,
+        entity_set: str,
+        start: datetime,
+        end: datetime,
+        page_limit: int,
+    ) -> list[dict[str, Any]]:
+        if end <= start:
+            return []
+        response = await self.mcp.call_capability(
+            "read_document_search_documents",
+            {
+                "database": database,
+                "entitySet": entity_set,
+                "from": start.date().isoformat(),
+                "to": end.date().isoformat(),
+                "limit": page_limit,
+            },
+        )
+        rows = [
+            row
+            for row in (response.get("rows") or [])
+            if isinstance(row, dict)
+        ]
+        truncated = bool(response.get("truncated"))
+        if not truncated or (end - start) <= timedelta(days=1):
+            return rows
+
+        mid = start + (end - start) / 2
+        left = await self._search_documents_window(
+            database=database,
+            entity_set=entity_set,
+            start=start,
+            end=mid,
+            page_limit=page_limit,
+        )
+        right = await self._search_documents_window(
+            database=database,
+            entity_set=entity_set,
+            start=mid,
+            end=end,
+            page_limit=page_limit,
+        )
+        merged: dict[str, dict[str, Any]] = {}
+        for row in left + right + rows:
+            ref = str(row.get("ref") or row.get("Ref_Key") or "")
+            if ref:
+                merged[ref] = row
+        return list(merged.values())
+
+    async def _active_case_refs(
+        self,
+        database: str,
+        source_type: ProcurementSourceType,
+    ) -> set[str]:
+        rows = (
+            await self.db.execute(
+                select(ProcurementCase.source_1c_ref).where(
+                    ProcurementCase.source_database == database,
+                    ProcurementCase.source_type == source_type.value,
+                    ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES)),
+                )
+            )
+        ).scalars().all()
+        return {str(value) for value in rows if value}
+
+    async def _upsert_case_from_document(
+        self,
+        document: NormalizedSourceDocument,
+    ) -> str:
+        case = await self.db.scalar(
+            select(ProcurementCase)
+            .options(selectinload(ProcurementCase.positions))
+            .where(ProcurementCase.correlation_id == document.correlation_id)
+        )
+        if case is None:
+            case = await self.db.scalar(
+                select(ProcurementCase)
+                .options(selectinload(ProcurementCase.positions))
+                .where(
+                    ProcurementCase.source_database == document.database,
+                    ProcurementCase.source_type == document.source_type.value,
+                    ProcurementCase.source_1c_ref == document.ref_key,
+                )
+            )
+        if case is not None:
+            case.source_synced_at = datetime.now(UTC)
+
+        # New and archived source documents outside the rolling two-calendar-month
+        # window must not appear as active cases. An already active case remains
+        # tracked until its source closes, even after it crosses the cutoff.
+        if not _is_recent_source_document(document) and (
+            case is None or case.status in TERMINAL_CASE_STATUSES
+        ):
+            return "skipped"
+
+        if document.skip_reason:
+            if case is not None and case.status not in TERMINAL_CASE_STATUSES:
+                await self._archive_case(
+                    case,
+                    closed_reason=self._closed_reason_from_skip(document.skip_reason),
+                    event_type="case_archived_from_source",
+                    idempotency_key=f"{document.poll_idempotency_key}:closed",
+                    payload={"skip_reason": document.skip_reason},
+                    source_status=document.status,
+                    source_data_version=document.data_version,
+                    source_content_hash=document.content_hash,
+                )
+                return "updated"
+            return "skipped"
+
+        if case is None:
+            case = await self._create_case(document)
+            enqueued = await self._enqueue_role_agent(case)
+            return "enqueued" if enqueued else "created"
+
+        was_terminal = case.status in TERMINAL_CASE_STATUSES
+        unchanged = (
+            case.source_data_version == document.data_version
+            and case.source_content_hash == document.content_hash
+            and not was_terminal
+        )
+        if unchanged:
+            presentations_updated = await self._update_case_presentations(case, document)
+            enqueued = await self._enqueue_role_agent(case)
+            if enqueued:
+                return "enqueued"
+            return "updated" if presentations_updated else "skipped"
+
+        await self._update_case_card(case, document)
+        await self._replace_positions(case, document)
+        await self._append_event(
+            case,
+            event_type="source_document_changed",
+            idempotency_key=f"{document.poll_idempotency_key}:changed",
+            previous_status=case.status,
+            new_status=case.status,
+            payload={
+                "source_data_version": document.data_version,
+                "content_hash": document.content_hash,
+                "positions": len(document.positions),
+            },
+        )
+        if was_terminal or case.status == ProcurementCaseStatus.HUMAN_REQUIRED.value:
+            await self._reactivate_case(case, document)
+        enqueued = await self._enqueue_role_agent(case)
+        return "enqueued" if enqueued else "updated"
+
+    async def _create_case(self, document: NormalizedSourceDocument) -> ProcurementCase:
+        case = ProcurementCase(
+            correlation_id=document.correlation_id,
+            source_type=document.source_type.value,
+            source_1c_ref=document.ref_key,
+            source_entity_set=document.entity_set,
+            source_database=document.database,
+            source_number=document.number,
+            source_date=document.date,
+            source_status=document.status,
+            source_data_version=document.data_version,
+            source_content_hash=document.content_hash,
+            source_synced_at=datetime.now(UTC),
+            initiator_1c_ref=document.initiator_1c_ref,
+            initiator_name=document.initiator_name,
+            department_1c_ref=document.department_1c_ref,
+            department_name=document.department_name,
+            warehouse_1c_ref=document.warehouse_1c_ref,
+            warehouse_name=document.warehouse_name,
+            warehouse_from_1c_ref=document.warehouse_from_1c_ref,
+            warehouse_to_1c_ref=document.warehouse_to_1c_ref,
+            organization_1c_ref=document.organization_1c_ref,
+            priority_1c_ref=document.priority_1c_ref,
+            required_date=document.required_date,
+            assigned_agents=[],
+            current_agent_id=None,
+            current_human_role="procurement_orchestrator",
+            autonomy_level=0,
+            control_point="basis",
+            requested_operation="route_source_role",
+            status=ProcurementCaseStatus.NEW.value,
+            idempotency_key=document.poll_idempotency_key,
+            graph_version=procurement_config.GRAPH_VERSION,
+            deadline_at=document.required_date,
+            closed_reason=None,
+            reactivated_at=None,
+            case_metadata={
+                "source_label": get_source_capability(document.source_type).label_ru,
+                "initial_route": [agent_id_for_source(document.source_type.value)],
+                "deadline": document.required_date.isoformat() if document.required_date else None,
+                "production_order_1c_ref": document.production_order_1c_ref,
+                "production_order_type": document.production_order_type,
+                "route_stages": DEFAULT_ROUTE_STAGES,
+            },
+        )
+        self.db.add(case)
+        await self.db.flush()
+        await self._replace_positions(case, document)
+        await self._append_event(
+            case,
+            event_type="case_created_from_source",
+            idempotency_key=f"{document.poll_idempotency_key}:created",
+            previous_status=None,
+            new_status=case.status,
+            payload={
+                "source_type": document.source_type.value,
+                "source_1c_ref": document.ref_key,
+                "source_number": document.number,
+                "positions": len(document.positions),
+            },
+        )
+        return case
+
+    async def _update_case_card(
+        self,
+        case: ProcurementCase,
+        document: NormalizedSourceDocument,
+    ) -> None:
+        case.source_entity_set = document.entity_set
+        case.source_database = document.database
+        case.source_number = document.number
+        case.source_date = document.date
+        case.source_status = document.status
+        case.source_data_version = document.data_version
+        case.source_content_hash = document.content_hash
+        case.initiator_1c_ref = document.initiator_1c_ref
+        case.initiator_name = document.initiator_name
+        case.department_1c_ref = document.department_1c_ref
+        case.department_name = document.department_name
+        case.warehouse_1c_ref = document.warehouse_1c_ref
+        case.warehouse_name = document.warehouse_name
+        case.warehouse_from_1c_ref = document.warehouse_from_1c_ref
+        case.warehouse_to_1c_ref = document.warehouse_to_1c_ref
+        case.organization_1c_ref = document.organization_1c_ref
+        case.priority_1c_ref = document.priority_1c_ref
+        case.required_date = document.required_date
+        case.deadline_at = document.required_date
+        metadata = dict(case.case_metadata or {})
+        metadata["deadline"] = document.required_date.isoformat() if document.required_date else None
+        metadata["production_order_1c_ref"] = document.production_order_1c_ref
+        metadata["production_order_type"] = document.production_order_type
+        case.case_metadata = metadata
+
+    async def _update_case_presentations(
+        self,
+        case: ProcurementCase,
+        document: NormalizedSourceDocument,
+    ) -> bool:
+        changed = False
+        for attribute, value in (
+            ("initiator_name", document.initiator_name),
+            ("department_name", document.department_name),
+            ("warehouse_name", document.warehouse_name),
+        ):
+            if value and getattr(case, attribute) != value:
+                setattr(case, attribute, value)
+                changed = True
+
+        by_line_id = {position.line_id: position for position in case.positions or []}
+        for line in document.positions:
+            position = by_line_id.get(line.line_id)
+            if position is None:
+                continue
+            if line.nomenclature_name and position.nomenclature_name != line.nomenclature_name:
+                position.nomenclature_name = line.nomenclature_name
+                changed = True
+            if line.unit and position.unit != line.unit:
+                position.unit = line.unit
+                changed = True
+        if changed:
+            await self.db.flush()
+        return changed
+
+    async def _replace_positions(
+        self,
+        case: ProcurementCase,
+        document: NormalizedSourceDocument,
+    ) -> None:
+        existing = (
+            await self.db.execute(
+                select(ProcurementCasePosition).where(ProcurementCasePosition.case_id == case.id)
+            )
+        ).scalars().all()
+        for row in existing:
+            await self.db.delete(row)
+        await self.db.flush()
+        for line in document.positions:
+            self.db.add(
+                ProcurementCasePosition(
+                    case_id=case.id,
+                    line_id=line.line_id,
+                    line_number=line.line_number,
+                    nomenclature_id=line.nomenclature_id,
+                    nomenclature_name=line.nomenclature_name,
+                    characteristic_id=line.characteristic_id,
+                    unit=line.unit,
+                    quantity=line.quantity,
+                    required_date=line.required_date,
+                    cancelled=line.cancelled,
+                    raw_payload=line.raw_payload,
+                )
+            )
+        await self.db.flush()
+        await self.db.refresh(case, attribute_names=["positions"])
+
+    @staticmethod
+    def _role_completion_key(case: ProcurementCase, agent_id: str) -> str:
+        source_revision = (
+            case.source_content_hash
+            or case.source_data_version
+            or case.updated_at.isoformat()
+        )
+        if (
+            agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+            and case.source_synced_at is not None
+        ):
+            source_revision = f"{source_revision}:{case.source_synced_at.isoformat()}"
+        return f"{agent_id}:{source_revision}"
+
+    @staticmethod
+    def _role_source_data(case: ProcurementCase) -> dict[str, Any]:
+        metadata = case.case_metadata or {}
+        warehouse_ids = [
+            value
+            for value in (
+                case.warehouse_1c_ref,
+                case.warehouse_from_1c_ref,
+                case.warehouse_to_1c_ref,
+            )
+            if value
+        ]
+        return {
+            "case_number": case.source_number or str(case.id),
+            "source_database": case.source_database,
+            "source_number": case.source_number,
+            "source_date": case.source_date.isoformat() if case.source_date else None,
+            "source_status": case.source_status,
+            "source_data_version": case.source_data_version,
+            "source_synced_at": (
+                case.source_synced_at.isoformat() if case.source_synced_at else None
+            ),
+            "positions": [
+                {
+                    "line_id": position.line_id,
+                    "line_number": position.line_number,
+                    "nomenclature_id": position.nomenclature_id,
+                    "nomenclature_name": position.nomenclature_name,
+                    "characteristic_id": position.characteristic_id,
+                    "unit": position.unit,
+                    "quantity": str(position.quantity),
+                    "direct_quantity": str(position.quantity),
+                    "gross_quantity": str(position.quantity),
+                    "required_date": (
+                        position.required_date.isoformat()
+                        if position.required_date
+                        else None
+                    ),
+                    "raw_payload": position.raw_payload or {},
+                    "project_id": (position.raw_payload or {}).get("Назначение_Key"),
+                    "production_stage_id": (position.raw_payload or {}).get("Этап_Key"),
+                }
+                for position in case.positions or []
+                if not position.cancelled
+            ],
+            "required_date": (
+                case.required_date.isoformat() if case.required_date else None
+            ),
+            "requested_date": (
+                case.required_date.isoformat() if case.required_date else None
+            ),
+            "warehouse_ids": list(dict.fromkeys(warehouse_ids)),
+            "organization_id": case.organization_1c_ref,
+            "production_order_1c_ref": metadata.get("production_order_1c_ref"),
+            "production_order_type": metadata.get("production_order_type"),
+        }
+
+    async def _enqueue_role_agent(self, case: ProcurementCase) -> bool:
+        if not self.enqueue_case or case.status in TERMINAL_CASE_STATUSES:
+            return False
+
+        agent_id = agent_id_for_source(case.source_type)
+        completion_key = self._role_completion_key(case, agent_id)
+        if (case.case_metadata or {}).get("role_agent_completion_key") == completion_key:
+            return False
+
+        if case.current_task_id is not None:
+            current_task = await self.db.get(Task, case.current_task_id)
+            if current_task is not None and current_task.status in BLOCKING_TASK_STATUSES:
+                task_key = (current_task.task_metadata or {}).get("role_completion_key")
+                if (
+                    current_task.status
+                    in {TaskStatus.WAITING_HUMAN, TaskStatus.WAITING_EXTERNAL}
+                    and task_key != completion_key
+                ):
+                    current_task.status = TaskStatus.CANCELLED
+                    current_task.finished_at = datetime.now(UTC)
+                    current_task.error_message = "Назначен повторный расчёт по свежему снимку 1С."
+                    case.current_task_id = None
+                    case.current_agent_id = None
+                else:
+                    return False
+            case.current_task_id = None
+
+        run_key = f"role:{case.id}:{completion_key}"[:255]
+        task = Task(
+            id=uuid.uuid4(),
+            title=f"{agent_label(agent_id)}: {case.source_number or case.source_1c_ref}",
+            description=f"Ролевая обработка: {case.source_type}",
+            status=TaskStatus.PENDING,
+            task_type="procurement_role_agent",
+            input_payload={
+                "correlation_id": case.correlation_id,
+                "case_id": str(case.id),
+                "source_type": case.source_type,
+                "source_1c_ref": case.source_1c_ref,
+                "source_number": case.source_number,
+                "caller_agent_id": "procurement_orchestrator",
+                "idempotency_key": run_key,
+                "source_data": self._role_source_data(case),
+                "role_context": {
+                    "case_number": case.source_number or str(case.id),
+                    "source_database": case.source_database,
+                    "source_date": case.source_date.isoformat() if case.source_date else None,
+                    "source_status": case.source_status,
+                    "source_data_version": case.source_data_version,
+                    "source_synced_at": (
+                        case.source_synced_at.isoformat() if case.source_synced_at else None
+                    ),
+                    "initiator_1c_ref": case.initiator_1c_ref,
+                    "initiator_name": case.initiator_name,
+                    "department_1c_ref": case.department_1c_ref,
+                    "department_name": case.department_name,
+                    "warehouse_1c_ref": case.warehouse_1c_ref,
+                    "warehouse_name": case.warehouse_name,
+                    "warehouse_from_1c_ref": case.warehouse_from_1c_ref,
+                    "warehouse_to_1c_ref": case.warehouse_to_1c_ref,
+                    "organization_1c_ref": case.organization_1c_ref,
+                    "priority_1c_ref": case.priority_1c_ref,
+                    "required_date": (
+                        case.required_date.isoformat() if case.required_date else None
+                    ),
+                    "production_order_1c_ref": (case.case_metadata or {}).get(
+                        "production_order_1c_ref"
+                    ),
+                    "production_order_type": (case.case_metadata or {}).get(
+                        "production_order_type"
+                    ),
+                },
+            },
+            task_metadata={
+                "procurement_case_id": str(case.id),
+                "source_type": case.source_type,
+                "agent_slug": agent_id,
+                "role_completion_key": completion_key,
+            },
+        )
+        self.db.add(task)
+        await self.db.flush()
+        case.current_task_id = task.id
+        case.current_agent_id = agent_id
+        case.assigned_agents = [agent_id]
+        await self._append_event(
+            case,
+            event_type="role_agent_task_enqueued",
+            idempotency_key=f"{run_key}:enqueued"[:255],
+            previous_status=case.status,
+            new_status=case.status,
+            payload={
+                "task_id": str(task.id),
+                "agent_id": agent_id,
+                "agent_label": agent_label(agent_id),
+                "source_type": case.source_type,
+            },
+        )
+        await self.db.flush()
+
+        if agent_id != PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
+            self.pending_dispatches.append((str(case.id), str(task.id)))
+        return True
+
+    async def claim_engineer_dispatches(self, *, limit: int = 1) -> int:
+        """Claim queued engineer calculations without exceeding five active slots."""
+        tasks = (
+            await self.db.execute(
+                select(Task)
+                .where(
+                    Task.task_type == "procurement_role_agent",
+                    Task.status.in_(
+                        [TaskStatus.PENDING, TaskStatus.PLANNING, TaskStatus.RUNNING]
+                    ),
+                )
+                .order_by(Task.created_at, Task.id)
+                .with_for_update(skip_locked=True)
+            )
+        ).scalars().all()
+        engineer_tasks = [
+            task
+            for task in tasks
+            if (task.task_metadata or {}).get("agent_slug")
+            == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+        ]
+        active = sum(
+            1
+            for task in engineer_tasks
+            if task.status in {TaskStatus.PLANNING, TaskStatus.RUNNING}
+            or bool((task.task_metadata or {}).get("dispatch_claimed"))
+        )
+        available = max(0, min(limit, 5 - active))
+        claimed = 0
+        for task in engineer_tasks:
+            if claimed >= available:
+                break
+            metadata = dict(task.task_metadata or {})
+            if task.status != TaskStatus.PENDING or metadata.get("dispatch_claimed"):
+                continue
+            metadata["dispatch_claimed"] = True
+            metadata["dispatch_claimed_at"] = datetime.now(UTC).isoformat()
+            task.task_metadata = metadata
+            case_id = str(metadata.get("procurement_case_id") or "")
+            if case_id:
+                self.pending_dispatches.append((case_id, str(task.id)))
+                claimed += 1
+        if claimed:
+            await self.db.flush()
+        return claimed
+
+    async def ensure_active_case_assignments(self) -> int:
+        if not self.enqueue_case:
+            return 0
+        cases = (
+            await self.db.execute(
+                select(ProcurementCase)
+                .options(selectinload(ProcurementCase.positions))
+                .where(ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES)))
+            )
+        ).scalars().all()
+        enqueued = 0
+        for case in cases:
+            if await self._enqueue_role_agent(case):
+                enqueued += 1
+        return enqueued
+
+    async def _apply_role_agent_result(
+        self,
+        case: ProcurementCase,
+        task: Task,
+        result_payload: dict[str, Any],
+        *,
+        event_type: str,
+    ) -> dict[str, Any]:
+        role_status = str(
+            result_payload.get("role_status")
+            or result_payload.get("status")
+            or "failed"
+        )
+        if role_status not in {
+            "waiting_human",
+            "waiting_external",
+            "completed",
+            "failed",
+        }:
+            raise ValueError(f"Неизвестный статус ролевого агента: {role_status}")
+
+        result_payload["role_status"] = role_status
+        result_payload.setdefault("agent_id", case.current_agent_id)
+        result_payload.setdefault("case_id", str(case.id))
+        result_payload.setdefault("correlation_id", case.correlation_id)
+        case.latest_result = result_payload
+        task_metadata = dict(task.task_metadata or {})
+        task_metadata["dispatch_claimed"] = False
+        task.task_metadata = task_metadata
+        output_data = result_payload.get("output_data") or {}
+        if (
+            result_payload.get("agent_id")
+            == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+            and isinstance(output_data, dict)
+        ):
+            metadata = dict(case.case_metadata or {})
+            metadata["production_preparation_engineer_output"] = output_data
+            metadata["engineer_evidence_fingerprint"] = output_data.get(
+                "evidence_fingerprint"
+            )
+            metadata["engineer_calculated_at"] = output_data.get("calculated_at")
+            case.case_metadata = metadata
+        task.final_result = result_payload
+        task.requires_human_review = role_status == "waiting_human"
+        wait_reason = str(
+            result_payload.get("wait_reason")
+            or result_payload.get("summary")
+            or ""
+        ) or None
+
+        previous_status = case.status
+        if role_status == "waiting_human":
+            task.status = TaskStatus.WAITING_HUMAN
+            task.finished_at = None
+            case.status = ProcurementCaseStatus.AGENT_WAITING.value
+            case.deviation_summary = wait_reason
+        elif role_status == "waiting_external":
+            task.status = TaskStatus.WAITING_EXTERNAL
+            task.finished_at = None
+            case.status = ProcurementCaseStatus.AGENT_WAITING.value
+            case.deviation_summary = wait_reason
+        elif role_status == "completed":
+            task.status = TaskStatus.COMPLETED
+            task.finished_at = datetime.now(UTC)
+            case.status = ProcurementCaseStatus.NEW.value
+            case.deviation_summary = None
+            metadata = dict(case.case_metadata or {})
+            metadata["role_agent_completion_key"] = (task.task_metadata or {}).get(
+                "role_completion_key"
+            )
+            metadata["role_agent_output"] = result_payload.get("output_data") or {}
+            case.case_metadata = metadata
+            if result_payload.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
+                case.control_point = "coverage"
+                positions = output_data.get("positions") if isinstance(output_data, dict) else []
+                has_deficit = any(
+                    float(item.get("net_requirement") or 0) > 0
+                    for item in positions or []
+                    if isinstance(item, dict)
+                )
+                case.requested_operation = (
+                    "route_confirmed_deficit" if has_deficit else "coverage_confirmed"
+                )
+            case.current_task_id = None
+            case.current_agent_id = None
+        else:
+            task.status = TaskStatus.FAILED
+            task.finished_at = datetime.now(UTC)
+            task.error_message = wait_reason or "Ролевой агент завершился с ошибкой."
+            case.status = ProcurementCaseStatus.BLOCKED.value
+            case.deviation_summary = task.error_message
+
+        event_hash = hashlib.sha256(
+            repr(sorted(result_payload.items())).encode("utf-8")
+        ).hexdigest()[:20]
+        await self._append_event(
+            case,
+            event_type=event_type,
+            idempotency_key=f"role-result:{task.id}:{role_status}:{event_hash}",
+            previous_status=previous_status,
+            new_status=case.status,
+            agent_id=str(result_payload.get("agent_id") or "") or None,
+            payload={
+                "task_id": str(task.id),
+                "agent_id": result_payload.get("agent_id"),
+                "role_status": role_status,
+                "wait_reason": wait_reason,
+                "output_data": result_payload.get("output_data") or {},
+            },
+        )
+        await self.db.flush()
+        return result_payload
+
+    async def execute_case_task(self, case_id: uuid.UUID, task_id: uuid.UUID) -> dict[str, Any]:
+        case = await self.db.scalar(
+            select(ProcurementCase)
+            .options(selectinload(ProcurementCase.positions))
+            .where(ProcurementCase.id == case_id)
+        )
+        task = await self.db.get(Task, task_id)
+        if case is None or task is None:
+            return {"status": "failed", "error": "case_or_task_not_found"}
+        if case.current_task_id != task.id:
+            return {"status": "failed", "error": "task_is_not_current_for_case"}
+
+        task.status = TaskStatus.RUNNING
+        task.started_at = datetime.now(UTC)
+        await self.db.flush()
+
+        payload = dict(task.input_payload or {})
+        payload["task_id"] = str(task.id)
+        payload["case_id"] = str(case.id)
+        payload["db"] = self.db
+
+        from app.agents import agent_registry
+
+        agent_id = str((task.task_metadata or {}).get("agent_slug") or "")
+        agent_cls = agent_registry.get(agent_id)
+        if agent_cls is None:
+            raise ValueError(f"Ролевой агент {agent_id!r} не зарегистрирован")
+        result = await agent_cls().run(payload)
+        result_payload = (
+            result.model_dump(mode="json")
+            if hasattr(result, "model_dump")
+            else dict(result)
+        )
+        return await self._apply_role_agent_result(
+            case,
+            task,
+            result_payload,
+            event_type="role_agent_result_received",
+        )
+
+    async def resume_case_agent(
+        self,
+        case_id: uuid.UUID,
+        result_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        case = await self.db.get(ProcurementCase, case_id)
+        if case is None or case.current_task_id is None:
+            return None
+        task = await self.db.get(Task, case.current_task_id)
+        if task is None or task.status not in {
+            TaskStatus.WAITING_HUMAN,
+            TaskStatus.WAITING_EXTERNAL,
+            TaskStatus.FAILED,
+        }:
+            return None
+        payload = dict(result_payload)
+        payload.setdefault("agent_id", case.current_agent_id)
+        return await self._apply_role_agent_result(
+            case,
+            task,
+            payload,
+            event_type="role_agent_resumed",
+        )
+
+    async def list_dashboard(
+        self,
+        *,
+        view: str = "active",
+        source_type: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_view = view if view in {"active", "processing", "archive"} else "active"
+        if normalized_view == "archive":
+            status_filter = list(TERMINAL_CASE_STATUSES)
+        else:
+            status_filter = list(ACTIVE_CASE_STATUSES)
+
+        case_filters = [ProcurementCase.status.in_(status_filter)]
+        if source_type:
+            case_filters.append(ProcurementCase.source_type == source_type)
+        cases = (
+            await self.db.execute(
+                select(ProcurementCase)
+                .options(selectinload(ProcurementCase.positions))
+                .where(*case_filters)
+                .order_by(
+                    ProcurementCase.source_date.desc().nullslast(),
+                    ProcurementCase.source_number.desc().nullslast(),
+                    ProcurementCase.updated_at.desc().nullslast(),
+                )
+            )
+        ).scalars().all()
+        if normalized_view == "processing":
+            # Same active cards, but presented as processing cases.
+            cases = [case for case in cases if case.status in ACTIVE_CASE_STATUSES]
+
+        archive_filters = [ProcurementCase.status.in_(list(TERMINAL_CASE_STATUSES))]
+        processing_filters = [ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES))]
+        if source_type:
+            archive_filters.append(ProcurementCase.source_type == source_type)
+            processing_filters.append(ProcurementCase.source_type == source_type)
+        archive_count = await self.db.scalar(
+            select(func.count()).select_from(ProcurementCase).where(*archive_filters)
+        )
+        processing_count = await self.db.scalar(
+            select(func.count()).select_from(ProcurementCase).where(*processing_filters)
+        )
+
+        sync_states = (
+            await self.db.execute(select(ProcurementSourceSyncState))
+        ).scalars().all()
+        groups = []
+        for capability in list_source_capabilities():
+            if source_type and capability.source_type.value != source_type:
+                continue
+            group_cases = [
+                self._serialize_case_summary(case)
+                for case in cases
+                if case.source_type == capability.source_type.value
+            ]
+            sync = next(
+                (
+                    item
+                    for item in sync_states
+                    if item.source_type == capability.source_type.value
+                ),
+                None,
+            )
+            groups.append(
+                {
+                    "source_type": capability.source_type.value,
+                    "label_ru": capability.label_ru,
+                    "entity_set": capability.entity_set,
+                    "available": capability.available,
+                    "unavailable_reason": capability.unavailable_reason,
+                    "cases": group_cases,
+                    "cases_count": len(group_cases),
+                    "sync": self._serialize_sync_state(sync, capability),
+                }
+            )
+        return {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "view": normalized_view,
+            "groups": groups,
+            "total_cases": len(cases),
+            "counts": {
+                "active": int(processing_count or 0),
+                "processing": int(processing_count or 0),
+                "archive": int(archive_count or 0),
+            },
+        }
+
+    async def get_case(self, case_id: uuid.UUID) -> dict[str, Any] | None:
+        case = await self.db.scalar(
+            select(ProcurementCase)
+            .options(selectinload(ProcurementCase.positions))
+            .where(ProcurementCase.id == case_id)
+        )
+        if case is None:
+            return None
+        current_task = (
+            await self.db.get(Task, case.current_task_id)
+            if case.current_task_id
+            else None
+        )
+        detail = self._serialize_case_detail(case)
+        detail["events"] = await self.list_case_events(case_id)
+        detail["route_stages"] = self._serialize_route_stages(case)
+        detail["timeline"] = self._serialize_timeline(detail["events"], case)
+        detail["current_state"] = {
+            "status": case.status,
+            "control_point": case.control_point,
+            "current_agent_id": case.current_agent_id,
+            "current_agent_label": (
+                "Агент закупок и логистики"
+                if case.current_agent_id == procurement_config.AGENT_ID
+                else agent_label(case.current_agent_id)
+            ),
+            "requires_human_review": bool((case.latest_result or {}).get("requires_human_review")),
+            "summary": (case.latest_result or {}).get("summary") or case.deviation_summary,
+            "task_id": str(case.current_task_id) if case.current_task_id else None,
+            "task_status": (
+                current_task.status.value if current_task is not None else None
+            ),
+            "wait_status": (case.latest_result or {}).get("role_status"),
+            "wait_reason": (case.latest_result or {}).get("wait_reason")
+            or case.deviation_summary,
+            "closed_reason": case.closed_reason,
+            "closed_reason_label": CLOSED_REASON_LABELS.get(case.closed_reason or ""),
+            "source_active": case.status in ACTIVE_CASE_STATUSES,
+        }
+        return detail
+
+    async def list_case_events(self, case_id: uuid.UUID) -> list[dict[str, Any]]:
+        events = (
+            await self.db.execute(
+                select(ProcurementCaseEvent)
+                .where(ProcurementCaseEvent.case_id == case_id)
+                .order_by(ProcurementCaseEvent.created_at.asc())
+            )
+        ).scalars().all()
+        return [self._serialize_event(event) for event in events]
+
+    async def list_sync_status(self) -> list[dict[str, Any]]:
+        states = (
+            await self.db.execute(select(ProcurementSourceSyncState))
+        ).scalars().all()
+        by_type = {item.source_type: item for item in states}
+        return [
+            self._serialize_sync_state(by_type.get(capability.source_type.value), capability)
+            for capability in list_source_capabilities()
+        ]
+
+    async def _get_or_create_sync_state(
+        self,
+        database: str,
+        source_type: ProcurementSourceType,
+        entity_set: str | None,
+    ) -> ProcurementSourceSyncState:
+        state = await self.db.scalar(
+            select(ProcurementSourceSyncState).where(
+                ProcurementSourceSyncState.database_name == database,
+                ProcurementSourceSyncState.source_type == source_type.value,
+            )
+        )
+        if state is not None:
+            state.entity_set = entity_set
+            return state
+        state = ProcurementSourceSyncState(
+            database_name=database,
+            source_type=source_type.value,
+            entity_set=entity_set,
+            capability_status="unknown",
+            watermark_refs=[],
+        )
+        self.db.add(state)
+        await self.db.flush()
+        return state
+
+    async def _advance_watermark(
+        self,
+        state: ProcurementSourceSyncState,
+        documents: list[NormalizedSourceDocument],
+    ) -> None:
+        dated = [doc for doc in documents if doc.date is not None and not doc.skip_reason]
+        if not dated:
+            return
+        latest = max(doc.date for doc in dated if doc.date is not None)
+        state.watermark_date = latest
+
+    async def _append_event(
+        self,
+        case: ProcurementCase,
+        *,
+        event_type: str,
+        idempotency_key: str,
+        previous_status: str | None,
+        new_status: str | None,
+        payload: dict[str, Any] | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        exists = await self.db.scalar(
+            select(ProcurementCaseEvent.id).where(
+                ProcurementCaseEvent.case_id == case.id,
+                ProcurementCaseEvent.idempotency_key == idempotency_key,
+            )
+        )
+        if exists is not None:
+            return
+        self.db.add(
+            ProcurementCaseEvent(
+                case_id=case.id,
+                correlation_id=case.correlation_id,
+                event_type=event_type,
+                agent_id=agent_id or case.current_agent_id or procurement_config.AGENT_ID,
+                actor_role="procurement_orchestrator",
+                previous_status=previous_status,
+                new_status=new_status,
+                idempotency_key=idempotency_key,
+                payload=payload or {},
+            )
+        )
+
+    @staticmethod
+    def _engineer_bucket(case: ProcurementCase) -> tuple[str | None, str | None]:
+        if case.source_type != ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value:
+            return None, None
+        result = case.latest_result or {}
+        output = result.get("output_data") or (case.case_metadata or {}).get(
+            "production_preparation_engineer_output"
+        )
+        output = output if isinstance(output, dict) else {}
+        role_status = str(result.get("role_status") or "")
+        validation_issues = output.get("validation_issues") or []
+        missing_data = output.get("missing_data") or []
+        unavailable = output.get("excluded_capabilities") or []
+        if (
+            role_status in {"failed", "waiting_human", "waiting_external"}
+            or validation_issues
+            or missing_data
+            or unavailable
+            or case.status in {
+                ProcurementCaseStatus.BLOCKED.value,
+                ProcurementCaseStatus.FAILED.value,
+            }
+        ):
+            reason = (
+                (validation_issues[0] or {}).get("message")
+                if validation_issues and isinstance(validation_issues[0], dict)
+                else None
+            )
+            return "critical", str(
+                reason
+                or (missing_data[0] if missing_data else None)
+                or (unavailable[0] if unavailable else None)
+                or case.error_message
+                or case.deviation_summary
+                or "ИИ-агент завершил обработку с ошибкой."
+            )
+        positions = output.get("positions")
+        if role_status == "completed" and isinstance(positions, list):
+            has_shortage = any(
+                float(position.get("net_requirement") or 0) > 0
+                for position in positions
+                if isinstance(position, dict)
+            )
+            if has_shortage:
+                return "attention", "Расчёт завершён: подтверждённого остатка недостаточно."
+            return "success", "Данные прочитаны, потребность рассчитана и полностью обеспечена."
+        return "attention", "ИИ-агент выполняет расчёт или кейс ожидает своей очереди."
+
+    def _serialize_case_summary(self, case: ProcurementCase) -> dict[str, Any]:
+        engineer_bucket, engineer_bucket_reason = self._engineer_bucket(case)
+        return {
+            "id": str(case.id),
+            "correlation_id": case.correlation_id,
+            "source_type": case.source_type,
+            "source_1c_ref": case.source_1c_ref,
+            "source_number": case.source_number,
+            "source_date": case.source_date.isoformat() if case.source_date else None,
+            "source_status": case.source_status,
+            "source_synced_at": (
+                case.source_synced_at.isoformat() if case.source_synced_at else None
+            ),
+            "status": case.status,
+            "control_point": case.control_point,
+            "current_agent_id": case.current_agent_id,
+            "current_agent_name": (
+                "Агент закупок и логистики"
+                if case.current_agent_id == procurement_config.AGENT_ID
+                else agent_label(case.current_agent_id)
+            ),
+            "current_task_id": str(case.current_task_id) if case.current_task_id else None,
+            "required_date": case.required_date.isoformat() if case.required_date else None,
+            "deadline_at": case.deadline_at.isoformat() if case.deadline_at else None,
+            "positions_count": len(case.positions or []),
+            "updated_at": case.updated_at.isoformat() if case.updated_at else None,
+            "summary": (case.latest_result or {}).get("summary") or case.deviation_summary,
+            "requires_human_review": bool((case.latest_result or {}).get("requires_human_review")),
+            "closed_at": case.closed_at.isoformat() if case.closed_at else None,
+            "closed_reason": case.closed_reason,
+            "closed_reason_label": CLOSED_REASON_LABELS.get(case.closed_reason or ""),
+            "reactivated_at": (
+                case.reactivated_at.isoformat() if case.reactivated_at else None
+            ),
+            "source_active": case.status in ACTIVE_CASE_STATUSES,
+            "engineer_bucket": engineer_bucket,
+            "engineer_bucket_reason": engineer_bucket_reason,
+        }
+
+    def _serialize_case_detail(self, case: ProcurementCase) -> dict[str, Any]:
+        payload = self._serialize_case_summary(case)
+        payload.update(
+            {
+                "source_entity_set": case.source_entity_set,
+                "source_database": case.source_database,
+                "source_data_version": case.source_data_version,
+                "initiator_1c_ref": case.initiator_1c_ref,
+                "initiator_name": case.initiator_name,
+                "department_1c_ref": case.department_1c_ref,
+                "department_name": case.department_name,
+                "warehouse_1c_ref": case.warehouse_1c_ref,
+                "warehouse_name": case.warehouse_name,
+                "warehouse_from_1c_ref": case.warehouse_from_1c_ref,
+                "warehouse_to_1c_ref": case.warehouse_to_1c_ref,
+                "organization_1c_ref": case.organization_1c_ref,
+                "priority_1c_ref": case.priority_1c_ref,
+                "assigned_agents": case.assigned_agents or [],
+                "deviation_summary": case.deviation_summary,
+                "latest_result": case.latest_result,
+                "case_metadata": case.case_metadata,
+                "positions": [
+                    {
+                        "id": str(position.id),
+                        "line_id": position.line_id,
+                        "line_number": position.line_number,
+                        "nomenclature_id": position.nomenclature_id,
+                        "nomenclature_name": position.nomenclature_name,
+                        "characteristic_id": position.characteristic_id,
+                        "unit": position.unit,
+                        "quantity": str(position.quantity),
+                        "required_date": (
+                            position.required_date.isoformat()
+                            if position.required_date
+                            else None
+                        ),
+                        "supply_action": (
+                            (position.raw_payload or {}).get("supply_action")
+                            or (position.raw_payload or {}).get("ВариантОбеспечения")
+                            or (position.raw_payload or {}).get("Действие")
+                            or (position.raw_payload or {}).get(
+                                "ОбеспечениеЗаказовПриПоддержанииЗапаса"
+                            )
+                            or (position.raw_payload or {}).get(
+                                "МетодОбеспеченияПотребностей"
+                            )
+                        ),
+                        "cancelled": position.cancelled,
+                    }
+                    for position in case.positions or []
+                ],
+                "events": [],
+                "route_stages": self._serialize_route_stages(case),
+                "timeline": [],
+                "current_state": None,
+            }
+        )
+        return payload
+
+    def _serialize_route_stages(self, case: ProcurementCase) -> list[dict[str, Any]]:
+        configured = (case.case_metadata or {}).get("route_stages") or DEFAULT_ROUTE_STAGES
+        status_map = {
+            ProcurementCaseStatus.NEW.value: "basis",
+            ProcurementCaseStatus.AGENT_WAITING.value: "basis",
+            ProcurementCaseStatus.DATA_CHECK.value: "data",
+            ProcurementCaseStatus.COVERAGE_CHECK.value: "coverage",
+            ProcurementCaseStatus.HUMAN_REQUIRED.value: "coverage",
+            ProcurementCaseStatus.BLOCKED.value: "coverage",
+            ProcurementCaseStatus.CLOSED.value: "receipt",
+            ProcurementCaseStatus.FAILED.value: "data",
+        }
+        current_stage = case.control_point or status_map.get(case.status, "basis")
+        if current_stage == "KT1":
+            current_stage = "basis"
+        stages: list[dict[str, Any]] = []
+        reached_current = False
+        for item in sorted(configured, key=lambda row: int(row.get("order") or 0)):
+            stage_id = str(item.get("stage_id") or "")
+            if case.status in TERMINAL_CASE_STATUSES and case.closed_reason:
+                status = "completed" if stage_id == "basis" else "skipped"
+            elif stage_id == current_stage:
+                status = "running"
+                reached_current = True
+            elif not reached_current:
+                status = "completed"
+            else:
+                status = "pending"
+            stages.append(
+                {
+                    "stage_id": stage_id,
+                    "label": item.get("label") or stage_id,
+                    "order": int(item.get("order") or 0),
+                    "status": status,
+                    "summary": None,
+                }
+            )
+        return stages
+
+    def _serialize_timeline(
+        self,
+        events: list[dict[str, Any]],
+        case: ProcurementCase,
+    ) -> list[dict[str, Any]]:
+        timeline: list[dict[str, Any]] = []
+        for event in events:
+            event_type = str(event.get("event_type") or "")
+            kind = "system"
+            if "agent" in event_type or event_type.startswith("kt1_"):
+                kind = "agent_run"
+            elif event_type.startswith("case_") or event_type.startswith("source_"):
+                kind = "status_change"
+            title = {
+                "case_created_from_source": "Кейс создан по основанию 1С",
+                "source_document_changed": "Основание 1С изменено",
+                "case_archived_from_source": "Кейс архивирован",
+                "case_reactivated_from_source": "Кейс возвращён в работу",
+                "kt1_task_enqueued": "Запущен этап агента",
+                "kt1_task_completed": "Этап агента завершён",
+                "role_agent_task_enqueued": "Назначен ролевой агент",
+                "role_agent_result_received": "Получен результат ролевого агента",
+                "role_agent_resumed": "Состояние ролевого агента обновлено",
+            }.get(event_type, event_type)
+            timeline.append(
+                {
+                    "id": event.get("id"),
+                    "at": event.get("created_at"),
+                    "kind": kind,
+                    "title": title,
+                    "detail": (event.get("payload") or {}).get("skip_reason")
+                    or (event.get("payload") or {}).get("closed_reason")
+                    or case.deviation_summary,
+                    "actor_id": event.get("agent_id"),
+                    "actor_label": event.get("actor_role"),
+                    "stage_id": case.control_point,
+                    "status": event.get("new_status"),
+                    "payload": event.get("payload") or {},
+                }
+            )
+        return timeline
+
+    def _serialize_event(self, event: ProcurementCaseEvent) -> dict[str, Any]:
+        return {
+            "id": str(event.id),
+            "event_type": event.event_type,
+            "agent_id": event.agent_id,
+            "actor_role": event.actor_role,
+            "previous_status": event.previous_status,
+            "new_status": event.new_status,
+            "payload": event.payload or {},
+            "created_at": event.created_at.isoformat() if event.created_at else None,
+        }
+
+    def _serialize_sync_state(
+        self,
+        state: ProcurementSourceSyncState | None,
+        capability: Any,
+    ) -> dict[str, Any]:
+        return {
+            "source_type": capability.source_type.value,
+            "label_ru": capability.label_ru,
+            "entity_set": capability.entity_set,
+            "available": capability.available,
+            "unavailable_reason": capability.unavailable_reason,
+            "capability_status": (
+                state.capability_status
+                if state is not None
+                else ("capability_unavailable" if not capability.available else "unknown")
+            ),
+            "capability_message": (
+                state.capability_message
+                if state is not None
+                else capability.unavailable_reason
+            ),
+            "database_name": state.database_name if state is not None else None,
+            "last_polled_at": state.last_polled_at.isoformat() if state and state.last_polled_at else None,
+            "last_success_at": (
+                state.last_success_at.isoformat() if state and state.last_success_at else None
+            ),
+            "watermark_date": (
+                state.watermark_date.isoformat() if state and state.watermark_date else None
+            ),
+            "last_error": state.last_error if state is not None else None,
+            "documents_seen": state.documents_seen if state is not None else 0,
+            "cases_created": state.cases_created if state is not None else 0,
+            "cases_updated": state.cases_updated if state is not None else 0,
+            "cases_skipped": state.cases_skipped if state is not None else 0,
+        }
+
+
+def build_poll_lock_key() -> str:
+    digest = hashlib.sha1(b"procurement-orchestrator-poll").hexdigest()[:12]
+    return f"procurement:orchestrator:poll:{digest}"
+
+
+__all__ = ["ProcurementOrchestratorService", "build_poll_lock_key"]

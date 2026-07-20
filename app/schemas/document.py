@@ -12,6 +12,7 @@ class DocumentCreate(BaseModel):
     task_id: uuid.UUID | None = None
     is_knowledge_base: bool = False
     source_url: str | None = None
+    relative_path: str | None = None
     metadata: dict | None = None
 
     # Legacy aliases accepted by older clients.
@@ -48,6 +49,10 @@ class DocumentRead(ORMModel):
     doc_metadata: dict | None
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentListItem(DocumentRead):
+    can_access: bool = False
 
 
 class DocumentVersionRead(ORMModel):

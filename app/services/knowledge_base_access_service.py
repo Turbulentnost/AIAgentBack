@@ -24,7 +24,7 @@ from app.models.knowledge_base import (
     KnowledgeBaseAgentBinding,
     KnowledgeBaseChunk,
 )
-from app.models.user import Department, User
+from app.models.user import Department, User, user_roles
 from app.services.permission_service import PermissionService
 
 
@@ -72,7 +72,7 @@ class KnowledgeBaseAccessService:
         if user.is_superuser:
             return EffectiveKnowledgeBaseAccess(True, "superuser", KnowledgeBaseAccessType.ADMIN)
 
-        if knowledge_base.status == KnowledgeBaseStatus.ARCHIVED:
+        if knowledge_base.deleted_at is not None or knowledge_base.status == KnowledgeBaseStatus.ARCHIVED:
             return EffectiveKnowledgeBaseAccess(False, "knowledge_base_archived")
 
         if knowledge_base.status != KnowledgeBaseStatus.READY and not allow_non_ready_for_admin:
@@ -163,7 +163,10 @@ class KnowledgeBaseAccessService:
     async def load_for_access_check(self, knowledge_base_id: uuid.UUID) -> KnowledgeBase | None:
         result = await self.db.execute(
             select(KnowledgeBase)
-            .where(KnowledgeBase.id == knowledge_base_id)
+            .where(
+                KnowledgeBase.id == knowledge_base_id,
+                KnowledgeBase.deleted_at.is_(None),
+            )
             .options(
                 selectinload(KnowledgeBase.access_grants),
                 selectinload(KnowledgeBase.access_exceptions),
@@ -231,18 +234,29 @@ class KnowledgeBaseAccessService:
     ) -> list[KnowledgeBaseAccessType]:
         matched: list[KnowledgeBaseAccessType] = []
         department_ids = await self._department_scope(user.department_id)
+        role_ids = await self._user_role_ids(user.id)
         for item in items:
             if deny_only and not getattr(item, "is_deny", False):
                 continue
             if item.grantee_type == KnowledgeBaseGrantType.USER and item.grantee_id == user.id:
                 matched.append(item.access_type)
+            elif item.grantee_type == KnowledgeBaseGrantType.ORGANIZATION:
+                matched.append(item.access_type)
             elif item.grantee_type == KnowledgeBaseGrantType.DEPARTMENT:
                 include_children = bool(getattr(item, "include_child_departments", False))
                 if item.grantee_id == user.department_id or (include_children and item.grantee_id in department_ids):
                     matched.append(item.access_type)
+            elif item.grantee_type == KnowledgeBaseGrantType.ROLE and item.grantee_id in role_ids:
+                matched.append(item.access_type)
             elif item.grantee_type == KnowledgeBaseGrantType.ADMIN_ONLY:
                 continue
         return matched
+
+    async def _user_role_ids(self, user_id: uuid.UUID) -> set[uuid.UUID]:
+        result = await self.db.execute(
+            select(user_roles.c.role_id).where(user_roles.c.user_id == user_id)
+        )
+        return {role_id for (role_id,) in result.all()}
 
     async def _department_scope(self, department_id: uuid.UUID | None) -> set[uuid.UUID]:
         if department_id is None:

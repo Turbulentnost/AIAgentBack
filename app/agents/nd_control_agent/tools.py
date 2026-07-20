@@ -14,4 +14,7 @@ TOOL_NAMES: list[str] = [
     "generate_docx_report",
     "prepare_approval_route",
     "send_to_approval",
+    "list_nd_control_departments",
+    "list_nd_document_cards",
+    "get_nd_document_card",
 ]

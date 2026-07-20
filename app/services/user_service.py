@@ -3,14 +3,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password
 from app.models.user import Department, User, UserAgent
+from app.services.employee_sync_service import SOURCE_SYSTEM
 from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.schemas.user import AdminUserCreate, UserCreate, UserUpdate
 from app.utils.department_utils import is_liquidated_department_name
+from app.utils.department_classification import is_position_like_department_name
 
 
 class UserService:
@@ -36,6 +39,26 @@ class UserService:
     async def get_by_email(self, email: str) -> User | None:
         result = await self.db.execute(select(User).where(User.email == email.lower()))
         return result.scalar_one_or_none()
+
+    async def list_platform_access_users(self, *, limit: int = 2000) -> list[User]:
+        """Users who can sign in: registered locally or activated via 1C (excludes sync stubs)."""
+        onec_never_activated = and_(
+            User.source_system == SOURCE_SYSTEM,
+            User.last_login_at.is_(None),
+            User.onec_hashed_password.is_(None),
+        )
+        result = await self.db.execute(
+            select(User)
+            .options(selectinload(User.department))
+            .where(
+                User.deleted_at.is_(None),
+                User.is_active.is_(True),
+                ~onec_never_activated,
+            )
+            .order_by(User.full_name.asc().nullslast(), User.last_name.asc().nullslast())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
     async def create(self, data: UserCreate, *, is_superuser: bool = False) -> User:
         values = data.model_dump(exclude={"password"})
@@ -128,7 +151,12 @@ class DepartmentService:
         result = await self.db.execute(stmt)
         departments = list(result.scalars().all())
         if active_only:
-            departments = [department for department in departments if not is_liquidated_department_name(department.name)]
+            departments = [
+                department
+                for department in departments
+                if not is_liquidated_department_name(department.name)
+                and not is_position_like_department_name(department.name)
+            ]
         return departments
 
     async def get(self, department_id: uuid.UUID) -> Department | None:

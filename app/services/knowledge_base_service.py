@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -15,6 +16,7 @@ from app.models.enums import (
     KnowledgeBaseAccessType,
     KnowledgeBaseGrantType,
     KnowledgeBaseIndexJobStatus,
+    KnowledgeBaseSourcePrecheckStatus,
     KnowledgeBaseSourceStatus,
     KnowledgeBaseStatus,
 )
@@ -40,6 +42,7 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseUpdate,
 )
 from app.services.audit_service import AuditService
+from app.services.knowledge_base_access_service import KnowledgeBaseAccessService
 
 
 class KnowledgeBaseServiceError(ValueError):
@@ -60,6 +63,7 @@ class KnowledgeBaseService:
         query: str | None = None,
     ) -> list[KnowledgeBase]:
         stmt = select(KnowledgeBase).order_by(KnowledgeBase.updated_at.desc())
+        stmt = stmt.where(KnowledgeBase.deleted_at.is_(None))
         if status is not None:
             stmt = stmt.where(KnowledgeBase.status == status)
         if department_id is not None:
@@ -74,7 +78,10 @@ class KnowledgeBaseService:
     async def get(self, knowledge_base_id: uuid.UUID) -> KnowledgeBase | None:
         result = await self.db.execute(
             select(KnowledgeBase)
-            .where(KnowledgeBase.id == knowledge_base_id)
+            .where(
+                KnowledgeBase.id == knowledge_base_id,
+                KnowledgeBase.deleted_at.is_(None),
+            )
             .options(
                 selectinload(KnowledgeBase.sources),
                 selectinload(KnowledgeBase.rules),
@@ -204,13 +211,77 @@ class KnowledgeBaseService:
         return kb
 
     async def archive(self, knowledge_base_id: uuid.UUID, *, current_user: User) -> KnowledgeBase:
-        kb = await self.get_or_raise(knowledge_base_id)
+        """Soft-delete: mark KB as deleted in PostgreSQL only.
+
+        Qdrant vectors, indexing jobs, sources and chunks are intentionally preserved.
+        """
+        result = await self.db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
+        )
+        kb = result.scalar_one_or_none()
+        if kb is None:
+            raise KnowledgeBaseServiceError("База знаний не найдена")
+        if kb.deleted_at is not None:
+            raise KnowledgeBaseServiceError("База знаний уже удалена")
+        if not current_user.is_superuser and kb.owner_user_id != current_user.id:
+            raise KnowledgeBaseServiceError("Удалить базу знаний может только её создатель")
+
+        now = datetime.now(timezone.utc)
         kb.status = KnowledgeBaseStatus.ARCHIVED
+        kb.deleted_at = now
+        kb.deleted_by_user_id = current_user.id
         await self.audit.log(
             action="kb.archived",
             actor_id=current_user.id,
             resource_type="knowledge_base",
             resource_id=str(kb.id),
+            payload={"soft_delete": True, "qdrant_collection": kb.qdrant_collection},
+        )
+        await self.db.flush()
+        return kb
+
+    async def confirm_review(self, knowledge_base_id: uuid.UUID, *, current_user: User) -> KnowledgeBase:
+        kb = await self.get_or_raise(knowledge_base_id)
+        if kb.deleted_at is not None:
+            raise KnowledgeBaseServiceError("База знаний удалена")
+        if kb.status == KnowledgeBaseStatus.READY:
+            return kb
+        if kb.status != KnowledgeBaseStatus.NEEDS_REVIEW:
+            raise KnowledgeBaseServiceError("Подтверждение доступно только для баз со статусом «Требует проверки»")
+
+        active_ids = await self.active_indexing_knowledge_base_ids([kb.id])
+        if kb.id in active_ids:
+            raise KnowledgeBaseServiceError("Нельзя подтвердить базу знаний во время индексации")
+
+        access_service = KnowledgeBaseAccessService(self.db)
+        kb_loaded = await access_service.load_for_access_check(kb.id) or kb
+        admin_access = await access_service.can_access_knowledge_base(
+            user=current_user,
+            knowledge_base=kb_loaded,
+            required_access=KnowledgeBaseAccessType.ADMIN,
+        )
+        can_manage = (
+            current_user.is_superuser
+            or kb.owner_user_id == current_user.id
+            or kb.responsible_user_id == current_user.id
+            or admin_access.allowed
+        )
+        if not can_manage:
+            raise KnowledgeBaseServiceError("Недостаточно прав для подтверждения базы знаний")
+
+        kb.status = KnowledgeBaseStatus.READY
+        metadata = dict(kb.metadata_ or {})
+        qc_warnings = metadata.get("qc_warnings")
+        if isinstance(qc_warnings, dict):
+            metadata["qc_warnings"] = {}
+        kb.metadata_ = metadata
+
+        await self.audit.log(
+            action="kb.review_confirmed",
+            actor_id=current_user.id,
+            resource_type="knowledge_base",
+            resource_id=str(kb.id),
+            payload={"previous_status": KnowledgeBaseStatus.NEEDS_REVIEW.value},
         )
         await self.db.flush()
         return kb
@@ -244,11 +315,25 @@ class KnowledgeBaseService:
             added_by_user_id=current_user.id,
             processing_status=KnowledgeBaseSourceStatus.DRAFT,
             file_size=version.file_size or document.file_size,
+            checksum=document.checksum or version.checksum,
             access_snapshot=self._document_access_snapshot(document),
         )
         self.db.add(source)
         kb.sources_count += 1
         kb.storage_bytes += int(source.file_size or 0)
+        await self.db.flush()
+
+        from app.services.knowledge_base_precheck_service import KnowledgeBasePrecheckService
+
+        precheck = await KnowledgeBasePrecheckService(self.db).precheck_source(source, user=current_user)
+        if not precheck.passed:
+            source.precheck_status = KnowledgeBaseSourcePrecheckStatus.FAILED
+            source.precheck_notes = precheck.user_message
+            source.processing_status = KnowledgeBaseSourceStatus.ERROR
+        elif precheck.needs_ocr:
+            source.processing_status = KnowledgeBaseSourceStatus.NEEDS_OCR
+        else:
+            source.processing_status = KnowledgeBaseSourceStatus.READY_TO_INDEX
         await self.db.flush()
         await self.audit.log(
             action="kb.source_added",
@@ -257,12 +342,33 @@ class KnowledgeBaseService:
             resource_id=str(kb.id),
             payload={"source_id": str(source.id), "document_id": str(document.id), "document_version_id": str(version.id)},
         )
+        from app.services.nd_document_card_service import NdDocumentCardService
+
+        await NdDocumentCardService(self.db).ensure_card_for_source(source)
+        return source
+
+    async def exclude_source(self, knowledge_base_id: uuid.UUID, source_id: uuid.UUID, *, current_user: User) -> KnowledgeBaseSource:
+        source = await self.db.get(KnowledgeBaseSource, source_id)
+        if source is None or source.knowledge_base_id != knowledge_base_id:
+            raise KnowledgeBaseServiceError("Источник базы знаний не найден")
+        source.processing_status = KnowledgeBaseSourceStatus.EXCLUDED
+        await self.audit.log(
+            action="kb.source_excluded",
+            actor_id=current_user.id,
+            resource_type="knowledge_base",
+            resource_id=str(knowledge_base_id),
+            payload={"source_id": str(source_id)},
+        )
+        await self.db.flush()
         return source
 
     async def remove_source(self, knowledge_base_id: uuid.UUID, source_id: uuid.UUID, *, current_user: User) -> None:
         source = await self.db.get(KnowledgeBaseSource, source_id)
         if source is None or source.knowledge_base_id != knowledge_base_id:
             raise KnowledgeBaseServiceError("Источник базы знаний не найден")
+        from app.services.nd_document_card_service import NdDocumentCardService
+
+        await NdDocumentCardService(self.db).archive_card_for_source(source_id)
         await self.db.delete(source)
         await self.audit.log(
             action="kb.source_removed",
@@ -274,6 +380,7 @@ class KnowledgeBaseService:
         await self.db.flush()
 
     async def list_sources(self, knowledge_base_id: uuid.UUID) -> list[KnowledgeBaseSource]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseSource)
             .where(KnowledgeBaseSource.knowledge_base_id == knowledge_base_id)
@@ -282,6 +389,7 @@ class KnowledgeBaseService:
         return list(result.scalars().all())
 
     async def list_chunks(self, knowledge_base_id: uuid.UUID) -> list[tuple[KnowledgeBaseChunk, DocumentChunk, Document | None]]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseChunk, DocumentChunk, Document)
             .join(DocumentChunk, DocumentChunk.id == KnowledgeBaseChunk.document_chunk_id)
@@ -337,6 +445,7 @@ class KnowledgeBaseService:
         return rule
 
     async def list_rules(self, knowledge_base_id: uuid.UUID) -> list[KnowledgeBaseRule]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseRule)
             .where(KnowledgeBaseRule.knowledge_base_id == knowledge_base_id)
@@ -354,6 +463,10 @@ class KnowledgeBaseService:
         if not payload.grants:
             raise KnowledgeBaseServiceError("База знаний не может быть без явных прав доступа")
         kb = await self.get_or_raise(knowledge_base_id)
+        if not current_user.is_superuser and kb.responsible_user_id != current_user.id:
+            raise KnowledgeBaseServiceError(
+                "Изменять доступ может только ответственный за эту базу знаний"
+            )
         for item in list(kb.access_grants):
             await self.db.delete(item)
         for item in list(kb.access_exceptions):
@@ -391,6 +504,7 @@ class KnowledgeBaseService:
         self,
         knowledge_base_id: uuid.UUID,
     ) -> tuple[list[KnowledgeBaseAccessGrant], list[KnowledgeBaseAccessException]]:
+        await self.get_or_raise(knowledge_base_id)
         grants = await self.db.execute(
             select(KnowledgeBaseAccessGrant).where(KnowledgeBaseAccessGrant.knowledge_base_id == knowledge_base_id)
         )
@@ -428,18 +542,35 @@ class KnowledgeBaseService:
         return bindings
 
     async def list_agents(self, knowledge_base_id: uuid.UUID) -> list[KnowledgeBaseAgentBinding]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseAgentBinding).where(KnowledgeBaseAgentBinding.knowledge_base_id == knowledge_base_id)
         )
         return list(result.scalars().all())
 
     async def list_jobs(self, knowledge_base_id: uuid.UUID) -> list[KnowledgeBaseIndexingJob]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(KnowledgeBaseIndexingJob)
             .where(KnowledgeBaseIndexingJob.knowledge_base_id == knowledge_base_id)
             .order_by(KnowledgeBaseIndexingJob.created_at.desc())
         )
         return list(result.scalars().all())
+
+    async def active_indexing_knowledge_base_ids(self, knowledge_base_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        if not knowledge_base_ids:
+            return set()
+        result = await self.db.execute(
+            select(KnowledgeBaseIndexingJob.knowledge_base_id)
+            .where(
+                KnowledgeBaseIndexingJob.knowledge_base_id.in_(knowledge_base_ids),
+                KnowledgeBaseIndexingJob.status.in_(
+                    [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                ),
+            )
+            .distinct()
+        )
+        return {row[0] for row in result.all()}
 
     async def list_job_errors(self, job_id: uuid.UUID) -> list[KnowledgeBaseIndexingError]:
         result = await self.db.execute(
@@ -450,6 +581,7 @@ class KnowledgeBaseService:
         return list(result.scalars().all())
 
     async def list_audit(self, knowledge_base_id: uuid.UUID) -> list[AuditLog]:
+        await self.get_or_raise(knowledge_base_id)
         result = await self.db.execute(
             select(AuditLog)
             .where(
@@ -460,36 +592,54 @@ class KnowledgeBaseService:
         )
         return list(result.scalars().all())
 
-    async def stats(self) -> KnowledgeBaseStats:
-        total = await self.db.scalar(select(func.count(KnowledgeBase.id)))
-        active = await self.db.scalar(
-            select(func.count(KnowledgeBase.id)).where(KnowledgeBase.status == KnowledgeBaseStatus.READY)
-        )
-        docs = await self.db.scalar(select(func.count(KnowledgeBaseSource.id)))
-        fragments = await self.db.scalar(select(func.coalesce(func.sum(KnowledgeBase.fragments_count), 0)))
-        storage = await self.db.scalar(select(func.coalesce(func.sum(KnowledgeBase.storage_bytes), 0)))
-        errors = await self.db.scalar(
-            select(func.count(KnowledgeBaseIndexingError.id)).where(KnowledgeBaseIndexingError.is_resolved.is_(False))
-        )
-        needs_review = await self.db.scalar(
-            select(func.count(KnowledgeBase.id)).where(KnowledgeBase.status == KnowledgeBaseStatus.NEEDS_REVIEW)
-        )
-        completed_jobs = await self.db.scalar(
-            select(func.count(KnowledgeBaseIndexingJob.id)).where(
-                KnowledgeBaseIndexingJob.status == KnowledgeBaseIndexJobStatus.COMPLETED
+    async def stats(self, *, user: User) -> KnowledgeBaseStats:
+        access_service = KnowledgeBaseAccessService(self.db)
+        accessible_ids: list[uuid.UUID] = []
+        successfully_indexed = 0
+
+        for kb in await self.list_knowledge_bases():
+            kb_loaded = await access_service.load_for_access_check(kb.id) or kb
+            read_access = await access_service.can_access_knowledge_base(
+                user=user,
+                knowledge_base=kb_loaded,
+                required_access=KnowledgeBaseAccessType.READ,
+            )
+            search_access = await access_service.can_access_knowledge_base(
+                user=user,
+                knowledge_base=kb_loaded,
+                required_access=KnowledgeBaseAccessType.SEARCH,
+                allow_non_ready_for_admin=False,
+            )
+            if not read_access.allowed and not search_access.allowed:
+                continue
+            accessible_ids.append(kb.id)
+            if kb.status == KnowledgeBaseStatus.READY:
+                successfully_indexed += 1
+
+        if not accessible_ids:
+            return KnowledgeBaseStats(
+                total_bases=0,
+                indexing_errors_count=0,
+                storage_bytes=0,
+                successfully_indexed_bases=0,
+            )
+
+        storage = await self.db.scalar(
+            select(func.coalesce(func.sum(KnowledgeBase.storage_bytes), 0)).where(
+                KnowledgeBase.id.in_(accessible_ids)
             )
         )
-        all_jobs = await self.db.scalar(select(func.count(KnowledgeBaseIndexingJob.id)))
-        success_percent = (float(completed_jobs or 0) / float(all_jobs or 1)) * 100
+        errors = await self.db.scalar(
+            select(func.count(KnowledgeBaseIndexingError.id)).where(
+                KnowledgeBaseIndexingError.is_resolved.is_(False),
+                KnowledgeBaseIndexingError.knowledge_base_id.in_(accessible_ids),
+            )
+        )
         return KnowledgeBaseStats(
-            total_bases=int(total or 0),
-            active_bases=int(active or 0),
-            documents_in_bases=int(docs or 0),
-            fragments_count=int(fragments or 0),
+            total_bases=len(accessible_ids),
+            indexing_errors_count=int(errors or 0),
             storage_bytes=int(storage or 0),
-            successful_indexing_percent=round(success_percent, 1),
-            errors_count=int(errors or 0),
-            needs_review_count=int(needs_review or 0),
+            successfully_indexed_bases=successfully_indexed,
         )
 
     async def get_or_raise(self, knowledge_base_id: uuid.UUID) -> KnowledgeBase:

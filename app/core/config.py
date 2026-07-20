@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     PASSWORD_MIN_LENGTH: int = 8
+    ONEC_AUTH_API_BASE_URL: str = "http://192.168.0.247:8000/api/v1"
+    ONEC_TOKEN_MAX_AGE_HOURS: int = 4
     BACKEND_CORS_ORIGINS: str = (
         "http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.157:5173"
     )
@@ -41,10 +43,15 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "ai_agents"
 
     REDIS_HOST: str = "192.168.1.157"
-    REDIS_PORT: int = 6379
+    REDIS_PORT: int = 16379
     REDIS_DB: int = 0
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
+    CELERY_VISIBILITY_TIMEOUT_SECONDS: int = 60 * 60 * 24
+    KB_INDEXING_STALE_AFTER_SECONDS: int = 60 * 45
+    KB_INDEXING_RECOVERY_INTERVAL_SECONDS: int = 60 * 10
+    KB_INDEXING_RECOVERY_MAX_JOBS: int = 5
+    KB_DOCUMENT_PARSE_TIMEOUT_SECONDS: int = 60 * 10
 
     QDRANT_HOST: str = "192.168.1.157"
     QDRANT_PORT: int = 6333
@@ -52,7 +59,28 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "knowledge_base_bge_m3"
     QDRANT_VECTOR_SIZE: int = 1024
 
+    # Режим поиска по базе знаний: "semantic" — чистый векторный (смысловой)
+    # поиск; "hybrid" — вектор + полнотекстовый поиск по ключевым словам.
+    # Гибрид устойчивее на коротких запросах («База данных»): смысловой поиск
+    # дополняется точными совпадениями слов, итог объединяется через RRF.
+    KB_SEARCH_MODE: str = "hybrid"
+    # Минимальная косинусная близость, ниже которой фрагмент не показывается
+    # (0 — без отсечки). Помогает не выдавать нерелевантные фрагменты.
+    KB_SEARCH_MIN_SCORE: float = 0.0
+    # Максимальное время (сек) на формирование «Предварительного ответа» через
+    # LLM. По истечении показываем самый релевантный фрагмент без синтеза.
+    KB_SEARCH_ANSWER_TIMEOUT: float = 45.0
+    # Модели LM Studio для генерации ответа по фрагментам (через запятую).
+    # Перебираются по порядку: если модель недоступна или вернула пустой
+    # ответ — пробуем следующую.
+    KB_SEARCH_ANSWER_MODELS: str = (
+        "openai/gpt-oss-120b,qwen/qwen3.5-9b,yandexgpt-5-lite-8b-instruct"
+    )
+
     MINIO_ENDPOINT: str = "192.168.1.157:9000"
+    # Адрес MinIO для presigned URL в браузере (LAN/IP). В Docker backend использует minio:9000,
+    # а клиенту отдаём публичный host:port, иначе <img src> не загрузится.
+    MINIO_PUBLIC_ENDPOINT: str = ""
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "ai-documents"
@@ -77,6 +105,7 @@ class Settings(BaseSettings):
     # Общий LLM-шлюз (прочие задачи платформы).
     LLM_GATEWAY_BASE_URL: str = ""
     LLM_GATEWAY_API_KEY: str | None = None
+    CLAUDE_API_KEY: str | None = None
     OPENAI_API_KEY_CLAUDE: str | None = None
     OPENAI_API_KEY: str | None = None
     LLM_DEFAULT_MODEL: str = ""
@@ -85,9 +114,31 @@ class Settings(BaseSettings):
     AGENT_BUILDER_CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
     AGENT_BUILDER_FALLBACK_BASE_URL: str = ""
     AGENT_BUILDER_FALLBACK_MODEL: str = "openai/gpt-oss-120b"
+    # Procurement agent: Anthropic-compatible Claude endpoint.
+    PROCUREMENT_LLM_BASE_URL: str = "https://api.claudehub.fun"
+    PROCUREMENT_LLM_MODEL: str = "claude-sonnet-4-6"
+    PROCUREMENT_LLM_MODELS: str = "claude-sonnet-4-6,claude-opus-4-1"
+    PROCUREMENT_LLM_STYLE: str = "anthropic"
+    PROCUREMENT_LLM_SUPPORTS_REASONING: bool = True
+    PROCUREMENT_LLM_DISCOVER_MODELS: bool = True
+    # Procurement orchestrator Level 0 polling.
+    PROCUREMENT_ORCHESTRATOR_ENABLED: bool = True
+    PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED: bool = False
+    PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS: int = 1800
+    PROCUREMENT_ORCHESTRATOR_LOOKBACK_DAYS: int = 14
+    PROCUREMENT_ORCHESTRATOR_PAGE_LIMIT: int = 50
+    PROCUREMENT_ORCHESTRATOR_OVERLAP_HOURS: int = 6
+    PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS: int = 1700
+    # Структурное извлечение nd_control (DocumentCard, анализ отдела).
+    ND_CONTROL_EXTRACTION_MODEL: str = "openai/gpt-oss-120b"
+    ND_CONTROL_EXTRACTION_LLM_TIMEOUT_SECONDS: int = 1200
+    ND_TEMPLATE_CLASSIFICATION_MODEL: str | None = None
+    ND_CONTROL_UML_MODEL: str | None = None
+    ND_CONTROL_UML_LLM_TIMEOUT_SECONDS: int = 180
     # OCR / vision для PDF и изображений — всегда qwen в LM Studio.
     VISION_LM_STUDIO_BASE_URL: str = ""
     VISION_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
+    VISION_OCR_TIMEOUT_SECONDS: int = 600
     EMBEDDINGS_PROVIDER: str = "local"
     EMBEDDINGS_MODEL: str = "BAAI/bge-m3"
     EMBEDDINGS_VECTOR_SIZE: int = 1024
@@ -108,6 +159,33 @@ class Settings(BaseSettings):
     # Внутренние/loopback/private IP, localhost, исполняемые файлы и запрещённые схемы блокируются всегда.
     # Задеплоенные production-агенты остаются на ограничительном allowlist (allow_open_web=False).
     BROWSER_SANDBOX_OPEN_WEB: bool = True
+
+    # 1С: ERP OData — значения только из .env (см. .env.example).
+    ONEC_ODATA_URL: str = ""
+    ONEC_ODATA_USER: str = ""
+    ONEC_ODATA_PASSWORD: str = ""
+    ONEC_ODATA_TIMEOUT: int = 120
+    ONEC_MEETING_MEMO_THEME: str = ""
+    ONEC_CORPORATE_EMAIL_DOMAIN: str = "turbo-don.ru"
+    ONEC_NOTIFICATION_DEFAULT_RECIPIENT_FIOS: str = ""
+    ONEC_NOTIFICATION_SOURCE_USER_FIO: str = ""
+    MEETING_DASHBOARD_CACHE_ENABLED: bool = True
+    MEETING_DASHBOARD_CACHE_TTL_SECONDS: int = 60 * 60 * 24
+    MEETING_DASHBOARD_CACHE_WARMUP_ENABLED: bool = True
+    MEETING_DASHBOARD_CACHE_WARMUP_HOURS: str = "10,15"
+    MEETING_DASHBOARD_CACHE_WARMUP_MINUTE: int = 0
+    MEETING_DASHBOARD_CACHE_WARMUP_TIMEZONE: str = "Europe/Moscow"
+
+    # Outlook / Exchange (COM-календарь, EWS, SMTP) — значения из .env.
+    OUTLOOK_EMAIL: str = ""
+    OUTLOOK_PASSWORD: str = ""
+    OUTLOOK_SERVER: str = ""
+    OUTLOOK_MAILBOX: str = ""
+    OUTLOOK_TIMEZONE: str = "Europe/Moscow"
+    OUTLOOK_SMTP_HOST: str = ""
+    OUTLOOK_SMTP_PORT: int = 587
+    OUTLOOK_SMTP_TLS: str = "true"
+    OUTLOOK_SMTP_FROM: str = ""
 
     @property
     def cors_origins(self) -> list[str]:
@@ -167,6 +245,19 @@ class Settings(BaseSettings):
                 path=self.POSTGRES_DB,
             )
         )
+
+    @computed_field
+    @property
+    def minio_presign_endpoint(self) -> str:
+        """Host:port для presigned URL в браузере."""
+        public = self.MINIO_PUBLIC_ENDPOINT.strip()
+        if public:
+            return public
+        internal_host = self.MINIO_ENDPOINT.split(":", 1)[0].strip()
+        if internal_host in {"minio", "localhost", "127.0.0.1"}:
+            # Backend в Docker: MinIO снаружи на POSTGRES_HOST:9000 (проброс порта compose).
+            return f"{self.POSTGRES_HOST}:9000"
+        return self.MINIO_ENDPOINT
 
     @computed_field
     @property

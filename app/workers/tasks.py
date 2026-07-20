@@ -1,9 +1,26 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.workers.celery_app import celery_app
+
+
+def _run_async_task(factory):
+    import asyncio
+
+    from app.db.session import engine
+    from app.integrations.qdrant import qdrant_client
+
+    async def runner():
+        qdrant_client.reset_client()
+        try:
+            return await factory()
+        finally:
+            await qdrant_client.aclose()
+            await engine.dispose()
+
+    return asyncio.run(runner())
 
 
 @celery_app.task(name="debug_task", bind=True)
@@ -17,13 +34,70 @@ def debug_task(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+@celery_app.task(name="warm_meeting_dashboard_cache")
+def warm_meeting_dashboard_cache() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.services.meeting_dashboard_cache import MeetingDashboardCacheService
+
+    if not settings.MEETING_DASHBOARD_CACHE_ENABLED or not settings.MEETING_DASHBOARD_CACHE_WARMUP_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "cache_or_warmup_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _warm() -> dict[str, Any]:
+        result = await MeetingDashboardCacheService().warmup()
+        return {
+            **result,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return _run_async_task(_warm)
+
+
 @celery_app.task(name="run_task", bind=True, max_retries=3)
 def run_task(self, task_id: str, task_type: str | None, input_payload: dict) -> dict[str, Any]:
+    if task_type == "meeting":
+        return run_meeting_task(task_id)
     import asyncio
 
     from app.orchestrator.orchestrator import orchestrator
 
     return asyncio.run(orchestrator.run(task_type, input_payload))
+
+
+@celery_app.task(name="run_meeting_task", bind=True, max_retries=3)
+def run_meeting_task(task_id: str) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.meeting_service import MeetingService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = MeetingService(db)
+            try:
+                result = await service.execute_task(uuid_module.UUID(task_id))
+                await db.commit()
+                return {
+                    "task_id": task_id,
+                    "task_name": "run_meeting_task",
+                    "status": "completed",
+                    "result": result,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as exc:  # noqa: BLE001
+                await db.commit()
+                return {
+                    "task_id": task_id,
+                    "task_name": "run_meeting_task",
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_run)
 
 
 @celery_app.task(name="run_sandbox", bind=True)
@@ -249,97 +323,477 @@ def index_document(self, document_id: str) -> dict[str, Any]:
     return asyncio.run(_run())
 
 
-@celery_app.task(name="index_knowledge_base_full", bind=True, max_retries=3)
+@celery_app.task(
+    name="index_knowledge_base_full",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=False,
+)
 def index_knowledge_base_full(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
-    import asyncio
     import uuid
 
     from app.db.session import AsyncSessionLocal
+    from app.models.enums import KnowledgeBaseIndexJobStatus
+    from app.models.knowledge_base import KnowledgeBaseIndexingJob
+    from app.services.knowledge_base_celery import is_celery_task_cancelled
     from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+
+    if is_celery_task_cancelled(self.request.id):
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "index_knowledge_base_full",
+            "knowledge_base_id": knowledge_base_id,
+            "job_id": job_id,
+            "status": "cancelled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
+            if job_id:
+                job = await db.get(KnowledgeBaseIndexingJob, uuid.UUID(job_id))
+                if job is not None and (
+                    job.status == KnowledgeBaseIndexJobStatus.CANCELLED or job.cancel_requested
+                ):
+                    return {
+                        "celery_task_id": self.request.id,
+                        "task_name": "index_knowledge_base_full",
+                        "knowledge_base_id": knowledge_base_id,
+                        "job_id": job_id,
+                        "status": "cancelled",
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
+            service = KnowledgeBaseIndexingService(db)
             try:
-                service = KnowledgeBaseIndexingService(db)
                 if job_id:
                     result = await service.run_job(uuid.UUID(job_id))
                 else:
                     result = await service.index_knowledge_base(uuid.UUID(knowledge_base_id))
                 await db.commit()
+                result_status = result.get("status")
+                if result_status in {"cancelled", "CANCELLED"}:
+                    status = "cancelled"
+                else:
+                    status = "completed"
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "index_knowledge_base_full",
-                    "status": "completed",
+                    "status": status,
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                     **result,
                 }
             except Exception as exc:
                 await db.rollback()
+                if job_id:
+                    async with AsyncSessionLocal() as cleanup_db:
+                        job = await cleanup_db.get(KnowledgeBaseIndexingJob, uuid.UUID(job_id))
+                        if job is not None and (
+                            job.status == KnowledgeBaseIndexJobStatus.CANCELLED or job.cancel_requested
+                        ):
+                            return {
+                                "celery_task_id": self.request.id,
+                                "task_name": "index_knowledge_base_full",
+                                "knowledge_base_id": knowledge_base_id,
+                                "job_id": job_id,
+                                "status": "cancelled",
+                                "finished_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                        await KnowledgeBaseIndexingService(cleanup_db).abort_job_from_worker(
+                            uuid.UUID(job_id),
+                            error_message=str(exc),
+                        )
+                        await cleanup_db.commit()
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "index_knowledge_base_full",
                     "knowledge_base_id": knowledge_base_id,
+                    "job_id": job_id,
                     "status": "failed",
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
 
-    return asyncio.run(_run())
+    return _run_async_task(_run)
 
 
-@celery_app.task(name="index_knowledge_base_source", bind=True, max_retries=3)
+@celery_app.task(
+    name="index_knowledge_base_source",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=False,
+)
 def index_knowledge_base_source(
     self,
     knowledge_base_id: str,
     source_id: str,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    import asyncio
     import uuid
 
     from app.db.session import AsyncSessionLocal
+    from app.models.enums import KnowledgeBaseIndexJobStatus
+    from app.models.knowledge_base import KnowledgeBaseIndexingJob
+    from app.services.knowledge_base_celery import is_celery_task_cancelled
     from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+
+    if is_celery_task_cancelled(self.request.id):
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "index_knowledge_base_source",
+            "knowledge_base_id": knowledge_base_id,
+            "source_id": source_id,
+            "job_id": job_id,
+            "status": "cancelled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     async def _run() -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
+            if job_id:
+                job = await db.get(KnowledgeBaseIndexingJob, uuid.UUID(job_id))
+                if job is not None and (
+                    job.status == KnowledgeBaseIndexJobStatus.CANCELLED or job.cancel_requested
+                ):
+                    return {
+                        "celery_task_id": self.request.id,
+                        "task_name": "index_knowledge_base_source",
+                        "knowledge_base_id": knowledge_base_id,
+                        "source_id": source_id,
+                        "job_id": job_id,
+                        "status": "cancelled",
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
+            service = KnowledgeBaseIndexingService(db)
             try:
-                service = KnowledgeBaseIndexingService(db)
                 result = (
                     await service.run_job(uuid.UUID(job_id))
                     if job_id
                     else await service.index_source(uuid.UUID(knowledge_base_id), uuid.UUID(source_id))
                 )
                 await db.commit()
+                result_status = result.get("status")
+                status = "cancelled" if result_status in {"cancelled", "CANCELLED"} else "completed"
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "index_knowledge_base_source",
-                    "status": "completed",
+                    "status": status,
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                     **result,
                 }
             except Exception as exc:
                 await db.rollback()
+                if job_id:
+                    async with AsyncSessionLocal() as cleanup_db:
+                        job = await cleanup_db.get(KnowledgeBaseIndexingJob, uuid.UUID(job_id))
+                        if job is not None and (
+                            job.status == KnowledgeBaseIndexJobStatus.CANCELLED or job.cancel_requested
+                        ):
+                            return {
+                                "celery_task_id": self.request.id,
+                                "task_name": "index_knowledge_base_source",
+                                "knowledge_base_id": knowledge_base_id,
+                                "source_id": source_id,
+                                "job_id": job_id,
+                                "status": "cancelled",
+                                "finished_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                        await KnowledgeBaseIndexingService(cleanup_db).abort_job_from_worker(
+                            uuid.UUID(job_id),
+                            error_message=str(exc),
+                        )
+                        await cleanup_db.commit()
                 return {
                     "celery_task_id": self.request.id,
                     "task_name": "index_knowledge_base_source",
                     "knowledge_base_id": knowledge_base_id,
                     "source_id": source_id,
+                    "job_id": job_id,
                     "status": "failed",
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
 
-    return asyncio.run(_run())
+    return _run_async_task(_run)
 
 
-@celery_app.task(name="reindex_knowledge_base_embeddings", bind=True, max_retries=3)
+@celery_app.task(name="recover_stale_knowledge_base_indexing_jobs", bind=True, max_retries=0)
+def recover_stale_knowledge_base_indexing_jobs(self) -> dict[str, Any]:
+    """Cancel stale/duplicated KB indexing jobs and requeue recoverable ones."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.models.enums import (
+        KnowledgeBaseIndexJobStatus,
+        KnowledgeBaseIndexJobType,
+        KnowledgeBaseSourceStatus,
+        KnowledgeBaseStatus,
+    )
+    from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseIndexingJob
+    from app.services.knowledge_base_celery import (
+        attach_celery_task_id,
+        read_celery_task_id,
+        revoke_active_indexing_tasks,
+        revoke_indexing_celery_task,
+    )
+    from app.services.knowledge_base_indexing_service import KnowledgeBaseIndexingService
+
+    indexing_task_names = {
+        "index_knowledge_base_full",
+        "index_knowledge_base_source",
+        "reindex_knowledge_base_embeddings",
+        "reindex_knowledge_base_after_access_change",
+    }
+
+    def active_tasks_by_job() -> dict[str, list[str]]:
+        try:
+            active = celery_app.control.inspect(timeout=2.0).active() or {}
+        except Exception:
+            return {}
+        result: dict[str, list[str]] = {}
+        for tasks in active.values():
+            for task in tasks:
+                if str(task.get("name") or "") not in indexing_task_names:
+                    continue
+                args = [str(item) for item in (task.get("args") or [])]
+                if len(args) < 2:
+                    continue
+                task_id = str(task.get("id") or "")
+                if task_id:
+                    result.setdefault(args[-1], []).append(task_id)
+        return result
+
+    async def _run() -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        stale_before = now - timedelta(seconds=settings.KB_INDEXING_STALE_AFTER_SECONDS)
+        active_by_job = active_tasks_by_job()
+        recovered: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+
+        async with AsyncSessionLocal() as db:
+            query = (
+                select(KnowledgeBaseIndexingJob)
+                .options(
+                    selectinload(KnowledgeBaseIndexingJob.knowledge_base).selectinload(
+                        KnowledgeBase.sources
+                    )
+                )
+                .where(
+                    KnowledgeBaseIndexingJob.status.in_(
+                        [KnowledgeBaseIndexJobStatus.QUEUED, KnowledgeBaseIndexJobStatus.RUNNING]
+                    )
+                )
+                .order_by(KnowledgeBaseIndexingJob.updated_at.asc())
+                .limit(settings.KB_INDEXING_RECOVERY_MAX_JOBS)
+            )
+            jobs = list((await db.execute(query)).scalars().all())
+            service = KnowledgeBaseIndexingService(db)
+
+            for job in jobs:
+                kb = job.knowledge_base
+                if kb is None:
+                    continue
+                updated_at = job.updated_at
+                if updated_at is not None and updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                is_stale = updated_at is None or updated_at <= stale_before
+                active_task_ids = active_by_job.get(str(job.id), [])
+                has_duplicates = len(active_task_ids) > 1
+                is_orphan = job.status == KnowledgeBaseIndexJobStatus.RUNNING and not active_task_ids
+                is_stale_queued = job.status == KnowledgeBaseIndexJobStatus.QUEUED and is_stale
+
+                if not (has_duplicates or is_orphan or is_stale_queued):
+                    skipped.append(
+                        {
+                            "job_id": str(job.id),
+                            "knowledge_base_id": str(job.knowledge_base_id),
+                            "active_tasks": len(active_task_ids),
+                            "reason": "active_or_recent",
+                        }
+                    )
+                    continue
+
+                revoke_indexing_celery_task(read_celery_task_id(job.processing_params), terminate=True)
+                revoke_active_indexing_tasks(
+                    knowledge_base_id=str(job.knowledge_base_id),
+                    job_ids=[str(job.id)],
+                    terminate=True,
+                )
+
+                job.status = KnowledgeBaseIndexJobStatus.CANCELLED
+                job.cancel_requested = True
+                job.cancel_requested_at = now
+                job.cancel_reason = "Автовосстановление зависшей индексации"
+                job.finished_at = now
+                job.processing_params = {
+                    **(job.processing_params or {}),
+                    "current_stage": "stopped",
+                    "last_observed_stage": "stopped",
+                    "recovered_by": "recover_stale_knowledge_base_indexing_jobs",
+                }
+
+                for source in kb.sources:
+                    if source.processing_status == KnowledgeBaseSourceStatus.PROCESSING:
+                        source.processing_status = KnowledgeBaseSourceStatus.READY_TO_INDEX
+
+                requeued_job_id: str | None = None
+                if kb.status != KnowledgeBaseStatus.ARCHIVED and kb.deleted_at is None:
+                    await service.mark_indexing_queued(kb.id)
+                    new_job = await service.create_job(
+                        kb.id,
+                        job_type=job.job_type,
+                        started_by_user_id=job.started_by_user_id,
+                        target_source_id=job.target_source_id,
+                        target_chunk_id=job.target_chunk_id,
+                    )
+                    await db.flush()
+                    if job.job_type == KnowledgeBaseIndexJobType.SOURCE and job.target_source_id is not None:
+                        async_result = index_knowledge_base_source.apply_async(
+                            args=[str(kb.id), str(job.target_source_id), str(new_job.id)],
+                            queue="indexing",
+                        )
+                    elif job.job_type == KnowledgeBaseIndexJobType.EMBEDDINGS:
+                        async_result = reindex_knowledge_base_embeddings.apply_async(
+                            args=[str(kb.id), str(new_job.id)],
+                            queue="indexing",
+                        )
+                    else:
+                        async_result = index_knowledge_base_full.apply_async(
+                            args=[str(kb.id), str(new_job.id)],
+                            queue="indexing",
+                        )
+                    new_job.processing_params = attach_celery_task_id(
+                        new_job.processing_params,
+                        async_result.id,
+                    )
+                    requeued_job_id = str(new_job.id)
+                elif kb.fragments_count > 0:
+                    kb.status = KnowledgeBaseStatus.READY
+                else:
+                    kb.status = KnowledgeBaseStatus.DRAFT
+
+                recovered.append(
+                    {
+                        "job_id": str(job.id),
+                        "knowledge_base_id": str(job.knowledge_base_id),
+                        "knowledge_base_name": kb.name,
+                        "active_tasks": len(active_task_ids),
+                        "reason": "duplicate_active_tasks" if has_duplicates else "stale_or_orphan",
+                        "requeued_job_id": requeued_job_id,
+                    }
+                )
+
+            await db.commit()
+
+        return {
+            "task_id": self.request.id,
+            "recovered": recovered,
+            "skipped": skipped,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return _run_async_task(_run)
+
+
+@celery_app.task(name="run_knowledge_base_search_query", bind=True, max_retries=0)
+def run_knowledge_base_search_query(self, search_query_id: str) -> dict[str, Any]:
+    """Фоновый поиск по базе знаний: выполняется до конца, даже если
+    пользователь ушёл со страницы. Результат сохраняется в историю."""
+    import uuid
+
+    from fastapi.encoders import jsonable_encoder
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseSearchQuery
+    from app.models.user import User
+    from app.services.knowledge_base_search_service import KnowledgeBaseSearchService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            item = await db.get(KnowledgeBaseSearchQuery, uuid.UUID(search_query_id))
+            if item is None:
+                return {"status": "failed", "error": "Запрос не найден"}
+            if item.cancel_requested or item.status == "cancelled":
+                item.status = "cancelled"
+                item.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return {"status": "cancelled"}
+
+            kb = await db.get(KnowledgeBase, item.knowledge_base_id)
+            user = await db.get(User, item.user_id)
+            if kb is None or user is None:
+                item.status = "failed"
+                item.error = "База знаний или пользователь не найдены"
+                item.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return {"status": "failed", "error": item.error}
+
+            item.status = "running"
+            await db.commit()
+
+            try:
+                result = await KnowledgeBaseSearchService(db).search(
+                    knowledge_base=kb,
+                    query=item.query,
+                    user=user,
+                    top_k=item.top_k,
+                    include_inaccessible=True,
+                    test_mode=True,
+                    viewer=user,
+                )
+            except Exception as exc:
+                await db.rollback()
+                item = await db.get(KnowledgeBaseSearchQuery, uuid.UUID(search_query_id))
+                if item is not None:
+                    item.status = "failed"
+                    item.error = str(exc)[:2000]
+                    item.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                return {"status": "failed", "error": str(exc)}
+
+            # Пользователь мог запросить отмену, пока шёл поиск.
+            await db.refresh(item)
+            if item.cancel_requested:
+                item.status = "cancelled"
+                item.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return {"status": "cancelled"}
+
+            item.answer = result.answer_preview
+            item.hits = jsonable_encoder(result.hits)
+            item.status = "completed"
+            item.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+            return {"status": "completed", "hits_count": len(result.hits)}
+
+    return _run_async_task(_run)
+
+
+@celery_app.task(
+    name="reindex_knowledge_base_embeddings",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=False,
+)
 def reindex_knowledge_base_embeddings(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
-    return index_knowledge_base_full(self, knowledge_base_id, job_id)
+    return index_knowledge_base_full.run(knowledge_base_id, job_id)
 
 
-@celery_app.task(name="reindex_knowledge_base_after_access_change", bind=True, max_retries=3)
+@celery_app.task(
+    name="reindex_knowledge_base_after_access_change",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    reject_on_worker_lost=False,
+)
 def reindex_knowledge_base_after_access_change(self, knowledge_base_id: str, job_id: str | None = None) -> dict[str, Any]:
-    return index_knowledge_base_full(self, knowledge_base_id, job_id)
+    return index_knowledge_base_full.run(knowledge_base_id, job_id)
 
 
 @celery_app.task(name="migrate_legacy_knowledge_base_documents", bind=True, max_retries=1)
@@ -421,14 +875,222 @@ def migrate_legacy_knowledge_base_documents(self) -> dict[str, Any]:
     return asyncio.run(_run())
 
 
-@celery_app.task(name="generate_report", bind=True, max_retries=3)
-def generate_report(self, task_id: str, report_type: str = "default") -> dict[str, Any]:
-    return _placeholder_result(self.request.id, "generate_report", task_id=task_id, report_type=report_type)
+@celery_app.task(name="run_department_analysis", bind=True, max_retries=0)
+def run_department_analysis(self, run_id: str, force_reextract: bool = False) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.department_analysis_service import DepartmentAnalysisService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = DepartmentAnalysisService(db)
+            run = await service.execute_department_analysis(
+                uuid_module.UUID(run_id),
+                force_reextract=force_reextract,
+            )
+            await db.commit()
+            return {
+                "celery_task_id": self.request.id,
+                "task_name": "run_department_analysis",
+                "run_id": run_id,
+                "status": run.status.value,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            }
+
+    return _run_async_task(_run)
 
 
-@celery_app.task(name="update_task_status", bind=True, max_retries=3)
-def update_task_status(self, task_id: str, status: str) -> dict[str, Any]:
-    return _placeholder_result(self.request.id, "update_task_status", task_id=task_id, status=status)
+@celery_app.task(name="classify_template_document", bind=True, max_retries=1)
+def classify_template_document(self, document_link_id: str) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.nd_template_classification_service import (
+        NdTemplateClassificationService,
+        NdTemplateClassificationServiceError,
+    )
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            link_id = uuid_module.UUID(document_link_id)
+            service = NdTemplateClassificationService(db)
+            try:
+                link = await service.classify_template_document(link_id)
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "classify_template_document",
+                    "document_link_id": document_link_id,
+                    "status": link.classification_status.value,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except NdTemplateClassificationServiceError as exc:
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "classify_template_document",
+                    "document_link_id": document_link_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_run)
+
+
+@celery_app.task(name="poll_procurement_sources", bind=True, max_retries=0)
+def poll_procurement_sources(self) -> dict[str, Any]:
+    from redis import Redis
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.procurement_orchestrator_service import (
+        ProcurementOrchestratorService,
+        build_poll_lock_key,
+    )
+
+    if not settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "poll_procurement_sources",
+            "status": "disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    lock_key = build_poll_lock_key()
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    acquired = bool(
+        redis_client.set(
+            lock_key,
+            self.request.id or "poll",
+            nx=True,
+            ex=settings.PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS,
+        )
+    )
+    if not acquired:
+        redis_client.close()
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "poll_procurement_sources",
+            "status": "skipped_locked",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = ProcurementOrchestratorService(db, enqueue_case=True)
+            try:
+                summary = await service.poll_once()
+                await db.commit()
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "poll_procurement_sources",
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+        dispatched = 0
+        for case_id, task_id in service.pending_dispatches:
+            run_procurement_case_task.apply_async(
+                args=[case_id, task_id],
+                queue="agents",
+            )
+            dispatched += 1
+        summary["dispatched"] = dispatched
+        summary["celery_task_id"] = self.request.id
+        summary["task_name"] = "poll_procurement_sources"
+        summary["status"] = "completed"
+        return summary
+
+    try:
+        return _run_async_task(_run)
+    finally:
+        redis_client.delete(lock_key)
+        redis_client.close()
+
+
+@celery_app.task(name="run_procurement_case_task", bind=True, max_retries=2)
+def run_procurement_case_task(self, case_id: str, task_id: str) -> dict[str, Any]:
+    from uuid import UUID
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.models.enums import ProcurementCaseStatus, TaskStatus
+    from app.models.procurement import ProcurementCase
+    from app.models.task import Task
+    from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            task = await db.get(Task, UUID(task_id))
+            if (
+                task is not None
+                and task.task_type != "procurement_role_agent"
+                and not settings.PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED
+            ):
+                case = await db.get(ProcurementCase, UUID(case_id))
+                task.status = TaskStatus.CANCELLED
+                task.finished_at = datetime.now(timezone.utc)
+                task.error_message = "Планирование оркестратора отключено."
+                if case is not None and case.current_task_id == UUID(task_id):
+                    case.current_task_id = None
+                    case.current_agent_id = None
+                    case.assigned_agents = []
+                    case.control_point = None
+                    if case.status != ProcurementCaseStatus.CLOSED.value:
+                        case.status = ProcurementCaseStatus.NEW.value
+                        case.deviation_summary = None
+                        case.error_message = None
+                        case.latest_result = None
+                await db.commit()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "run_procurement_case_task",
+                    "case_id": case_id,
+                    "task_id": task_id,
+                    "status": "skipped",
+                    "reason": "planning_disabled",
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            service = ProcurementOrchestratorService(db, enqueue_case=False)
+            try:
+                result = await service.execute_case_task(UUID(case_id), UUID(task_id))
+                await service.claim_engineer_dispatches(limit=1)
+                await db.commit()
+                for next_case_id, next_task_id in service.pending_dispatches:
+                    run_procurement_case_task.apply_async(
+                        args=[next_case_id, next_task_id],
+                        queue="agents",
+                    )
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "run_procurement_case_task",
+                    "case_id": case_id,
+                    "task_id": task_id,
+                    "status": "completed",
+                    "result_status": result.get("status") or result.get("case_status"),
+                    "next_engineer_tasks": len(service.pending_dispatches),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                if self.request.retries < self.max_retries:
+                    raise self.retry(exc=exc, countdown=30) from exc
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "run_procurement_case_task",
+                    "case_id": case_id,
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_run)
 
 
 def _placeholder_result(celery_task_id: str, task_name: str, **payload: Any) -> dict[str, Any]:

@@ -1,0 +1,459 @@
+"""RuleRouter — детерминированная маршрутизация (ТЗ §8, §10)."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from agent_pochta.config import PROJECT_ROOT
+from agent_pochta.routing.confidence import calculate_confidence
+from agent_pochta.routing.corrections import find_correction_match
+from agent_pochta.routing.models import ConfidenceLevel, RoutingDecision, ServiceRoute
+from agent_pochta.routing.normalize import (
+    contains_claim_marker,
+    keyword_in_text,
+    normalize_email_address,
+    normalize_text,
+)
+from agent_pochta.routing.process_type import infer_process_type_heuristic
+from agent_pochta.routing.recipients import build_routing_search_text
+from agent_pochta.routing.xml_builder import (
+    build_xml_document,
+    sanitize_theme,
+    strip_forbidden_tags,
+    validate_xml_document,
+)
+from agent_pochta.schemas import EmailMessage, SenderIdentity
+
+_DEFAULT_RULES_PATH = Path(__file__).resolve().parent / "data" / "routing_rules.json"
+_FALLBACK_RULES_PATH = PROJECT_ROOT / "data" / "routing_rules.json"
+
+_ORG_FROM_RECIPIENT = (
+    ("almaz", "АЛ"),
+    ("mgs_", "МГ"),
+    ("mgs@", "МГ"),
+)
+
+
+@dataclass
+class _Candidate:
+    code: str
+    name: str
+    direction: str
+    source: str
+    reasoning: str
+    topic_hits: int = 0
+    content_hits: int = 0
+    organization: str | None = None
+    matched_keywords: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RouteEngine:
+    rules: dict = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, path: Path | None = None) -> RouteEngine:
+        rules_path = path or _DEFAULT_RULES_PATH
+        if not rules_path.is_file():
+            rules_path = _FALLBACK_RULES_PATH
+        with rules_path.open(encoding="utf-8") as fh:
+            return cls(rules=json.load(fh))
+
+    def _dept_name(self, code: str, fallback: str = "") -> str:
+        names = self.rules.get("department_names", {})
+        return names.get(code, fallback or code)
+
+    def detect_organization(self, text: str, *, recipient: str = "") -> str:
+        recipient = recipient.lower()
+        for marker, org in _ORG_FROM_RECIPIENT:
+            if marker in recipient:
+                return org
+
+        normalized = normalize_text(text)
+        org_keywords = self.rules.get("organization_keywords", {})
+        for org in sorted(org_keywords, key=lambda key: -max(len(kw) for kw in org_keywords[key])):
+            keywords = org_keywords[org]
+            if any(kw in normalized for kw in sorted(keywords, key=len, reverse=True)):
+                return org
+        return "НП"
+
+    def detect_direction(self, organization: str, candidate_direction: str | None = None) -> str:
+        if organization in {"АЛ", "МГ", "АМ", "МИ"}:
+            return organization
+        return candidate_direction or "КС"
+
+    def _exact_email_match(self, recipient: str, subject: str, body: str) -> list[_Candidate]:
+        recipient = normalize_email_address(recipient, self.rules.get("email_aliases"))
+        text = normalize_text(f"{subject} {body}")
+        local = recipient.split("@", 1)[0]
+        found: list[_Candidate] = []
+        for rule in self.rules.get("exact_email_rules", []):
+            if rule.get("is_fallback_mailbox"):
+                continue
+            if recipient != rule["email"].lower():
+                continue
+            about = rule.get("about", "")
+            about_tokens = [token for token in about.split() if token]
+            topic_hits = sum(1 for token in about_tokens if keyword_in_text(token, text)) if about_tokens else 0
+            matched = [local]
+            matched.extend(token for token in about_tokens if keyword_in_text(token, text))
+            found.append(
+                _Candidate(
+                    code=rule["code"],
+                    name=rule.get("name") or self._dept_name(rule["code"]),
+                    direction=rule.get("direction", "КС"),
+                    source="exact_email",
+                    reasoning=f"Точное совпадение email получателя {recipient}",
+                    topic_hits=topic_hits,
+                    matched_keywords=matched,
+                )
+            )
+        return found
+
+    def _email_keyword_match(self, recipient: str) -> list[_Candidate]:
+        local = recipient.split("@", 1)[0].lower()
+        found: list[_Candidate] = []
+        for rule in self.rules.get("email_keyword_rules", []):
+            keyword = rule["keyword"].lower()
+            if keyword in local:
+                found.append(
+                    _Candidate(
+                        code=rule["code"],
+                        name=rule.get("name") or self._dept_name(rule["code"]),
+                        direction=rule.get("direction", "КС"),
+                        source="email_keyword",
+                        reasoning=f"Ключевое слово «{keyword}» в адресе {recipient}",
+                        matched_keywords=[keyword],
+                    )
+                )
+        return found
+
+    def _content_match(self, recipient: str, subject: str, body: str) -> list[_Candidate]:
+        text = normalize_text(
+            build_routing_search_text(recipient=recipient, subject=subject, body=body)
+        )
+        found: list[_Candidate] = []
+        for rule in self.rules.get("content_rules", []):
+            hits = [kw for kw in rule.get("keywords", []) if keyword_in_text(kw, text)]
+            if not hits:
+                continue
+            found.append(
+                _Candidate(
+                    code=rule["code"],
+                    name=rule.get("name") or self._dept_name(rule["code"]),
+                    direction=rule.get("direction", "КС"),
+                    source="content",
+                    reasoning=f"Совпадение по содержимому: {', '.join(hits[:5])}",
+                    content_hits=len(hits),
+                    topic_hits=1 if rule.get("about") else 0,
+                    organization=rule.get("organization"),
+                    matched_keywords=hits,
+                )
+            )
+        return found
+
+    def _sales_rules(self, subject: str, body: str, partner: str | None) -> list[_Candidate]:
+        text = normalize_text(f"{subject} {body} {partner or ''}")
+        found: list[_Candidate] = []
+        for holding in self.rules.get("sales_orkk_holdings", []):
+            if holding in text:
+                found.append(
+                    _Candidate(
+                        code="00-000076",
+                        name=self._dept_name("00-000076", "ОРКК"),
+                        direction="КС",
+                        source="sales_orkk",
+                        reasoning="Холдинг/ВИНК нефтегазового сектора",
+                        matched_keywords=[holding],
+                    )
+                )
+                return found
+        for marker in self.rules.get("sales_gazprom", []):
+            if marker in text:
+                found.append(
+                    _Candidate(
+                        code="00-000076",
+                        name=self._dept_name("00-000076", "ОРКК / ПАО Газпром"),
+                        direction="КС",
+                        source="sales_gazprom",
+                        reasoning="ПАО Газпром / дочерние общества",
+                        matched_keywords=[marker],
+                    )
+                )
+                return found
+        for marker in self.rules.get("sales_odp", []):
+            if marker in text:
+                found.append(
+                    _Candidate(
+                        code="00-000075",
+                        name=self._dept_name("00-000075", "ОДП"),
+                        direction="КС",
+                        source="sales_odp",
+                        reasoning="Региональный/дилерский/низкое давление",
+                        matched_keywords=[marker],
+                    )
+                )
+                return found
+        return found
+
+    def _reserve_route(self) -> _Candidate:
+        code = self.rules.get("reserve_code", "00-000066")
+        return _Candidate(
+            code=code,
+            name=self.rules.get("reserve_name") or self._dept_name(code),
+            direction="КС",
+            source="reserve",
+            reasoning="Резервный маршрут при отсутствии однозначного правила",
+        )
+
+    def _correction_match(
+        self,
+        recipient: str,
+        sender_email: str,
+        subject: str,
+        body: str,
+    ) -> _Candidate | None:
+        entry = find_correction_match(
+            recipient=recipient,
+            sender_email=sender_email,
+            subject=subject,
+            body=body,
+        )
+        if entry is None:
+            return None
+        code = str(entry["department_id"])
+        keywords = [str(kw).strip() for kw in (entry.get("keywords") or []) if str(kw).strip()]
+        return _Candidate(
+            code=code,
+            name=entry.get("department_name") or self._dept_name(code),
+            direction="КС",
+            source="human_correction",
+            reasoning="Коррекция оператора (human-in-the-loop)",
+            topic_hits=len(keywords),
+            content_hits=len(keywords),
+            matched_keywords=keywords,
+        )
+
+    def _pick_candidates(
+        self,
+        recipient: str,
+        subject: str,
+        body: str,
+        partner: str | None,
+        sender_email: str = "",
+    ) -> list[_Candidate]:
+        recipient = normalize_email_address(recipient, self.rules.get("email_aliases"))
+        correction = self._correction_match(recipient, sender_email, subject, body)
+        if correction is not None:
+            return [correction]
+        routes = self._exact_email_match(recipient, subject, body)
+        if not routes:
+            routes = self._email_keyword_match(recipient)
+        if not routes:
+            routes = self._content_match(recipient, subject, body)
+        commercial_markers = ("ткп", "коммерческ", "кп ", "запрос цен", "счет", "счёт")
+        text = normalize_text(f"{subject} {body}")
+        if any(m in text for m in commercial_markers):
+            sales = self._sales_rules(subject, body, partner)
+            if sales:
+                routes = sales + routes
+        if not routes:
+            routes = [self._reserve_route()]
+        return routes
+
+    def _collect_matching_keywords(self, candidates: list[_Candidate]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for candidate in candidates[:3]:
+            for kw in candidate.matched_keywords:
+                value = kw.strip()
+                if not value or value in seen:
+                    continue
+                seen.add(value)
+                result.append(value)
+        return result[:10]
+
+    def _resolve_partner(self, sender: SenderIdentity | None) -> str | None:
+        if sender and sender.contractor and sender.contractor.name:
+            name = sender.contractor.name.strip()
+            return name or None
+        return None
+
+    def route(
+        self,
+        email: EmailMessage,
+        *,
+        combined_text: str,
+        recipient: str | None = None,
+        sender: SenderIdentity | None = None,
+    ) -> RoutingDecision:
+        recipient = normalize_email_address(
+            recipient or email.routing_recipient or email.mailbox,
+            self.rules.get("email_aliases"),
+        )
+        subject = email.subject or ""
+        body = combined_text or email.body_text or ""
+        partner = self._resolve_partner(sender)
+
+        organization = self.detect_organization(f"{subject} {body}", recipient=recipient)
+        candidates = self._pick_candidates(
+            recipient,
+            subject,
+            body,
+            partner,
+            sender_email=email.sender_email,
+        )
+
+        unique_codes = {c.code for c in candidates}
+        has_conflict = len(unique_codes) > 1
+        primary = candidates[0]
+        if has_conflict:
+            exact = [c for c in candidates if c.source == "exact_email"]
+            if exact:
+                primary = max(exact, key=lambda c: c.topic_hits)
+            elif len({c.code for c in candidates if c.source != "reserve"}) == 1:
+                has_conflict = False
+
+        if primary.organization:
+            organization = primary.organization
+
+        direction = self.detect_direction(organization, primary.direction)
+        claim = contains_claim_marker(f"{subject} {body}")
+
+        info_no_topic = (
+            recipient == "info@turbo-don.ru"
+            and primary.source == "reserve"
+            and not any(c.source == "content" for c in candidates)
+        )
+
+        score, level = calculate_confidence(
+            exact_email=primary.source in {"exact_email", "human_correction"},
+            topic_matches=primary.topic_hits,
+            email_keyword=primary.source == "email_keyword",
+            content_keyword_hits=primary.content_hits,
+            org_confirmed=organization != "НП",
+            holding_found=primary.source.startswith("sales"),
+            has_conflict=has_conflict and primary.source != "human_correction",
+            info_mailbox_no_topic=info_no_topic,
+            unknown_route=primary.source == "reserve",
+        )
+
+        keywords = self._collect_matching_keywords(candidates)
+
+        process = infer_process_type_heuristic(subject, body, claim=claim)
+
+        services = [
+            ServiceRoute(
+                code=primary.code,
+                name=primary.name,
+                process=process,
+                reasoning=primary.reasoning,
+                direction=direction,
+            )
+        ]
+
+        decision = RoutingDecision(
+            organization=organization,
+            direction=direction,
+            process=process,
+            services=services,
+            confidence_level=level,
+            confidence_score=score,
+            matching_keywords=keywords,
+            partner=partner,
+            claim=claim,
+            theme=sanitize_theme(subject),
+            has_conflict=has_conflict,
+            match_source=primary.source,
+        )
+
+        xml = build_xml_document(email, recipient=recipient, decision=decision)
+        xml = strip_forbidden_tags(xml)
+        if validate_xml_document(xml):
+            decision.xml_document = xml
+        return decision
+
+
+_engine: RouteEngine | None = None
+
+
+def get_route_engine() -> RouteEngine:
+    global _engine
+    if _engine is None:
+        _engine = RouteEngine.load()
+    return _engine
+
+
+def reset_route_engine() -> None:
+    global _engine
+    _engine = None
+
+
+def route_email(
+    email: EmailMessage,
+    *,
+    combined_text: str = "",
+    recipient: str | None = None,
+    sender: SenderIdentity | None = None,
+    engine: RouteEngine | None = None,
+) -> RoutingDecision:
+    return (engine or get_route_engine()).route(
+        email,
+        combined_text=combined_text,
+        recipient=recipient,
+        sender=sender,
+    )
+
+
+def rebuild_decision_xml(
+    email: EmailMessage,
+    decision: RoutingDecision,
+    *,
+    recipient: str,
+    department_id: str | None = None,
+    department_name: str | None = None,
+    theme: str | None = None,
+    partner: str | None = None,
+    process: str | None = None,
+) -> RoutingDecision:
+    """Пересобирает XML после изменения отдела (RAG/LLM или human-in-the-loop)."""
+    services = list(decision.services)
+    resolved_process = process or decision.process or (services[0].process if services else "исполнение")
+    if department_id:
+        base = services[0] if services else ServiceRoute(code=department_id, name=department_name or department_id)
+        services = [
+            ServiceRoute(
+                code=department_id,
+                name=department_name or base.name,
+                process=resolved_process,
+                direction=decision.direction,
+            )
+        ]
+    elif process is not None:
+        services = [
+            ServiceRoute(
+                code=svc.code,
+                name=svc.name,
+                process=resolved_process,
+                reasoning=svc.reasoning,
+                direction=svc.direction,
+            )
+            for svc in services
+        ]
+    updates: dict = {"services": services, "process": resolved_process}
+    if theme is not None:
+        updates["theme"] = theme
+    if partner is not None:
+        updates["partner"] = partner
+    updated = decision.model_copy(update=updates)
+    xml = build_xml_document(
+        email,
+        recipient=recipient,
+        decision=updated,
+    )
+    xml = strip_forbidden_tags(xml)
+    if validate_xml_document(xml):
+        return updated.model_copy(update={"xml_document": xml})
+    return updated

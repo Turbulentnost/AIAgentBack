@@ -17,6 +17,8 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     output_schema: Mapped[dict | None] = mapped_column(JSONB)
     department_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("departments.id", ondelete="SET NULL"))
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    icon_bucket: Mapped[str | None] = mapped_column(String(255))
+    icon_object_name: Mapped[str | None] = mapped_column(String(1024))
     versions: Mapped[list["AgentVersion"]] = relationship(back_populates="agent", cascade="all, delete-orphan")
     tools: Mapped[list["AgentTool"]] = relationship(back_populates="agent", cascade="all, delete-orphan")
     user_access: Mapped[list["UserAgent"]] = relationship(

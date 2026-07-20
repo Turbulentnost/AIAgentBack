@@ -5,6 +5,8 @@ import os
 import requests
 from requests.auth import HTTPBasicAuth
 
+from app.core.config import settings
+
 DEFAULT_ONEC_BASE_URL = "http://192.168.2.229:81/erp_pm"
 
 
@@ -16,14 +18,14 @@ def normalize_odata_base(raw_base_url: str) -> str:
 
 
 def get_odata_base_url() -> str:
-    return normalize_odata_base(os.getenv("ONEC_BASE_URL", DEFAULT_ONEC_BASE_URL))
+    raw_url = settings.ONEC_ODATA_URL or os.getenv("ONEC_BASE_URL", DEFAULT_ONEC_BASE_URL)
+    return normalize_odata_base(raw_url)
 
 
 def get_odata_auth() -> HTTPBasicAuth:
-    return HTTPBasicAuth(
-        os.getenv("ODATA_USER", "odata.user"),
-        os.getenv("ODATA_PASSWORD", "npo852456"),
-    )
+    user = settings.ONEC_ODATA_USER or os.getenv("ODATA_USER", "odata.user")
+    password = settings.ONEC_ODATA_PASSWORD or os.getenv("ODATA_PASSWORD", "")
+    return HTTPBasicAuth(user, password)
 
 
 def create_session() -> requests.Session:

@@ -16,6 +16,7 @@ class TaskStatus(str, enum.Enum):
     PLANNING = "planning"
     RUNNING = "running"
     WAITING_HUMAN = "waiting_human"
+    WAITING_EXTERNAL = "waiting_external"
     COMPLETED = "completed"
     COMPLETED_WITH_ISSUES = "completed_with_issues"
     FAILED = "failed"
@@ -96,6 +97,23 @@ class KnowledgeBaseSourceStatus(str, enum.Enum):
     UPDATING = "updating"
     ERROR = "error"
     ARCHIVED = "archived"
+    EXCLUDED = "excluded"
+    NEEDS_OCR = "needs_ocr"
+    READY_TO_INDEX = "ready_to_index"
+
+
+class KnowledgeBaseSourcePrecheckStatus(str, enum.Enum):
+    PENDING = "pending"
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+class KnowledgeBaseChunkQualityStatus(str, enum.Enum):
+    UNKNOWN = "unknown"
+    GOOD = "good"
+    MEDIUM = "medium"
+    LOW = "low"
+    FAILED = "failed"
 
 class KnowledgeBaseRuleStatus(str, enum.Enum):
     DRAFT = "draft"
@@ -106,6 +124,8 @@ class KnowledgeBaseRuleStatus(str, enum.Enum):
 class KnowledgeBaseGrantType(str, enum.Enum):
     USER = "user"
     DEPARTMENT = "department"
+    ROLE = "role"
+    ORGANIZATION = "organization"
     AGENT = "agent"
     ADMIN_ONLY = "admin_only"
 
@@ -137,6 +157,7 @@ class KnowledgeBaseIndexJobStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     PARTIAL = "partial"
+    CANCELLED = "CANCELLED"
 
 class KnowledgeBaseIndexErrorType(str, enum.Enum):
     TEXT_EXTRACT_FAILED = "text_extract_failed"
@@ -280,3 +301,232 @@ class OpeDecision(str, enum.Enum):
     REFINE = "refine"
     EXTEND = "extend"
     TERMINATE = "terminate"
+
+
+class NdDocumentType(str, enum.Enum):
+    POLICY = "policy"
+    REGULATION = "regulation"
+    PROCEDURE = "procedure"
+    STO = "sto"
+    INSTRUCTION = "instruction"
+
+
+class NdTemplateType(str, enum.Enum):
+    POLICY = "policy"
+    REGULATION = "regulation"
+    DEPARTMENT_REGULATION = "department_regulation"
+    PROCESS_REGULATION = "process_regulation"
+    STO = "sto"
+    INSTRUCTION = "instruction"
+    WORK_INSTRUCTION = "work_instruction"
+    JOB_DESCRIPTION = "job_description"
+    CHANGE_NOTICE = "change_notice"
+    DOCUMENT_INTRODUCTION_ORDER = "document_introduction_order"
+    IMPLEMENTATION_PLAN = "implementation_plan"
+    CHANGE_REGISTRATION_SHEET = "change_registration_sheet"
+    ISSUANCE_ACKNOWLEDGEMENT_SHEET = "issuance_acknowledgement_sheet"
+    TRAINING_PROTOCOL = "training_protocol"
+    PROCESS_PASSPORT = "process_passport"
+
+
+class NdTemplateClassificationStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+
+
+class NdChangeJournalEventType(str, enum.Enum):
+    DOCUMENT_CREATED = "document_created"
+    DOCUMENT_UPDATED = "document_updated"
+    DOCUMENT_DELETED = "document_deleted"
+    TEMPLATE_DOCUMENT_ADDED = "template_document_added"
+    TEMPLATE_DOCUMENT_CLASSIFIED = "template_document_classified"
+    DEPARTMENT_ANALYSIS_STARTED = "department_analysis_started"
+    ND_CHANGE_REQUEST_CREATED = "nd_change_request_created"
+    ND_CHANGE_REQUEST_UPDATED = "nd_change_request_updated"
+    ND_CHANGE_REQUEST_COMPLETED = "nd_change_request_completed"
+    ND_CHANGE_DRAFT_APPLIED = "nd_change_draft_applied"
+    ND_CHANGE_NOTICE_GENERATED = "nd_change_notice_generated"
+    ND_CONTROL_DEPARTMENT_CREATED = "nd_control_department_created"
+    ND_CONTROL_DEPARTMENT_DELETED = "nd_control_department_deleted"
+
+
+class NdChangeJournalSource(str, enum.Enum):
+    MANUAL = "manual"
+    SYSTEM = "system"
+    ND_CHANGE_WORKFLOW = "nd_change_workflow"
+
+
+class NdQmsLevel(str, enum.Enum):
+    STRATEGIC = "strategic"
+    ORGANIZATIONAL = "organizational"
+    PROCESS = "process"
+    TECHNICAL = "technical"
+    OPERATIONAL = "operational"
+
+
+class NdDocumentCardStatus(str, enum.Enum):
+    ACTIVE = "active"
+    DRAFT = "draft"
+    SUPERSEDED = "superseded"
+    ARCHIVED = "archived"
+
+
+class NdConfidentialityLevel(str, enum.Enum):
+    PUBLIC = "public"
+    RESTRICTED = "restricted"
+    CONFIDENTIAL = "confidential"
+
+
+class NdExtractionStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+
+
+class NdBuildStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+
+
+class NdStructuralDocumentStatus(str, enum.Enum):
+    ACTIVE = "active"
+    PROJECT = "project"
+    DRAFT = "draft"
+    ARCHIVED = "archived"
+    SUPERSEDED = "superseded"
+
+
+class NdStructuralDocumentType(str, enum.Enum):
+    """Тип нормативного документа СМК (классификация DocumentType)."""
+
+    POLICY = "POLICY"
+    REGULATION = "REGULATION"
+    PROCESS_REGULATION = "PROCESS_REGULATION"
+    STO = "STO"
+    INSTRUCTION = "INSTRUCTION"
+
+
+class NdDocumentLevel(str, enum.Enum):
+    """Уровень документа в иерархии СМК (классификация DocumentLevel)."""
+
+    STRATEGIC = "strategic"
+    ORGANIZATIONAL = "organizational"
+    PROCESS = "process"
+    TECHNICAL = "technical"
+    OPERATIONAL = "operational"
+
+
+class NdGraphEntityType(str, enum.Enum):
+    DEPARTMENT = "Department"
+    PROCESS = "Process"
+    DOCUMENT = "Document"
+    ROLE = "Role"
+    FORM = "Form"
+    SYSTEM = "System"
+    RESOURCE = "Resource"
+
+
+class NdRelationType(str, enum.Enum):
+    DEPARTMENT_OWNS_PROCESS = "DEPARTMENT_OWNS_PROCESS"
+    DEPARTMENT_PARTICIPATES_IN_PROCESS = "DEPARTMENT_PARTICIPATES_IN_PROCESS"
+    PROCESS_USES_FORM = "PROCESS_USES_FORM"
+    PROCESS_USES_SYSTEM = "PROCESS_USES_SYSTEM"
+    PROCESS_HAS_ROLE = "PROCESS_HAS_ROLE"
+    PROCESS_PRODUCES_OUTPUT = "PROCESS_PRODUCES_OUTPUT"
+    PROCESS_CONSUMES_INPUT = "PROCESS_CONSUMES_INPUT"
+    PROCESS_RELATED_TO_PROCESS = "PROCESS_RELATED_TO_PROCESS"
+    DOCUMENT_REGULATES_PROCESS = "DOCUMENT_REGULATES_PROCESS"
+    DOCUMENT_MENTIONS_DEPARTMENT = "DOCUMENT_MENTIONS_DEPARTMENT"
+    ROLE_RESPONSIBLE_FOR_ACTION = "ROLE_RESPONSIBLE_FOR_ACTION"
+
+
+class NdRelationExtractionType(str, enum.Enum):
+    EXPLICIT = "explicit"
+    INFERRED = "inferred"
+    UNCERTAIN = "uncertain"
+
+
+class NdResponsibilityRoleType(str, enum.Enum):
+    PROCESS_OWNER = "process_owner"
+    PERFORMER = "performer"
+    CONTROLLER = "controller"
+    APPROVER = "approver"
+    DOCUMENT_OWNER = "document_owner"
+    UNKNOWN = "unknown"
+
+
+class NdUnknownReason(str, enum.Enum):
+    NOT_FOUND = "not_found"
+    AMBIGUOUS = "ambiguous"
+    REQUIRES_HUMAN_CONFIRMATION = "requires_human_confirmation"
+
+
+class DepartmentAnalysisRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    COMPLETED_WITH_WARNINGS = "completed_with_warnings"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DepartmentAnalysisStep(str, enum.Enum):
+    INITIALIZING = "initializing"
+    LOADING_KNOWLEDGE_BASES = "loading_knowledge_bases"
+    EXTRACTING_DOCUMENT_CARDS = "extracting_document_cards"
+    BUILDING_DEPARTMENT_PROFILE = "building_department_profile"
+    BUILDING_RELATIONS = "building_relations"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ProcurementSourceType(str, enum.Enum):
+    INTERNAL_CONSUMPTION_ORDER = "internal_consumption_order"
+    PRODUCTION_MATERIAL_ORDER = "production_material_order"
+    TRANSFER_ORDER = "transfer_order"
+    REORDER_POINT = "reorder_point"
+
+
+class ProcurementCaseStatus(str, enum.Enum):
+    NEW = "new"
+    AGENT_WAITING = "agent_waiting"
+    DATA_CHECK = "data_check"
+    COVERAGE_CHECK = "coverage_check"
+    HUMAN_REQUIRED = "human_required"
+    BLOCKED = "blocked"
+    PURCHASE_DRAFT = "purchase_draft"
+    APPROVAL_REQUIRED = "approval_required"
+    ORDERED = "ordered"
+    PAYMENT_PENDING = "payment_pending"
+    IN_TRANSIT = "in_transit"
+    RECEIVING = "receiving"
+    QUALITY_QUEUED = "quality_queued"
+    QUALITY_ASSIGNED = "quality_assigned"
+    QUALITY_DOC_CHECK = "quality_doc_check"
+    QUALITY_INSPECTION = "quality_inspection"
+    QUALITY_DECISION = "quality_decision"
+    ISOLATED = "isolated"
+    NONCONFORMITY = "nonconformity"
+    REWORK = "rework"
+    REINSPECTION = "reinspection"
+    QUALITY_RELEASED = "quality_released"
+    POSTING_REQUIRED = "posting_required"
+    POSTED = "posted"
+    CLOSED = "closed"
+    FAILED = "failed"
+
+
+class ProcurementActionClass(str, enum.Enum):
+    READ = "R"
+    DRAFT = "D"
+    NOTIFY = "N"
+    HUMAN = "H"
+    FORBIDDEN = "X"

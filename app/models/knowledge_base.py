@@ -2,20 +2,23 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import (
     KnowledgeBaseAccessType,
     KnowledgeBaseAgentAccessMode,
+    KnowledgeBaseChunkQualityStatus,
     KnowledgeBaseGrantType,
     KnowledgeBaseIndexErrorType,
     KnowledgeBaseIndexJobStatus,
     KnowledgeBaseIndexJobType,
     KnowledgeBaseRuleStatus,
+    KnowledgeBaseSourcePrecheckStatus,
     KnowledgeBaseSourceStatus,
     KnowledgeBaseStatus,
 )
@@ -45,6 +48,11 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     vector_store: Mapped[str] = mapped_column(String(64), default="qdrant", index=True)
     qdrant_collection: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    deleted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     sources_count: Mapped[int] = mapped_column(Integer, default=0)
     fragments_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -113,6 +121,17 @@ class KnowledgeBaseSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     fragments_count: Mapped[int] = mapped_column(Integer, default=0)
     file_size: Mapped[int | None] = mapped_column(BigInteger)
     access_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+    precheck_status: Mapped[KnowledgeBaseSourcePrecheckStatus] = mapped_column(
+        default=KnowledgeBaseSourcePrecheckStatus.PENDING,
+        index=True,
+    )
+    precheck_notes: Mapped[str | None] = mapped_column(Text)
+    checksum: Mapped[str | None] = mapped_column(String(128), index=True)
+    quality_status: Mapped[KnowledgeBaseChunkQualityStatus] = mapped_column(
+        default=KnowledgeBaseChunkQualityStatus.UNKNOWN,
+        index=True,
+    )
+    pages_count: Mapped[int | None] = mapped_column(Integer)
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="sources")
     chunks: Mapped[list["KnowledgeBaseChunk"]] = relationship(
@@ -152,6 +171,11 @@ class KnowledgeBaseChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     clause_number: Mapped[str | None] = mapped_column(String(128))
     fragment_type: Mapped[str | None] = mapped_column(String(64), index=True)
     access_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+    quality_status: Mapped[KnowledgeBaseChunkQualityStatus] = mapped_column(
+        default=KnowledgeBaseChunkQualityStatus.UNKNOWN,
+        index=True,
+    )
+    search_vector: Mapped[Any | None] = mapped_column(TSVECTOR)
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="chunks")
     source: Mapped[KnowledgeBaseSource] = relationship(back_populates="chunks")
@@ -262,6 +286,21 @@ class KnowledgeBaseIndexingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     created_fragments_count: Mapped[int] = mapped_column(Integer, default=0)
     updated_fragments_count: Mapped[int] = mapped_column(Integer, default=0)
     errors_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_sources_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_chunks_count: Mapped[int] = mapped_column(Integer, default=0)
+    extracted_sources_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunked_sources_count: Mapped[int] = mapped_column(Integer, default=0)
+    embedded_chunks_count: Mapped[int] = mapped_column(Integer, default=0)
+    qdrant_points_count: Mapped[int] = mapped_column(Integer, default=0)
+    fulltext_chunks_count: Mapped[int] = mapped_column(Integer, default=0)
+    processing_params: Mapped[dict | None] = mapped_column(JSONB)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    cancel_requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     started_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -275,6 +314,34 @@ class KnowledgeBaseIndexingJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="job",
         cascade="all, delete-orphan",
     )
+
+
+class KnowledgeBaseSearchQuery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """История поисковых запросов пользователя по базе знаний.
+
+    Запрос выполняется в фоне (Celery): пользователь может уйти со страницы,
+    результат будет сохранён и показан при возвращении.
+    """
+
+    __tablename__ = "knowledge_base_search_queries"
+
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    query: Mapped[str] = mapped_column(Text)
+    top_k: Mapped[int] = mapped_column(Integer, default=5)
+    # pending | running | completed | failed | cancelled
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    answer: Mapped[str | None] = mapped_column(Text)
+    hits: Mapped[list[Any] | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class KnowledgeBaseIndexingError(UUIDPrimaryKeyMixin, TimestampMixin, Base):

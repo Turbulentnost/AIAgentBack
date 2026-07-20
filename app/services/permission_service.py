@@ -3,13 +3,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import literal, or_, select
+from sqlalchemy import literal, or_, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
 from app.models.document import Document
 from app.models.task import Task
 from app.models.user import DepartmentAgent, Permission, User, UserAgent, role_permissions, user_roles
+
+PUBLIC_DOCUMENT_ACCESS_SCOPES = {"public", "global", "all", "company"}
 
 
 class PermissionService:
@@ -26,17 +28,20 @@ class PermissionService:
             UserAgent.user_id == user.id,
             or_(UserAgent.expires_at.is_(None), UserAgent.expires_at > now),
         ]
-        agent_ids_query = select(UserAgent.agent_id).where(*conditions)
+        agent_id_queries = [select(UserAgent.agent_id).where(*conditions)]
 
         if user.department_id is not None:
-            department_agent_ids = select(DepartmentAgent.agent_id).where(
-                DepartmentAgent.department_id == user.department_id
+            agent_id_queries.append(
+                select(DepartmentAgent.agent_id).where(
+                    DepartmentAgent.department_id == user.department_id
+                )
             )
-            agent_ids_query = agent_ids_query.union(department_agent_ids)
 
         role_agent_ids = self._role_agent_ids_query(user, "run")
         if role_agent_ids is not None:
-            agent_ids_query = agent_ids_query.union(role_agent_ids)
+            agent_id_queries.append(role_agent_ids)
+
+        agent_ids_query = agent_id_queries[0] if len(agent_id_queries) == 1 else union(*agent_id_queries)
 
         result = await self.db.execute(
             select(Agent).where(Agent.id.in_(agent_ids_query)).order_by(Agent.name)
@@ -88,7 +93,18 @@ class PermissionService:
         document = await self.db.get(Document, document_id)
         if document is None:
             return False
-        return user.department_id is not None and document.department_id == user.department_id
+        return self.can_access_document_record(user, document)
+
+    def can_access_document_record(self, user: User, document: Document) -> bool:
+        if user.is_superuser:
+            return True
+        if document.uploaded_by_user_id == user.id:
+            return True
+        if user.department_id is not None and document.department_id == user.department_id:
+            return True
+        metadata = document.metadata_ or {}
+        access_scope = str(metadata.get("access_scope") or metadata.get("access") or "").lower()
+        return access_scope in PUBLIC_DOCUMENT_ACCESS_SCOPES
 
     def _agent_action_column(self, action: str, model: type[UserAgent] | type[DepartmentAgent]):
         mapping = {
@@ -115,10 +131,9 @@ class PermissionService:
         if user.role_id is not None:
             role_queries.append(select(literal(user.role_id).label("role_id")))
         role_queries.append(select(user_roles.c.role_id).where(user_roles.c.user_id == user.id))
-        query = role_queries[0]
-        for next_query in role_queries[1:]:
-            query = query.union(next_query)
-        return query
+        if len(role_queries) == 1:
+            return role_queries[0]
+        return union(*role_queries)
 
     async def _has_role_agent_permission(self, user: User, agent_id: uuid.UUID, action: str) -> bool:
         role_ids_query = self._user_role_ids_query(user)
