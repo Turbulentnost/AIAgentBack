@@ -17,3 +17,4 @@ alembic/versions/*.py
 !alembic/versions/0051_procurement_role_waiting_status.py
 !alembic/versions/0052_procurement_source_synced_at.py
 !alembic/versions/0053_production_preparation_engineer_agent.py
+!alembic/versions/0054_cfo_head_agent.py
