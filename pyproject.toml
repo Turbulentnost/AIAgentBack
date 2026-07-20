@@ -52,6 +52,7 @@ include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.agents.cfo_head_agent" = ["prompts/*.md"]
+"app.agents.finance_director_agent" = ["prompts/*.md"]
 
 [tool.ruff]
 line-length = 100

@@ -10,6 +10,7 @@ from app.agents.finance_director_agent.decisions import (
     assess_case,
     build_awaiting_output,
 )
+from app.agents.finance_director_agent.prompts import recommend_with_llm
 from app.agents.finance_director_agent.schemas import (
     FinanceDirectorAgentRequest,
     FinanceDirectorAgentResult,
@@ -81,10 +82,17 @@ class FinanceDirectorAgent(BaseAgent):
             )
 
         output_data = build_awaiting_output(request.case_context, assessment)
+        rag_text = str((request.payload or {}).get("rag_text") or "")
+        advice = await recommend_with_llm(request, assessment, rag_text=rag_text)
+        output_data["llm_recommendation"] = advice
+        # Deterministic code action remains primary; LLM advice is for the human.
         return FinanceDirectorAgentResult(
             agent_id=self.agent_id,
             status="waiting_human",
-            summary="Требуется решение по финансовому исключению",
+            summary=str(
+                advice.get("recommendation")
+                or "Требуется решение по финансовому исключению"
+            ),
             data_confidence=ConfidenceLevel.HIGH,
             requires_human_review=True,
             case_id=request.case_id,
