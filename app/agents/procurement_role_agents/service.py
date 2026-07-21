@@ -10,9 +10,13 @@ from app.agents.procurement_role_agents.schemas import (
     ProcurementRoleAgentResult,
 )
 from app.agents.omto_support_manager_agent.service import OmtoSupportManagerService
+from app.agents.otk_head_agent.service import OtkHeadService
 from app.agents.production_preparation_engineer_agent.service import (
     ProductionPreparationEngineerService,
 )
+from app.agents.quality_deputy_director_agent.service import QualityDeputyDirectorService
+from app.agents.quality_engineer_agent.service import QualityEngineerService
+from app.agents.quality_kpi_agent.service import QualityKpiService
 from app.models.enums import ConfidenceLevel
 
 
@@ -115,10 +119,60 @@ class OmtoSupportManagerAgent(_WaitingProcurementRoleAgent):
         )
 
 
+@agent_registry.register
+class OtkHeadAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.OTK_HEAD_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Распределение предъявлений, проверка актов и контроль сроков входного контроля."
+    )
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await OtkHeadService().run(payload, agent_id=self.agent_id)
+
+
+@agent_registry.register
+class QualityEngineerAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.QUALITY_ENGINEER_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Документарный и физический входной контроль, протоколы и акты несоответствия."
+    )
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await QualityEngineerService().run(payload, agent_id=self.agent_id)
+
+
+@agent_registry.register
+class QualityDeputyDirectorAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.QUALITY_DEPUTY_DIRECTOR_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Проект резолюции по несоответствующей партии и контроль маршрута исполнения."
+    )
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await QualityDeputyDirectorService().run(payload, agent_id=self.agent_id)
+
+
+@agent_registry.register
+class QualityKpiAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.QUALITY_KPI_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = "Оценка работы ИИ-агентов и расчёт KPI по §12 ТЗ."
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await QualityKpiService().run(payload, agent_id=self.agent_id)
+
+
 __all__ = [
     "DepartmentInitiatorAgent",
     "OmtoSupportManagerAgent",
+    "OtkHeadAgent",
     "ProductionDispatcherAgent",
     "ProductionPreparationEngineerAgent",
+    "QualityDeputyDirectorAgent",
+    "QualityEngineerAgent",
+    "QualityKpiAgent",
     "WarehouseManagerAgent",
 ]

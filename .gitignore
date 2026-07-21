@@ -18,6 +18,7 @@ alembic/versions/*.py
 !alembic/versions/0052_procurement_source_synced_at.py
 !alembic/versions/0053_production_preparation_engineer_agent.py
 !alembic/versions/0054_omto_support_manager_agent.py
+!alembic/versions/0055_quality_agents.py
 
 # Build / coverage
 dist/
