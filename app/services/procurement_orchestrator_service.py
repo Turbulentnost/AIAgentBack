@@ -18,6 +18,7 @@ from app.agents.procurement_agent.source_discovery import (
     get_source_capability,
     list_source_capabilities,
     normalize_source_document,
+    parse_1c_datetime,
 )
 from app.agents.procurement_role_agents.config import (
     PRODUCTION_DISPATCHER_AGENT_ID,
@@ -77,6 +78,8 @@ PROCUREMENT_DOCUMENT_FIELDS = [
     "СкладПолучатель_Key",
     "Организация_Key",
     "Приоритет_Key",
+    "Основание",
+    "Основание_Type",
     "ДокументОснование",
     "ДокументОснование_Type",
     "ЖелаемаяДатаПоступления",
@@ -287,12 +290,29 @@ class ProcurementOrchestratorService:
             raise MCPUnavailableError(
                 f"Табличная часть для {source_type.value} не настроена"
             )
+        selection_payload: dict[str, Any] = {
+            "database": database,
+            "linesEntitySet": capability.lines_entity_set,
+        }
+        if source_type is ProcurementSourceType.REORDER_POINT:
+            existing_active_refs = (
+                await self.db.scalars(
+                    select(ProcurementCase.source_1c_ref).where(
+                        ProcurementCase.source_database == database,
+                        ProcurementCase.source_type == source_type.value,
+                        ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES)),
+                    )
+                )
+            ).all()
+            selection_payload.update(
+                {
+                    "dateFrom": _source_date_cutoff().date().isoformat(),
+                    "includeRefs": list(dict.fromkeys(existing_active_refs)),
+                }
+            )
         selection = await self.mcp.call_capability(
             "read_procurement_get_active_document_refs",
-            {
-                "database": database,
-                "linesEntitySet": capability.lines_entity_set,
-            },
+            selection_payload,
         )
         candidate_refs = {
             str(value).lower()
@@ -665,6 +685,7 @@ class ProcurementOrchestratorService:
         except (MCPUnavailableError, MCPCallError):
             units = {}
 
+        basis_documents = await self._read_source_basis_documents(database, documents)
         for document in documents:
             document.initiator_name = self._presentation_name(
                 initiators,
@@ -678,6 +699,16 @@ class ProcurementOrchestratorService:
                 warehouses,
                 document.warehouse_1c_ref,
             )
+            basis = basis_documents.get(
+                (
+                    str(document.source_basis_type or ""),
+                    str(document.source_basis_1c_ref or "").lower(),
+                ),
+                {},
+            )
+            document.source_basis_number = str(basis.get("Number") or "") or None
+            document.source_basis_date = parse_1c_datetime(basis.get("Date"))
+            document.source_basis_status = str(basis.get("Статус") or "") or None
             for line in document.positions:
                 item = nomenclature.get(line.nomenclature_id.lower(), {})
                 line.nomenclature_name = str(item.get("name") or "") or None
@@ -688,6 +719,44 @@ class ProcurementOrchestratorService:
                 )
                 line.unit_id = unit_ref or None
                 line.unit = self._presentation_name(units, unit_ref) or line.unit
+
+    async def _read_source_basis_documents(
+        self,
+        database: str,
+        documents: list[NormalizedSourceDocument],
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        requested: list[tuple[str, str, str]] = []
+        for document in documents:
+            basis_type = str(document.source_basis_type or "")
+            basis_ref = str(document.source_basis_1c_ref or "").lower()
+            entity_set = basis_type.removeprefix("StandardODATA.")
+            if entity_set.startswith("Document_") and self._is_real_1c_ref(basis_ref):
+                requested.append((basis_type, entity_set, basis_ref))
+        if not requested:
+            return {}
+
+        semaphore = asyncio.Semaphore(4)
+
+        async def fetch_one(
+            basis_type: str,
+            entity_set: str,
+            basis_ref: str,
+        ) -> tuple[tuple[str, str], dict[str, Any]]:
+            async with semaphore:
+                try:
+                    payload = await self.mcp.call_capability(
+                        "read_document_get_documents",
+                        {
+                            "database": database,
+                            "entitySet": entity_set,
+                            "ref": basis_ref,
+                        },
+                    )
+                except (MCPUnavailableError, MCPCallError):
+                    payload = {}
+            return (basis_type, basis_ref), payload
+
+        return dict(await asyncio.gather(*(fetch_one(*item) for item in requested)))
 
     async def _read_presentations(
         self,
@@ -935,6 +1004,15 @@ class ProcurementOrchestratorService:
                 "source_label": get_source_capability(document.source_type).label_ru,
                 "initial_route": [agent_id_for_source(document.source_type.value)],
                 "deadline": document.required_date.isoformat() if document.required_date else None,
+                "source_basis_1c_ref": document.source_basis_1c_ref,
+                "source_basis_type": document.source_basis_type,
+                "source_basis_number": document.source_basis_number,
+                "source_basis_date": (
+                    document.source_basis_date.isoformat()
+                    if document.source_basis_date
+                    else None
+                ),
+                "source_basis_status": document.source_basis_status,
                 "production_order_1c_ref": document.production_order_1c_ref,
                 "production_order_type": document.production_order_type,
                 "route_stages": DEFAULT_ROUTE_STAGES,
@@ -986,6 +1064,15 @@ class ProcurementOrchestratorService:
         metadata["deadline"] = (
             document.required_date.isoformat() if document.required_date else None
         )
+        metadata["source_basis_1c_ref"] = document.source_basis_1c_ref
+        metadata["source_basis_type"] = document.source_basis_type
+        metadata["source_basis_number"] = document.source_basis_number
+        metadata["source_basis_date"] = (
+            document.source_basis_date.isoformat()
+            if document.source_basis_date
+            else None
+        )
+        metadata["source_basis_status"] = document.source_basis_status
         metadata["production_order_1c_ref"] = document.production_order_1c_ref
         metadata["production_order_type"] = document.production_order_type
         case.case_metadata = metadata
@@ -1119,12 +1206,19 @@ class ProcurementOrchestratorService:
             ),
             "warehouse_ids": list(dict.fromkeys(warehouse_ids)),
             "organization_id": case.organization_1c_ref,
+            "source_basis_1c_ref": metadata.get("source_basis_1c_ref"),
+            "source_basis_type": metadata.get("source_basis_type"),
+            "source_basis_number": metadata.get("source_basis_number"),
+            "source_basis_date": metadata.get("source_basis_date"),
+            "source_basis_status": metadata.get("source_basis_status"),
             "production_order_1c_ref": metadata.get("production_order_1c_ref"),
             "production_order_type": metadata.get("production_order_type"),
         }
 
     async def _enqueue_role_agent(self, case: ProcurementCase) -> bool:
         if not self.enqueue_case or case.status in TERMINAL_CASE_STATUSES:
+            return False
+        if case.source_type == ProcurementSourceType.REORDER_POINT.value:
             return False
 
         agent_id = agent_id_for_source(case.source_type)
@@ -1195,6 +1289,21 @@ class ProcurementOrchestratorService:
                     "priority_1c_ref": case.priority_1c_ref,
                     "required_date": (
                         case.required_date.isoformat() if case.required_date else None
+                    ),
+                    "source_basis_1c_ref": (case.case_metadata or {}).get(
+                        "source_basis_1c_ref"
+                    ),
+                    "source_basis_type": (case.case_metadata or {}).get(
+                        "source_basis_type"
+                    ),
+                    "source_basis_number": (case.case_metadata or {}).get(
+                        "source_basis_number"
+                    ),
+                    "source_basis_date": (case.case_metadata or {}).get(
+                        "source_basis_date"
+                    ),
+                    "source_basis_status": (case.case_metadata or {}).get(
+                        "source_basis_status"
                     ),
                     "production_order_1c_ref": (case.case_metadata or {}).get(
                         "production_order_1c_ref"
@@ -1966,6 +2075,11 @@ class ProcurementOrchestratorService:
             "source_synced_at": (
                 case.source_synced_at.isoformat() if case.source_synced_at else None
             ),
+            "source_basis_1c_ref": metadata.get("source_basis_1c_ref"),
+            "source_basis_type": metadata.get("source_basis_type"),
+            "source_basis_number": metadata.get("source_basis_number"),
+            "source_basis_date": metadata.get("source_basis_date"),
+            "source_basis_status": metadata.get("source_basis_status"),
             "status": case.status,
             "control_point": case.control_point,
             "current_agent_id": case.current_agent_id,

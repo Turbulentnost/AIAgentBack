@@ -486,6 +486,10 @@ def calculate_engineer_assessment(
                     for supply in supplies
                     if supply.nomenclature_id == material.nomenclature_id
                     and supply.source_type in OTHER_WAREHOUSE_TYPES
+                    and (
+                        not supply.warehouse_id
+                        or supply.warehouse_id == case.warehouse_1c_ref
+                    )
                     and _exclusion_reason(
                         supply,
                         material=material,
@@ -500,6 +504,13 @@ def calculate_engineer_assessment(
             for supply in sorted(
                 supplies,
                 key=lambda value: (
+                    0
+                    if value.source_type in OTHER_WAREHOUSE_TYPES
+                    and (
+                        not value.warehouse_id
+                        or value.warehouse_id == case.warehouse_1c_ref
+                    )
+                    else 1,
                     _aware_datetime(value.available_at) if value.available_at else now,
                     value.supply_id,
                 ),
@@ -571,7 +582,7 @@ def calculate_engineer_assessment(
                 and supply.warehouse_id
                 and supply.warehouse_id != case.warehouse_1c_ref
             )
-            warehouse_stock_used = free_stock + other_stock
+            warehouse_stock_used = free_stock
             warehouse_stock_remaining = max(
                 Decimal("0"),
                 warehouse_stock_before - warehouse_stock_used,

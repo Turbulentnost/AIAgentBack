@@ -86,6 +86,11 @@ class ProcurementCaseSummary(BaseModel):
     source_date: datetime | None = None
     source_status: str | None = None
     source_synced_at: datetime | None = None
+    source_basis_1c_ref: str | None = None
+    source_basis_type: str | None = None
+    source_basis_number: str | None = None
+    source_basis_date: datetime | None = None
+    source_basis_status: str | None = None
     status: str
     control_point: str | None = None
     current_agent_id: str | None = None

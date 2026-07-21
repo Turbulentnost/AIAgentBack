@@ -102,7 +102,16 @@ def _document(
                     "Номенклатура_Key": "item-1",
                     "Количество": quantity,
                     "Отменено": cancelled,
-                    "ВариантОбеспечения": action,
+                    (
+                        "ОбеспечениеЗаказовПриПоддержанииЗапаса"
+                        if source_type is ProcurementSourceType.REORDER_POINT
+                        else "ВариантОбеспечения"
+                    ): (
+                        "ЗаСчетЗапасов"
+                        if source_type is ProcurementSourceType.REORDER_POINT
+                        and action == "КОбеспечению"
+                        else action
+                    ),
                 }
             ],
         },
@@ -201,6 +210,9 @@ async def test_role_agent_is_routed_by_source_type(
         _document(ref, "v1", source_type=source_type)
     )
 
+    if source_type is ProcurementSourceType.REORDER_POINT:
+        assert result == "created"
+        return
     assert result == "enqueued"
     case = (await db_session.execute(select(ProcurementCase))).scalar_one()
     task = (await db_session.execute(select(Task))).scalar_one()

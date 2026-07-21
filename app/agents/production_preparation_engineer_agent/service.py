@@ -26,7 +26,7 @@ from app.agents.production_preparation_engineer_agent.schemas import (
 from app.models.enums import ConfidenceLevel, ProcurementSourceType
 
 PRODUCTION_SUPPLY_REGISTERS = (
-    ("AccumulationRegister_СвободныеОстатки_RecordType", "warehouse"),
+    ("AccumulationRegister_ТоварыНаСкладах_RecordType", "warehouse"),
     (
         "AccumulationRegister_МатериалыИРаботыВПроизводстве_RecordType",
         "semifinished_production",
@@ -284,7 +284,7 @@ class ProductionPreparationEngineerService:
                             "limit": (
                                 20000
                                 if entity_set
-                                == "AccumulationRegister_СвободныеОстатки_RecordType"
+                                == "AccumulationRegister_ТоварыНаСкладах_RecordType"
                                 else 5000
                             ),
                         },
