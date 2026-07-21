@@ -26,7 +26,7 @@ from app.agents.production_preparation_engineer_agent.schemas import (
 from app.models.enums import ConfidenceLevel, ProcurementSourceType
 
 PRODUCTION_SUPPLY_REGISTERS = (
-    ("AccumulationRegister_ТоварыНаСкладах_RecordType", "warehouse"),
+    ("AccumulationRegister_СвободныеОстатки_RecordType", "warehouse"),
     (
         "AccumulationRegister_МатериалыИРаботыВПроизводстве_RecordType",
         "semifinished_production",
@@ -281,7 +281,12 @@ class ProductionPreparationEngineerService:
                             "entitySet": entity_set,
                             "nomenclatureRefs": material_ids,
                             "sourceType": source_type,
-                            "limit": 5000,
+                            "limit": (
+                                20000
+                                if entity_set
+                                == "AccumulationRegister_СвободныеОстатки_RecordType"
+                                else 5000
+                            ),
                         },
                     )
                 except MCPUnavailableError:

@@ -40,6 +40,8 @@ async def _agent_read(db: DbSession, agent) -> AgentRead:
 
 async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessRead:
     data = (await _agent_read(db, agent)).model_dump()
+    if agent.slug == "production_preparation_engineer_agent":
+        data["name"] = "Агент закупок и логистики"
     data.update(
         {
             "access_level": "full" if current_user.is_superuser else "granted",
