@@ -20,11 +20,13 @@ from agent_pochta.db.message_filters import (
     info_to_test_ii_sql_filter,
     is_info_to_test_ii_routing,
     is_only_info_to,
+    email_eligible_for_erp,
     matches_info_recipient_only,
     matches_recipient_q,
     only_info_to_sql_filter,
     recipient_display_value,
     recipient_q_sql_filter,
+    sanitize_json_text_for_pg,
     msk_day_end_exclusive_utc,
     msk_day_start_utc,
     parse_optional_date,
@@ -309,6 +311,24 @@ def test_is_only_info_to_rejects_test_ii_routing():
     assert is_only_info_to(mailbox=TEST_II_MAILBOX, payload=payload) is False
 
 
+def test_email_eligible_for_erp_accepts_info_only():
+    assert email_eligible_for_erp(
+        mailbox=INFO_MAILBOX,
+        to=[INFO_MAILBOX],
+        cc=[],
+        routing_recipient=INFO_MAILBOX,
+    ) is True
+
+
+def test_email_eligible_for_erp_rejects_td_sales():
+    assert email_eligible_for_erp(
+        mailbox="td_sales2.8@turbo-don.ru",
+        to=["td_sales2.8@turbo-don.ru"],
+        cc=[],
+        routing_recipient="td_sales2.8@turbo-don.ru",
+    ) is False
+
+
 def test_recipient_display_value_prefers_routing_recipient():
     payload = {
         "routing_recipient": "tender@turbo-don.ru",
@@ -327,6 +347,12 @@ def test_matches_recipient_q_on_to_when_routing_empty():
     payload = {"to": [INFO_MAILBOX, "tender@turbo-don.ru"], "cc": []}
     assert matches_recipient_q(mailbox=INFO_MAILBOX, payload=payload, query="info@") is True
     assert matches_recipient_q(mailbox=INFO_MAILBOX, payload=payload, query="tender") is True
+
+
+def test_matches_recipient_q_falls_back_to_mailbox_when_recipient_empty():
+    payload = {"to": [], "cc": []}
+    assert matches_recipient_q(mailbox=INFO_MAILBOX, payload=payload, query="info") is True
+    assert matches_recipient_q(mailbox=TENDER_MAILBOX, payload=payload, query="info") is False
 
 
 def test_matches_info_recipient_only_on_routing_and_to():
@@ -513,7 +539,7 @@ def test_recipient_q_sql_filter_matches_python_on_postgres():
         repo = EmailRepository(session)
         filtered = repo.list_messages(recipient_q="info@turbo-don", limit=500)
         filtered_ids = {row.id for row in filtered}
-        for (name, _mailbox, _payload_json, _query, expected), row_id in zip(cases, row_ids, strict=True):
+        for (name, _mailbox, _payload, _query, expected), row_id in zip(cases, row_ids, strict=True):
             if name in {"routing-info", "to-info"}:
                 assert (row_id in filtered_ids) is expected, name
             elif name in {"routing-tender", "to-tender"}:
@@ -552,10 +578,56 @@ def test_info_recipient_only_filter_on_postgres():
         repo = EmailRepository(session)
         filtered = repo.list_messages(info_recipient_only=True, limit=500)
         filtered_ids = {row.id for row in filtered}
-        for (name, _mailbox, _payload_json, expected), row_id in zip(cases, row_ids, strict=True):
+        for (name, _mailbox, _payload, expected), row_id in zip(cases, row_ids, strict=True):
             assert (row_id in filtered_ids) is expected, name
 
         session.query(EmailMessageRow).filter(EmailMessageRow.id.in_(row_ids)).delete(
+            synchronize_session=False
+        )
+        session.commit()
+
+
+def test_sanitize_json_text_for_pg_strips_nul_escape_and_byte():
+    payload = {"to": [INFO_MAILBOX], "body_text": f"Probe\x00 with NUL"}
+    raw = json.dumps(payload, ensure_ascii=False)
+    assert "\x00" not in raw
+    assert "\\u0000" in raw
+
+    cleaned = sanitize_json_text_for_pg(raw)
+    assert "\\u0000" not in cleaned
+    assert json.loads(cleaned)["body_text"] == "Probe with NUL"
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL is not configured")
+def test_info_recipient_only_filter_survives_nul_bytes_in_payload():
+    """json.dumps NUL as \\u0000 must not crash JSONB cast during list/stats filters."""
+    suffix = uuid.uuid4().hex[:8]
+    payload = {
+        "to": [INFO_MAILBOX],
+        "cc": [],
+        "routing_recipient": INFO_MAILBOX,
+        "body_text": f"Probe {suffix}\x00 with NUL",
+    }
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    assert "\\u0000" in payload_json
+    row_id = None
+    factory = get_session_factory()
+    with factory() as session:
+        row_id = _insert_filter_probe_row(
+            session,
+            suffix=suffix,
+            mailbox=INFO_MAILBOX,
+            payload_json=payload_json,
+        )
+        session.commit()
+
+        repo = EmailRepository(session)
+        filtered = repo.list_messages(info_recipient_only=True, limit=500)
+        assert row_id in {row.id for row in filtered}
+        assert repo.count_messages(info_recipient_only=True) >= 1
+        assert sum(repo.count_by_status(info_recipient_only=True).values()) >= 1
+
+        session.query(EmailMessageRow).filter(EmailMessageRow.id == row_id).delete(
             synchronize_session=False
         )
         session.commit()
@@ -590,7 +662,7 @@ def test_only_info_to_sql_filter_matches_python_on_postgres():
         filtered = repo.list_messages(only_info_to=True, limit=500)
         filtered_ids = {row.id for row in filtered}
 
-        for (name, _mailbox, _payload_json, expected), row_id in zip(cases, row_ids, strict=True):
+        for (name, _mailbox, _payload, expected), row_id in zip(cases, row_ids, strict=True):
             assert (row_id in filtered_ids) is expected, name
 
         sql_count = session.query(EmailMessageRow).filter(

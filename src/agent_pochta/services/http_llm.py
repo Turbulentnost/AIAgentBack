@@ -86,7 +86,7 @@ class ChatCompletionsLLMGateway(LLMGateway):
     def _use_json_response_format(self) -> bool:
         """LM Studio / локальный vLLM часто отвечает 400 на response_format."""
         host = self._base_url.lower()
-        if "openrouter.ai" in host or "api.openai.com" in host or "groq.com" in host:
+        if "openrouter.ai" in host or "api.openai.com" in host or "groq.com" in host or "deepseek.com" in host:
             return True
         return False
 

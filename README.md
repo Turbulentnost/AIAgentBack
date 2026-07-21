@@ -1,4 +1,4 @@
-# Агент-Почта (ТЗ-АГТ-ПОЧТА-001)
+﻿# Агент-Почта (ТЗ-АГТ-ПОЧТА-001)
 
 ИИ-агент обработки входящей корреспонденции Outlook для НПО «Турбулентность-ДОН».
 Маршрутизация входящей почты в 1С:ERP на платформе **LangGraph**.
@@ -94,13 +94,15 @@ python scripts/seed_rag.py --load  # коллекции contractors / department
 # Терминал 1: agent-pochta API (если ещё не запущен)
 python scripts/run_api.py
 
-# Терминал 2: фронтенд
-cd "C:\Users\mdj\Desktop\рабочее\agent_nd_front"  # замените на свой путь к репозиторию agent_nd_front
-npm run dev
+# Терминал 2: фронтенд (из корня agent-pochta удобнее run_frontend.cmd)
+run_frontend.cmd
+# или: cd agent_nd_front && npm run dev
 ```
 
-Откройте http://localhost:5173/agents/incoming-mail (или ссылку «Входящая корреспонденция» в каталоге агентов).
+Откройте http://localhost:5173/agents/incoming-mail — **логин не нужен** при `VITE_STANDALONE_INCOMING_MAIL=true` (включено в `run_frontend.cmd` и `.env.example` фронта). UI работает только с agent-pochta (`:8080`), platform API (`:5454`) не требуется.
 
-Proxy dev: `/pochta-api` → `http://localhost:8080` (см. `VITE_POCHTA_API_PROXY` в `.env` фронта).
+Proxy dev: `/pochta-api` → `http://127.0.0.1:8080` (см. `VITE_POCHTA_API_PROXY` в `.env` фронта).
+
+Если в консоли Vite `http proxy error … ECONNREFUSED` на `/api/v1/email-messages`: это не «битый» proxy — пока контейнер `api` пересоздаётся (`docker compose up --force-recreate`), порт 8080 на хосте недоступен 20–60 с, а UI опрашивает API каждые 30 с. Проверка: `curl http://127.0.0.1:8080/health`. После перезапуска Docker: `scripts\wait_pochta_api.cmd` или `docker compose up -d --wait api`.
 
 Следующий шаг: human-in-the-loop формы в UI, интеграция с каталогом платформы, `USE_STUBS=false` для ОПЭ.

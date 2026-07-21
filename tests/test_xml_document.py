@@ -436,7 +436,7 @@ def test_rebuild_xml_document_resets_org_derived_direction():
     parsed = parse_document_xml(xml)
     assert parsed is not None
     assert parsed["organization"] == "НП"
-    assert parsed["direction"] == "КС"
+    assert parsed["direction"] == "ПР"
 
 
 def test_repository_clear_xml_document():

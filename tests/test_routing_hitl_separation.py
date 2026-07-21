@@ -66,6 +66,26 @@ def test_api_dept_confidence_recovers_score_from_routing_decision():
     ) == 0.45
 
 
+def test_api_route_confidence_level_aligns_with_dept_confidence():
+    from agent_pochta.api.app import _row_to_list_dict
+
+    row = _email_row(
+        status=ProcessingStatus.DONE.value,
+        spam_reason=None,
+        payload={
+            "routing_decision": {
+                "confidence_score": 45,
+                "confidence_level": "НИЗКАЯ",
+            }
+        },
+    )
+    row.dept_confidence = 0.88
+    data = _row_to_list_dict(row)
+    assert data["dept_confidence"] == 0.88
+    assert data["route_confidence_level"] == "ВЫСОКАЯ"
+    assert data["route_confidence_score"] == 88
+
+
 def test_extract_correction_keywords_strips_subject_prefix_and_adds_recipient():
     keywords = extract_correction_keywords(
         "Re: вопрос по оплате",

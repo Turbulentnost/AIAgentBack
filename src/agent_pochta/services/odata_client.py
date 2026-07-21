@@ -72,3 +72,30 @@ class ODataClient:
             if isinstance(data, dict):
                 return data
             raise ValueError(f"Unexpected OData POST response type: {type(data)!r}")
+
+    def get_by_key(self, entity: str, ref_key: str) -> dict[str, Any] | None:
+        """Читает одну запись по Ref_Key. None, если 404."""
+        entity = entity.strip("/")
+        key = (ref_key or "").strip()
+        if not key:
+            return None
+        url = f"{self._base_url}{entity}(guid'{key}')?$format=json"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.get(url, headers={"Accept": "application/json"})
+            if response.status_code == 404:
+                return None
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData GET {entity}(guid'{key}') failed ({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, dict) else None

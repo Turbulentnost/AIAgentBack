@@ -6,9 +6,21 @@
 from __future__ import annotations
 
 from agent_pochta.config import get_settings
+from agent_pochta.db.message_filters import INFO_MAILBOX, email_eligible_for_erp
 from agent_pochta.schemas import ErpTaskResult, ProcessingStatus
 from agent_pochta.services import ServiceContainer
 from agent_pochta.state import AgentState
+
+
+def _skip_erp_result(*, trace: list[str], meta: dict, reason: str) -> AgentState:
+    erp = ErpTaskResult(
+        success=True,
+        erp_document_number="SKIP-ERP",
+        erp_task_id=None,
+    )
+    meta["erp_skipped"] = True
+    meta["erp_skip_reason"] = reason
+    return {"erp": erp, "trace": trace, "meta": meta}
 
 
 def node_create_erp_task(state: AgentState, container: ServiceContainer) -> AgentState:
@@ -21,17 +33,26 @@ def node_create_erp_task(state: AgentState, container: ServiceContainer) -> Agen
     xml_document = meta.get("xml_document")
 
     if meta.get("skip_erp") or not routing.register_erp:
-        erp = ErpTaskResult(
-            success=True,
-            erp_document_number="SKIP-ERP",
-            erp_task_id=None,
+        return _skip_erp_result(
+            trace=trace,
+            meta=meta,
+            reason=(
+                "G.1: документ 2-й очереди / без поручения·срока·обязательства — "
+                "регистрация входящей в 1С ERP не требуется"
+            ),
         )
-        meta["erp_skipped"] = True
-        meta["erp_skip_reason"] = (
-            "G.1: документ 2-й очереди / без поручения·срока·обязательства — "
-            "регистрация входящей в 1С ERP не требуется"
+
+    if not email_eligible_for_erp(
+        mailbox=email.mailbox,
+        to=email.to,
+        cc=email.cc,
+        routing_recipient=email.routing_recipient,
+    ):
+        return _skip_erp_result(
+            trace=trace,
+            meta=meta,
+            reason=f"Регистрация входящей в 1С ERP только для {INFO_MAILBOX}",
         )
-        return {"erp": erp, "trace": trace, "meta": meta}
 
     if settings.agent_mode == "dry_run":
         erp = ErpTaskResult(
@@ -46,6 +67,20 @@ def node_create_erp_task(state: AgentState, container: ServiceContainer) -> Agen
         res = container.integration.create_incoming_correspondence(
             email, routing, summary, xml_document=xml_document
         )
+        doc_id = res.get("erp_document_id")
+        if doc_id:
+            from agent_pochta.services.erp_attachments import attach_email_files_to_document
+
+            try:
+                attached = attach_email_files_to_document(
+                    container.integration,
+                    document_ref_key=str(doc_id),
+                    email=email,
+                )
+                if attached:
+                    meta["erp_attachments"] = attached
+            except Exception as attach_exc:  # noqa: BLE001
+                meta["erp_attachment_errors"] = [str(attach_exc)]
         erp = ErpTaskResult(
             success=True,
             erp_document_number=res["erp_document_number"],

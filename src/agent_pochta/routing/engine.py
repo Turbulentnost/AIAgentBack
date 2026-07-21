@@ -18,9 +18,17 @@ from agent_pochta.routing.normalize import (
     normalize_text,
 )
 from agent_pochta.routing.onec_corrections import find_onec_correction_match
-from agent_pochta.routing.organizations import normalize_organization_code
+from agent_pochta.routing.organizations import (
+    COMMERCIAL_DEPARTMENT_CODES,
+    DIRECTION_COMMERCIAL,
+    DIRECTION_DEFAULT,
+    DIRECTION_UNCLEAR,
+    normalize_organization_code,
+    resolve_direction_for_department,
+)
 from agent_pochta.routing.process_type import infer_process_type_heuristic
 from agent_pochta.routing.recipients import build_routing_search_text
+from agent_pochta.routing.reply_routing import match_gazprom_np_reply
 from agent_pochta.routing.xml_builder import (
     build_xml_document,
     sanitize_theme,
@@ -100,7 +108,7 @@ class RouteEngine:
     def detect_direction(self, organization: str, candidate_direction: str | None = None) -> str:
         if organization in _ORG_AS_DIRECTION:
             return organization
-        return candidate_direction or "КС"
+        return candidate_direction or DIRECTION_UNCLEAR
 
     def _exact_email_match(self, recipient: str, subject: str, body: str) -> list[_Candidate]:
         recipient = normalize_email_address(recipient, self.rules.get("email_aliases"))
@@ -121,7 +129,7 @@ class RouteEngine:
                 _Candidate(
                     code=rule["code"],
                     name=rule.get("name") or self._dept_name(rule["code"]),
-                    direction=rule.get("direction", "КС"),
+                    direction=rule.get("direction", DIRECTION_DEFAULT),
                     source="exact_email",
                     reasoning=f"Точное совпадение email получателя {recipient}",
                     topic_hits=topic_hits,
@@ -140,7 +148,7 @@ class RouteEngine:
                     _Candidate(
                         code=rule["code"],
                         name=rule.get("name") or self._dept_name(rule["code"]),
-                        direction=rule.get("direction", "КС"),
+                        direction=rule.get("direction", DIRECTION_DEFAULT),
                         source="email_keyword",
                         reasoning=f"Ключевое слово «{keyword}» в адресе {recipient}",
                         matched_keywords=[keyword],
@@ -161,7 +169,7 @@ class RouteEngine:
                 _Candidate(
                     code=rule["code"],
                     name=rule.get("name") or self._dept_name(rule["code"]),
-                    direction=rule.get("direction", "КС"),
+                    direction=rule.get("direction", DIRECTION_DEFAULT),
                     source="content",
                     reasoning=f"Совпадение по содержимому: {', '.join(hits[:5])}",
                     content_hits=len(hits),
@@ -182,7 +190,7 @@ class RouteEngine:
                     _Candidate(
                         code="00-000076",
                         name=self._dept_name("00-000076", "Отдел по работе с ПАО Газпром"),
-                        direction="КС",
+                        direction=DIRECTION_COMMERCIAL,
                         source="sales_gazprom",
                         reasoning="ПАО Газпром / дочерние общества",
                         matched_keywords=[marker],
@@ -195,7 +203,7 @@ class RouteEngine:
                     _Candidate(
                         code="00-000042",
                         name=self._dept_name("00-000042", "ОРКК"),
-                        direction="КС",
+                        direction=DIRECTION_COMMERCIAL,
                         source="sales_orkk",
                         reasoning="Холдинг/ВИНК → ОРКК",
                         matched_keywords=[holding],
@@ -208,7 +216,7 @@ class RouteEngine:
                     _Candidate(
                         code="00-000155",
                         name=self._dept_name("00-000155", "ОДП"),
-                        direction="КС",
+                        direction=DIRECTION_COMMERCIAL,
                         source="sales_odp",
                         reasoning="Дилерский/региональный контур → ОДП",
                         matched_keywords=[marker],
@@ -252,7 +260,7 @@ class RouteEngine:
         return _Candidate(
             code=code,
             name=self.rules.get("reserve_name") or self._dept_name(code),
-            direction="КС",
+            direction=DIRECTION_UNCLEAR,
             source="reserve",
             reasoning="Резервный маршрут при отсутствии однозначного правила",
         )
@@ -274,7 +282,7 @@ class RouteEngine:
         return _Candidate(
             code=code,
             name=rule.get("name") or self._dept_name(code),
-            direction=rule.get("direction", "КС"),
+            direction=rule.get("direction", DIRECTION_DEFAULT),
             source=source,
             reasoning=reasoning,
             topic_hits=max(2, len(hits)),
@@ -365,7 +373,7 @@ class RouteEngine:
         return _Candidate(
             code=str(cfg["code"]),
             name=cfg.get("name") or self._dept_name(str(cfg["code"])),
-            direction=cfg.get("direction", "КС"),
+            direction=cfg.get("direction", DIRECTION_DEFAULT),
             source="institution_chairman",
             reasoning=(
                 f"{rule_code}: ТПП/АПГО → Председатель Совета Директоров; "
@@ -404,11 +412,94 @@ class RouteEngine:
         return _Candidate(
             code=str(cfg["code"]),
             name=cfg.get("name") or self._dept_name(str(cfg["code"])),
-            direction=cfg.get("direction", "КС"),
+            direction=cfg.get("direction", DIRECTION_DEFAULT),
             source="institution_operational_director",
             reasoning=(
                 f"{rule_code}: министерство/администрация → Операционный директор; "
                 f"{', '.join(hits[:5])}"
+            ),
+            topic_hits=max(2, len(hits)),
+            content_hits=max(1, len(hits)),
+            matched_keywords=hits,
+        )
+
+    def _gazprom_np_reply_match(
+        self,
+        subject: str,
+        body: str,
+        sender_email: str = "",
+    ) -> _Candidate | None:
+        """Ответ в переписке по Газпрому: НП в теле → ОПГ, иначе → Операционный директор."""
+        cfg = self.rules.get("gazprom_np_reply_rules")
+        if not cfg or not cfg.get("code"):
+            return None
+        branch, hits = match_gazprom_np_reply(
+            subject=subject,
+            body=body,
+            sender_email=sender_email,
+            rules=cfg,
+        )
+        if not branch:
+            return None
+        rule_code = cfg.get("rule_code", "GAZPROM_NP_REPLY")
+        marker = str(cfg.get("marker") or "НП")
+        if branch == "opg":
+            code = str(cfg["code"])
+            name = cfg.get("name") or self._dept_name(code)
+            reasoning = (
+                f"{rule_code}: ответ в переписке по Газпрому, "
+                f"пометка {marker} в теле → Отдел по работе с ПАО Газпром"
+            )
+        else:
+            code = str(cfg.get("operational_director_code") or "00-000152")
+            name = cfg.get("operational_director_name") or self._dept_name(
+                code, "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+            )
+            reasoning = (
+                f"{rule_code}: ответ в переписке по Газпрому без пометки {marker} "
+                f"в теле → Операционный директор"
+            )
+        return _Candidate(
+            code=code,
+            name=name,
+            direction=cfg.get("direction", DIRECTION_COMMERCIAL)
+            if branch == "opg"
+            else cfg.get("operational_director_direction", DIRECTION_DEFAULT),
+            source="gazprom_np_reply",
+            reasoning=reasoning,
+            topic_hits=max(2, len(hits)),
+            content_hits=max(1, len(hits)),
+            matched_keywords=hits,
+        )
+
+    def _ud_transfer_match(
+        self,
+        subject: str,
+        body: str,
+        partner: str | None = None,
+    ) -> _Candidate | None:
+        """Управление делами → помощник зам. операционного директора."""
+        cfg = self.rules.get("ud_transfer_rules")
+        if not cfg or not cfg.get("code"):
+            return None
+        text = normalize_text(f"{subject} {body} {partner or ''}")
+        hits = [
+            str(pattern)
+            for pattern in (cfg.get("content_patterns") or [])
+            if keyword_in_text(str(pattern), text)
+        ]
+        if not hits:
+            return None
+        rule_code = cfg.get("rule_code", "UD_TRANSFER_DEPUTY_OD_ASSISTANT")
+        code = str(cfg["code"])
+        return _Candidate(
+            code=code,
+            name=cfg.get("name") or self._dept_name(code),
+            direction=cfg.get("direction", DIRECTION_DEFAULT),
+            source="ud_transfer",
+            reasoning=(
+                f"{rule_code}: Управление делами → "
+                f"помощник зам. операционного директора; {', '.join(hits[:5])}"
             ),
             topic_hits=max(2, len(hits)),
             content_hits=max(1, len(hits)),
@@ -422,7 +513,7 @@ class RouteEngine:
         return _Candidate(
             code=code,
             name=cfg.get("name") or self._dept_name(code),
-            direction=cfg.get("direction", "КС"),
+            direction=cfg.get("direction", DIRECTION_UNCLEAR),
             source="info_strict_unclear",
             reasoning=f"info@ strict {rule_code}: неясное письмо → УД / КС",
             topic_hits=1,
@@ -450,7 +541,7 @@ class RouteEngine:
         return _Candidate(
             code=code,
             name=entry.get("department_name") or self._dept_name(code),
-            direction="КС",
+            direction=DIRECTION_DEFAULT,
             source="human_correction",
             reasoning="Коррекция оператора (human-in-the-loop)",
             topic_hits=len(keywords),
@@ -470,6 +561,9 @@ class RouteEngine:
         correction = self._correction_match(recipient, sender_email, subject, body)
         if correction is not None:
             return [correction]
+        gazprom_np_reply = self._gazprom_np_reply_match(subject, body, sender_email)
+        if gazprom_np_reply is not None:
+            return [gazprom_np_reply]
         info_strict = self._info_strict_match(recipient, subject, body, sender_email)
         if info_strict is not None:
             return [info_strict]
@@ -481,6 +575,9 @@ class RouteEngine:
         )
         if institution_od is not None:
             return [institution_od]
+        ud_transfer = self._ud_transfer_match(subject, body, partner)
+        if ud_transfer is not None:
+            return [ud_transfer]
         det = self._deterministic_candidate(subject, body, partner, sender_email)
         if det is not None:
             return [det]
@@ -573,6 +670,8 @@ class RouteEngine:
                 partner = partner_from_onec
 
         direction = self.detect_direction(organization, primary.direction)
+        if primary.code in COMMERCIAL_DEPARTMENT_CODES:
+            direction = DIRECTION_COMMERCIAL
         claim = contains_claim_marker(f"{subject} {body}")
 
         info_no_topic = (
@@ -588,6 +687,8 @@ class RouteEngine:
                 "info_strict",
                 "institution_chairman",
                 "institution_operational_director",
+                "ud_transfer",
+                "gazprom_np_reply",
             }
             or primary.source.startswith("det_"),
             topic_matches=primary.topic_hits,
@@ -681,14 +782,23 @@ def rebuild_decision_xml(
     """Пересобирает XML после изменения отдела (RAG/LLM или human-in-the-loop)."""
     services = list(decision.services)
     resolved_process = process or decision.process or (services[0].process if services else "исполнение")
+    direction = decision.direction
+    previous_code = services[0].code if services else None
     if department_id:
         base = services[0] if services else ServiceRoute(code=department_id, name=department_name or department_id)
+        if department_id != previous_code:
+            direction = resolve_direction_for_department(
+                department_id,
+                decision.organization,
+                rules=get_route_engine().rules,
+                fallback_direction=decision.direction,
+            )
         services = [
             ServiceRoute(
                 code=department_id,
                 name=department_name or base.name,
                 process=resolved_process,
-                direction=decision.direction,
+                direction=direction,
             )
         ]
     elif process is not None:
@@ -703,6 +813,8 @@ def rebuild_decision_xml(
             for svc in services
         ]
     updates: dict = {"services": services, "process": resolved_process}
+    if department_id and department_id != previous_code:
+        updates["direction"] = direction
     if theme is not None:
         updates["theme"] = theme
     if partner is not None:

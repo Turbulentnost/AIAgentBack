@@ -39,7 +39,7 @@ def test_info_amural_routes_to_chairman(engine):
         engine=engine,
     )
     assert decision.services[0].code == "00-000001"
-    assert decision.direction == "КС"
+    assert decision.direction == "ПР"
     assert decision.match_source == "info_strict"
     assert decision.confidence_level == ConfidenceLevel.HIGH
     assert not _needs_rag_fallback(decision)
@@ -106,7 +106,7 @@ def test_info_ministry_routes_to_operational_director(engine):
         engine=engine,
     )
     assert decision.services[0].code == "00-000152"
-    assert decision.direction == "КС"
+    assert decision.direction == "ПР"
     assert decision.match_source == "info_strict"
     assert decision.confidence_level == ConfidenceLevel.HIGH
     assert not _needs_rag_fallback(decision)
@@ -216,6 +216,43 @@ def test_amural_beats_ministry_on_info(engine):
     decision = route_email(
         _email(subject="Министерство / Амураль"),
         combined_text="Министерство направляет письмо на имя Амураль И.Б.",
+        recipient="info@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code == "00-000001"
+    assert decision.match_source == "info_strict"
+
+
+def test_info_igor_borisovich_routes_to_chairman(engine):
+    decision = route_email(
+        _email(subject="Обращение", sender_email="secretary@region.gov.ru"),
+        combined_text="Письмо на имя Игорь Борисович",
+        recipient="info@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code == "00-000001"
+    assert decision.match_source == "info_strict"
+    assert decision.confidence_level == ConfidenceLevel.HIGH
+
+
+def test_info_gazprom_igor_borisovich_routes_to_chairman(engine):
+    decision = route_email(
+        _email(
+            subject="Приглашение",
+            sender_email="notify@office.gazprom.ru",
+        ),
+        combined_text="ПАО Газпром направляет материалы для Игорь Борисович",
+        recipient="info@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code == "00-000001"
+    assert decision.match_source == "info_strict"
+
+
+def test_info_igor_borisovich_initials_routes_to_chairman(engine):
+    decision = route_email(
+        _email(subject="Документы", sender_email="notify@office.gazprom.ru"),
+        combined_text="Письмо на имя И.Б. от ПАО Газпром",
         recipient="info@turbo-don.ru",
         engine=engine,
     )

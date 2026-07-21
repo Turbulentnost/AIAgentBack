@@ -138,6 +138,29 @@ def _dept_confidence_for_api(row, meta: dict[str, Any]) -> float | None:
     return float(value) if value is not None else None
 
 
+def _effective_route_confidence(
+    dept_confidence: float | None,
+    decision: dict[str, Any],
+) -> tuple[int | None, str | None]:
+    """Согласовать score/level правил с dept_confidence LLM для UI."""
+    route_level = decision.get("confidence_level")
+    try:
+        route_score = int(decision.get("confidence_score") or 0)
+    except (TypeError, ValueError):
+        route_score = 0
+
+    if dept_confidence is not None and float(dept_confidence) > 0:
+        from agent_pochta.routing.confidence import score_to_level
+
+        llm_score = round(float(dept_confidence) * 100)
+        score = max(llm_score, route_score)
+        return score, score_to_level(score).value
+
+    if route_score > 0:
+        return route_score, route_level
+    return route_score or None, route_level
+
+
 def _utc_iso(value: datetime | None) -> str | None:
     """Serialize naive UTC timestamps for JSON (ISO 8601 with Z suffix)."""
     if value is None:
@@ -190,6 +213,8 @@ def _row_to_list_dict(row) -> dict[str, Any]:
     """Lightweight serializer for list endpoints (no body_text)."""
     meta = _payload_meta(row)
     decision = meta.get("routing_decision") or {}
+    dept_conf = _dept_confidence_for_api(row, meta)
+    route_score, route_level = _effective_route_confidence(dept_conf, decision)
     return {
         "id": str(row.id),
         "message_id": row.message_id,
@@ -208,9 +233,9 @@ def _row_to_list_dict(row) -> dict[str, Any]:
         "hitl_reason": meta.get("hitl_reason") or hitl_reason_from_row(row),
         "department_id": row.department_id,
         "department_name": row.department_name,
-        "dept_confidence": _dept_confidence_for_api(row, meta),
-        "route_confidence_level": decision.get("confidence_level"),
-        "route_confidence_score": decision.get("confidence_score"),
+        "dept_confidence": dept_conf,
+        "route_confidence_level": route_level,
+        "route_confidence_score": route_score,
         "priority": row.priority,
         "summary_ru": row.summary_ru,
         "erp_document_number": row.erp_document_number,
@@ -1010,10 +1035,15 @@ def reanalyze_message(row_id: uuid.UUID) -> dict[str, Any]:
 @app.post("/api/v1/email-messages/{row_id}/retry-erp")
 def retry_erp(row_id: uuid.UUID) -> dict[str, Any]:
     with get_session_factory()() as session:
-        row = EmailRepository(session).get_by_id(row_id)
+        repo = EmailRepository(session)
+        row = repo.get_by_id(row_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Message not found")
         message_id = row.message_id
+        # Ручной повтор с UI — сброс лимита автоматических попыток.
+        row.erp_retry_count = 0
+        row.human_review = False
+        session.commit()
 
     task = retry_erp_task.delay(message_id)
     return {"task_id": task.id, "message_id": message_id, "status": "erp_retry_scheduled"}

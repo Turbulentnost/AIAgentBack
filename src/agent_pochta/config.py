@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # dry_run | review | live (ТЗ §6)
     agent_mode: str = Field(default="live", alias="AGENT_MODE")
     routing_rules_path: str = Field(default="", alias="ROUTING_RULES_PATH")
+    dialog_rules_path: str = Field(default="", alias="DIALOG_RULES_PATH")
     routing_corrections_path: str = Field(default="", alias="ROUTING_CORRECTIONS_PATH")
     spam_learning_path: str = Field(default="", alias="SPAM_LEARNING_PATH")
 
@@ -99,6 +100,10 @@ class Settings(BaseSettings):
     )
     odata_incoming_field_map: str = Field(default="", alias="ODATA_INCOMING_FIELD_MAP")
     odata_incoming_extra_fields: str = Field(default="", alias="ODATA_INCOMING_EXTRA_FIELDS")
+    odata_incoming_defaults_file: str = Field(
+        default="data/odata_incoming_defaults.json",
+        alias="ODATA_INCOMING_DEFAULTS_FILE",
+    )
     odata_organization_keys: str = Field(default="", alias="ODATA_ORGANIZATION_KEYS")
     odata_department_keys: str = Field(default="", alias="ODATA_DEPARTMENT_KEYS")
     odata_organization_keys_file: str = Field(
@@ -110,17 +115,27 @@ class Settings(BaseSettings):
         alias="ODATA_DEPARTMENT_KEYS_FILE",
     )
     odata_routing_rules_path: str = Field(default="", alias="ODATA_ROUTING_RULES_PATH")
+    odata_attached_file_field_map_file: str = Field(
+        default="data/odata_attached_file_field_map.json",
+        alias="ODATA_ATTACHED_FILE_FIELD_MAP_FILE",
+    )
+    odata_attach_files_enabled: bool = Field(default=True, alias="ODATA_ATTACH_FILES_ENABLED")
     odata_timeout_sec: float = Field(default=60.0, alias="ODATA_TIMEOUT_SEC")
     celery_broker_url: str = Field(
         default="amqp://guest:guest@localhost:5672//", alias="CELERY_BROKER_URL"
     )
 
     # Внешние сервисы платформы (при use_stubs=false)
-    # openai_compat | gigachat | auto (gigachat при заданном GIGACHAT_API_PERS)
+    # openai_compat | gigachat | deepseek | auto
     llm_provider: str = Field(default="auto", alias="LLM_PROVIDER")
     llm_gateway_url: str = Field(default="", alias="LLM_GATEWAY_URL")
     llm_gateway_api_key: str = Field(default="", alias="LLM_GATEWAY_API_KEY")
     llm_default_model: str = Field(default="qwen/qwen3.5-9b", alias="LLM_DEFAULT_MODEL")
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com/v1",
+        alias="DEEPSEEK_BASE_URL",
+    )
     gigachat_credentials: str = Field(
         default="",
         validation_alias=AliasChoices("GIGACHAT_API_PERS", "GIGACHAT_CREDENTIALS"),
@@ -178,10 +193,12 @@ class Settings(BaseSettings):
 
     @property
     def effective_llm_provider(self) -> str:
-        """gigachat | openai_compat."""
+        """gigachat | deepseek | openai_compat."""
         explicit = (self.llm_provider or "auto").strip().lower()
-        if explicit in {"gigachat", "openai_compat"}:
+        if explicit in {"gigachat", "openai_compat", "deepseek"}:
             return explicit
+        if self.deepseek_api_key:
+            return "deepseek"
         if self.gigachat_credentials:
             return "gigachat"
         if "gigachat.devices.sberbank.ru" in (self.llm_gateway_url or "").lower():
@@ -190,17 +207,33 @@ class Settings(BaseSettings):
 
     @property
     def effective_gigachat_credentials(self) -> str:
-        return (self.gigachat_credentials or self.llm_gateway_api_key or "").strip()
+        return (self.gigachat_credentials or "").strip()
+
+    @property
+    def effective_llm_api_key(self) -> str:
+        if self.effective_llm_provider == "deepseek":
+            return (self.deepseek_api_key or self.llm_gateway_api_key).strip()
+        if self.effective_llm_provider == "gigachat":
+            return self.effective_gigachat_credentials
+        return (self.llm_gateway_api_key or "").strip()
 
     @property
     def effective_llm_base_url(self) -> str:
+        if self.effective_llm_provider == "deepseek":
+            return (
+                self.deepseek_base_url
+                or self.llm_gateway_url
+                or "https://api.deepseek.com/v1"
+            ).rstrip("/")
         if self.effective_llm_provider == "gigachat":
             return self.gigachat_base_url or self.llm_gateway_url
         return self.llm_gateway_url
 
     @property
     def llm_configured(self) -> bool:
-        """Есть реальный LLM (GigaChat credentials или OpenAI-compatible URL)."""
+        """Есть реальный LLM (DeepSeek / GigaChat / OpenAI-compatible URL)."""
+        if self.effective_llm_provider == "deepseek":
+            return bool(self.effective_llm_api_key)
         if self.effective_llm_provider == "gigachat":
             return bool(self.effective_gigachat_credentials)
         return bool(self.llm_gateway_url)
@@ -236,7 +269,9 @@ class Settings(BaseSettings):
         else:
             integration = "stub(no ERP URL)"
         llm_url = self.effective_llm_base_url
-        if self.effective_llm_provider == "gigachat" and self.effective_gigachat_credentials:
+        if self.effective_llm_provider == "deepseek" and self.effective_llm_api_key:
+            llm_label = f"deepseek({llm_url}, model={self.llm_default_model})"
+        elif self.effective_llm_provider == "gigachat" and self.effective_gigachat_credentials:
             llm_label = f"gigachat({llm_url}, scope={self.gigachat_scope})"
         elif llm_url:
             llm_label = f"real({llm_url})"

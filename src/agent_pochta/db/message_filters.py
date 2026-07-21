@@ -43,6 +43,23 @@ def payload_recipient_lists(payload: dict[str, Any]) -> tuple[list[str], list[st
     return to_list, cc_list
 
 
+def sanitize_json_text_for_pg(value: str) -> str:
+    """Strip NUL from JSON text before PostgreSQL jsonb cast.
+
+    json.dumps emits ``\\u0000`` for NUL; Postgres rejects that on text→jsonb.
+    """
+    if not value:
+        return value
+    return value.replace("\x00", "").replace("\\u0000", "")
+
+
+def safe_payload_jsonb(raw_payload_column):
+    """CAST text -> JSONB; strip JSON \u0000 escapes before cast (Postgres rejects them)."""
+    sanitized = func.regexp_replace(raw_payload_column, r"\\u0000", "", "g")
+    return cast(sanitized, JSONB)
+
+
+
 def _jsonb_contains_email(payload, key: str, email: str):
     """SQL: JSON-массив key содержит email (без учёта регистра)."""
     array_expr = func.coalesce(payload[key], cast("[]", JSONB))
@@ -79,6 +96,44 @@ def is_info_to_test_ii_routing(*, mailbox: str, payload: dict[str, Any] | None) 
         return normalize_email_address(mailbox) == TEST_II_MAILBOX
 
     return False
+
+
+def email_info_filter_payload(
+    *,
+    mailbox: str,
+    to: list[str] | None = None,
+    cc: list[str] | None = None,
+    routing_recipient: str | None = None,
+) -> dict[str, Any]:
+    """Словарь для is_only_info_to из полей письма (узел 7, retry_erp)."""
+    payload: dict[str, Any] = {
+        "to": list(to or []),
+        "cc": list(cc or []),
+    }
+    if routing_recipient:
+        payload["routing_recipient"] = routing_recipient
+    elif normalize_email_address(mailbox) == INFO_MAILBOX:
+        payload["routing_recipient"] = INFO_MAILBOX
+    return payload
+
+
+def email_eligible_for_erp(
+    *,
+    mailbox: str,
+    to: list[str] | None = None,
+    cc: list[str] | None = None,
+    routing_recipient: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    """Регистрация входящей в 1С ERP только для info@turbo-don.ru."""
+    if payload is None:
+        payload = email_info_filter_payload(
+            mailbox=mailbox,
+            to=to,
+            cc=cc,
+            routing_recipient=routing_recipient,
+        )
+    return is_only_info_to(mailbox=mailbox, payload=payload)
 
 
 def is_only_info_to(*, mailbox: str, payload: dict[str, Any] | None) -> bool:
@@ -137,8 +192,12 @@ def matches_recipient_q(*, mailbox: str, payload: dict[str, Any] | None, query: 
     needle = query.strip().lower()
     if not needle:
         return True
+    if not payload:
+        return False
     displayed = recipient_display_value(mailbox=mailbox, payload=payload).lower()
-    return needle in displayed if displayed else False
+    if displayed:
+        return needle in displayed
+    return needle in normalize_email_address(mailbox)
 
 
 def matches_info_recipient_only(*, mailbox: str, payload: dict[str, Any] | None) -> bool:
@@ -148,7 +207,7 @@ def matches_info_recipient_only(*, mailbox: str, payload: dict[str, Any] | None)
 
 def recipient_q_sql_filter(mailbox_column, raw_payload_column, query: str):
     """SQL: подстрока в routing_recipient или (если пуст) в любом адресе To."""
-    payload = cast(raw_payload_column, JSONB)
+    payload = safe_payload_jsonb(raw_payload_column)
     pattern = f"%{query.strip().lower()}%"
 
     routing = func.lower(func.coalesce(payload["routing_recipient"].astext, ""))
@@ -164,16 +223,22 @@ def recipient_q_sql_filter(mailbox_column, raw_payload_column, query: str):
         .exists()
     )
     routing_empty = func.coalesce(payload["routing_recipient"].astext, "") == ""
+    empty_to = func.coalesce(func.jsonb_array_length(payload["to"]), 0) == 0
+    mailbox_match = and_(
+        routing_empty,
+        empty_to,
+        func.lower(mailbox_column).like(pattern),
+    )
 
     return and_(
         raw_payload_column.isnot(None),
-        or_(routing_match, and_(routing_empty, to_any_match)),
+        or_(routing_match, and_(routing_empty, to_any_match), mailbox_match),
     )
 
 
 def info_to_test_ii_sql_filter(mailbox_column, raw_payload_column):
     """SQL-условие PostgreSQL: цепочка info@ → test_ii@."""
-    payload = cast(raw_payload_column, JSONB)
+    payload = safe_payload_jsonb(raw_payload_column)
     routing = func.lower(func.coalesce(payload["routing_recipient"].astext, ""))
 
     info_in_to = _jsonb_contains_email(payload, "to", INFO_MAILBOX)
@@ -200,7 +265,7 @@ def info_to_test_ii_sql_filter(mailbox_column, raw_payload_column):
 
 def only_info_to_sql_filter(mailbox_column, raw_payload_column):
     """SQL-условие PostgreSQL: Кому только info@turbo-don.ru, без других получателей."""
-    payload = cast(raw_payload_column, JSONB)
+    payload = safe_payload_jsonb(raw_payload_column)
     empty_cc = func.coalesce(func.jsonb_array_length(payload["cc"]), 0) == 0
 
     array_expr = func.coalesce(payload["to"], cast("[]", JSONB))

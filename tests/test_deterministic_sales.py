@@ -102,6 +102,26 @@ def test_chairman_marker_overrides_gazprom(engine):
     assert decision.match_source == "det_chairman"
 
 
+def test_gazprom_igor_borisovich_routes_to_chairman(engine):
+    decision = _route(
+        engine,
+        "ПАО Газпром направляет материалы для Игорь Борисович.",
+    )
+
+    assert decision.services[0].code == "00-000001"
+    assert decision.match_source == "det_chairman"
+
+
+def test_predsedatel_igor_borisovich_routes_to_chairman_without_gazprom(engine):
+    decision = _route(
+        engine,
+        "Председателю Совета Директоров Игорь Борисович — материалы для рассмотрения.",
+    )
+
+    assert decision.services[0].code == "00-000001"
+    assert decision.match_source == "det_chairman"
+
+
 @pytest.mark.parametrize("holding", ["СИБУР", "Роснефть"])
 def test_orkk_holdings_route_to_key_accounts(engine, holding):
     decision = _route(engine, f"{holding}: запрос КП на промышленное оборудование.")

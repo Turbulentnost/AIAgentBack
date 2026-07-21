@@ -213,7 +213,6 @@ def test_graph_skips_erp_for_second_queue_accounting():
     assert res["routing"].priority == Priority.NORMAL
     assert (res.get("meta") or {}).get("skip_erp") is True
     assert "create_erp_task" not in res["trace"]
-    assert res["status"] == ProcessingStatus.DONE
 
 
 def test_graph_registers_erp_when_accounting_has_obligation():
@@ -225,7 +224,7 @@ def test_graph_registers_erp_when_accounting_has_obligation():
                 sender_email="buh@romashka.ru",
                 subject="УПД — срок ответа 5 дней",
                 body_text="Направляем УПД. Срок ответа 5 рабочих дней, требование подписать.",
-                routing_recipient="buh@turbo-don.ru",
+                routing_recipient="info@turbo-don.ru",
             )
         }
     )
@@ -236,3 +235,39 @@ def test_graph_registers_erp_when_accounting_has_obligation():
     assert "create_erp_task" in res["trace"]
     assert res["erp"].success
     assert res["erp"].erp_document_number != "SKIP-ERP"
+
+
+def test_graph_skips_erp_for_non_info_mailbox_even_with_obligation():
+    """register_erp=True, но узел 7 пропускает не-info ящики."""
+    from unittest.mock import MagicMock
+
+    from agent_pochta.nodes.n7_create_erp_task import node_create_erp_task
+    from agent_pochta.schemas import Priority, RoutingResult
+
+    container = MagicMock()
+    email = _email(
+        message_id="<upd-buh@example>",
+        routing_recipient="buh@turbo-don.ru",
+    )
+    routing = RoutingResult(
+        department_id="00-000002",
+        department_name="Бухгалтерия",
+        confidence=1.0,
+        reasoning="test",
+        priority=Priority.HIGH,
+        register_erp=True,
+    )
+    result = node_create_erp_task(
+        {
+            "email": email,
+            "routing": routing,
+            "summary_ru": "Обзор.",
+            "trace": ["route_department"],
+            "meta": {"xml_document": "<document></document>"},
+        },
+        container,
+    )
+    assert result["erp"].success
+    assert result["erp"].erp_document_number == "SKIP-ERP"
+    assert result["meta"]["erp_skipped"] is True
+    container.integration.create_incoming_correspondence.assert_not_called()

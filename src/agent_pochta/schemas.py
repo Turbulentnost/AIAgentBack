@@ -28,6 +28,7 @@ class ProcessingStatus(StrEnum):
     SPAM = "spam"
     ERROR = "error"
     AWAITING_HUMAN = "awaiting_human"
+    DIALOG = "dialog"
 
 
 class Attachment(BaseModel):

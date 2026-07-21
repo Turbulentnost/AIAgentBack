@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 
 from agent_pochta.routing.models import RoutingDecision, ServiceRoute
+from agent_pochta.routing.organizations import DIRECTION_DEFAULT
 from agent_pochta.schemas import EmailMessage, SpamResult
 
 _DEPT_CODE_RE = re.compile(r"^00-\d{6}$")
@@ -25,6 +26,7 @@ _INTERNAL_KEYWORD_SOURCES = frozenset(
         "human_correction",
         "info_strict",
         "info_strict_unclear",
+        "gazprom_np_reply",
     }
 )
 
@@ -89,6 +91,9 @@ def infer_theme_action(
     from_key = key_phrase_to_action(key_phrase)
     if from_key:
         return from_key
+
+    if (key_phrase or "").strip().lower().startswith("диалог"):
+        return "Диалог"
 
     combined = _theme_context(subject, combined_text)
     subj = sanitize_theme(subject, max_len=80)
@@ -461,7 +466,10 @@ def build_xml_document(
     partner = format_partner(decision.partner)
 
     organization = (decision.organization or "НП").strip() or "НП"
-    direction = (decision.direction or "КС").strip() or "КС"
+    direction = (decision.direction or DIRECTION_DEFAULT).strip() or DIRECTION_DEFAULT
+    dialog_block = ""
+    if decision.dialog_mode:
+        dialog_block = f"<dialog_mode>{_esc(decision.dialog_mode)}</dialog_mode>"
 
     return (
         "<document>"
@@ -475,6 +483,7 @@ def build_xml_document(
         f"<email_recipient>{_esc(recipient)}</email_recipient>"
         f"<mail_datetime>{mail_dt}</mail_datetime>"
         f"<process>{_esc(document_process)}</process>"
+        f"{dialog_block}"
         "</document>"
     )
 

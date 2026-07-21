@@ -12,8 +12,12 @@ from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.db.repository import EmailRepository, persist_processing_start
 from agent_pochta.db.session import get_session_factory
 from agent_pochta.demo_filter import is_demo_email
-from agent_pochta.email_payload import email_from_task_payload
-from agent_pochta.routing.recipients import routing_message_id, split_routing_recipients
+from agent_pochta.email_payload import email_from_task_payload, email_to_task_payload
+from agent_pochta.routing.recipients import (
+    normalize_routing_email,
+    routing_message_id,
+    split_routing_recipients,
+)
 from agent_pochta.schemas import EmailMessage, ProcessingStatus
 from agent_pochta.routing.learning import learn_from_not_spam
 from agent_pochta.workers.celery_app import celery_app
@@ -26,6 +30,7 @@ _SKIP_IMAP_REQUEUE_STATUSES = {
     ProcessingStatus.SPAM.value,
     ProcessingStatus.AWAITING_HUMAN.value,
     ProcessingStatus.ERROR.value,
+    ProcessingStatus.DIALOG.value,
 }
 
 # Lease for in-flight rows: stale PROCESSING (worker crash) may be re-enqueued.
@@ -53,9 +58,8 @@ def _processing_started_at(row: EmailMessageRow):
         return None
 
 
-def _is_already_processed(message_id: str) -> bool:
-    from datetime import datetime, timedelta
-
+def _is_terminal_in_db(message_id: str) -> bool:
+    """True, если запись уже в финальном статусе (повторный прогон не нужен)."""
     factory = get_session_factory()
     try:
         with factory() as session:
@@ -64,16 +68,34 @@ def _is_already_processed(message_id: str) -> bool:
         return False
     if row is None:
         return False
-    if row.status in _SKIP_IMAP_REQUEUE_STATUSES:
+    return row.status in _SKIP_IMAP_REQUEUE_STATUSES
+
+
+def _should_skip_imap_enqueue(message_id: str) -> bool:
+    """True, если IMAP/catchup не должен снова ставить письмо в очередь."""
+    from datetime import datetime, timedelta
+
+    if _is_terminal_in_db(message_id):
         return True
-    if row.status != ProcessingStatus.PROCESSING.value:
+
+    factory = get_session_factory()
+    try:
+        with factory() as session:
+            row = session.query(EmailMessageRow).filter_by(message_id=message_id).one_or_none()
+    except Exception:
         return False
+    if row is None or row.status != ProcessingStatus.PROCESSING.value:
+        return False
+
     started = _processing_started_at(row)
     if started is None:
-        # Legacy orphan without lease — allow IMAP/reprocess recovery.
         return False
     age = datetime.utcnow() - started
     return age < timedelta(seconds=_STALE_PROCESSING_AFTER_SEC)
+
+
+def _is_already_processed(message_id: str) -> bool:
+    return _should_skip_imap_enqueue(message_id)
 
 
 
@@ -82,9 +104,105 @@ def should_enqueue_email(email: EmailMessage) -> bool:
     recipients = split_routing_recipients(email)
     for recipient in recipients:
         attempt_id = routing_message_id(email.message_id, recipient)
-        if not _is_already_processed(attempt_id):
+        if not _should_skip_imap_enqueue(attempt_id):
             return True
     return False
+
+
+def recover_stale_processing(*, limit: int = 30, force: bool = False) -> dict:
+    """Повторно ставит в очередь записи status=processing, зависшие дольше lease."""
+    from datetime import datetime, timedelta
+
+    factory = get_session_factory()
+    recovered = 0
+    skipped_fresh = 0
+    skipped_no_payload = 0
+    deleted_orphans = 0
+    errors: list[str] = []
+    to_enqueue: list[tuple[str, dict]] = []
+
+    with factory() as session:
+        repo = EmailRepository(session)
+        rows = (
+            session.query(EmailMessageRow)
+            .filter(EmailMessageRow.status == ProcessingStatus.PROCESSING.value)
+            .order_by(EmailMessageRow.received_at.asc())
+            .limit(max(limit * 3, 100))
+            .all()
+        )
+        for row in rows:
+            if recovered >= limit:
+                break
+            if not force:
+                started = _processing_started_at(row)
+                if started is not None:
+                    age = datetime.utcnow() - started
+                    if age < timedelta(seconds=_STALE_PROCESSING_AFTER_SEC):
+                        skipped_fresh += 1
+                        continue
+
+            email = repo.load_email_from_row(row)
+            if email is None:
+                skipped_no_payload += 1
+                continue
+
+            email = normalize_routing_email(email)
+            canonical_id = routing_message_id(
+                email.message_id,
+                email.routing_recipient or split_routing_recipients(email)[0],
+            )
+            if row.message_id != canonical_id:
+                canonical = repo.get_by_message_id(canonical_id)
+                if canonical is not None and canonical.id != row.id:
+                    session.delete(row)
+                    deleted_orphans += 1
+                    continue
+                row.message_id = canonical_id
+
+            repo.touch_processing_lease(row)
+            to_enqueue.append((canonical_id, email_to_task_payload(email)))
+            recovered += 1
+        session.commit()
+
+    for message_id, payload in to_enqueue:
+        try:
+            process_email_task.delay(payload)
+        except Exception as exc:
+            errors.append(f"{message_id}: {exc}")
+
+    if recovered or deleted_orphans:
+        logger.info(
+            "stale_processing_recovered",
+            recovered=recovered,
+            deleted_orphans=deleted_orphans,
+            skipped_fresh=skipped_fresh,
+            skipped_no_payload=skipped_no_payload,
+            force=force,
+        )
+
+    return {
+        "recovered": recovered,
+        "deleted_orphans": deleted_orphans,
+        "skipped_fresh": skipped_fresh,
+        "skipped_no_payload": skipped_no_payload,
+        "errors": errors,
+    }
+
+
+def extract_xml_document_from_row(row: EmailMessageRow) -> str | None:
+    """Извлекает xml_document из raw_payload_json строки БД."""
+    if not row.raw_payload_json:
+        return None
+    try:
+        payload = json.loads(row.raw_payload_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    xml = payload.get("xml_document")
+    if isinstance(xml, str) and xml.strip():
+        return xml.strip()
+    return None
 
 
 def _schedule_erp_retry(message_id: str) -> None:
@@ -98,7 +216,7 @@ def _schedule_erp_retry(message_id: str) -> None:
 
 @celery_app.task(name="agent_pochta.process_email", bind=True, max_retries=3, default_retry_delay=60)
 def process_email_task(self, email_payload: dict) -> dict:
-    email = email_from_task_payload(email_payload)
+    email = normalize_routing_email(email_from_task_payload(email_payload))
     if is_demo_email(email):
         logger.info("skip_demo_email", message_id=email.message_id, sender=email.sender_email)
         return {
@@ -115,7 +233,7 @@ def process_email_task(self, email_payload: dict) -> dict:
         attempt_id = routing_message_id(email.message_id, recipient)
         attempt_email = attempt_email.model_copy(update={"message_id": attempt_id})
 
-        if _is_already_processed(attempt_id):
+        if _is_terminal_in_db(attempt_id):
             results.append(
                 {"skipped": True, "message_id": attempt_id, "recipient": recipient, "reason": "already_processed"}
             )
@@ -158,7 +276,14 @@ def process_email_task(self, email_payload: dict) -> dict:
 def poll_imap_task() -> dict:
     from agent_pochta.imap.poller import poll_mailboxes
 
-    return poll_mailboxes()
+    imap_result = poll_mailboxes()
+    recovery = recover_stale_processing()
+    return {**imap_result, "stale_recovery": recovery}
+
+
+@celery_app.task(name="agent_pochta.recover_stale_processing")
+def recover_stale_processing_task(*, limit: int = 30) -> dict:
+    return recover_stale_processing(limit=limit)
 
 
 @celery_app.task(
@@ -196,6 +321,18 @@ def retry_erp_task(self, message_id: str) -> dict:
         if email is None or routing is None:
             return {"ok": False, "reason": "incomplete_record"}
 
+        from agent_pochta.db.message_filters import email_eligible_for_erp, load_payload_dict
+
+        payload = load_payload_dict(row.raw_payload_json)
+        if not email_eligible_for_erp(
+            mailbox=row.mailbox or email.mailbox,
+            to=email.to,
+            cc=email.cc,
+            routing_recipient=email.routing_recipient,
+            payload=payload,
+        ):
+            return {"ok": True, "skipped": True, "reason": "not_info_mailbox"}
+
         if not summary_ru:
             from agent_pochta.workers.hitl import continue_after_human_approval
 
@@ -214,21 +351,35 @@ def retry_erp_task(self, message_id: str) -> dict:
                 "recovered_from_hitl_gap": True,
             }
 
+        xml_document = extract_xml_document_from_row(row)
+        if not xml_document:
+            row.status = ProcessingStatus.ERROR.value
+            row.human_review = True
+            session.commit()
+            return {"ok": False, "reason": "missing_xml_document"}
+
         attempt = repo.increment_erp_retry(row.id)
-        xml_document = None
-        if row.raw_payload_json:
-            try:
-                loaded = json.loads(row.raw_payload_json)
-                if isinstance(loaded, dict):
-                    xml_document = loaded.get("xml_document")
-            except json.JSONDecodeError:
-                xml_document = None
         session.commit()
 
     try:
         res = container.integration.create_incoming_correspondence(
             email, routing, summary_ru, xml_document=xml_document
         )
+        doc_id = res.get("erp_document_id")
+        attachment_meta: dict = {}
+        if doc_id and email is not None:
+            from agent_pochta.services.erp_attachments import attach_email_files_to_document
+
+            try:
+                attached = attach_email_files_to_document(
+                    container.integration,
+                    document_ref_key=str(doc_id),
+                    email=email,
+                )
+                if attached:
+                    attachment_meta["erp_attachments"] = attached
+            except Exception as attach_exc:
+                attachment_meta["erp_attachment_errors"] = [str(attach_exc)]
         with factory() as session:
             row = EmailRepository(session).get_by_message_id(message_id)
             if row:
@@ -237,8 +388,21 @@ def retry_erp_task(self, message_id: str) -> dict:
                 row.status = ProcessingStatus.DONE.value
                 row.human_review = False
                 row.erp_retry_count = 0
+                if attachment_meta and row.raw_payload_json:
+                    try:
+                        payload = json.loads(row.raw_payload_json)
+                        if isinstance(payload, dict):
+                            payload.update(attachment_meta)
+                            row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+                    except json.JSONDecodeError:
+                        pass
                 session.commit()
-        return {"ok": True, "attempt": attempt, "erp_document_number": res["erp_document_number"]}
+        return {
+            "ok": True,
+            "attempt": attempt,
+            "erp_document_number": res["erp_document_number"],
+            **attachment_meta,
+        }
     except Exception as exc:
         logger.exception("erp_retry_failed", message_id=message_id, attempt=attempt)
         with factory() as session:
@@ -259,16 +423,9 @@ def retry_erp_task(self, message_id: str) -> dict:
 
 def _hitl_meta_from_row(row: EmailMessageRow) -> dict:
     meta: dict = {}
-    if not row.raw_payload_json:
-        return meta
-    try:
-        payload = json.loads(row.raw_payload_json)
-    except json.JSONDecodeError:
-        return meta
-    if isinstance(payload, dict):
-        xml = payload.get("xml_document")
-        if isinstance(xml, str) and xml.strip():
-            meta["xml_document"] = xml
+    xml = extract_xml_document_from_row(row)
+    if xml:
+        meta["xml_document"] = xml
     return meta
 
 

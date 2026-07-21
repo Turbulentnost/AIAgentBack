@@ -16,6 +16,7 @@ from agent_pochta.routing.models import ConfidenceLevel
 from agent_pochta.routing.xml_builder import build_subject_xml_theme, sanitize_theme
 from agent_pochta.schemas import ProcessingStatus, RoutingResult, SenderIdentity, SpamResult
 from agent_pochta.services import ServiceContainer
+from agent_pochta.routing.dialog import DialogMode, apply_dialog_classification, classify_dialog
 from agent_pochta.routing.priority import PriorityDecision, select_priority
 from agent_pochta.routing.process_type import infer_process_type_heuristic
 from agent_pochta.services.llm_analyze import resolve_partner_name
@@ -406,30 +407,88 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             process=resolved_process,
         )
 
+    dialog_cls = classify_dialog(
+        subject=email.subject or "",
+        body=text,
+        sender_email=email.sender_email or "",
+        claim=decision.claim,
+        process_type=resolved_process or "",
+    )
+    dialog_status: ProcessingStatus | None = None
+    if dialog_cls.is_dialog:
+        dialog_process, dialog_theme, dialog_trace = apply_dialog_classification(
+            dialog_cls,
+            subject=email.subject or "",
+        )
+        resolved_process = dialog_process
+        decision = decision.model_copy(
+            update={
+                "match_source": dialog_trace,
+                "dialog_mode": dialog_cls.mode.value if dialog_cls.mode else None,
+            }
+        )
+        decision = rebuild_decision_xml(
+            email,
+            decision,
+            recipient=recipient,
+            theme=dialog_theme,
+            process=resolved_process,
+        )
+        routing = routing.model_copy(
+            update={
+                "document_kind": dialog_cls.document_kind,
+                "queue_tier": dialog_cls.queue_tier,
+                "register_erp": dialog_cls.register_erp,
+            }
+        )
+        if dialog_cls.mode == DialogMode.DORMANT:
+            dialog_status = ProcessingStatus.DIALOG
+        trace = trace + [dialog_trace]
+
     human, reason = _needs_human_review(decision, settings, rag_used=rag_used, routing=routing)
+
+    from agent_pochta.routing.confidence import score_to_level
+
+    meta_confidence_score = decision.confidence_score
+    meta_confidence_level = decision.confidence_level
+    if routing.confidence > 0:
+        llm_score = round(routing.confidence * 100)
+        if llm_score > meta_confidence_score:
+            meta_confidence_score = llm_score
+            meta_confidence_level = score_to_level(llm_score)
+
     meta.update(
         {
             "routing_decision": {
                 "organization": decision.organization,
                 "direction": decision.direction,
-                "confidence_level": decision.confidence_level.value,
-                "confidence_score": decision.confidence_score,
+                "confidence_level": meta_confidence_level.value,
+                "confidence_score": meta_confidence_score,
                 "match_source": decision.match_source,
                 "has_conflict": decision.has_conflict,
                 "partner": decision.partner,
                 "claim": decision.claim,
-                "document_kind": priority_decision.document_kind,
-                "queue_tier": priority_decision.queue_tier,
-                "register_erp": priority_decision.register_erp,
+                "document_kind": routing.document_kind or priority_decision.document_kind,
+                "queue_tier": routing.queue_tier,
+                "register_erp": routing.register_erp,
                 "has_obligation": priority_decision.has_obligation,
                 "priority_reasoning": priority_decision.reasoning,
             },
             "xml_document": decision.xml_document,
             "routing_recipient": recipient,
             "rag_fallback": rag_used,
-            "skip_erp": not priority_decision.register_erp,
+            "skip_erp": not routing.register_erp,
         }
     )
+    if dialog_cls.is_dialog:
+        meta["dialog"] = {
+            "mode": dialog_cls.mode.value if dialog_cls.mode else None,
+            "document_kind": dialog_cls.document_kind,
+            "thread_markers": dialog_cls.thread_markers,
+            "dormant_markers": dialog_cls.dormant_markers,
+            "activation_markers": dialog_cls.activation_markers,
+            "reasoning": dialog_cls.reasoning,
+        }
     if rag_used:
         meta["rag_candidates"] = llm_candidates
 
@@ -448,6 +507,16 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             "status": ProcessingStatus.AWAITING_HUMAN,
             "human_review": True,
             "escalation_reason": escalation,
+            "trace": trace,
+            "meta": meta,
+        }
+
+    if dialog_status == ProcessingStatus.DIALOG:
+        return {
+            "spam": spam,
+            "routing": routing,
+            "summary_ru": summary_ru,
+            "status": ProcessingStatus.DIALOG,
             "trace": trace,
             "meta": meta,
         }

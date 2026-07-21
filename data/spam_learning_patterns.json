@@ -4204,6 +4204,666 @@
       ],
       "label": "spam",
       "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "f657a15b-06e7-4b15-af7c-b8d8f903f565",
+      "created_at": "2026-07-20T07:51:55.396077+00:00",
+      "message_id": "<3535BFD3-1C8F-4C73-90D9-6C0F4AB31B10@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/9dc257d53461bb68a857b85eed3e2dcc/",
+        "mode pdf",
+        "pdf отправлено",
+        "receipts-renderer.taxi.yandex.net/v1/render/124/9dc257d53461bb68a857b85eed3e2dcc/ mode",
+        "отправлено с",
+        "с iphone"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "580ca800-bef9-4afc-ac43-65820ea62715",
+      "created_at": "2026-07-20T07:51:59.700980+00:00",
+      "message_id": "<D709BDE5-1E25-495A-8D52-EE4671BC90C1@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/41c7bc47a0981bf983d26d59a2a4430e/",
+        "icloud.com по",
+        "iphone требуется",
+        "mode pdf",
+        "morozovanata0 icloud.com",
+        "pdf отправлено"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "abff74df-fb5b-4e85-97b9-ab39d8366dd0",
+      "created_at": "2026-07-20T07:52:06.390431+00:00",
+      "message_id": "<43DD88BF-1602-4B70-B00B-044B2FA02A06@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/8a96b74979e728368ca85b12db7012fb/",
+        "icloud.com по",
+        "iphone требуется",
+        "mode pdf",
+        "morozovanata0 icloud.com",
+        "pdf отправлено"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "95b0d533-a4dd-4425-904c-d977737f41cb",
+      "created_at": "2026-07-20T07:52:09.186664+00:00",
+      "message_id": "<80B71118-6D00-439B-A652-AE417D839B4C@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/d6e6f3f27c3d8ddd8e648c3d6435e0e8/",
+        "icloud.com по",
+        "iphone требуется",
+        "mode pdf",
+        "morozovanata0 icloud.com",
+        "pdf отправлено"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "f173eb15-700b-4f44-99a9-b24267c9fa84",
+      "created_at": "2026-07-20T07:52:12.142308+00:00",
+      "message_id": "<774FDDCE-CFF2-419D-BF32-A2D2135E829C@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/403c8da907cf1d0ca06d3402800fb691/",
+        "icloud.com по",
+        "iphone требуется",
+        "mode pdf",
+        "morozovanata0 icloud.com",
+        "pdf отправлено"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "24f77e8f-7cdc-4db3-9aa7-0c5c8e03b38d",
+      "created_at": "2026-07-20T07:52:14.918086+00:00",
+      "message_id": "<712113C7-5A6A-4154-966A-E4696076725F@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/74949d106661ecfd809e4e6f39c18658/",
+        "icloud.com по",
+        "iphone требуется",
+        "mode pdf",
+        "morozovanata0 icloud.com",
+        "pdf отправлено"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "fa233464-9687-4e4f-b417-6a6e86567683",
+      "created_at": "2026-07-20T07:54:56.470805+00:00",
+      "message_id": "<1784533526.436068471@f719.i.mail.ru>#zavgar@turbo-don.ru",
+      "sender_email": "menavto-servis@mail.ru",
+      "keywords": [
+        "документы от дивисенко",
+        "menavto servis",
+        "menavto-servis mail.ru"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "68f67a39-3230-42ff-bba0-30001dba80f9",
+      "created_at": "2026-07-20T07:55:03.178932+00:00",
+      "message_id": "<0DDEC13F-C406-44B3-9240-0F99757FF85E@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/d96e1ac7df2bda298aa04a307f36688f/",
+        "icloud.com по",
+        "iphone требуется",
+        "mode pdf",
+        "morozovanata0 icloud.com",
+        "pdf отправлено"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "526f4e50-e7d2-46da-a925-b3abd25a17c1",
+      "created_at": "2026-07-20T07:55:14.126847+00:00",
+      "message_id": "<39088FE5-E085-4625-97CD-F4642710404D@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/21b0628ed7402e748f3688e82fb004dd/",
+        "icloud.com по",
+        "iphone требуется",
+        "mode pdf",
+        "morozovanata0 icloud.com",
+        "pdf отправлено"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "8d1a3e3e-3347-4573-93ef-afbb0509350e",
+      "created_at": "2026-07-20T07:55:16.012881+00:00",
+      "message_id": "<D96B0BAE-1EE9-4FEB-90F5-41568A972346@icloud.com>#td_sales2.3@turbo-don.ru",
+      "sender_email": "morozovanata0@icloud.com",
+      "keywords": [
+        "https receipts-renderer.taxi.yandex.net/v1/render/124/e0a7878b4457e085b14932f9561348f5/",
+        "icloud.com по",
+        "iphone требуется",
+        "mode pdf",
+        "morozovanata0 icloud.com",
+        "pdf отправлено"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "e8a04a49-f05b-400a-973d-7c6710718d52",
+      "created_at": "2026-07-20T07:55:21.142138+00:00",
+      "message_id": "<20260720154035276.23@venture-mfg.com>#info@turbo-don.ru",
+      "sender_email": "top2@venture-mfg.com",
+      "keywords": [
+        "*** spam *** для отдела закупок",
+        "spam для отдела"
+      ],
+      "label": "not_spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Нарушение прав доступа!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "cb4724bc-8e51-41b8-81bf-4d9665170cb7",
+      "created_at": "2026-07-20T07:58:11.105748+00:00",
+      "message_id": "<50788703536436858554518236102752@rulane.life>#info@transelectro.ru",
+      "sender_email": "eyjovmy@rulane.life",
+      "keywords": [
+        "матч, который нельзя пропустить",
+        "матч который нельзя"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "f780ca24-5b30-4300-aa9a-bd41751ecd63",
+      "created_at": "2026-07-20T07:58:13.222703+00:00",
+      "message_id": "<74640414114783343387224144360087@rulane.life>#infortrend@treolan.ru",
+      "sender_email": "yrfodcd@rulane.life",
+      "keywords": [
+        "матч, который нельзя пропустить",
+        "матч который нельзя"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "19c9916c-3734-4e06-94d2-29b8f7953cbe",
+      "created_at": "2026-07-20T07:58:15.377085+00:00",
+      "message_id": "<54034334513656878120117007145421@rulane.life>#info@tpk-unikom.ru",
+      "sender_email": "usyozpv@rulane.life",
+      "keywords": [
+        "матч, который нельзя пропустить",
+        "матч который нельзя"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "d2ed99ee-e331-4e80-9689-04889051086c",
+      "created_at": "2026-07-20T07:58:59.168595+00:00",
+      "message_id": "<CAPUNob+bUsfBUgTSpa1BPfVsW9L7F7RAxbD28aiqV4HMhK5CUQ@mail.gmail.com>#info@turbo-don.ru",
+      "sender_email": "faikf3530@gmail.com",
+      "keywords": [
+        "*** spam ***",
+        "бухгалтерии такие",
+        "бы быть",
+        "быть расценены",
+        "быть связаны",
+        "восстановить паспорт"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "79bcc2fe-321a-4ff7-80db-93b5b690034f",
+      "created_at": "2026-07-20T07:59:01.831489+00:00",
+      "message_id": "<78066127827670868612270254560811@prorucane.pro>#info@tspstroi.ru",
+      "sender_email": "acrowvn@prorucane.pro",
+      "keywords": [
+        "матч, который нельзя пропустить",
+        "матч который нельзя"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "f1a57e56-9c56-4476-9cd3-1016f99a2ac0",
+      "created_at": "2026-07-20T08:01:09.587266+00:00",
+      "message_id": "<212851784122504@mail.360.yandex.ru>#info@turbo-don.ru",
+      "sender_email": "rgo@gazo.ru",
+      "keywords": [
+        "из российского газового общества (приглашение на 12-ую центральноазиатскую нефтегазовую выставку в казахстане"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "25eac8a8-2707-4848-b149-a252f5b34dbc",
+      "created_at": "2026-07-20T08:01:12.816568+00:00",
+      "message_id": "<ddf034cb-0efb-4aa6-acb8-df0715688d15@turbo-don.ru>#info@turbo-don.ru",
+      "sender_email": "rostov@pecom.ru",
+      "keywords": [
+        "*** spam *** счет на оплату ооо \"пэк\" для ооо нпо \"турбулентность-дон",
+        "spam счет на"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "4bdf4138-a146-46d7-85de-ca0aa21b365f",
+      "created_at": "2026-07-20T10:20:40.281730+00:00",
+      "message_id": "<961784541623@mail.360.yandex.ru>#td_sales1.9@turbo-don.ru",
+      "sender_email": "andryuhina@ngosar.ru",
+      "keywords": [
+        "заявка распор.246",
+        "20.07.2026 12",
+        "andryuhina ngosar.ru",
+        "gt добрый",
+        "lt td_sales1.9"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "bdb8b702-ba89-49b1-b204-9efa07073cf0",
+      "created_at": "2026-07-20T10:20:40.422336+00:00",
+      "message_id": "<961784541623@mail.360.yandex.ru>#td_sales1.9@turbo-don.ru",
+      "sender_email": "andryuhina@ngosar.ru",
+      "keywords": [
+        "заявка распор.246",
+        "20.07.2026 12",
+        "andryuhina ngosar.ru",
+        "gt добрый",
+        "lt td_sales1.9"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "8b232ee9-8644-4eb9-a62f-3415a7614a2b",
+      "created_at": "2026-07-20T10:25:27.288400+00:00",
+      "message_id": "<399911784269173@mail.yandex.ru>#info@rndgaz.ru",
+      "sender_email": "aro-minprom@yandex.ru",
+      "keywords": [
+        "240-16-32факс 240-17-39",
+        "240-17-39 nbsp",
+        "240-18-27 240-16-32факс",
+        "240-51-56 240-18-27",
+        "minprom.donland.ru nbsp",
+        "nbsp nbsp"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "a180fac5-dfd6-4aa0-85c3-68bd7c6de111",
+      "created_at": "2026-07-20T10:25:27.433129+00:00",
+      "message_id": "<399911784269173@mail.yandex.ru>#info@rndgaz.ru",
+      "sender_email": "aro-minprom@yandex.ru",
+      "keywords": [
+        "240-16-32факс 240-17-39",
+        "240-17-39 nbsp",
+        "240-18-27 240-16-32факс",
+        "240-51-56 240-18-27",
+        "minprom.donland.ru nbsp",
+        "nbsp nbsp"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "d06b0102-2e01-4e0c-a4e9-68304a0c4b5e",
+      "created_at": "2026-07-20T10:26:48.317256+00:00",
+      "message_id": "<399911784269173@mail.yandex.ru>#info@salskselmash.ru",
+      "sender_email": "aro-minprom@yandex.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "3d2f36f8-4e90-4970-a8a3-fb218c096f25",
+      "created_at": "2026-07-20T10:26:48.442616+00:00",
+      "message_id": "<399911784269173@mail.yandex.ru>#info@salskselmash.ru",
+      "sender_email": "aro-minprom@yandex.ru",
+      "keywords": [],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "c6f41300-0b10-4ae0-bb29-c3ad5f54fbcc",
+      "created_at": "2026-07-20T10:27:39.106665+00:00",
+      "message_id": "<CAJ51+ZtHEh1vE4=HAbb+tSf3sjTZa3vmx641uZt+FLMzVu4S5g@mail.gmail.com>#info@infratest.ru",
+      "sender_email": "vadimtsiulin@gmail.com",
+      "keywords": [
+        "предложение работники из туркменистана бесплатно"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "a4713820-246c-4a59-9469-f5b044a0065d",
+      "created_at": "2026-07-20T10:28:12.523208+00:00",
+      "message_id": "<CAJ51+ZtHEh1vE4=HAbb+tSf3sjTZa3vmx641uZt+FLMzVu4S5g@mail.gmail.com>#info@mitsar-eeg.ru",
+      "sender_email": "vadimtsiulin@gmail.com",
+      "keywords": [
+        "предложение работники из туркменистана бесплатно"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "351def75-29d5-49a9-9811-59bc6f58427a",
+      "created_at": "2026-07-20T10:28:19.227480+00:00",
+      "message_id": "<CAJ51+ZtHEh1vE4=HAbb+tSf3sjTZa3vmx641uZt+FLMzVu4S5g@mail.gmail.com>#info@vimatec.ru",
+      "sender_email": "vadimtsiulin@gmail.com",
+      "keywords": [
+        "предложение работники из туркменистана бесплатно"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "61d79621-edfd-4a9e-88c0-a9b7032d4f18",
+      "created_at": "2026-07-20T10:28:22.019713+00:00",
+      "message_id": "<CAJ51+ZtHEh1vE4=HAbb+tSf3sjTZa3vmx641uZt+FLMzVu4S5g@mail.gmail.com>#info@unicont.ru",
+      "sender_email": "vadimtsiulin@gmail.com",
+      "keywords": [
+        "предложение работники из туркменистана бесплатно"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "d8391772-19ae-4393-9b56-2b7772b49bb0",
+      "created_at": "2026-07-20T10:28:28.491363+00:00",
+      "message_id": "<CAJ51+ZtHEh1vE4=HAbb+tSf3sjTZa3vmx641uZt+FLMzVu4S5g@mail.gmail.com>#info@ecohim.ru",
+      "sender_email": "vadimtsiulin@gmail.com",
+      "keywords": [
+        "предложение работники из туркменистана бесплатно"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "ea2ae590-3707-4358-8520-b496248ae10e",
+      "created_at": "2026-07-20T10:58:49.749526+00:00",
+      "message_id": "<97411784039645@mail.360.yandex.ru>#info@energosit.ru",
+      "sender_email": "te@brvfinance.ru",
+      "keywords": [
+        "предложение по бг и тендерному кредитованию ниже рынка"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "65fbfbab-68b9-449e-9b1d-ed2e2a599b86",
+      "created_at": "2026-07-20T10:59:00.058802+00:00",
+      "message_id": "<97411784039645@mail.360.yandex.ru>#info@spec-market.com",
+      "sender_email": "te@brvfinance.ru",
+      "keywords": [
+        "предложение по бг и тендерному кредитованию ниже рынка"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "3da517ac-0ad6-4e15-b08d-d7b993b15e88",
+      "created_at": "2026-07-20T11:00:47.619706+00:00",
+      "message_id": "<1784034558.548541483@f452.i.mail.ru>#info@turbo-don.ru",
+      "sender_email": "guliybk@mail.ru",
+      "keywords": [
+        "претензия о возмещении убытков"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "fd4f6d96-2bb8-4852-b91b-0d46f93c0990",
+      "created_at": "2026-07-20T11:21:04.917099+00:00",
+      "message_id": "<56241784029695@mail.yandex.ru>#info@turbo-don.ru",
+      "sender_email": "info@nii-srp.ru",
+      "keywords": [
+        "уведомление для а.е. донцовой",
+        "для а.е донцовой"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "6d0528cf-bccc-4408-a0de-d27eda16d74e",
+      "created_at": "2026-07-20T11:21:33.928522+00:00",
+      "message_id": "<701401dd1385$75304a20$5f90de60$@enleader.ru>#info@turbo-don.ru",
+      "sender_email": "maria.zaytseva@enleader.ru",
+      "keywords": [
+        "нефтепереработка и разнотоннажная химия, сентябрь 2026",
+        "разнотоннажная химия сентябрь"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "732e31de-3b14-4856-8ad6-9572ea5cbf82",
+      "created_at": "2026-07-20T11:22:15.577007+00:00",
+      "message_id": "<92831784027374@91f7b0fd-a5c1-4b96-972b-4eb90d2b2ef8>#info@turbo-don.ru",
+      "sender_email": "petryshina-k@yandex.ru",
+      "keywords": [
+        "nbsp будем",
+        "nbsp почты",
+        "nbsp с",
+        "будем рады",
+        "вами работать",
+        "вновь nbsp"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "f53f4154-29ea-41d7-a56f-f7aded8ad7f9",
+      "created_at": "2026-07-20T11:24:12.919498+00:00",
+      "message_id": "<AFoAEwApKnV9fHBvPs5Dy4pk.1.1784025981674.3053934.hou@junovation.cn>#info@turbo-don.ru",
+      "sender_email": "hou@junovation.cn",
+      "keywords": [
+        "explore advanced ami meter solutions"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "f413313e-f4bf-4291-999e-2a362e243ce3",
+      "created_at": "2026-07-20T11:55:50.826161+00:00",
+      "message_id": "<20260720114905.6C4C9541729@mail.turbo-don.ru>#uk_omto4@turbo-don.ru",
+      "sender_email": "mailer-daemon@turbo-don.ru",
+      "keywords": [
+        "undelivered mail returned",
+        "mail returned to",
+        "returned to sender",
+        "mailer-daemon"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "e83ba90f-7f6f-4f72-a07e-811cad22391f",
+      "created_at": "2026-07-20T12:05:34.633202+00:00",
+      "message_id": "<vuic0OzwAYv0Z4hfkjfh460Y1simXCMhQZ2c4GDAg@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка пао",
+        "закупка пао ростелеком",
+        "пао ростелеком поставка",
+        "ростелеком поставка доски",
+        "поставка доски магнитной",
+        "доски магнитной маркерной",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "a6cdc251-b1ea-4279-bf4c-3938b2230ed1",
+      "created_at": "2026-07-20T12:06:46.053578+00:00",
+      "message_id": "<57202944049545cba1f1804cf9dc5dd9@spectr-rs.ru>#uk_omto4@turbo-don.ru",
+      "sender_email": "anton.t@spectr-rs.ru",
+      "keywords": [
+        "заявка от ооо",
+        "от ооо нпо",
+        "ооо нпо турбулентность-дон",
+        "anton.t"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "ea885d60-189f-4694-84f5-2dcca43ffc40",
+      "created_at": "2026-07-20T12:06:50.942785+00:00",
+      "message_id": "<57202944049545cba1f1804cf9dc5dd9@spectr-rs.ru>#anton.t@spectr-rs.ru",
+      "sender_email": "anton.t@spectr-rs.ru",
+      "keywords": [
+        "заявка от ооо",
+        "от ооо нпо",
+        "ооо нпо турбулентность-дон",
+        "anton.t"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "bc7e49d1-6709-4c6d-a987-29fee0fe7159",
+      "created_at": "2026-07-20T12:07:53.748518+00:00",
+      "message_id": "<4c90fbc0-2e29-4db1-8369-0ccf542c542c@yandex.ru>#opmu@turbo-don.ru",
+      "sender_email": "uh.ingener@yandex.ru",
+      "keywords": [
+        "поверка",
+        "письмо от",
+        "от козулин",
+        "козулин с.в",
+        "с.в uh.ingener",
+        "uh.ingener yandex.ru"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "67a3a40e-72c0-48c3-a667-d4947b1750c7",
+      "created_at": "2026-07-20T12:09:23.753675+00:00",
+      "message_id": "<1784546755.243138654@f510.i.mail.ru>#npo_ceh1.12@turbo-don.ru",
+      "sender_email": "tender@rostov2.russvet.ru",
+      "keywords": [
+        "заказ в энергоком",
+        "в энергоком от",
+        "энергоком от турбулентность-дон",
+        "tender"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "b338f629-85f6-438e-890a-a6ff595dac5b",
+      "created_at": "2026-07-20T12:09:43.168180+00:00",
+      "message_id": "<hB0C2i8qRTQNIysFT1JfQwHWEiQAHkjhhBS1wF1vmM@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка гбу",
+        "закупка гбу илишевская",
+        "гбу илишевская райветстанция",
+        "илишевская райветстанция рб",
+        "райветстанция рб услуги",
+        "рб услуги перерегистрации",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "0f1eccdf-fe70-476c-b220-9bc4f03252be",
+      "created_at": "2026-07-20T12:10:27.679004+00:00",
+      "message_id": "<F984D96B-F4E0-4E10-82C8-82972704237A@gmail.com>#opmu@turbo-don.ru",
+      "sender_email": "vkhasyan@gmail.com",
+      "keywords": [
+        "письмо от",
+        "от владимир",
+        "владимир хасьян",
+        "хасьян vkhasyan",
+        "vkhasyan gmail.com",
+        "gmail.com по"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "a88f2194-6425-487f-91ed-823c010e0eae",
+      "created_at": "2026-07-20T12:46:45.546220+00:00",
+      "message_id": "<5219462e-a84f-46b5-a560-049c88c0a308@mail>#npo_opmu9@turbo-don.ru",
+      "sender_email": "robot@dellin.ru",
+      "keywords": [
+        "заказ 64487356 создан",
+        "гк деловые",
+        "robot"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "831029bd-1343-489f-ab59-cf1a1e6f6bd2",
+      "created_at": "2026-07-20T13:11:55.546914+00:00",
+      "message_id": "<0e2f1942-f6e9-41cc-8f54-45655bebf5f5@stanko-service.su>#uk_omto7@turbo-don.ru",
+      "sender_email": "info@stanko-service.su",
+      "keywords": [
+        "от ооо",
+        "ооо станкосервис",
+        "станкосервис лёля",
+        "лёля родина",
+        "родина поступили",
+        "поступили счета"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "69deebc4-9812-44d0-b094-1f1f95b0f5a6",
+      "created_at": "2026-07-20T13:38:25.712372+00:00",
+      "message_id": "<d6df3b032d87d7a96bc29e0b84e68042@dsjr.net>#test_ii@turbo-don.ru",
+      "sender_email": "patrick.blau@dsjr.net",
+      "keywords": [
+        "your business caught",
+        "business caught our",
+        "caught our attention",
+        "our attention let",
+        "attention let s",
+        "let s talk",
+        "patrick.blau"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "49938544-5238-484a-a375-32d8b78138e2",
+      "created_at": "2026-07-21T07:40:19.730172+00:00",
+      "message_id": "<1787136561.3473056.1784619503109@etp.metal-it.ru>#tender@turbo-don.ru",
+      "sender_email": "etp-info@etp.metal-it.ru",
+      "keywords": [
+        "приглашение к участию",
+        "к участию в",
+        "участию в закупке",
+        "в закупке ао",
+        "закупке ао уралэлектромедь",
+        "ао уралэлектромедь 132841-тт",
+        "etp-info"
+      ],
+      "label": "spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Не удалось записать: \"Входящая корреспонденция\"!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
     }
   ]
 }

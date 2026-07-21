@@ -40,10 +40,14 @@ def _build_llm(settings: Settings) -> LLMGateway:
                 model=settings.llm_default_model,
                 verify_ssl=settings.gigachat_verify_ssl,
             )
-    if settings.llm_gateway_url:
+    base_url = settings.effective_llm_base_url
+    if base_url and (
+        settings.effective_llm_provider in {"openai_compat", "deepseek"}
+        or settings.effective_llm_api_key
+    ):
         return ChatCompletionsLLMGateway(
-            settings.llm_gateway_url,
-            api_key=settings.llm_gateway_api_key,
+            base_url,
+            api_key=settings.effective_llm_api_key,
             model=settings.llm_default_model,
         )
     return StubLLMGateway()
@@ -71,11 +75,14 @@ def _build_integration(settings: Settings) -> IntegrationService:
             timeout_sec=settings.odata_timeout_sec,
             field_map_json=settings.odata_incoming_field_map,
             extra_fields_json=settings.odata_incoming_extra_fields,
+            incoming_defaults_file=settings.odata_incoming_defaults_file,
             organization_keys_json=settings.odata_organization_keys,
             department_keys_json=settings.odata_department_keys,
             organization_keys_file=settings.odata_organization_keys_file,
             department_keys_file=settings.odata_department_keys_file,
             routing_rules_path=settings.odata_routing_rules_path,
+            attached_file_field_map_path=settings.odata_attached_file_field_map_file,
+            attach_files_enabled=settings.odata_attach_files_enabled,
         )
     if mode == "http":
         return HttpIntegrationService(settings.integration_service_url)

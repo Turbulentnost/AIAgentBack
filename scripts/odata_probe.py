@@ -31,6 +31,7 @@ ENTITIES_READ = [
     "Catalog_КонтрагентыForMail",
     "Catalog_ПодразделенияForMail",
     "Document_ТД_ВходящаяКорреспонденция",
+    "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
     "InformationRegister_КадроваяИсторияСотрудников_RecordType",
 ]
 
@@ -93,43 +94,36 @@ def probe_get(
     return result
 
 
-def probe_post_minimal(
-    client: httpx.Client,
-    base: str,
-    *,
-    auth: tuple[str, str] | None,
-) -> dict:
-    url = f"{base.rstrip('/')}/{quote(POST_ENTITY)}?$format=json"
-    payload = {
-        "Date": "2026-07-09T14:00:00",
-        "ИсточникПоступления": "E-MAIL",
-        "Статус": "Передано на исполнение",
-        "ТемаСлужебнойЗаписки": "OData probe test",
-        "Подразделение": "Управление делами",
-        "Партнер": "OData probe partner",
-        "ПлательщикНаправление": "OData probe partner",
-        "Организация_Key": "fbca2148-6cfd-11e7-812d-001e67112509",
-        "ПодразделениеИсполнитель_Key": "a831b004-fb2c-11e2-8c56-001e67112509",
-        "КомуПодразделениеСсылка_Key": "a831b004-fb2c-11e2-8c56-001e67112509",
-        "Posted": False,
-    }
-    try:
-        response = client.post(
-            url,
-            json=payload,
-            auth=auth,
-            timeout=30,
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-        )
-    except Exception as exc:
-        return {"entity": POST_ENTITY, "method": "POST", "ok": False, "error": str(exc)}
+def probe_post_minimal() -> dict:
+    """Показывает минимальный payload (без POST в 1С)."""
+    from agent_pochta.services.odata_incoming_mapper import build_incoming_document_payload
+    from agent_pochta.schemas import EmailMessage, Priority, RoutingResult
+    from datetime import datetime, timezone
+
+    xml = (
+        "<document><organization>НП</organization>"
+        "<направление>КС</направление><partner>Тест</partner></document>"
+    )
+    email = EmailMessage(
+        message_id="<probe@local>",
+        mailbox="info@turbo-don.ru",
+        sender_email="probe@local",
+        subject="probe",
+        received_at=datetime.now(timezone.utc),
+    )
+    routing = RoutingResult(
+        department_id="00-000066",
+        department_name="УД",
+        confidence=1.0,
+        reasoning="probe",
+        priority=Priority.NORMAL,
+    )
+    payload = build_incoming_document_payload(email, routing, "", xml_document=xml)
     return {
         "entity": POST_ENTITY,
-        "method": "POST",
-        "status": response.status_code,
-        "ok": response.status_code in (200, 201),
-        "error": _error_text(response) if response.status_code not in (200, 201) else "",
-        "body_preview": response.text[:400] if response.status_code in (200, 201) else "",
+        "method": "DRY-RUN",
+        "ok": True,
+        "payload": payload,
     }
 
 
@@ -138,7 +132,11 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="OData access probe")
-    parser.add_argument("--try-post", action="store_true", help="Пробный POST документа")
+    parser.add_argument(
+        "--try-post",
+        action="store_true",
+        help="Показать минимальный payload (POST в 1С отключён)",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -204,14 +202,11 @@ def main() -> None:
         print(f"\n  Итого чтение: OK={read_ok}, FAIL={read_fail}")
 
         if args.try_post:
-            print("\n=== POST (пробный документ) ===")
-            r = probe_post_minimal(client, base, auth=auth)
-            mark = "OK" if r.get("ok") else "FAIL"
-            print(f"  [{mark}] {r['entity']}: HTTP {r.get('status', '?')}")
-            if r.get("error"):
-                print(f"    Ошибка: {r['error']}")
-            if r.get("body_preview"):
-                print(f"    Ответ: {r['body_preview'][:200]}")
+            print("\n=== Минимальный payload (dry-run, POST отключён) ===")
+            r = probe_post_minimal()
+            import json as _json
+
+            print(_json.dumps(r.get("payload") or {}, ensure_ascii=False, indent=2))
 
     print("\n=== Рекомендации ===")
     if read_fail and read_ok == 0:
@@ -219,8 +214,7 @@ def main() -> None:
     elif read_ok and read_fail:
         print("  • Часть сущностей недоступна — в публикации OData не включены все каталоги.")
     if args.try_post:
-        print("  • Если POST → «Нарушение прав доступа» — нужен пользователь с правом записи документа.")
-        print("  • odata.user обычно только на чтение; для узла 7 нужен отдельный пользователь 1С.")
+        print("  • POST в 1С из probe отключён. Используйте create_incoming_odata.py --post при необходимости.")
 
 
 if __name__ == "__main__":

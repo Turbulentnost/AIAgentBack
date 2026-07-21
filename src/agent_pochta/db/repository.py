@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import date, datetime, timezone
 
+import structlog
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,15 @@ from agent_pochta.db.session import get_session_factory
 from agent_pochta.email_payload import email_to_task_payload
 from agent_pochta.schemas import EmailMessage, Priority, ProcessingStatus, RoutingResult
 from agent_pochta.state import AgentState
+
+logger = structlog.get_logger(__name__)
+
+
+def _sanitize_pg_text(value: str | None) -> str | None:
+    """PostgreSQL text columns reject NUL (0x00) bytes."""
+    if not value or "\x00" not in value:
+        return value
+    return value.replace("\x00", "")
 
 
 class EmailRepository:
@@ -187,11 +197,21 @@ class EmailRepository:
         rows = query.group_by(EmailMessageRow.status).all()
         return {status: int(count) for status, count in rows}
 
+    def touch_processing_lease(self, row: EmailMessageRow) -> None:
+        """Продлевает lease обработки — защита от повторной постановки в очередь."""
+        payload: dict
+        try:
+            raw = json.loads(row.raw_payload_json or "{}")
+        except json.JSONDecodeError:
+            raw = {}
+        payload = raw if isinstance(raw, dict) else {}
+        payload["processing_started_at"] = datetime.utcnow().isoformat()
+        row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+
     def ensure_processing_row(self, email: EmailMessage) -> uuid.UUID:
         """Создаёт или обновляет запись со status=processing до завершения графа."""
         row = self.get_by_message_id(email.message_id)
         payload = email_to_task_payload(email, for_storage=True)
-        from datetime import datetime
 
         payload["processing_started_at"] = datetime.utcnow().isoformat()
         payload_json = json.dumps(payload, ensure_ascii=False)
@@ -262,6 +282,8 @@ class EmailRepository:
             payload["rag_fallback"] = bool(meta.get("rag_fallback"))
         if routing_recipient := meta.get("routing_recipient"):
             payload["routing_recipient"] = routing_recipient
+        if dialog := meta.get("dialog"):
+            payload["dialog"] = dialog
         row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
 
         spam = state.get("spam")
@@ -289,7 +311,7 @@ class EmailRepository:
             row.priority = routing.priority.value
 
         if summary := state.get("summary_ru"):
-            row.summary_ru = summary
+            row.summary_ru = _sanitize_pg_text(summary)
 
         erp = state.get("erp")
         if erp is not None and erp.success:
@@ -313,7 +335,7 @@ class EmailRepository:
         row.attachments.clear()
         settings = get_settings()
         for attachment in email.attachments:
-            stored_text = attachment.extracted_text
+            stored_text = _sanitize_pg_text(attachment.extracted_text)
             if stored_text:
                 stored_text = stored_text[: settings.document_storage_excerpt_chars]
             row.attachments.append(
@@ -580,6 +602,7 @@ def persist_processing_result(state: AgentState) -> uuid.UUID | None:
             session.commit()
             return row_id
     except Exception:
+        logger.exception("persist_processing_result_failed", message_id=getattr(state.get("email"), "message_id", None))
         return None
 
 

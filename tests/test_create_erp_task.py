@@ -56,3 +56,24 @@ def test_create_erp_task_unapproved_failure_sets_error(monkeypatch):
 
     assert result["status"] == ProcessingStatus.ERROR
     assert result.get("human_review") is True
+
+
+def test_create_erp_task_skips_non_info_mailbox(monkeypatch):
+    container = MagicMock()
+    monkeypatch.setattr("agent_pochta.nodes.n7_create_erp_task.get_settings", lambda: MagicMock(agent_mode="live"))
+
+    state = _state()
+    state["email"] = state["email"].model_copy(
+        update={
+            "mailbox": "td_sales2.8@turbo-don.ru",
+            "routing_recipient": "td_sales2.8@turbo-don.ru",
+        }
+    )
+
+    result = node_create_erp_task(state, container)
+
+    assert result["erp"].success is True
+    assert result["erp"].erp_document_number == "SKIP-ERP"
+    assert result["meta"]["erp_skipped"] is True
+    assert "info@turbo-don.ru" in result["meta"]["erp_skip_reason"]
+    container.integration.create_incoming_correspondence.assert_not_called()

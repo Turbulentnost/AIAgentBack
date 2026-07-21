@@ -21,9 +21,10 @@ from agent_pochta.services.odata_incoming_mapper import (
     load_guid_map,
     load_guid_map_from_file,
     resolve_guid_map,
+    resolve_incoming_extra_fields,
     resolve_department_name,
+    resolve_payer_direction,
 )
-from agent_pochta.services.routing_departments import resolve_department_display_name
 from agent_pochta.services.odata_integration import ODataIntegrationService
 
 SAMPLE_XML = (
@@ -41,15 +42,8 @@ SAMPLE_XML = (
     "<email_recipient>info@turbo-don.ru</email_recipient>"
     "<mail_datetime>2026-07-03 10:00:00</mail_datetime>"
     "<process>исполнение</process>"
-    "<spam>false</spam>"
-    "<confidence_level>ВЫСОКАЯ</confidence_level>"
-    "<matching_keywords>договор</matching_keywords>"
-    "<processing_notes>Автоматическая регистрация разрешена.</processing_notes>"
     "</document>"
 )
-
-ORG_KEYS = {"НП": "11111111-1111-1111-1111-111111111111"}
-DEPT_KEYS = {"00-000076": "22222222-2222-2222-2222-222222222222"}
 
 
 @pytest.fixture
@@ -74,29 +68,7 @@ def sample_routing() -> RoutingResult:
     )
 
 
-def test_build_incoming_document_payload_maps_required_fields(
-    sample_email: EmailMessage,
-    sample_routing: RoutingResult,
-) -> None:
-    payload = build_incoming_document_payload(
-        sample_email,
-        sample_routing,
-        "Краткий обзор",
-        xml_document=SAMPLE_XML,
-        organization_keys=ORG_KEYS,
-        department_keys=DEPT_KEYS,
-    )
-    assert payload["ТемаСлужебнойЗаписки"] == "Запрос: Тема письма из почты"
-    assert payload["Подразделение"] == resolve_department_display_name("00-000076", "Отдел тест")
-    assert payload["Партнер"] == "ООО Пример"
-    assert payload["ПлательщикНаправление"] == "ООО Пример"
-    assert payload["Направление"] == "КС"
-    assert payload["Организация_Key"] == ORG_KEYS["НП"]
-    assert payload["ПодразделениеИсполнитель_Key"] == DEPT_KEYS["00-000076"]
-    assert payload["КомуПодразделениеСсылка_Key"] == DEPT_KEYS["00-000076"]
-
-
-def test_build_incoming_document_payload_maps_optional_fields(
+def test_build_incoming_document_payload_only_author_and_payer(
     sample_email: EmailMessage,
     sample_routing: RoutingResult,
 ) -> None:
@@ -106,20 +78,58 @@ def test_build_incoming_document_payload_maps_optional_fields(
         "Краткий обзор",
         xml_document=SAMPLE_XML,
     )
-    assert payload["Содержание"] == "Краткий обзор"
+    assert set(payload.keys()) == {
+        "Автор",
+        "Автор_Type",
+        "ПлательщикНаправление",
+        "ПлательщикНаправление_Type",
+    }
     assert payload["Автор"] == "ИИ 1С"
-    assert payload["Кому"] == "00-000076"
-    assert payload["ДокументОснование"] == "Тема письма из почты"
-    assert payload["EmailОтправителяПисьма"] == "sender@example.com"
-    assert payload["EmailПолучателяПисьма"] == "info@turbo-don.ru"
-    assert payload["Претензия"] is False
-    assert payload["ID_XML"] == "<test-001@example.com>"
-    assert payload["ИсточникПоступления"] == "E-MAIL"
-    assert "XML:" in payload["Комментарий"]
-    assert payload["Date"] == "2026-07-03T10:00:00"
+    assert payload["Автор_Type"] == "Edm.String"
+    assert payload["ПлательщикНаправление"] == resolve_payer_direction("НП", "КС")
+    assert payload["ПлательщикНаправление_Type"] == "Edm.String"
+    assert "Направление" not in payload
+    assert "Партнер" not in payload
+    assert "ТемаСлужебнойЗаписки" not in payload
 
 
-def test_payer_defaults_to_partner_when_missing() -> None:
+def test_build_incoming_document_payload_ignores_composite_extra_fields(
+    sample_email: EmailMessage,
+    sample_routing: RoutingResult,
+) -> None:
+    payload = build_incoming_document_payload(
+        sample_email,
+        sample_routing,
+        "Обзор",
+        xml_document=SAMPLE_XML,
+        extra_fields={
+            "Партнер": "ООО Пример",
+            "Posted": False,
+            "ГрифДоступа_Key": "bbdfce50-4266-11e8-8272-ac1f6b05524d",
+        },
+    )
+    assert "Партнер" not in payload
+    assert payload["Posted"] is False
+    assert payload["ГрифДоступа_Key"] == "bbdfce50-4266-11e8-8272-ac1f6b05524d"
+    assert set(payload.keys()) == {
+        "Автор",
+        "Автор_Type",
+        "ПлательщикНаправление",
+        "ПлательщикНаправление_Type",
+        "Posted",
+        "ГрифДоступа_Key",
+    }
+
+
+def test_build_incoming_document_payload_requires_xml(
+    sample_email: EmailMessage,
+    sample_routing: RoutingResult,
+) -> None:
+    with pytest.raises(ValueError, match="xml_document is required"):
+        build_incoming_document_payload(sample_email, sample_routing, "Обзор")
+
+
+def test_payer_direction_from_xml_not_partner() -> None:
     xml = (
         "<document>"
         "<organization>НП</organization>"
@@ -142,43 +152,23 @@ def test_payer_defaults_to_partner_when_missing() -> None:
         reasoning="",
     )
     payload = build_incoming_document_payload(email, routing, "", xml_document=xml)
-    assert payload["Партнер"] == "ООО Контрагент"
-    assert payload["ПлательщикНаправление"] == "ООО Контрагент"
+    assert "Партнер" not in payload
+    assert payload["ПлательщикНаправление"] == resolve_payer_direction("НП", "КС")
 
 
-def test_build_incoming_document_payload_uses_email_subject_not_xml_body_theme() -> None:
-    subject = "ОЛ 31222, 31240 в работу"
-    body_theme = (
-        f"{subject} Добрый день!ОЛ 31222, 31340 отправлены в просчет."
-        "Потребуются габаритные чертежи."
-    )
-    xml = (
-        "<document>"
-        f"<organization>НП</organization><theme>{body_theme}</theme>"
-        "<направление>КС</направление><claim>false</claim><partner>-</partner>"
-        "<services><service><name>00-000076</name><process>исполнение</process>"
-        "<reasoning>Тест</reasoning></service></services>"
-        "<email_sender>sender@example.com</email_sender>"
-        "<email_recipient>info@turbo-don.ru</email_recipient>"
-        "<mail_datetime>2026-07-03 10:00:00</mail_datetime><process>исполнение</process>"
-        "</document>"
-    )
-    email = EmailMessage(
-        message_id="<ol@test>",
-        mailbox="info@turbo-don.ru",
-        sender_email="sender@example.com",
-        subject=subject,
-        body_text="Добрый день!ОЛ 31222, 31340 отправлены в просчет.",
-        received_at=datetime(2026, 7, 3, 10, 0, tzinfo=timezone.utc),
-    )
-    routing = RoutingResult(
-        department_id="00-000076",
-        department_name="Отдел",
-        confidence=1.0,
-        reasoning="",
-    )
-    payload = build_incoming_document_payload(email, routing, "Обзор", xml_document=xml)
-    assert payload["ТемаСлужебнойЗаписки"] == "Отправить в просчёт: ОЛ 31222, 31240 в работу"
+def test_resolve_payer_direction_np_default_is_production() -> None:
+    assert resolve_payer_direction("НП", None) == "ТурбулентностьДОНПроизводство1"
+    assert resolve_payer_direction("НП", "") == "ТурбулентностьДОНПроизводство1"
+
+
+def test_resolve_payer_direction_np_pr_uses_production_suffix() -> None:
+    assert resolve_payer_direction("НП", "ПР") == "ТурбулентностьДОНПроизводство1"
+
+
+def test_resolve_payer_direction_child_orgs() -> None:
+    assert resolve_payer_direction("АЛ", "АЛ") == "АЛМАЗ"
+    assert resolve_payer_direction("МГ", "МГ") == "Метрогазсервис"
+    assert resolve_payer_direction("БМ", "БМ") == "БМИ"
 
 
 def test_resolve_department_name_falls_back_to_rules_lookup() -> None:
@@ -193,6 +183,8 @@ def test_resolve_department_name_falls_back_to_rules_lookup() -> None:
 
 
 def test_build_department_name_lookup_collects_rule_names() -> None:
+    from agent_pochta.services.routing_departments import resolve_department_display_name
+
     lookup = build_department_name_lookup(
         {
             "email_keyword_rules": [
@@ -223,9 +215,6 @@ def test_odata_client_create_entity_posts_json() -> None:
 
     assert result["Number"] == "ВК-000001"
     mock_http.post.assert_called_once()
-    args, kwargs = mock_http.post.call_args
-    assert args[0].endswith("Document_ТД_ВходящаяКорреспонденция?$format=json")
-    assert kwargs["json"]["Date"] == "2026-07-03T10:00:00"
 
 
 def test_odata_integration_service_returns_document_ids(
@@ -235,8 +224,6 @@ def test_odata_integration_service_returns_document_ids(
     service = ODataIntegrationService(
         "http://1c.local/odata/standard.odata",
         entity="Document_ТД_ВходящаяКорреспонденция",
-        organization_keys_json=json.dumps(ORG_KEYS),
-        department_keys_json=json.dumps(DEPT_KEYS),
     )
     with patch.object(
         service._client,
@@ -252,11 +239,10 @@ def test_odata_integration_service_returns_document_ids(
 
     create_mock.assert_called_once()
     payload = create_mock.call_args[0][1]
-    assert payload["Организация_Key"] == ORG_KEYS["НП"]
-    assert payload["Кому"] == "00-000076"
+    assert payload["Автор"] == "ИИ 1С"
+    assert payload["ПлательщикНаправление"] == resolve_payer_direction("НП", "КС")
     assert result["erp_document_number"] == "ВК-000042"
     assert result["erp_document_id"] == "11111111-2222-3333-4444-555555555555"
-    assert result["erp_task_id"] is None
 
 
 def test_build_container_uses_odata_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -349,3 +335,92 @@ def test_load_guid_map_from_file(tmp_path: Path) -> None:
 def test_load_guid_map_invalid_json_raises() -> None:
     with pytest.raises(ValueError, match="ODATA_ORGANIZATION_KEYS"):
         load_guid_map("{bad", env_name="ODATA_ORGANIZATION_KEYS")
+
+
+def test_resolve_incoming_extra_fields_merges_file_and_inline(tmp_path: Path) -> None:
+    defaults_file = tmp_path / "defaults.json"
+    defaults_file.write_text(
+        json.dumps(
+            {
+                "Posted": False,
+                "ГрифДоступа_Key": "from-file",
+                "Ответственный_Key": "resp-from-file",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    resolved = resolve_incoming_extra_fields(
+        json.dumps({"ГрифДоступа_Key": "from-inline"}, ensure_ascii=False),
+        file_path=str(defaults_file),
+    )
+    assert resolved["Posted"] is False
+    assert resolved["ГрифДоступа_Key"] == "from-inline"
+    assert resolved["Ответственный_Key"] == "resp-from-file"
+
+
+def test_odata_integration_service_loads_defaults_file(
+    sample_email: EmailMessage,
+    sample_routing: RoutingResult,
+    tmp_path: Path,
+) -> None:
+    defaults_file = tmp_path / "defaults.json"
+    defaults_file.write_text(
+        json.dumps(
+            {
+                "Posted": False,
+                "ГрифДоступа_Key": "bbdfce50-4266-11e8-8272-ac1f6b05524d",
+                "Ответственный_Key": "4a3f1bd0-04f3-11e8-826d-ac1f6b05524d",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = ODataIntegrationService(
+        "http://1c.local/odata/standard.odata",
+        entity="Document_ТД_ВходящаяКорреспонденция",
+        incoming_defaults_file=str(defaults_file),
+    )
+    with patch.object(
+        service._client,
+        "create_entity",
+        return_value={"Ref_Key": "abc", "Number": "ВК-0001"},
+    ) as create_mock:
+        service.create_incoming_correspondence(
+            sample_email,
+            sample_routing,
+            "Обзор",
+            xml_document=SAMPLE_XML,
+        )
+
+    payload = create_mock.call_args[0][1]
+    assert payload["Posted"] is False
+    assert payload["ГрифДоступа_Key"] == "bbdfce50-4266-11e8-8272-ac1f6b05524d"
+    assert payload["Ответственный_Key"] == "4a3f1bd0-04f3-11e8-826d-ac1f6b05524d"
+
+
+def test_build_container_applies_incoming_defaults_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    defaults_file = tmp_path / "defaults.json"
+    defaults_file.write_text(
+        json.dumps({"Posted": False, "ГрифДоступа_Key": "guid-from-file"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("USE_STUBS", "false")
+    monkeypatch.setenv("ERP_MODE", "odata")
+    monkeypatch.setenv("ODATA_BASE_URL", "http://1c.local/odata/standard.odata")
+    monkeypatch.setenv("ODATA_INCOMING_DEFAULTS_FILE", str(defaults_file))
+    reset_settings()
+
+    container = build_container(Settings())
+    assert isinstance(container.integration, ODataIntegrationService)
+    assert container.integration._extra_fields["ГрифДоступа_Key"] == "guid-from-file"
+    assert container.integration._extra_fields["Posted"] is False
+
+
+def test_gazprom_and_yandex_payer_direction_from_xml_direction() -> None:
+    """Направление из XML, не partner — как у писем gazprom/yandex в production."""
+    assert resolve_payer_direction("НП", "СС") == "ТурбулентностьДОНСС"
+    assert resolve_payer_direction("НП", "ПР") == "ТурбулентностьДОНПроизводство1"

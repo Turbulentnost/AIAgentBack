@@ -8,7 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from agent_pochta.config import PROJECT_ROOT
-from agent_pochta.routing.normalize import normalize_text
+from agent_pochta.routing.organizations import DIRECTION_COMMERCIAL, DIRECTION_DEFAULT
+from agent_pochta.routing.normalize import keyword_in_text, normalize_text
 
 _DEFAULT_PATH = PROJECT_ROOT / "data" / "deterministic_sales_rules.json"
 
@@ -42,7 +43,7 @@ def _hits_in_text(markers: list[str], text: str) -> list[str]:
         m = (marker or "").strip().lower()
         if not m:
             continue
-        if m in text:
+        if keyword_in_text(m, text):
             found.append(m)
     return found
 
@@ -88,6 +89,16 @@ def match_deterministic_sales(
 
     text = normalize_text(f"{subject} {body} {partner or ''}")
     sender = (sender_email or "").lower().strip()
+    commercial_markers = (
+        "ткп",
+        "коммерческ",
+        "кп ",
+        "запрос цен",
+        "счет",
+        "счёт",
+        "ценовое",
+        "стоимость",
+    )
 
     chair_hits = _hits_in_text(list(cfg.get("chairman_override_markers") or []), text)
 
@@ -100,10 +111,22 @@ def match_deterministic_sales(
         hits = _hits_in_text(list(rule.get("keywords") or []), text)
         if not hits:
             continue
+        if rule.get("id") == "bmi_equipment" and any(
+            keyword_in_text(marker, text) for marker in commercial_markers
+        ):
+            return DeterministicHit(
+                code="00-000128",
+                name="Отдел продаж БМИ",
+                direction="БМ",
+                source="det_product_bmi_equipment_commercial",
+                reasoning="Коммерческий запрос на оборудование БМИ",
+                matched_keywords=hits,
+                organization="БМ",
+            )
         return DeterministicHit(
             code=str(rule["department_id"]),
             name=str(rule.get("department_name") or rule["department_id"]),
-            direction=str(rule.get("direction") or "КС"),
+            direction=str(rule.get("direction") or DIRECTION_DEFAULT),
             source=f"det_product_{rule.get('id') or 'x'}",
             reasoning=str(rule.get("reasoning") or rule.get("id") or "product"),
             matched_keywords=hits,
@@ -122,6 +145,14 @@ def match_deterministic_sales(
         text,
     )
 
+    igor_hits = _hits_in_text(["игорь борисович"], text)
+    predsedatel_hits = _hits_in_text(
+        [
+            "председатель совета директоров",
+            "председателю совета директоров",
+        ],
+        text,
+    )
     sales_context = bool(
         sales_hits
         or foreign_marker_hits
@@ -129,19 +160,25 @@ def match_deterministic_sales(
         or gazprom_hits
         or orkk_hits
         or spu_hits
+        or chair_hits
     )
     if not sales_context:
         return None
 
-    # Амураль / Председатель СД — исключение из контура Газпром→ОПГ.
-    if chair_hits and gazprom_hits:
+    # Амураль / Игорь Борисович / Председатель СД — исключение из контура Газпром→ОПГ.
+    if (
+        (chair_hits and gazprom_hits)
+        or (igor_hits and gazprom_hits)
+        or (igor_hits and predsedatel_hits)
+    ):
+        chairman_keywords = igor_hits or predsedatel_hits or chair_hits
         return DeterministicHit(
             code=str(cfg["chairman_department_id"]),
             name=str(cfg.get("chairman_department_name") or "Председатель Совета Директоров"),
-            direction="КС",
+            direction=DIRECTION_COMMERCIAL,
             source="det_chairman",
-            reasoning="Амураль / Председатель СД",
-            matched_keywords=chair_hits,
+            reasoning="Амураль / Игорь Борисович / Председатель СД",
+            matched_keywords=chairman_keywords,
         )
 
     is_foreign, foreign_hits = _is_foreign(text, sender, cfg)
@@ -149,7 +186,7 @@ def match_deterministic_sales(
         return DeterministicHit(
             code=str(cfg["foreign_department_id"]),
             name=str(cfg.get("foreign_department_name") or "ВЭД"),
-            direction="КС",
+            direction=DIRECTION_COMMERCIAL,
             source="det_sales_foreign",
             reasoning="Зарубежный/экспортный контур → ВЭД",
             matched_keywords=foreign_hits or sales_hits,
@@ -160,7 +197,7 @@ def match_deterministic_sales(
         return DeterministicHit(
             code="00-000074",
             name="Отдел продаж эталонного оборудования и услуг",
-            direction="КС",
+            direction=DIRECTION_COMMERCIAL,
             source="det_sales_spu",
             reasoning="СПУ → ОПЭ",
             matched_keywords=spu_hits,
@@ -170,7 +207,7 @@ def match_deterministic_sales(
         return DeterministicHit(
             code=str(cfg["dealer_department_id"]),
             name=str(cfg.get("dealer_department_name") or "ОДП"),
-            direction="КС",
+            direction=DIRECTION_COMMERCIAL,
             source="det_sales_dealer",
             reasoning="Гранд / UFG-H → ОДП",
             matched_keywords=dealer_hits,
@@ -180,7 +217,7 @@ def match_deterministic_sales(
         return DeterministicHit(
             code=str(cfg["gazprom_department_id"]),
             name=str(cfg.get("gazprom_department_name") or "ОПГ"),
-            direction="КС",
+            direction=DIRECTION_COMMERCIAL,
             source="det_sales_gazprom",
             reasoning="Газпром / дочерние → ОПГ",
             matched_keywords=gazprom_hits,
@@ -190,7 +227,7 @@ def match_deterministic_sales(
         return DeterministicHit(
             code=str(cfg["orkk_department_id"]),
             name=str(cfg.get("orkk_department_name") or "ОРКК"),
-            direction="КС",
+            direction=DIRECTION_COMMERCIAL,
             source="det_sales_orkk",
             reasoning="Ключевой холдинг → ОРКК",
             matched_keywords=orkk_hits,
@@ -201,7 +238,7 @@ def match_deterministic_sales(
         return DeterministicHit(
             code=str(cfg["orkk_department_id"]),
             name=str(cfg.get("orkk_department_name") or "ОРКК"),
-            direction="КС",
+            direction=DIRECTION_COMMERCIAL,
             source="det_sales_industrial",
             reasoning="Промышленная тематика без холдинга → ОРКК",
             matched_keywords=industrial_hits,

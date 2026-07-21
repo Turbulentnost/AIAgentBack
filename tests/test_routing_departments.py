@@ -101,6 +101,7 @@ def test_list_active_departments_for_ui_uses_onec_names():
     assert by_id["00-000002"] == "Бухгалтерия"
     assert by_id["00-000066"] == "Управление делами"
     assert by_id["00-000152"] == "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    assert by_id["00-000182"] == "Помощник зам. операционного директора"
     assert "ФИНАНСОВЫЙ" in by_id["00-000049"] and "ДИРЕКТОР" in by_id["00-000049"]
     assert "00-999999" not in by_id
     assert "00-000007" not in by_id
@@ -118,7 +119,17 @@ def test_list_active_departments_for_ui_explicit_directors_allowed():
     assert "00-000007" not in allowlist
     assert "00-000149" not in allowlist
     for item in list_active_departments_for_ui():
-        if item["id"] in {"00-000001", "00-000152", "00-000049", "00-000058", "00-000080", "00-000163", "00-000172", "00-000040"}:
+        if item["id"] in {
+            "00-000001",
+            "00-000152",
+            "00-000049",
+            "00-000058",
+            "00-000080",
+            "00-000163",
+            "00-000172",
+            "00-000040",
+            "00-000182",
+        }:
             continue
         name_l = item["name"].lower().replace("ё", "е")
         assert "директор" not in name_l, item

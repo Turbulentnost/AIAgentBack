@@ -52,6 +52,8 @@ def test_analyze_system_prompt_forbids_chat_replies():
     assert "Не человек и не должность" in system
     assert "БелГИМ" in system
     assert "process_type" in system
+    assert "сух" in system.lower()
+    assert "мусорн" in system.lower()
     # код организации (НП/АЛ/…) не в схеме ответа LLM
     assert '"organization"' not in system
 

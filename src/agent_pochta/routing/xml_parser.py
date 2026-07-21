@@ -8,6 +8,7 @@ from typing import Any
 
 from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.routing.models import ConfidenceLevel, RoutingDecision, ServiceRoute
+from agent_pochta.routing.organizations import DIRECTION_DEFAULT, DIRECTION_UNCLEAR
 from agent_pochta.routing.xml_builder import (
     RESERVE_DEPARTMENT_CODE,
     SPAM_DEPARTMENT_CODE,
@@ -97,7 +98,7 @@ def ensure_xml_document(state: AgentState) -> str | None:
     routing = state.get("routing")
 
     if routing is not None:
-        direction = str(decision_meta.get("direction") or "КС")
+        direction = str(decision_meta.get("direction") or DIRECTION_DEFAULT)
         services = [
             ServiceRoute(
                 code=routing.department_id,
@@ -176,7 +177,7 @@ def rebuild_xml_document_from_row(
 
     previous_organization = (existing or {}).get("organization") or "НП"
     organization = organization_override or previous_organization or "НП"
-    existing_direction = (existing or {}).get("direction") or "КС"
+    existing_direction = (existing or {}).get("direction") or DIRECTION_DEFAULT
     if organization_override and organization_override != previous_organization:
         from agent_pochta.routing.organizations import direction_for_organization_override
 
