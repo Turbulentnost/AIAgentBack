@@ -48,7 +48,18 @@ async def test_role_agent_is_registered_and_waits_for_rules(agent_id: str):
 
 
 @pytest.mark.asyncio
-async def test_engineer_agent_calculates_embedded_confirmed_evidence():
+@pytest.mark.parametrize(
+    ("stock_quantity", "expected_status", "expected_net"),
+    [
+        ("50", "completed", "0"),
+        ("40", "waiting_human", "10"),
+    ],
+)
+async def test_engineer_agent_calculates_embedded_confirmed_evidence(
+    stock_quantity: str,
+    expected_status: str,
+    expected_net: str,
+):
     agent_cls = agent_registry.get(PRODUCTION_PREPARATION_ENGINEER_AGENT_ID)
     assert agent_cls is not None
     result = await agent_cls().run(
@@ -100,15 +111,17 @@ async def test_engineer_agent_calculates_embedded_confirmed_evidence():
                         "source_type": "warehouse",
                         "nomenclature_id": "steel",
                         "unit": "кг",
-                        "quantity": "50",
+                        "quantity": stock_quantity,
                     }
                 ],
             },
             "role_context": {"warehouse_1c_ref": "warehouse-main"},
         }
     )
-    assert result.role_status == "completed"
-    assert result.output_data["positions"][0]["net_requirement"] == "0"
+    assert result.role_status == expected_status
+    assert result.output_data["positions"][0]["net_requirement"] == expected_net
+    if expected_status == "waiting_human":
+        assert result.output_data["decision_kind"] == "purchase_confirmation"
 
 
 @pytest.mark.asyncio

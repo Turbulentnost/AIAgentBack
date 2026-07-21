@@ -1,7 +1,7 @@
-"""accountant agent catalog and permissions
+"""chief accountant agent catalog and permissions
 
-Revision ID: 0058_accountant_agent
-Revises: 0057_chief_accountant_agent
+Revision ID: 0058_chief_accountant_agent
+Revises: 0057_executive_director_agent
 Create Date: 2026-07-20
 """
 
@@ -9,16 +9,16 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0058_accountant_agent"
-down_revision = "0057_chief_accountant_agent"
+revision = "0058_chief_accountant_agent"
+down_revision = "0057_executive_director_agent"
 branch_labels = None
 depends_on = None
 
-AGENT_ID = "a480cfde-01c8-48bb-a5ca-a00100000055"
-VERSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000056"
-RUN_PERMISSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000057"
-VIEW_PERMISSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000058"
-SLUG = "accountant_agent"
+AGENT_ID = "a480cfde-01c8-48bb-a5ca-a00100000051"
+VERSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000052"
+RUN_PERMISSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000053"
+VIEW_PERMISSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000054"
+SLUG = "chief_accountant_agent"
 
 
 def upgrade() -> None:
@@ -29,11 +29,11 @@ def upgrade() -> None:
         INSERT INTO permissions (id, code, name, description)
         VALUES
           ('{RUN_PERMISSION_ID}', 'agents.{SLUG}.run',
-           'Работа агента бухгалтера (оплата)',
-           'Доступ к рабочему месту контроля оплаты заявок'),
+           'Работа агента главного бухгалтера',
+           'Доступ к рабочему месту бухгалтерского заключения по оплатам'),
           ('{VIEW_PERMISSION_ID}', 'agents.{SLUG}.view_results',
-           'Просмотр результатов агента бухгалтера (оплата)',
-           'Просмотр решений mark_paid/defer/cancel по оплате')
+           'Просмотр результатов агента главного бухгалтера',
+           'Просмотр решений approve/return по реквизитам и авансам')
         ON CONFLICT (code) DO UPDATE
         SET name = EXCLUDED.name, description = EXCLUDED.description;
 
@@ -53,11 +53,11 @@ def upgrade() -> None:
         )
         VALUES (
           '{AGENT_ID}',
-          'ИИ-агент бухгалтера (оплата)',
+          'ИИ-агент главного бухгалтера',
           '{SLUG}',
-          'Контроль плана/просрочки/факта оплаты: рекомендация mark_paid/defer/cancel.',
+          'Бухгалтерское заключение по реквизитам, авансам и ЦФО: рекомендация approve/return.',
           'TESTING',
-          '{{"case_id":"string","case_context":{{"payment_request_id":"string","fully_approved":"boolean","payment_planned_date":"date"}}}}'::jsonb,
+          '{{"case_id":"string","case_context":{{"registry_id":"string","payment_request_id":"string","invoice_requisites":"object"}}}}'::jsonb,
           '{{"role_status":"string","suggested_action":"string","output_data":"object"}}'::jsonb,
           NULL, NULL
         )
@@ -74,11 +74,11 @@ def upgrade() -> None:
           (SELECT id FROM agents WHERE slug = '{SLUG}'),
           1,
           jsonb_build_object(
-            'module', 'app.agents.accountant_agent.service',
+            'module', 'app.agents.chief_accountant_agent.service',
             'contour', 'contour4',
             'read_only', false
           ),
-          'Каркас роли бухгалтера (оплата) контура 4 на платформе',
+          'Каркас роли главного бухгалтера контура 4 на платформе',
           true
         )
         ON CONFLICT (id) DO UPDATE

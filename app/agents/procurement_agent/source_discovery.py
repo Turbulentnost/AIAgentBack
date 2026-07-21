@@ -307,7 +307,11 @@ def normalize_source_document(
         or raw.get("Отменено")
     )
     positions = normalize_need_lines(raw.get("Товары") or [])
-    active_positions = [line for line in positions if not line.cancelled]
+    active_positions = [
+        line
+        for line in positions
+        if not line.cancelled and is_supply_action(line.supply_action)
+    ]
     # Header desired-receipt date applies to every line; otherwise keep per-line dates.
     header_required_date = parse_1c_datetime(raw.get("ЖелаемаяДатаПоступления"))
     if header_required_date:
@@ -361,9 +365,11 @@ def normalize_source_document(
     elif is_terminal_status(status):
         document.skip_reason = f"terminal_status:{status}"
     elif not active_positions:
-        document.skip_reason = "no_active_positions"
-    elif any(not is_supply_action(line.supply_action) for line in active_positions):
-        document.skip_reason = "inactive_supply_action"
+        document.skip_reason = (
+            "inactive_supply_action"
+            if any(not line.cancelled for line in positions)
+            else "no_active_positions"
+        )
     return document
 
 

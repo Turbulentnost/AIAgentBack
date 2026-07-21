@@ -198,6 +198,9 @@ class EngineerAssessmentLine(BaseModel):
     gross_requirement: Decimal
     free_stock: Decimal = Decimal("0")
     available_other_warehouses: Decimal = Decimal("0")
+    warehouse_stock_before: Decimal = Decimal("0")
+    warehouse_stock_used: Decimal = Decimal("0")
+    warehouse_stock_remaining: Decimal = Decimal("0")
     confirmed_arrivals: Decimal = Decimal("0")
     total_available_supply: Decimal = Decimal("0")
     net_requirement: Decimal = Decimal("0")

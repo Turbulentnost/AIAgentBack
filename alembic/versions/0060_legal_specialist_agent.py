@@ -1,7 +1,7 @@
-"""cfo head agent catalog and permissions
+"""legal specialist agent catalog and permissions
 
-Revision ID: 0054_cfo_head_agent
-Revises: 0053_engineer_agent
+Revision ID: 0060_legal_specialist_agent
+Revises: 0059_accountant_agent
 Create Date: 2026-07-20
 """
 
@@ -9,16 +9,16 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "0054_cfo_head_agent"
-down_revision = "0053_engineer_agent"
+revision = "0060_legal_specialist_agent"
+down_revision = "0059_accountant_agent"
 branch_labels = None
 depends_on = None
 
-AGENT_ID = "a480cfde-01c8-48bb-a5ca-a00100000021"
-VERSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000022"
-RUN_PERMISSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000023"
-VIEW_PERMISSION_ID = "a480cfde-01c8-48bb-a5ca-a00100000024"
-SLUG = "cfo_head_agent"
+AGENT_ID = "a480cfde-01c8-48bb-a5ca-a00100000059"
+VERSION_ID = "a480cfde-01c8-48bb-a5ca-a0010000005a"
+RUN_PERMISSION_ID = "a480cfde-01c8-48bb-a5ca-a0010000005b"
+VIEW_PERMISSION_ID = "a480cfde-01c8-48bb-a5ca-a0010000005c"
+SLUG = "legal_specialist_agent"
 
 
 def upgrade() -> None:
@@ -29,11 +29,11 @@ def upgrade() -> None:
         INSERT INTO permissions (id, code, name, description)
         VALUES
           ('{RUN_PERMISSION_ID}', 'agents.{SLUG}.run',
-           'Работа агента руководителя ЦФО',
-           'Доступ к рабочему месту утверждения заявок на расходование ДС по ЦФО'),
+           'Работа агента юридической службы',
+           'Доступ к рабочему месту претензий по незакрытым авансам'),
           ('{VIEW_PERMISSION_ID}', 'agents.{SLUG}.view_results',
-           'Просмотр результатов агента руководителя ЦФО',
-           'Просмотр решений и статусов по заявкам ЦФО')
+           'Просмотр результатов агента юридической службы',
+           'Просмотр решений по претензии и пакету иска')
         ON CONFLICT (code) DO UPDATE
         SET name = EXCLUDED.name, description = EXCLUDED.description;
 
@@ -53,11 +53,11 @@ def upgrade() -> None:
         )
         VALUES (
           '{AGENT_ID}',
-          'ИИ-агент руководителя ЦФО',
+          'ИИ-агент юридической службы',
           '{SLUG}',
-          'Утверждение заявки на расходование ДС по ЦФО: проверка лимита и подготовка решения.',
+          'Претензии по незакрытым авансам: черновик/утверждение/пакет иска (HITL).',
           'TESTING',
-          '{{"case_id":"string","case_context":{{"amount":"number","ds_limit":"number"}}}}'::jsonb,
+          '{{"case_id":"string","case_context":{{"upstream":{{"supplier_id":"string"}},"open_advances":"array"}}}}'::jsonb,
           '{{"role_status":"string","suggested_action":"string","output_data":"object"}}'::jsonb,
           NULL, NULL
         )
@@ -74,11 +74,11 @@ def upgrade() -> None:
           (SELECT id FROM agents WHERE slug = '{SLUG}'),
           1,
           jsonb_build_object(
-            'module', 'app.agents.cfo_head_agent.service',
+            'module', 'app.agents.legal_specialist_agent.service',
             'contour', 'contour4',
             'read_only', false
           ),
-          'Каркас роли руководителя ЦФО контура 4 на платформе',
+          'Каркас роли юридической службы контура 4 на платформе',
           true
         )
         ON CONFLICT (id) DO UPDATE

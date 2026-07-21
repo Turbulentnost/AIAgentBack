@@ -104,6 +104,16 @@ class ProcurementCaseSummary(BaseModel):
     source_active: bool = False
     engineer_bucket: Literal["success", "attention", "critical"] | None = None
     engineer_bucket_reason: str | None = None
+    engineer_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    engineer_decision_kind: Literal[
+        "none", "purchase_confirmation", "critical_acknowledgement"
+    ] | None = None
+    engineer_invoked_at: datetime | None = None
+    engineer_workspace_archived_at: datetime | None = None
+    engineer_action_at: datetime | None = None
+    engineer_critical_acknowledged_at: datetime | None = None
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):
@@ -198,6 +208,12 @@ class ProcurementRoleAgentResultRead(ProcurementRoleAgentResumeRequest):
     correlation_id: str
 
 
+class ProcurementEngineerActionRead(BaseModel):
+    status: str
+    action: Literal["purchase_confirmed", "critical_acknowledged"]
+    case_id: str
+
+
 __all__ = [
     "ProcurementCaseDetail",
     "ProcurementCaseEventRead",
@@ -206,6 +222,7 @@ __all__ = [
     "ProcurementCurrentStateRead",
     "ProcurementDashboardCounts",
     "ProcurementDashboardRead",
+    "ProcurementEngineerActionRead",
     "ProcurementPermissionsRead",
     "ProcurementRefreshResult",
     "ProcurementRoleAgentResumeRequest",
