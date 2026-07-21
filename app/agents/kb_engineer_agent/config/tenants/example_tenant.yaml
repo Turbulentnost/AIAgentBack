@@ -1,0 +1,17 @@
+# config/tenants/example_tenant.yaml — пример конфигурации арендатора (переопределяет default).
+# Значения-заглушки. Реальные нормативы, пороги и маршруты задаёт владелец процесса.
+tenant_id: example_tenant
+extends: default
+
+thresholds:
+  mandatory_coverage_pct: 100
+  block_on_kd_status: [устаревший, заменён, отменён]
+
+# Перечень применимых нормативов арендатора (RAG-контур):
+regulations:
+  - "СТО-28-020 «Закупки» (версия 07)"
+  - "СТО-10-095"
+
+escalation:
+  default_role: "Руководитель КБ / ГСПП"
+  critical_role: "Руководитель КБ / ГСПП (техническая функция)"

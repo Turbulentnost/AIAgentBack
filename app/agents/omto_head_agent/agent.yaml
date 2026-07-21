@@ -1,0 +1,70 @@
+# backend/app/agents/omto_head_agent/agent.yaml
+# ПАСПОРТ АГЕНТА (п. 4.1 ТЗ-ПЛАТФ-001) → сущности agents, agent_versions.
+# Все изменения фиксируются в журнале версий. Источник — Приложение Г ТЗ-АГТ-ОМТО-НАЧ-001.
+
+agent_id: omto_head_agent
+name: "Агент начальника ОМТО"
+name_full: "ИИ-агент начальника отдела материально-технического обеспечения"
+doc_ref: ТЗ-АГТ-ОМТО-НАЧ-001
+version: 1.0
+status: draft            # draft|testing|ope|rework|active|paused|archived
+
+contour:
+  primary: "№3 — Закупка и выбор поставщика"
+  secondary: "№4 — Цены, проектные цены, оплаты и договоры; №5 — Поставка, логистика и входной контроль"
+
+owner:
+  role: "Начальник ОМТО"
+  process_owner: "Начальник ОМТО (владелец процесса закупки по СТО-28-020)"
+  reports_to: "Начальник службы логистики"
+  registry_no: 15        # реестр ролевых агентов системного ТЗ
+
+purpose: >
+  Агент начальника ОМТО — ролевой агент контура №3 — Закупка и выбор поставщика.
+
+autonomy:
+  default: U1            # рекомендация
+  allowed: [U1, U2]      # U2 — только уведомления и маршрутизация
+  forbidden: [U3, U4]    # внешняя отправка, подпись, проведение — запрещены
+
+regulations:
+  - "СТО-28-020 «Закупки» (версия 07)"
+  - "СТО-10-095"
+
+prompts:
+  system: prompts/system.md
+
+io:
+  input_schema: schemas/input.schema.json
+  output_schema: schemas/output.schema.json
+
+runtime:
+  engine: langgraph
+  graph: graph.py:build_graph
+  checkpointer: postgres
+  worker: celery
+
+allowed_tools:  # полный перечень — tools.yaml
+  - erp.read_procurement_cases
+  - erp.read_project_prices
+  - erp.read_invoices_payments
+  - erp.read_delivery_status
+  - erp.read_claims
+  - erp.write_decision
+  - rag.search_regulations
+  - notify.route
+
+allowed_sources:  # полный перечень — sources.yaml
+  - onec_erp        # только через integration-service; прямой доступ запрещён
+  - knowledge_base  # RAG-контур: СТО-28-020 «Закупки» (версия 07), СТО-10-095
+
+policies:
+  confidence: confidence.yaml
+  hitl: hitl.yaml
+  access: access.yaml
+  kpi: kpi.yaml
+
+ope:
+  required: true
+  card: ope/ope_card.md
+  checklist: ope/checklist.md

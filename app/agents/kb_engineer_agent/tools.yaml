@@ -1,0 +1,45 @@
+# tools.yaml — декларация инструментов (п. 4.5/4.6) → agent_tools, tool_calls.
+# Прямое обращение к 1С запрещено; реализация — в backend/app/tools/erp и integrations/onec.
+# Вызов — только через app.platform_sdk.call_tool (журнал tool_calls, write_gate). [TABLE 8]
+agent_id: kb_engineer_agent
+
+tools:
+  - name: rag.search_kd
+    purpose: "Гибридный поиск КД/ТД: смысл + обозначение, пункт, версия, реквизиты"
+    onec: "knowledge_base / Qdrant + полнотекстовый индекс"
+    rights: read
+
+  - name: erp.read_item_card
+    purpose: "Карточка позиции, связанные версии КД, применяемость"
+    onec: "OData: Справочник.Номенклатура; Регистр «Версии КД»"
+    rights: read
+
+  - name: erp.read_specification
+    purpose: "Ресурсная спецификация, состав изделия, применяемость позиции"
+    onec: "OData: Документ.РесурснаяСпецификация"
+    rights: read
+
+  - name: docs.parse_analog_datasheet
+    purpose: "Разбор паспорта, сертификата, описания (PDF/DOCX/XLSX/скан + OCR)"
+    onec: "document-service"
+    rights: read
+
+  - name: rag.search_gost
+    purpose: "Поиск применимых ГОСТ и внешних нормативных требований"
+    onec: "knowledge_base + зарегистрированный внешний источник"
+    rights: read
+
+  - name: erp.write_deviation_approval
+    purpose: "Фиксация согласованного отклонения от КД"
+    onec: "HTTP-сервис: /hs/agents/v1/kd_deviation (белый список)"
+    rights: write                # только после HITL
+
+  - name: docs.render_template
+    purpose: "Формирование технического заключения по шаблону"
+    onec: "document-service"
+    rights: draft
+
+  - name: notify.route
+    purpose: "Уведомление закупщика и руководителя КБ/ГСПП (уровень У2)"
+    onec: "платформенный сервис уведомлений"
+    rights: notify

@@ -1,0 +1,73 @@
+# backend/app/agents/procurement_manager_agent/agent.yaml
+# ПАСПОРТ АГЕНТА (п. 4.1 ТЗ-ПЛАТФ-001) → сущности agents, agent_versions.
+# Все изменения фиксируются в журнале версий.
+
+agent_id: procurement_manager_agent
+name: "Агент менеджера по закупкам"
+name_full: "ИИ-агент ведущего менеджера / менеджера по закупкам"
+doc_ref: ТЗ-АГТ-ЗАКУП-001
+version: 1.0
+status: draft            # draft|testing|ope|rework|active|paused|archived
+
+contour:
+  primary: "№3 — Закупка и выбор поставщика"
+  secondary: "№4 — Цены, проектные цены, оплаты и договоры; №5 — Поставка, логистика и входной контроль"
+
+owner:
+  role: "Ведущий менеджер / менеджер по закупкам"
+  process_owner: "Начальник ОМТО (владелец процесса закупки по СТО-28-020)"
+  reports_to: "Начальник ОМТО / заместитель начальника ОМТО"
+  registry_no: 17        # реестр ролевых агентов системного ТЗ
+
+purpose: >
+  Агент менеджера по закупкам — ролевой агент контура №3 — Закупка и выбор поставщика.
+
+autonomy:
+  default: U1            # рекомендация
+  allowed: [U1, U2]      # U2 — только уведомления и маршрутизация
+  forbidden: [U3, U4]    # внешняя отправка, подпись, проведение — запрещены
+
+regulations:
+  - "СТО-28-020 «Закупки» (версия 07)"
+  - "СТО-10-095"
+  - "ПЛ-34-048"
+
+prompts:
+  system: prompts/system.md
+
+io:
+  input_schema: schemas/input.schema.json
+  output_schema: schemas/output.schema.json
+
+runtime:
+  engine: langgraph
+  graph: graph.py:build_graph
+  checkpointer: postgres
+  worker: celery
+
+allowed_tools:  # полный перечень — tools.yaml
+  - erp.read_specification
+  - rag.search_kd
+  - erp.read_supplier_history
+  - erp.read_contracts
+  - market.search_offers
+  - docs.parse_quote
+  - erp.draft_purchase_order
+  - erp.link_invoice
+  - docs.render_template
+  - notify.route
+
+allowed_sources:  # полный перечень — sources.yaml
+  - onec_erp        # только через integration-service; прямой доступ запрещён
+  - knowledge_base  # RAG-контур: СТО-28-020 «Закупки» (версия 07)
+
+policies:
+  confidence: confidence.yaml
+  hitl: hitl.yaml
+  access: access.yaml
+  kpi: kpi.yaml
+
+ope:
+  required: true
+  card: ope/ope_card.md
+  checklist: ope/checklist.md

@@ -1,0 +1,36 @@
+# config/default.yaml — значения по умолчанию.
+# Обязательные критерии проверки, пороги риска, сроки актуальности источников и маршруты
+# задаются конфигурацией арендатора (config/tenants/<tenant>.yaml), НЕ зашиваются в код (п. 5).
+agent_id: security_officer_agent
+
+autonomy:
+  level: U1
+
+# Обязательные критерии проверки контрагента (покрытие 100% — блокирующий KPI K1):
+mandatory_criteria:
+  - id: registration
+    name: "Регистрация и статус в официальном реестре"
+  - id: settlements
+    name: "Взаиморасчёты и задолженность"
+  - id: history
+    name: "История исполнения договоров, претензии"
+  - id: affiliation
+    name: "Связанность и конфликт интересов"
+
+thresholds:
+  min_criteria_coverage_pct: 100         # заключение не выдаётся при покрытии < 100% (K6)
+  source_freshness_days: 30              # допустимый срок актуальности внешнего источника
+  new_org_risk_months: 12               # срок регистрации < N мес. — фактор риска
+  one_time_exception_limit_rub: 10000    # одноразовое исключение (согласование ФД + СБ)
+
+risk_levels: [low, medium, high]
+
+exceptions:                              # предусмотренные исключения — задаются арендатором
+  enabled: false
+
+routes:                                  # маршруты согласования — переопределяются арендатором
+  new_supplier_route: ["Начальник ОМТО", "СБ", "Юрист"]
+  critical_route: ["Руководитель службы безопасности"]
+
+templates:                               # идентификаторы шаблонов документов
+  counterparty_verdict: counterparty_verdict_default

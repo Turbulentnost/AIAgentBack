@@ -1,0 +1,72 @@
+# backend/app/agents/omto_deputy_agent/agent.yaml
+# ПАСПОРТ АГЕНТА (п. 4.1 ТЗ-ПЛАТФ-001) → сущности agents, agent_versions.
+# Все изменения фиксируются в журнале версий.
+
+agent_id: omto_deputy_agent
+name: "Агент заместителя начальника ОМТО"
+name_full: "ИИ-агент заместителя начальника отдела материально-технического обеспечения"
+doc_ref: ТЗ-АГТ-ОМТО-ЗАМ-001
+version: 1.0
+status: draft            # draft|testing|ope|rework|active|paused|archived
+
+contour:
+  primary: "№3 — Закупка и выбор поставщика"
+  secondary: "—"
+
+owner:
+  role: "Заместитель начальника ОМТО"
+  process_owner: "Начальник ОМТО (владелец процесса закупки по СТО-28-020)"
+  reports_to: "Начальник ОМТО"
+  registry_no: 16        # реестр ролевых агентов системного ТЗ
+
+purpose: >
+  Агент заместителя начальника ОМТО — ролевой агент контура №3 — Закупка и выбор поставщика.
+
+autonomy:
+  default: U1            # рекомендация
+  allowed: [U1, U2]      # U2 — только уведомления и маршрутизация
+  forbidden: [U3, U4]    # внешняя отправка, подпись, проведение — запрещены
+
+regulations:
+  - "СТО-28-020 «Закупки» (версия 07)"
+
+prompts:
+  system: prompts/system.md
+
+io:
+  input_schema: schemas/input.schema.json
+  output_schema: schemas/output.schema.json
+
+runtime:
+  engine: langgraph
+  graph: graph.py:build_graph
+  checkpointer: postgres
+  worker: celery
+
+allowed_tools:  # полный перечень — tools.yaml
+  - erp.read_unassigned_queue
+  - erp.read_open_orders
+  - erp.read_managers_workload
+  - erp.read_item_groups
+  - erp.set_responsible_manager
+  - rag.search_regulations
+  - notify.route
+
+allowed_sources:  # полный перечень — sources.yaml
+  - onec_erp        # только через integration-service; прямой доступ запрещён
+  - knowledge_base  # RAG-контур: СТО-28-020 «Закупки» (версия 07)
+
+policies:
+  confidence: confidence.yaml
+  hitl: hitl.yaml
+  access: access.yaml
+  kpi: kpi.yaml
+
+ope:
+  required: true
+  card: ope/ope_card.md
+  checklist: ope/checklist.md
+
+# ВАЖНО — открытая коллизия D01 (СТО-28-020 vs СТО-06-010): владелец создания заказа
+# поставщику не определён. До закрытия D01 агент формирует ТОЛЬКО проект назначения и
+# не создаёт заказ поставщику. ТЗ подлежит корректировке после закрытия решения D01.

@@ -1,0 +1,29 @@
+# config/default.yaml — значения по умолчанию.
+# Все регламенты, коды ЦФО, статьи расходов, маршруты согласования и пороги задаются
+# конфигурацией арендатора (config/tenants/<tenant>.yaml), НЕ зашиваются в код (п. 5).
+agent_id: procurement_manager_agent
+
+autonomy:
+  level: U1
+
+thresholds:
+  required_comparable_quotes: 3          # требуемое число сопоставимых предложений (K1)
+  price_deviation_memo_pct: 0            # порог отклонения цены для служебной записки (шаг 3.3)
+  one_time_exception_limit_rub: 10000    # одноразовое исключение (согласование ФД + СБ)
+  spec_clarification_cycles_max: 1       # целевое число циклов уточнения (K6)
+
+normalization:
+  currency: RUB
+  vat_included: true
+  lead_time_unit: "рабочие дни"
+
+routes:                                  # маршруты согласования — переопределяются арендатором
+  contract_route: "ПЛ-34-048"
+  price_memo_route: ["Начальник ОМТО", "Финансовая функция"]
+  new_supplier_route: ["Начальник ОМТО", "СБ", "Юрист"]
+
+templates:                               # идентификаторы шаблонов документов
+  rfq: rfq_default
+  contract: contract_default
+  price_memo: price_memo_default
+  claim: claim_default

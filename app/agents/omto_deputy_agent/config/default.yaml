@@ -1,0 +1,20 @@
+# config/default.yaml — значения по умолчанию.
+# Все регламенты, коды ЦФО, справочники, нормативы и пороги задаются конфигурацией
+# арендатора (config/tenants/<tenant>.yaml), НЕ зашиваются в код (п. 5).
+agent_id: omto_deputy_agent
+
+autonomy:
+  level: U1
+
+thresholds:
+  queue_overdue_days: 2                  # допустимый срок нахождения позиции в очереди (K2)
+  workload_deviation_pct: 20             # предельное отклонение загрузки от среднего (K4)
+  workload_data_stale_hours: 24          # порог устаревания данных загрузки менеджеров
+  specialization_match_min: 1            # минимум подходящих кандидатов для назначения
+
+escalation:
+  default_role: "Начальник ОМТО"
+
+notify:                                  # адресаты уведомлений (уровень У2)
+  manager: true
+  head: true

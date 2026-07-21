@@ -1,0 +1,24 @@
+# config/default.yaml — значения по умолчанию.
+# Все регламенты, нормативы и пороги задаются конфигурацией арендатора
+# (config/tenants/<tenant>.yaml), НЕ зашиваются в код (п. 5). [TABLE 16]
+agent_id: kb_engineer_agent
+
+autonomy:
+  level: U1
+
+thresholds:
+  mandatory_coverage_pct: 100            # покрытие обязательных критериев для выдачи заключения (K1)
+  block_on_kd_status: [устаревший, заменён, отменён]   # статусы КД, при которых заключение не выдаётся
+  critical_impact_max_confidence: medium # при критическом влиянии уверенность не выше medium
+
+kd_status_values:                        # статусы актуальности КД (Ф1)
+  actual: [действующий, изменён]
+  not_actual: [заменён, отменён, устаревший, "требует проверки"]
+
+templates:                               # идентификаторы шаблонов документов
+  conclusion_allow: conclusion_allow_default
+  conclusion_deny: conclusion_deny_default
+
+escalation:
+  default_role: "Руководитель КБ / ГСПП"
+  critical_role: "Руководитель КБ / ГСПП (техническая функция)"

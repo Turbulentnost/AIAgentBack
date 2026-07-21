@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "procurement_manager_agent.output",
+  "description": "Структурированный результат агента по образцу п. 4.8 ТЗ-ПЛАТФ-001 (task_results).",
+  "type": "object",
+  "required": ["agent_id", "status", "summary", "findings",
+               "data_confidence", "requires_human_review"],
+  "properties": {
+    "agent_id": { "const": "procurement_manager_agent" },
+    "status":   { "enum": ["completed", "completed_with_issues", "needs_input", "failed"] },
+    "summary":  { "type": "string", "maxLength": 300,
+                  "description": "Краткое резюме на русском языке" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "severity", "description", "source"],
+        "properties": {
+          "type":        { "type": "string" },
+          "severity":    { "enum": ["critical", "major", "minor"] },
+          "description": { "type": "string" },
+          "source":      { "type": "string",
+                           "description": "документ, раздел, пункт, версия, дата обращения, статус источника (п. 4.7)" },
+          "recommendation": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "data_confidence":       { "enum": ["high", "medium", "low"] },
+    "requires_human_review": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

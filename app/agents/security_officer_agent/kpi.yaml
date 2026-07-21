@@ -1,0 +1,33 @@
+# kpi.yaml — целевые значения KPI (раздел 11, TABLE 13 ТЗ-АГТ-СБ-001). blocking препятствуют
+# приёмке; guardrail при нарушении порога вызывают автоматическое понижение автономности.
+agent_id: security_officer_agent
+targets:
+  - id: K1
+    name: "Полнота проверки контрагента по обязательным критериям"
+    target: "100%"
+    blocking: true
+    source: "map_to_criteria + coverage"
+  - id: K2
+    name: "Пропущенные критические факторы риска"
+    target: "0"
+    blocking: true
+    source: "сверка с фактическими инцидентами + журнал ОПЭ"
+  - id: K3
+    name: "Доля необоснованных блокировок безопасных контрагентов"
+    target: "≤ 5%"
+    guardrail: true
+    on_breach: downgrade_autonomy
+    source: "журнал HITL"
+  - id: K4
+    name: "Своевременность заключения"
+    target: "≥ 95%"
+    source: "audit_logs"
+  - id: K5
+    name: "Доля факторов риска со ссылкой, датой обращения и статусом источника"
+    target: "100%"
+    source: "source_references"
+  - id: K6
+    name: "Заключения, выданные при покрытии критериев < 100%"
+    target: "0"
+    blocking: true
+    source: "coverage + audit_logs"

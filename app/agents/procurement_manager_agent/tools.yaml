@@ -1,0 +1,55 @@
+# tools.yaml — декларация инструментов (п. 4.5/4.6) → agent_tools, tool_calls.
+# Прямое обращение к 1С запрещено; реализация — в backend/app/tools/erp и integrations/onec.
+# Вызов — только через app.platform_sdk.call_tool (журнал tool_calls, write_gate).
+agent_id: procurement_manager_agent
+
+tools:
+  - name: erp.read_specification
+    purpose: "Спецификация, номенклатура, описание, файлы"
+    onec: "OData: Справочник.Номенклатура, Документ.Спецификация"
+    rights: read
+
+  - name: rag.search_kd
+    purpose: "КД/ТД, версия, статус актуальности, требования качества"
+    onec: "knowledge_base / Qdrant + полнотекстовый поиск"
+    rights: read
+
+  - name: erp.read_supplier_history
+    purpose: "Рейтинг, договор, качество, история поставок, коммерческие условия"
+    onec: "HTTP-сервис: /hs/agents/v1/supplier_rating"
+    rights: read
+
+  - name: erp.read_contracts
+    purpose: "Действующие договоры, существенные условия, маршрут ПЛ-34-048"
+    onec: "OData: Справочник.ДоговорыКонтрагентов"
+    rights: read
+
+  - name: market.search_offers
+    purpose: "Рыночные предложения через зарегистрированный внешний источник"
+    onec: "integration-service (белый список источников)"
+    rights: read
+
+  - name: docs.parse_quote
+    purpose: "Разбор КП: PDF/DOCX/XLSX/сканы, извлечение таблиц и реквизитов"
+    onec: "document-service (PyMuPDF, python-docx, openpyxl, OCR)"
+    rights: read
+
+  - name: erp.draft_purchase_order
+    purpose: "Создание ПРОЕКТА заказа поставщику без проведения"
+    onec: "HTTP-сервис: /hs/agents/v1/purchase_order_draft"
+    rights: write_draft          # только после HITL
+
+  - name: erp.link_invoice
+    purpose: "Связывание счёта с кейсом, даты поступления и оплаты"
+    onec: "HTTP-сервис: /hs/agents/v1/invoice_link"
+    rights: write                # только после HITL
+
+  - name: docs.render_template
+    purpose: "Формирование RFQ, договора, СЗ, претензии по шаблону"
+    onec: "document-service"
+    rights: draft
+
+  - name: notify.route
+    purpose: "Уведомление и маршрутизация проекта (уровень У2)"
+    onec: "платформенный сервис уведомлений"
+    rights: notify

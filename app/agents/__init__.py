@@ -3,6 +3,7 @@ from app.agents.meeting_agent import service as _meeting_service  # noqa: F401,E
 from app.agents.nd_control_agent import service as _nd_control_service  # noqa: F401,E402
 from app.agents.procurement_agent import service as _procurement_service  # noqa: F401,E402
 from app.agents.procurement_role_agents import service as _procurement_role_service  # noqa: F401,E402
+from app.agents.omto_role_agents import service as _omto_role_service  # noqa: F401,E402
 from app.agents.tasks_agent import service as _tasks_service  # noqa: F401,E402
 
 __all__ = ["agent_registry"]

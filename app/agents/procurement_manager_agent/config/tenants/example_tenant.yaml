@@ -1,0 +1,20 @@
+# config/tenants/example_tenant.yaml — пример конфигурации арендатора (переопределяет default).
+# Значения-заглушки. Реальные ЦФО, статьи, маршруты и пороги задаёт владелец процесса.
+tenant_id: example_tenant
+extends: default
+
+thresholds:
+  required_comparable_quotes: 3
+  one_time_exception_limit_rub: 10000
+
+cfo:                                     # центры финансовой ответственности (ЦФО)
+  - code: "ЦФО-01"
+    name: "ОМТО"
+expense_items:
+  - code: "СТ-МТО-001"
+    name: "Материалы основного производства"
+
+routes:
+  contract_route: "ПЛ-34-048"
+  price_memo_route: ["Начальник ОМТО", "Финансовый директор"]
+  new_supplier_route: ["Начальник ОМТО", "СБ", "Юрист"]

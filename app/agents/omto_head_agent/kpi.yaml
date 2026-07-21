@@ -1,0 +1,30 @@
+# kpi.yaml — целевые значения KPI (раздел 11 ТЗ). blocking препятствуют приёмке;
+# guardrail при нарушении порога вызывают автоматическое понижение автономности.
+# Источник — раздел 11 и TABLE 13 ТЗ-АГТ-ОМТО-НАЧ-001.
+agent_id: omto_head_agent
+targets:
+  - id: K1
+    name: "Своевременность распределения заявок"
+    target: "≥ 98%"
+    source: "erp.read_procurement_cases"
+  - id: K2
+    name: "Доля просроченных закупочных задач"
+    target: "≤ 5%"
+    source: "erp.read_procurement_cases"
+  - id: K3
+    name: "Пропущенные критические отклонения цены или поставки"
+    target: "0"
+    blocking: true
+    source: "сверка с 1С + журнал ОПЭ"
+  - id: K4
+    name: "Корректирующие действия, закрытые в срок"
+    target: "≥ 95%"
+    source: "erp.write_decision + audit_logs"
+  - id: K5
+    name: "Доля выводов со ссылкой на источник и правило"
+    target: "100%"
+    source: "source_references"
+  - id: K6
+    name: "Доля проектов решений, принятых без существенной переработки"
+    target: "≥ 90%"
+    source: "журнал HITL"

@@ -1,0 +1,62 @@
+# confidence.yaml — правила снижения уверенности и эскалации (п. 4.7 ТЗ-ПЛАТФ-001).
+# Узел assess_confidence понижает data_confidence и выставляет requires_human_review.
+agent_id: omto_deputy_agent
+version: 1
+
+# Условия обязательного снижения уверенности и передачи человеку (раздел 8.2 ТЗ):
+#  - номенклатурная группа позиции не определяется однозначно по справочнику арендатора;
+#  - отсутствуют обязательные реквизиты позиции (дата потребности, ЦФО, приоритет);
+#  - матрица специализаций не покрывает номенклатурную группу позиции;
+#  - данные о загрузке менеджеров устарели (дата обновления превышает порог конфигурации);
+#  - обнаружен возможный, но не подтверждённый дубль (совпадение по номенклатуре без
+#    совпадения по дате или проекту);
+#  - позиция помечена как критическая для производственного плана — уверенность не выше medium.
+rules:
+  - id: missing_required_fields
+    when: state.errors[?type=='missing_field']
+    set_confidence: low
+    requires_human_review: true
+
+  - id: source_conflict
+    when: conflicting_sources_detected
+    set_confidence: low
+    requires_human_review: true
+
+  - id: ambiguous_item_group
+    when: state.classification.group_unambiguous == false
+    set_confidence: low
+    requires_human_review: true
+
+  - id: specialization_not_covered
+    when: state.classification.has_candidate == false
+    set_confidence: low
+    requires_human_review: true
+
+  - id: stale_workload_data
+    when: any(managers[?workload_stale==true])
+    set_confidence: low
+    requires_human_review: true
+
+  - id: unconfirmed_duplicate
+    when: possible_duplicate && not confirmed_duplicate
+    set_confidence: low
+    requires_human_review: true
+
+  - id: critical_position
+    when: state.classification.critical_for_plan == true
+    max_confidence: medium
+    requires_human_review: true
+
+  - id: critical_finding
+    when: any(findings[?severity=='critical'])
+    max_confidence: medium
+    requires_human_review: true
+
+degrade_on:
+  - metric: false_escalation_rate
+    threshold: 0.05
+    action: downgrade_to_U0     # автоматическое понижение автономности
+
+escalation:
+  default_role: "Начальник ОМТО"
+  critical_role: "Начальник ОМТО (владелец процесса закупки по СТО-28-020)"

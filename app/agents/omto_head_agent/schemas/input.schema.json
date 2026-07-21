@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "omto_head_agent.input",
+  "type": "object",
+  "required": ["correlation_id", "tenant_id", "task_type"],
+  "properties": {
+    "correlation_id": { "type": "string", "format": "uuid" },
+    "tenant_id":      { "type": "string" },
+    "task_type":      { "enum": ["periodic_control", "case_review",
+                                 "price_deviation_review", "daily_report"] },
+    "case_ids":       { "type": "array", "items": { "type": "string" } },
+    "period": {
+      "type": "object",
+      "properties": { "from": { "type": "string", "format": "date" },
+                      "to":   { "type": "string", "format": "date" } }
+    },
+    "requested_by":   { "type": "string", "description": "user_id инициатора" }
+  },
+  "additionalProperties": false
+}
