@@ -8,13 +8,16 @@ from agent_pochta.schemas import EmailMessage
 from agent_pochta.services.llm_analyze import (
     build_analyze_messages,
     extract_partner_from_summary,
+    extract_partner_from_text_fields,
     infer_partner_from_domain,
     infer_partner_from_email,
+    is_own_organization,
     looks_like_job_title,
     looks_like_org_name,
     looks_like_person_name,
     normalize_partner_name,
     parse_analyze_response,
+    resolve_partner_ladder,
     resolve_partner_name,
 )
 from agent_pochta.services.summary import extract_partner_from_signature
@@ -49,7 +52,7 @@ def test_analyze_system_prompt_forbids_chat_replies():
     assert "Действие требуемое в письме: краткая тема" in system
     assert "не ставь шаблонное «Действие»" in system
     assert "partner_name" in system
-    assert "Не человек и не должность" in system
+    assert "Лесенка" in system
     assert "БелГИМ" in system
     assert "process_type" in system
     assert "сух" in system.lower()
@@ -442,4 +445,56 @@ def test_resolve_partner_uses_summary_company_when_domain_unknown():
             summary_ru="Оксана Попова от компании H-Energy отвечает на запрос.",
         )
         == "H-Energy"
+    )
+
+
+def test_is_own_organization_excludes_turbulence_and_almaz():
+    assert is_own_organization('ООО НПО «Турбулентность-ДОН»') is True
+    assert is_own_organization('ООО "АЛМАЗ"') is True
+    assert is_own_organization("ООО «Ромашка»") is False
+
+
+def test_resolve_partner_ladder_explicit_company():
+    email = _email(sender_name="Иван Иванов")
+    assert (
+        resolve_partner_ladder(
+            explicit_partner="ООО «Ромашка»",
+            email=email,
+        )
+        == "ООО «Ромашка»"
+    )
+
+
+def test_resolve_partner_ladder_finds_ooo_in_text():
+    email = _email(
+        sender_name="Менеджер",
+        subject="Счёт",
+        body_text="Направляем счёт от ООО «ГазСервис».",
+    )
+    assert (
+        resolve_partner_ladder(
+            explicit_partner=None,
+            email=email,
+        )
+        == "ООО «ГазСервис»"
+    )
+
+
+def test_resolve_partner_ladder_sender_name_fallback():
+    email = _email(sender_name="Пётр Сидоров", body_text="Добрый день!")
+    assert (
+        resolve_partner_ladder(
+            explicit_partner=None,
+            email=email,
+        )
+        == "Пётр Сидоров"
+    )
+
+
+def test_extract_partner_from_text_fields_skips_own_org():
+    assert (
+        extract_partner_from_text_fields(
+            body_text="ООО НПО «Турбулентность-ДОН» просит оплатить счёт ООО «Лунда».",
+        )
+        == "ООО «Лунда»"
     )

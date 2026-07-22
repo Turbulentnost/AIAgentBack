@@ -578,17 +578,24 @@ def test_gazprom_and_yandex_payer_direction_from_xml_direction() -> None:
     assert resolve_payer_direction("НП", "ПР") == "ТурбулентностьДОНПроизводство1"
 
 
-def test_almaz_default_partner_when_xml_partner_dash(
+def test_almaz_empty_xml_partner_uses_ladder_not_default_almaz(
     sample_email: EmailMessage,
     sample_routing: RoutingResult,
 ) -> None:
+    """Пустой partner при org=АЛ не подставляет ООО АЛМАЗ — только лесенку."""
     xml = (
         SAMPLE_XML.replace("<organization>НП</organization>", "<organization>АЛ</organization>")
         .replace("<partner>ООО Пример</partner>", "<partner>-</partner>")
         .replace("<направление>КС</направление>", "<направление>АЛ</направление>")
     )
+    email = sample_email.model_copy(
+        update={
+            "sender_name": "Иван Петров",
+            "body_text": "Добрый день, просим счёт.",
+        }
+    )
     payload = build_incoming_document_payload(
-        sample_email,
+        email,
         sample_routing,
         "",
         xml_document=xml,
@@ -596,5 +603,53 @@ def test_almaz_default_partner_when_xml_partner_dash(
         department_keys=SAMPLE_DEPT_KEYS,
     )
     assert payload["ПлательщикНаправление"] == "АЛМАЗ"
-    assert payload["Партнер"] == 'ООО "АЛМАЗ"'
+    assert payload["Партнер"] == "Иван Петров"
+    assert payload["Партнер"] != 'ООО "АЛМАЗ"'
     assert payload["Партнер_Type"] == "Edm.String"
+
+
+def test_empty_xml_partner_finds_ooo_in_body(
+    sample_email: EmailMessage,
+    sample_routing: RoutingResult,
+) -> None:
+    xml = SAMPLE_XML.replace("<partner>ООО Пример</partner>", "<partner>-</partner>")
+    email = sample_email.model_copy(
+        update={
+            "body_text": "Счёт от ООО «Ромашка» во вложении.",
+            "sender_name": "Менеджер",
+        }
+    )
+    payload = build_incoming_document_payload(
+        email,
+        sample_routing,
+        "",
+        xml_document=xml,
+        organization_keys=SAMPLE_ORG_KEYS,
+        department_keys=SAMPLE_DEPT_KEYS,
+    )
+    assert payload["Партнер"] == "ООО «Ромашка»"
+
+
+def test_empty_xml_partner_skips_own_organization_in_body(
+    sample_email: EmailMessage,
+    sample_routing: RoutingResult,
+) -> None:
+    xml = SAMPLE_XML.replace("<partner>ООО Пример</partner>", "<partner>-</partner>")
+    email = sample_email.model_copy(
+        update={
+            "body_text": (
+                "ООО НПО «Турбулентность-ДОН» направляет документы.\n"
+                "Контрагент: ООО «Внешний Партнёр»."
+            ),
+            "sender_name": "Секретарь",
+        }
+    )
+    payload = build_incoming_document_payload(
+        email,
+        sample_routing,
+        "",
+        xml_document=xml,
+        organization_keys=SAMPLE_ORG_KEYS,
+        department_keys=SAMPLE_DEPT_KEYS,
+    )
+    assert payload["Партнер"] == "ООО «Внешний Партнёр»"

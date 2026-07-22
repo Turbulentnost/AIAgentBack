@@ -12,7 +12,6 @@ from agent_pochta.schemas import EmailMessage, RoutingResult, SenderIdentity, Sp
 from agent_pochta.services.summary import (
     build_summary_context,
     clamp_summary,
-    extract_partner_from_signature,
     summary_ru_system_rules,
 )
 
@@ -76,6 +75,22 @@ _SUMMARY_COMPANY_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_LEGAL_ENTITY_IN_TEXT_RE = re.compile(
+    r"(?<!\w)("
+    r"(?:ООО|OOO|АО|AO|ПАО|PAO|ЗАО|ZAO|ИП|ФГУП|"
+    r"ГУП|МУП|НКО|АНО|ЧОУ|ОАО|"
+    r"LLC|Ltd\.?|Inc\.?|Corp\.?)"
+    r"[\s«\"]*[^\n,;]{2,120}?)"
+    r"(?:[»\"]|(?=\s*(?:\n|$|tel|phone|тел|моб|email|@|\d{10})))",
+    re.IGNORECASE,
+)
+_OWN_ORG_SUBSTRINGS = (
+    "турбулентность",
+    "turbulentnost",
+    "turbo-don",
+    "turbodon",
+)
+_OWN_ORG_EXACT_CORES = frozenset({"алмаз", "almaz", "npo"})
 
 
 @dataclass(frozen=True)
@@ -177,6 +192,96 @@ def partners_same_entity(left: str | None, right: str | None) -> bool:
     return a in b or b in a
 
 
+def is_own_organization(name: str | None) -> bool:
+    """True для наших юрлиц/брендов (НПО, Турбулентность-ДОН, ООО АЛМАЗ и т.п.)."""
+    core = _partner_core_key(name)
+    if not core:
+        return False
+    if core in _OWN_ORG_EXACT_CORES or core.endswith("алмаз") or core.endswith("almaz"):
+        return True
+    normalized = core.replace("-", "")
+    return any(marker.replace("-", "") in normalized for marker in _OWN_ORG_SUBSTRINGS)
+
+
+def _accept_partner_candidate(raw: str | None) -> str | None:
+    candidate = normalize_partner_name(raw)
+    if not candidate or is_own_organization(candidate):
+        return None
+    return candidate
+
+
+def extract_partner_from_text_fields(
+    *,
+    subject: str | None = None,
+    body_text: str | None = None,
+    sender_name: str | None = None,
+    sender_email: str | None = None,
+    summary_ru: str | None = None,
+) -> str | None:
+    """Ищет юрлицо в subject/body/summary/From; пропускает наши организации."""
+    from agent_pochta.services.summary import extract_partner_from_signature
+
+    for chunk in (
+        extract_partner_from_signature(body_text or ""),
+        extract_partner_from_summary(summary_ru),
+    ):
+        accepted = _accept_partner_candidate(chunk)
+        if accepted:
+            return accepted
+
+    combined = "\n".join(
+        part
+        for part in (subject, body_text, sender_name, sender_email)
+        if part and str(part).strip()
+    )
+    if not combined.strip():
+        return None
+
+    for match in _LEGAL_ENTITY_IN_TEXT_RE.finditer(combined):
+        accepted = _accept_partner_candidate(match.group(0).strip())
+        if accepted:
+            return accepted
+    return None
+
+
+def resolve_partner_ladder(
+    *,
+    explicit_partner: str | None,
+    email: EmailMessage | None = None,
+    subject: str | None = None,
+    body_text: str | None = None,
+    summary_ru: str | None = None,
+) -> str | None:
+    """Лесенка: явная компания → юрлицо в тексте → имя отправителя (From)."""
+    explicit = _accept_partner_candidate(explicit_partner)
+    summary_partner = _accept_partner_candidate(extract_partner_from_summary(summary_ru))
+    if explicit and looks_like_org_name(explicit):
+        if summary_partner and not partners_same_entity(explicit, summary_partner):
+            return summary_partner
+        return explicit
+
+    resolved_subject = subject if subject is not None else (email.subject if email else None)
+    resolved_body = body_text if body_text is not None else (email.body_text if email else None)
+    from_text = extract_partner_from_text_fields(
+        subject=resolved_subject,
+        body_text=resolved_body,
+        sender_name=email.sender_name if email else None,
+        sender_email=email.sender_email if email else None,
+        summary_ru=summary_ru,
+    )
+    if from_text:
+        return from_text
+
+    if summary_partner:
+        return summary_partner
+
+    if email is not None:
+        sender = normalize_partner_name(email.sender_name)
+        if sender and "@" not in sender:
+            return sender
+    return None
+
+
 def _format_domain_label(label: str) -> str:
     parts = [part for part in label.split("-") if part]
     if not parts:
@@ -252,41 +357,32 @@ def resolve_partner_name(
     qdrant_url: str | None = None,
     learned_partner: str | None = None,
 ) -> str | None:
-    """HITL → подпись → LLM/обзор (согласованность) → домен → RAG → From (org)."""
+    """HITL → лесенка (явная компания → текст → From) с канонизацией в Qdrant."""
     learned = normalize_partner_name(learned_partner)
     if learned:
         return _canonicalize_partner(learned, qdrant_url=qdrant_url)
 
+    explicit = normalize_partner_name(llm_partner)
+    if not explicit:
+        rag_hint = normalize_partner_name(rag_partner)
+        if rag_hint and looks_like_org_name(rag_hint):
+            explicit = rag_hint
+
     text = body_text if body_text is not None else (email.body_text if email else "")
 
-    signature_partner = extract_partner_from_signature(text or "")
-    if signature_partner:
-        return _canonicalize_partner(signature_partner, qdrant_url=qdrant_url)
-
-    summary_partner = extract_partner_from_summary(summary_ru)
-    llm = normalize_partner_name(llm_partner)
-    if llm and looks_like_org_name(llm):
-        # Компания в summary_ru и partner_name — одна сущность; иначе доверяем обзору.
-        if summary_partner and not partners_same_entity(llm, summary_partner):
-            return _canonicalize_partner(summary_partner, qdrant_url=qdrant_url)
-        return _canonicalize_partner(llm, qdrant_url=qdrant_url)
-
-    if email is not None:
-        domain_partner = infer_partner_from_domain(email.sender_email)
-        if domain_partner:
-            if summary_partner and not partners_same_entity(domain_partner, summary_partner):
-                return _canonicalize_partner(summary_partner, qdrant_url=qdrant_url)
-            return _canonicalize_partner(domain_partner, qdrant_url=qdrant_url)
-
-    if summary_partner:
-        return _canonicalize_partner(summary_partner, qdrant_url=qdrant_url)
+    resolved = resolve_partner_ladder(
+        explicit_partner=explicit,
+        email=email,
+        subject=email.subject if email else None,
+        body_text=text,
+        summary_ru=summary_ru,
+    )
+    if resolved:
+        return _canonicalize_partner(resolved, qdrant_url=qdrant_url)
 
     rag = normalize_partner_name(rag_partner)
-    if rag and looks_like_org_name(rag):
+    if rag and looks_like_org_name(rag) and not is_own_organization(rag):
         return rag
-
-    if email is not None:
-        return infer_partner_from_email(email)
     return None
 
 
@@ -339,15 +435,17 @@ def build_analyze_messages(
         "формат «Глагол: краткая тема». "
         "Глагол из: Запрос, Проверить, Решить, Согласовать, Оплатить, Ознакомиться, Рассмотреть. "
         "Не копируй тело; не ставь шаблонное «Действие»; убери Re:/Fw:/Fwd:.\n"
-        "5) partner_name — компания (юрлицо/бренд), от которой пришёл запрос "
-        "(поле «Партнёр» в 1С, ≤200 символов). Не человек и не должность.\n"
-        "   Бери юрлицо/бренд; предпочтительнее русское наименование с правовой формой.\n"
-        "   Запрещено: ФИО; должность/роль; чужое подразделение без названия компании; "
-        "мы (НПО/ООО «Турбулентность-ДОН»); голая форма («ООО») без имени.\n"
+        "5) partner_name — контрагент (поле «Партнёр» в 1С, ≤200 символов). "
+        "Лесенка (строго по порядку):\n"
+        "   а) Явно названная компания в письме/вложениях/подписи — укажи её "
+        "(предпочтительно с правовой формой: ООО, ИП, ПАО, АО, ЗАО…).\n"
+        "   б) Если компании нет — найди в subject/body/attachments/signature юрлицо "
+        "по маркерам ООО/ИП/ПАО/АО/ЗАО и т.п.; НЕ наши: "
+        "Турбулентность, Турбулентность-ДОН, turbo-don, ООО НПО, ООО АЛМАЗ.\n"
+        "   в) Если юрлица нет — оставь \"\" (имя отправителя From подставит backend).\n"
+        "   Запрещено: ФИО; должность/роль; наши юрлица; голая форма («ООО») без имени.\n"
         "   Если в summary_ru названа компания — partner_name должен быть той же.\n"
-        "   Источники по приоритету: email_signature → attachments_text → тело письма. "
-        "Не бери домен/From, если организация есть в тексте. "
-        "contractor_name — только подсказка.\n"
+        "   Не подставляй домен почты и payer/organization из XML — это не контрагент.\n"
         "   Контрпример: «Инженер 1 категории…, БелГИМ» → partner_name «БелГИМ».\n"
         "   Неизвестно → \"\".\n"
         "6) process_type — по СУТИ требуемого действия, не по типу вложения.\n"

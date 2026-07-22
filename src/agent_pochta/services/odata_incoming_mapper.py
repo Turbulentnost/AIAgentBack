@@ -21,6 +21,7 @@ from agent_pochta.routing.organizations import (
 from agent_pochta.routing.xml_builder import resolve_document_theme
 from agent_pochta.routing.xml_parser import parse_document_xml
 from agent_pochta.schemas import EmailMessage, RoutingResult
+from agent_pochta.services.llm_analyze import normalize_partner_name, resolve_partner_ladder
 
 DEFAULT_PAYER_DIRECTION_MAP_FILE = (
     PROJECT_ROOT / "data" / "odata_payer_direction_map.json"
@@ -61,7 +62,6 @@ _MSK = ZoneInfo("Europe/Moscow")
 _EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 _COMPOSITE_STRING_TYPE = "Edm.String"
 _ORG_AS_PAYER_DIRECTION = frozenset({"АЛ", "МГ", "АМ", "МИ", "БМ"})
-_ALMAZ_DEFAULT_PARTNER = 'ООО "АЛМАЗ"'
 
 # Enum 1С «ТД_НаправленияСлужебныхЗаписок» (поле OData «Направление»).
 # Коды XML (<направление> ПР/КС/СС) сюда не входят — это отдельный enum «ПлательщикНаправление».
@@ -506,9 +506,18 @@ def build_incoming_document_payload(
         process_type=parsed.get("process") or "",
         claim=bool(parsed.get("claim")),
     )
-    partner = parsed.get("partner") or ""
-    if partner == "-":
-        partner = ""
+    partner = normalize_partner_name(parsed.get("partner")) or ""
+    if not partner:
+        partner = (
+            resolve_partner_ladder(
+                explicit_partner=None,
+                email=email,
+                subject=email.subject,
+                body_text=email.body_text or "",
+                summary_ru=summary_ru,
+            )
+            or ""
+        )
     xml_direction = (parsed.get("direction") or "").strip()
     payer_direction_code = xml_direction
     if (routing.department_id or "").strip() in KS_PAYER_DIRECTION_DEPARTMENT_CODES:
@@ -523,8 +532,6 @@ def build_incoming_document_payload(
         payer_direction_code,
         payer_direction_map=payer_direction_map,
     )
-    if not partner and org_code == "АЛ" and payer_direction == "АЛМАЗ":
-        partner = _ALMAZ_DEFAULT_PARTNER
     ai_task = summary_ru.strip() or str(theme).strip()
 
     payload: dict[str, Any] = {
