@@ -16,6 +16,7 @@ from app.agents.meeting_agent.memo_presenter import (
     collect_location_keys,
     load_catalog_descriptions,
 )
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.user import User
 from app.schemas.meeting import MeetingDashboardItem, MeetingLoginContext
@@ -39,7 +40,7 @@ logger = get_logger(__name__)
 EMPTY_DATE = "0001-01-01T00:00:00"
 UNAPPROVED_STATUS = "НеСогласована"
 MEMO_DOCUMENT_DATE_FIELD = "Date"
-DEFAULT_DASHBOARD_LIMIT = 500
+DEFAULT_DASHBOARD_LIMIT = settings.MEETING_DASHBOARD_ONEC_LIMIT
 
 
 def build_meeting_theme_base_filter() -> str:
@@ -167,7 +168,10 @@ def get_meeting_dashboard(
     limit: int = DEFAULT_DASHBOARD_LIMIT,
     config: ODataConfig = CONFIG,
 ) -> dict[str, Any]:
-    """Возвращает несогласованные СЗ за всё время и СЗ с датой документа за указанный день (любой статус)."""
+    """Возвращает несогласованные СЗ за всё время и СЗ с датой документа за указанный день (любой статус).
+
+    Из 1С загружается не более ``limit`` документов суммарно (сначала несогласованные, затем за день).
+    """
     day = target_date or date.today()
     session = create_session(config)
     metadata = load_metadata_xml(session, config)
@@ -179,12 +183,17 @@ def get_meeting_dashboard(
         limit=limit,
         metadata=metadata,
     )
-    today_rows = _fetch_rows(
-        session,
-        config,
-        build_today_meetings_filter(day),
-        limit=limit,
-        metadata=metadata,
+    remaining_limit = max(limit - len(unapproved_rows), 0)
+    today_rows = (
+        _fetch_rows(
+            session,
+            config,
+            build_today_meetings_filter(day),
+            limit=remaining_limit,
+            metadata=metadata,
+        )
+        if remaining_limit > 0
+        else []
     )
 
     location_labels = load_catalog_descriptions(

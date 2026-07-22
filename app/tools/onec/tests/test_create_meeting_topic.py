@@ -1,13 +1,15 @@
 import uuid
+from unittest.mock import patch
 
 import pytest
 
 from app.tools.onec.create_meeting_topic import (
     MEETING_TYPES,
     build_meeting_topic_payload,
-    copy_template_fields,
+    build_skip_result,
     default_closed_date,
     meeting_time,
+    resolve_topic_participants,
 )
 
 
@@ -36,49 +38,6 @@ def test_build_meeting_topic_payload_required_fields() -> None:
     uuid.UUID(payload["Ref_Key"])
 
 
-def test_build_meeting_topic_payload_uses_template() -> None:
-    template = {
-        "Ref_Key": "c7781365-f149-11f0-977f-6cb31113810c",
-        "Code": "000009459",
-        "Description": "Технический совет",
-        "ВидСовещания": "Отчетное",
-        "Подразделение_Key": "4668a58b-6eb1-11e2-afce-001e67112509",
-        "Кабинет_Key": "35ccfb35-ad89-11f0-9720-6cb31113810e",
-        "ДатаЗакрытияТемы": "2026-12-31T00:00:00",
-        "ТемаКругаУправления": True,
-    }
-    payload = build_meeting_topic_payload(
-        description="Новая тема",
-        manager_ref="5b2e1e74-a805-11eb-85c6-ac1f6b05524d",
-        meeting_type="Внеплановое",
-        template=template,
-    )
-
-    assert payload["Description"] == "Новая тема"
-    assert payload["ВидСовещания"] == "Внеплановое"
-    assert payload["Подразделение_Key"] == template["Подразделение_Key"]
-    assert payload["Кабинет_Key"] == template["Кабинет_Key"]
-    assert payload["ТемаКругаУправления"] is True
-    assert payload["ВидСовещания"] == "Внеплановое"
-
-
-def test_copy_template_fields_skips_service_fields() -> None:
-    copied = copy_template_fields(
-        {
-            "Ref_Key": "abc",
-            "Code": "000001",
-            "Description": "Old",
-            "Подразделение_Key": "dept-1",
-            "Predefined": False,
-        }
-    )
-
-    assert "Ref_Key" not in copied
-    assert "Code" not in copied
-    assert "Description" not in copied
-    assert copied["Подразделение_Key"] == "dept-1"
-
-
 def test_build_meeting_topic_payload_validates_meeting_type() -> None:
     with pytest.raises(ValueError, match="Вид совещания"):
         build_meeting_topic_payload(
@@ -95,3 +54,39 @@ def test_default_closed_date_end_of_year() -> None:
 def test_meeting_types_contains_expected_values() -> None:
     assert "Отчетное" in MEETING_TYPES
     assert "Плановое" in MEETING_TYPES
+
+
+def test_build_skip_result() -> None:
+    result = build_skip_result(
+        similar_topic={
+            "code": "000009370",
+            "description": "Еженедельное совещание с главным метрологом",
+            "similarity_score": 0.95,
+        },
+        dry_run=False,
+        manager_fio="Мегрелишвили Михаил Эмзарович",
+        reviewer_fio="Мегрелишвили Михаил Эмзарович",
+    )
+
+    assert result["skipped"] is True
+    assert result["created"] is False
+    assert result["skip_reason"] == "similar_topic_exists"
+    assert "000009370" in result["message"]
+
+
+def test_resolve_topic_participants_adds_manager_and_explicit_fios() -> None:
+    class Session:
+        pass
+
+    with patch(
+        "app.tools.onec.create_meeting_topic.resolve_participant_refs_by_fio",
+        return_value=[{"participant_ref_key": "user-2", "fio": "Хозуян Иван Владимирович"}],
+    ):
+        resolved = resolve_topic_participants(
+            Session(),
+            None,
+            manager_ref="user-1",
+            participant_fios=["Хозуян Иван Владимирович"],
+        )
+
+    assert [item["participant_ref_key"] for item in resolved] == ["user-1", "user-2"]

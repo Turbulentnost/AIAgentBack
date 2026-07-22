@@ -10,6 +10,7 @@ from app.schemas.scheduled_meeting import (
     ScheduledMeetingRecurrencePayload,
     ScheduledMeetingUpdate,
 )
+from app.services.scheduled_meeting_roles import is_scheduled_meeting_structure_locked
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,12 @@ class SeriesUpdateChangeSet:
     new_series_end_date: date
     series_end_changed: bool
     comment_changed: bool
+    meeting_category_changed: bool
+    manager_changed: bool
+    responsible_changed: bool
+    new_meeting_category_id: uuid.UUID | None
+    new_manager_position_id: uuid.UUID | None
+    new_responsible_position_id: uuid.UUID | None
     participants_changed: bool
     participants_added: tuple[uuid.UUID, ...]
     participants_removed: tuple[uuid.UUID, ...]
@@ -82,6 +89,7 @@ def _unsupported_update_fields(
     payload: ScheduledMeetingUpdate,
 ) -> list[str]:
     unsupported: list[str] = []
+    structure_locked = is_scheduled_meeting_structure_locked(meeting)
 
     if payload.title is not None and payload.title.strip() != meeting.title.strip():
         unsupported.append("название")
@@ -94,7 +102,53 @@ def _unsupported_update_fields(
     if payload.recurrence is not None and _recurrence_schedule_changed(meeting, payload.recurrence):
         unsupported.append("периодичность")
 
+    if structure_locked:
+        if (
+            payload.meeting_category_id is not None
+            and payload.meeting_category_id != meeting.meeting_category_id
+        ):
+            unsupported.append("вид совещания")
+        if (
+            payload.manager_position_id is not None
+            and payload.manager_position_id != meeting.manager_position_id
+        ):
+            unsupported.append("руководитель")
+        if (
+            payload.responsible_position_id is not None
+            and payload.responsible_position_id != meeting.responsible_position_id
+        ):
+            unsupported.append("ответственный")
+
     return unsupported
+
+
+def _role_field_changes(
+    meeting: ScheduledMeeting,
+    payload: ScheduledMeetingUpdate,
+) -> tuple[bool, bool, bool, uuid.UUID | None, uuid.UUID | None, uuid.UUID | None]:
+    if is_scheduled_meeting_structure_locked(meeting):
+        return False, False, False, None, None, None
+
+    meeting_category_changed = (
+        payload.meeting_category_id is not None
+        and payload.meeting_category_id != meeting.meeting_category_id
+    )
+    manager_changed = (
+        payload.manager_position_id is not None
+        and payload.manager_position_id != meeting.manager_position_id
+    )
+    responsible_changed = (
+        payload.responsible_position_id is not None
+        and payload.responsible_position_id != meeting.responsible_position_id
+    )
+    return (
+        meeting_category_changed,
+        manager_changed,
+        responsible_changed,
+        payload.meeting_category_id if meeting_category_changed else None,
+        payload.manager_position_id if manager_changed else None,
+        payload.responsible_position_id if responsible_changed else None,
+    )
 
 
 def _participant_update_change(
@@ -142,11 +196,25 @@ def build_series_update_change_set(
         _participant_update_change(meeting, payload)
     )
     unsupported = list(_unsupported_update_fields(meeting, payload))
+    (
+        meeting_category_changed,
+        manager_changed,
+        responsible_changed,
+        new_meeting_category_id,
+        new_manager_position_id,
+        new_responsible_position_id,
+    ) = _role_field_changes(meeting, payload)
 
     return SeriesUpdateChangeSet(
         new_series_end_date=new_end,
         series_end_changed=new_end != meeting.series_end_date,
         comment_changed=comment_changed,
+        meeting_category_changed=meeting_category_changed,
+        manager_changed=manager_changed,
+        responsible_changed=responsible_changed,
+        new_meeting_category_id=new_meeting_category_id,
+        new_manager_position_id=new_manager_position_id,
+        new_responsible_position_id=new_responsible_position_id,
         participants_changed=participants_changed,
         participants_added=participants_added,
         participants_removed=participants_removed,

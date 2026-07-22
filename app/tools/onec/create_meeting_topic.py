@@ -1,33 +1,20 @@
 """
 Создание темы совещания в 1С:ERP — справочник Catalog_ТД_ТемыСовещаний (OData).
 
+Перед созданием проверяет, есть ли у руководителя похожая активная тема
+(дата закрытия строго позже сегодня, только темы этого руководителя).
+Если есть — новая тема не создаётся, возвращается существующая.
+
 Обязательные поля при создании:
   - description (Description) — наименование темы
   - manager_fio → Руководитель_Key — руководитель совещания
   - meeting_type (ВидСовещания) — Отчетное | Внеплановое | Плановое | Селекторное
 
-Рекомендуемые поля:
-  - closed_date (ДатаЗакрытияТемы) — дата окончания действия темы; пустая = бессрочно
-  - department_key (Подразделение_Key) — подразделение; можно взять из template_code/ref_key
-  - reviewer_fio → Проверяющий_Key — по умолчанию совпадает с руководителем
-  - room_key (Кабинет_Key) — переговорная
-  - start_time / end_time — время совещания (формат 0001-01-01THH:MM:SS)
-
-Опциональные поля:
-  - project_key, committee_key, organization_key, basis_key
-  - start_date, end_date (ДатаНачала, ДатаКонца)
-  - is_project_topic, is_management_circle_topic
-  - schedule_defined и поля повторения (repeat)
-  - priority (Приоритет)
-
-Code присваивает 1С автоматически. Ref_Key генерируется на стороне клиента.
-
 CLI:
   python -m app.tools.onec.create_meeting_topic \\
-    --description "Технический совет" \\
-    --manager "Соломичева Светлана Викторовна" \\
+    --description "Еженедельное совещание с главным метрологом" \\
+    --manager "Мегрелишвили Михаил Эмзарович" \\
     --meeting-type Отчетное \\
-    --template-code 000009459 \\
     --dry-run
 """
 
@@ -39,36 +26,25 @@ import sys
 import uuid
 from datetime import date
 from typing import Any
-from urllib.parse import quote
 
 import requests
 
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import entity_url
-from app.tools.onec.lookup_user_ref import is_empty_key, resolve_user_by_fio
+from app.tools.onec.lookup_user_ref import resolve_user_by_fio
+from app.tools.onec.meeting_topic_participants import (
+    add_meeting_topic_participants,
+    resolve_participant_refs_by_fio,
+)
+from app.tools.onec.meeting_topic_similarity import find_similar_topic_for_manager
 from app.tools.onec.meeting_topics_registry import (
     CATALOG_ENTITY,
     EMPTY_DATE,
     EMPTY_GUID,
-    build_filter_parts,
-    build_list_url,
-    fetch_topic_by_key,
     normalize_topic,
-    odata_get_json,
 )
 
 MEETING_TYPES = ("Отчетное", "Внеплановое", "Плановое", "Селекторное")
-SKIP_TEMPLATE_FIELDS = frozenset(
-    {
-        "Ref_Key",
-        "Code",
-        "DataVersion",
-        "DeletionMark",
-        "Description",
-        "Predefined",
-        "PredefinedDataName",
-    }
-)
 
 
 def default_closed_date(*, end_of_year: bool = True) -> str:
@@ -79,70 +55,6 @@ def default_closed_date(*, end_of_year: bool = True) -> str:
 
 def meeting_time(hour: int, minute: int = 0) -> str:
     return f"0001-01-01T{hour:02d}:{minute:02d}:00"
-
-
-def fetch_template_topic(
-    session: requests.Session,
-    config: ODataConfig,
-    *,
-    template_ref_key: str | None = None,
-    template_code: str | None = None,
-) -> dict[str, Any] | None:
-    if template_ref_key:
-        return fetch_topic_by_key(
-            session,
-            config,
-            template_ref_key,
-            expand_related=False,
-        )
-
-    if not template_code:
-        return None
-
-    filters = build_filter_parts(
-        query=None,
-        code=template_code.strip(),
-        meeting_type=None,
-        active_only=False,
-        ref_key=None,
-    )
-    url = build_list_url(
-        config,
-        odata_filter=" and ".join(filters),
-        limit=1,
-        expand_related=False,
-    )
-    rows = odata_get_json(session, url, timeout=config.timeout).get("value") or []
-    return rows[0] if rows else None
-
-
-def copy_template_fields(source: dict[str, Any]) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    for key, value in source.items():
-        if key in SKIP_TEMPLATE_FIELDS:
-            continue
-        if key.endswith("@navigationLinkUrl"):
-            continue
-        if isinstance(value, list):
-            payload[key] = list(value)
-            continue
-        payload[key] = value
-    return payload
-
-
-def _apply_user_ref(
-    session: requests.Session,
-    config: ODataConfig,
-    payload: dict[str, Any],
-    *,
-    field_key: str,
-    fio: str | None,
-) -> str | None:
-    if not fio:
-        return None
-    user_ref, _, _ = resolve_user_by_fio(session, fio, config=config)
-    payload[field_key] = user_ref
-    return user_ref
 
 
 def build_meeting_topic_payload(
@@ -166,7 +78,7 @@ def build_meeting_topic_payload(
     is_management_circle_topic: bool | None = None,
     schedule_defined: bool | None = None,
     priority: str | None = None,
-    template: dict[str, Any] | None = None,
+    topic_details: str | None = None,
 ) -> dict[str, Any]:
     topic_name = description.strip()
     if not topic_name:
@@ -178,53 +90,33 @@ def build_meeting_topic_payload(
             f"Вид совещания должен быть одним из: {', '.join(MEETING_TYPES)}"
         )
 
-    payload = copy_template_fields(template) if template else {}
-    payload.update(
-        {
-            "Ref_Key": str(uuid.uuid4()),
-            "DeletionMark": False,
-            "Description": topic_name,
-            "ВидСовещания": normalized_type,
-            "Руководитель_Key": manager_ref,
-            "Проверяющий_Key": reviewer_ref or manager_ref,
-            "ДатаЗакрытияТемы": closed_date if closed_date is not None else payload.get(
-                "ДатаЗакрытияТемы", EMPTY_DATE
-            ),
-            "ДатаНачала": start_date or payload.get("ДатаНачала") or EMPTY_DATE,
-            "ДатаКонца": end_date or payload.get("ДатаКонца") or EMPTY_DATE,
-            "ВремяНачалаСовещания": start_time
-            or payload.get("ВремяНачалаСовещания")
-            or EMPTY_DATE,
-            "ВремяОкончанияСовещания": end_time
-            or payload.get("ВремяОкончанияСовещания")
-            or EMPTY_DATE,
-            "ПоПроекту": (
-                is_project_topic
-                if is_project_topic is not None
-                else bool(payload.get("ПоПроекту"))
-            ),
-            "ТемаКругаУправления": (
-                is_management_circle_topic
-                if is_management_circle_topic is not None
-                else bool(payload.get("ТемаКругаУправления"))
-            ),
-            "РасписаниеЗадано": (
-                schedule_defined
-                if schedule_defined is not None
-                else bool(payload.get("РасписаниеЗадано"))
-            ),
-            "Приоритет": priority if priority is not None else payload.get("Приоритет", ""),
-            "ПериодПовтораДней": payload.get("ПериодПовтораДней", 0),
-            "ПериодНедель": payload.get("ПериодНедель", 0),
-            "ПериодМесяцев": payload.get("ПериодМесяцев", 0),
-            "ПериодЛет": payload.get("ПериодЛет", 0),
-            "КоличествоПовторов": payload.get("КоличествоПовторов", 0),
-            "ДеньВМесяце": payload.get("ДеньВМесяце", 0),
-            "ДеньНеделиВМесяце": payload.get("ДеньНеделиВМесяце", 0),
-            "ПовторениеПоДнямНедели": payload.get("ПовторениеПоДнямНедели") or [],
-            "ПовторениеПоМесяцам": payload.get("ПовторениеПоМесяцам") or [],
-        }
-    )
+    payload: dict[str, Any] = {
+        "Ref_Key": str(uuid.uuid4()),
+        "DeletionMark": False,
+        "Description": topic_name,
+        "ВидСовещания": normalized_type,
+        "Руководитель_Key": manager_ref,
+        "Проверяющий_Key": reviewer_ref or manager_ref,
+        "ДатаЗакрытияТемы": closed_date or EMPTY_DATE,
+        "ДатаНачала": start_date or EMPTY_DATE,
+        "ДатаКонца": end_date or EMPTY_DATE,
+        "ВремяНачалаСовещания": start_time or EMPTY_DATE,
+        "ВремяОкончанияСовещания": end_time or EMPTY_DATE,
+        "ПоПроекту": bool(is_project_topic),
+        "ТемаКругаУправления": bool(is_management_circle_topic),
+        "РасписаниеЗадано": bool(schedule_defined),
+        "Приоритет": priority or "",
+        "Описание": (topic_details or "").strip(),
+        "ПериодПовтораДней": 0,
+        "ПериодНедель": 0,
+        "ПериодМесяцев": 0,
+        "ПериодЛет": 0,
+        "КоличествоПовторов": 0,
+        "ДеньВМесяце": 0,
+        "ДеньНеделиВМесяце": 0,
+        "ПовторениеПоДнямНедели": [],
+        "ПовторениеПоМесяцам": [],
+    }
 
     for field_key, value in (
         ("Подразделение_Key", department_key),
@@ -234,10 +126,7 @@ def build_meeting_topic_payload(
         ("Организация_Key", organization_key),
         ("Основание_Key", basis_key),
     ):
-        if value:
-            payload[field_key] = value
-        elif field_key not in payload or is_empty_key(payload.get(field_key)):
-            payload[field_key] = EMPTY_GUID
+        payload[field_key] = value if value else EMPTY_GUID
 
     return payload
 
@@ -257,6 +146,56 @@ def post_meeting_topic(
             f"Ошибка создания темы совещания: HTTP {response.status_code}: {response.text[:1200]}"
         )
     return response.json()
+
+
+def resolve_topic_participants(
+    session: requests.Session,
+    config: ODataConfig,
+    *,
+    manager_ref: str,
+    participant_fios: list[str] | None,
+) -> list[dict[str, str]]:
+    resolved = (
+        resolve_participant_refs_by_fio(session, config, participant_fios)
+        if participant_fios
+        else []
+    )
+    seen = {item["participant_ref_key"].strip().lower() for item in resolved}
+    if manager_ref.strip().lower() not in seen:
+        resolved.insert(0, {"participant_ref_key": manager_ref, "fio": None})
+    return resolved
+
+
+def build_skip_result(
+    *,
+    similar_topic: dict[str, Any],
+    dry_run: bool,
+    manager_fio: str,
+    reviewer_fio: str,
+) -> dict[str, Any]:
+    code = similar_topic.get("code") or "?"
+    description = similar_topic.get("description") or "?"
+    return {
+        "catalog_entity": CATALOG_ENTITY,
+        "dry_run": dry_run,
+        "created": False,
+        "skipped": True,
+        "skip_reason": "similar_topic_exists",
+        "manager_fio": manager_fio,
+        "reviewer_fio": reviewer_fio,
+        "similar_topic": similar_topic,
+        "similarity_score": similar_topic.get("similarity_score"),
+        "similarity_method": similar_topic.get("similarity_method"),
+        "similarity_breakdown": similar_topic.get("similarity_breakdown"),
+        "topic": similar_topic,
+        "payload": None,
+        "participants_count": 0,
+        "participants": [],
+        "message": (
+            f"У руководителя уже есть похожая тема №{code}: {description}. "
+            "Новая тема не создана."
+        ),
+    }
 
 
 def create_meeting_topic(
@@ -281,8 +220,9 @@ def create_meeting_topic(
     is_management_circle_topic: bool | None = None,
     schedule_defined: bool | None = None,
     priority: str | None = None,
-    template_ref_key: str | None = None,
-    template_code: str | None = None,
+    topic_details: str | None = None,
+    participant_fios: list[str] | None = None,
+    skip_similarity_check: bool = False,
     dry_run: bool = False,
     config: ODataConfig = CONFIG,
 ) -> dict[str, Any]:
@@ -302,14 +242,23 @@ def create_meeting_topic(
             config=config,
         )
 
-    template = fetch_template_topic(
-        session,
-        config,
-        template_ref_key=template_ref_key,
-        template_code=template_code,
-    )
-    if (template_ref_key or template_code) and template is None:
-        raise ValueError("Тема-шаблон не найдена")
+    if not skip_similarity_check:
+        similar_topic = find_similar_topic_for_manager(
+            session,
+            config,
+            manager_ref_key=manager_ref,
+            description=description,
+            meeting_type=meeting_type,
+            topic_details=topic_details,
+            participant_fios=participant_fios,
+        )
+        if similar_topic:
+            return build_skip_result(
+                similar_topic=similar_topic,
+                dry_run=dry_run,
+                manager_fio=resolved_manager_fio,
+                reviewer_fio=resolved_reviewer_fio or resolved_manager_fio,
+            )
 
     resolved_closed_date = closed_date
     if resolved_closed_date is None and closed_end_of_year:
@@ -335,27 +284,61 @@ def create_meeting_topic(
         is_management_circle_topic=is_management_circle_topic,
         schedule_defined=schedule_defined,
         priority=priority,
-        template=template,
+        topic_details=topic_details,
+    )
+
+    topic_ref_key = str(payload["Ref_Key"])
+    participant_refs = resolve_topic_participants(
+        session,
+        config,
+        manager_ref=manager_ref,
+        participant_fios=participant_fios,
     )
 
     result: dict[str, Any] = {
         "catalog_entity": CATALOG_ENTITY,
         "dry_run": dry_run,
+        "created": False,
+        "skipped": False,
+        "skip_reason": None,
         "manager_fio": resolved_manager_fio,
         "reviewer_fio": resolved_reviewer_fio or resolved_manager_fio,
-        "template_ref_key": template.get("Ref_Key") if template else template_ref_key,
-        "template_code": template.get("Code") if template else template_code,
+        "similar_topic": None,
+        "similarity_score": None,
+        "similarity_method": None,
+        "similarity_breakdown": None,
         "payload": payload,
         "topic": None,
+        "participants_count": len(participant_refs),
+        "participants": [],
+        "message": None,
     }
 
     if dry_run:
         result["topic"] = normalize_topic(payload, expand_related=False)
+        result["participants"] = add_meeting_topic_participants(
+            session,
+            config,
+            topic_ref_key=topic_ref_key,
+            participant_refs=participant_refs,
+            dry_run=True,
+        )
+        result["message"] = "Проверка пройдена — тема может быть создана."
         return result
 
     body = post_meeting_topic(session, config, payload)
+    result["created"] = True
     result["topic"] = normalize_topic(body, expand_related=False)
     result["body"] = body
+    result["message"] = f"Создана тема совещания №{result['topic'].get('code') or '?'}."
+    created_topic_ref = str(body.get("Ref_Key") or topic_ref_key)
+    result["participants"] = add_meeting_topic_participants(
+        session,
+        config,
+        topic_ref_key=created_topic_ref,
+        participant_refs=participant_refs,
+        dry_run=False,
+    )
     return result
 
 
@@ -394,12 +377,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Тема круга управления (ТемаКругаУправления)",
     )
     parser.add_argument(
-        "--template-ref-key",
-        help="Ref_Key существующей темы для копирования реквизитов",
+        "--details",
+        help="Описание темы (поле Описание в 1С)",
     )
     parser.add_argument(
-        "--template-code",
-        help="Код существующей темы для копирования реквизитов",
+        "--participant",
+        action="append",
+        dest="participants",
+        help="ФИО участника (можно указать несколько раз)",
+    )
+    parser.add_argument(
+        "--skip-similarity-check",
+        action="store_true",
+        help="Не проверять похожие темы у руководителя перед созданием",
     )
     parser.add_argument(
         "--dry-run",
@@ -441,8 +431,9 @@ def main(argv: list[str] | None = None) -> int:
             start_time=_parse_cli_time(args.start_time),
             end_time=_parse_cli_time(args.end_time),
             is_management_circle_topic=args.management_circle,
-            template_ref_key=args.template_ref_key,
-            template_code=args.template_code,
+            topic_details=args.details,
+            participant_fios=args.participants,
+            skip_similarity_check=args.skip_similarity_check,
             dry_run=args.dry_run,
         )
     except (requests.RequestException, RuntimeError, ValueError) as error:

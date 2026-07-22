@@ -61,6 +61,18 @@ class ScheduledMeeting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     title: Mapped[str] = mapped_column(String(512))
+    meeting_category_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("meeting_categories.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    manager_position_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("positions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    responsible_position_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("positions.id", ondelete="RESTRICT"),
+        index=True,
+    )
     meeting_type: Mapped[ScheduledMeetingType] = mapped_column(
         SAEnum(
             ScheduledMeetingType,
@@ -128,6 +140,13 @@ class ScheduledMeeting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     outlook_meeting_url: Mapped[str | None] = mapped_column(Text)
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
+    meeting_category: Mapped["MeetingCategory"] = relationship(
+        back_populates="scheduled_meetings",
+    )
+    manager_position: Mapped["Position"] = relationship(foreign_keys=[manager_position_id])
+    responsible_position: Mapped["Position"] = relationship(
+        foreign_keys=[responsible_position_id],
+    )
     participants: Mapped[list["ScheduledMeetingParticipant"]] = relationship(
         back_populates="meeting",
         order_by="ScheduledMeetingParticipant.sort_order",
@@ -160,4 +179,5 @@ class ScheduledMeetingParticipant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     position: Mapped["Position"] = relationship()
 
 
+from app.models.meeting_category import MeetingCategory  # noqa: E402
 from app.models.position import Position  # noqa: E402

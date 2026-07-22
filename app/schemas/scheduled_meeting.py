@@ -47,9 +47,27 @@ class ScheduledMeetingParticipantOptionRead(BaseModel):
     slug: str | None = None
 
 
+class MeetingCategoryRead(ORMModel):
+    id: uuid.UUID
+    name: str
+    sort_order: int
+    is_active: bool
+
+
+class ScheduledMeetingRolePositionRead(BaseModel):
+    position_id: uuid.UUID
+    position_name: str | None = None
+
+
 class ScheduledMeetingRead(ORMModel):
     id: uuid.UUID
     title: str
+    meeting_category_id: uuid.UUID
+    meeting_category_name: str | None = None
+    manager_position_id: uuid.UUID
+    manager_position_name: str | None = None
+    responsible_position_id: uuid.UUID
+    responsible_position_name: str | None = None
     meeting_type: ScheduledMeetingType
     status: ScheduledMeetingStatus
     time_local: time
@@ -120,6 +138,9 @@ class ScheduledMeetingParticipantCreate(BaseModel):
 
 class ScheduledMeetingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=512)
+    meeting_category_id: uuid.UUID
+    manager_position_id: uuid.UUID
+    responsible_position_id: uuid.UUID
     meeting_type: ScheduledMeetingType
     status: ScheduledMeetingStatus = ScheduledMeetingStatus.PLANNED
     recurrence: ScheduledMeetingRecurrencePayload
@@ -174,6 +195,9 @@ class ScheduledMeetingCreate(BaseModel):
 
 class ScheduledMeetingUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=512)
+    meeting_category_id: uuid.UUID | None = None
+    manager_position_id: uuid.UUID | None = None
+    responsible_position_id: uuid.UUID | None = None
     meeting_type: ScheduledMeetingType | None = None
     status: ScheduledMeetingStatus | None = None
     recurrence: ScheduledMeetingRecurrencePayload | None = None

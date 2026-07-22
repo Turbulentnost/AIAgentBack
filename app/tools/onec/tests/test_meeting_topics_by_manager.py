@@ -1,6 +1,10 @@
+from datetime import date
+
 from app.tools.onec.meeting_topics_by_manager import (
+    filter_topics_for_manager_similarity,
     group_topics_by_manager,
     manager_fio_from_topic,
+    topic_belongs_to_manager,
     topic_matches_manager_fio,
 )
 
@@ -49,3 +53,40 @@ def test_topic_matches_manager_fio_partial() -> None:
 
 def test_manager_fio_from_topic_fallback() -> None:
     assert manager_fio_from_topic({}) == "—"
+
+
+def test_filter_topics_for_manager_similarity_keeps_active_manager_topics_only() -> None:
+    topics = [
+        {
+            "ref_key": "active",
+            "closed_date": "2026-12-31T00:00:00",
+            "is_active": True,
+            "keys": {"manager": "manager-1"},
+        },
+        {
+            "ref_key": "closed-today",
+            "closed_date": "2026-07-22T00:00:00",
+            "is_active": False,
+            "keys": {"manager": "manager-1"},
+        },
+        {
+            "ref_key": "other-manager",
+            "closed_date": "2026-12-31T00:00:00",
+            "is_active": True,
+            "keys": {"manager": "manager-2"},
+        },
+    ]
+
+    filtered = filter_topics_for_manager_similarity(
+        topics,
+        manager_ref_key="manager-1",
+        today=date(2026, 7, 22),
+    )
+
+    assert [topic["ref_key"] for topic in filtered] == ["active"]
+
+
+def test_topic_belongs_to_manager() -> None:
+    topic = {"keys": {"manager": "Manager-Ref"}}
+    assert topic_belongs_to_manager(topic, "manager-ref")
+    assert not topic_belongs_to_manager(topic, "other-ref")

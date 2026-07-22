@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from urllib.parse import quote
 
@@ -13,7 +14,8 @@ import requests
 
 from app.integrations.onec_odata import fetch_all
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
-from app.tools.onec.lookup_user_ref import normalize_name, resolve_user_by_fio
+from app.tools.onec.lookup_user_ref import is_empty_key, normalize_name, resolve_user_by_fio
+from app.tools.onec.meeting_topics_registry import is_topic_active
 from app.tools.onec.meeting_topics_registry import (
     CATALOG_ENTITY,
     build_filter_parts,
@@ -35,6 +37,41 @@ CSV_COLUMNS = (
 def manager_fio_from_topic(topic: dict[str, Any]) -> str:
     manager = (topic.get("manager") or "").strip()
     return manager or "—"
+
+
+def topic_manager_ref_key(topic: dict[str, Any]) -> str | None:
+    manager_ref = (topic.get("keys") or {}).get("manager")
+    if is_empty_key(manager_ref):
+        return None
+    return str(manager_ref).strip()
+
+
+def topic_belongs_to_manager(topic: dict[str, Any], manager_ref_key: str) -> bool:
+    topic_manager_ref = topic_manager_ref_key(topic)
+    if not topic_manager_ref:
+        return False
+    return topic_manager_ref.casefold() == manager_ref_key.strip().casefold()
+
+
+def is_active_manager_topic(topic: dict[str, Any], *, today: date | None = None) -> bool:
+    if topic.get("is_active") is False:
+        return False
+    return is_topic_active(topic.get("closed_date"), today=today)
+
+
+def filter_topics_for_manager_similarity(
+    topics: list[dict[str, Any]],
+    *,
+    manager_ref_key: str,
+    today: date | None = None,
+) -> list[dict[str, Any]]:
+    """Оставляет только активные темы указанного руководителя."""
+    return [
+        topic
+        for topic in topics
+        if is_active_manager_topic(topic, today=today)
+        and topic_belongs_to_manager(topic, manager_ref_key)
+    ]
 
 
 def topic_matches_manager_fio(topic: dict[str, Any], manager_fio: str) -> bool:

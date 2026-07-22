@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -97,10 +97,10 @@ class GetMeetingDashboardInput(BaseModel):
         description="Дата совещаний в формате YYYY-MM-DD (по умолчанию — сегодня)",
     )
     limit: int = Field(
-        default=500,
+        default=50,
         ge=1,
-        le=500,
-        description="Максимум документов в каждом списке",
+        le=50,
+        description="Максимум служебных записок суммарно (несогласованные + за день)",
     )
 
 
@@ -278,6 +278,7 @@ class MeetingTopicItem(BaseModel):
     ref_key: str | None = None
     code: str | None = None
     description: str
+    details: str | None = None
     meeting_type: str | None = None
     priority: str | None = None
     schedule_defined: bool = False
@@ -763,15 +764,19 @@ class CreateMeetingTopicInput(BaseModel):
     )
     is_management_circle_topic: bool | None = Field(
         default=None,
-        description="Тема круга управления; без значения берётся из шаблона",
+        description="Тема круга управления",
     )
-    template_ref_key: str | None = Field(
-        default=None,
-        description="Ref_Key темы-шаблона для копирования реквизитов",
+    participant_fios: list[str] = Field(
+        default_factory=list,
+        description="Участники темы по ФИО (Catalog_Пользователи)",
     )
-    template_code: str | None = Field(
+    topic_details: str | None = Field(
         default=None,
-        description="Код темы-шаблона для копирования реквизитов",
+        description="Описание темы (поле Описание в 1С)",
+    )
+    skip_similarity_check: bool = Field(
+        default=False,
+        description="Не проверять похожие темы у руководителя перед созданием",
     )
     dry_run: bool = Field(
         default=False,
@@ -779,14 +784,34 @@ class CreateMeetingTopicInput(BaseModel):
     )
 
 
+class CreateMeetingTopicParticipantResult(BaseModel):
+    participant_ref_key: str | None = None
+    fio: str | None = None
+    dry_run: bool | None = None
+
+
+class CreateMeetingTopicSimilarityBreakdown(BaseModel):
+    topic: float | None = None
+    participants: float | None = None
+    details: float | None = None
+
+
 class CreateMeetingTopicOutput(BaseModel):
     catalog_entity: str
     dry_run: bool
+    created: bool = False
+    skipped: bool = False
+    skip_reason: str | None = None
     manager_fio: str
     reviewer_fio: str
-    template_ref_key: str | None = None
-    template_code: str | None = None
+    similar_topic: MeetingTopicItem | None = None
+    similarity_score: float | None = None
+    similarity_method: str | None = None
+    similarity_breakdown: CreateMeetingTopicSimilarityBreakdown | None = None
     topic: MeetingTopicItem | None = None
+    participants_count: int = 0
+    participants: list[CreateMeetingTopicParticipantResult] = Field(default_factory=list)
+    message: str | None = None
 
 
 async def create_meeting_topic_tool(
@@ -810,8 +835,9 @@ async def create_meeting_topic_tool(
         start_time=payload.start_time,
         end_time=payload.end_time,
         is_management_circle_topic=payload.is_management_circle_topic,
-        template_ref_key=payload.template_ref_key,
-        template_code=payload.template_code,
+        participant_fios=payload.participant_fios or None,
+        topic_details=payload.topic_details,
+        skip_similarity_check=payload.skip_similarity_check,
         dry_run=payload.dry_run,
     )
     return CreateMeetingTopicOutput.model_validate(raw)
@@ -822,19 +848,19 @@ class CreateMeetingTopicTool(Tool):
     description = "Создаёт тему совещания в справочнике Catalog_ТД_ТемыСовещаний 1С:ERP."
     agent_description = (
         "Инструмент create_meeting_topic создаёт элемент справочника тем совещаний 1С "
-        "(Catalog_ТД_ТемыСовещаний). Обязательны description, manager_fio, meeting_type. "
-        "template_code/template_ref_key — скопировать подразделение, кабинет и прочие "
-        "реквизиты с существующей темы; closed_end_of_year — активна до конца года. "
-        "dry_run=true — только сформировать payload без записи. Нужны ONEC_ODATA_* в .env."
+        "(Catalog_ТД_ТемыСовещаний). При постановке совещания сначала вызывай "
+        "check_meeting_topic_similar, затем resolve_meeting_topic по решению пользователя. "
+        "Этот инструмент используй только для прямого создания или dry_run. "
+        "Обязательны description, manager_fio, meeting_type. participant_fios — участники темы."
     )
     input_model = CreateMeetingTopicInput
     output_model = CreateMeetingTopicOutput
     required_permissions = ["create_meeting_topic"]
     preview_default_params = {
-        "description": "Технический совет",
-        "manager_fio": "Соломичева Светлана Викторовна",
+        "description": "Еженедельное совещание с главным метрологом",
+        "manager_fio": "Мегрелишвили Михаил Эмзарович",
         "meeting_type": "Отчетное",
-        "template_code": "000009459",
+        "participant_fios": ["Хозуян Иван Владимирович"],
         "dry_run": True,
     }
 
@@ -847,6 +873,187 @@ class CreateMeetingTopicTool(Tool):
 
 
 register_tool(CreateMeetingTopicTool())
+
+
+class CheckMeetingTopicSimilarInput(BaseModel):
+    description: str = Field(description="Наименование темы совещания")
+    manager_fio: str = Field(description="ФИО руководителя")
+    meeting_type: str = Field(
+        default="Отчетное",
+        description=f"Вид совещания: {', '.join(MEETING_TYPES)}",
+    )
+    topic_details: str | None = Field(
+        default=None,
+        description="Описание темы (поле Описание в 1С)",
+    )
+    participant_fios: list[str] = Field(
+        default_factory=list,
+        description="Участники темы по ФИО",
+    )
+
+
+class CheckMeetingTopicSimilarOutput(BaseModel):
+    similar_found: bool
+    requires_user_decision: bool
+    similar_topic: MeetingTopicSummaryRead | None = None
+    similarity_score: float | None = None
+    similarity_method: str | None = None
+    similarity_breakdown: CreateMeetingTopicSimilarityBreakdown | None = None
+    required_fields: list[str] = Field(default_factory=list)
+    message: str
+
+
+class MeetingTopicSummaryRead(BaseModel):
+    ref_key: str | None = None
+    code: str | None = None
+    description: str
+    details: str | None = None
+    meeting_type: str | None = None
+    manager: str | None = None
+    reviewer: str | None = None
+    department: str | None = None
+    room: str | None = None
+    project: str | None = None
+    committee: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    closed_date: str | None = None
+    is_active: bool = True
+    similarity_score: float | None = None
+    similarity_method: str | None = None
+    similarity_breakdown: CreateMeetingTopicSimilarityBreakdown | None = None
+    participants: list[CreateMeetingTopicParticipantResult] = Field(default_factory=list)
+
+
+async def check_meeting_topic_similar_tool(
+    payload: CheckMeetingTopicSimilarInput,
+    context: ToolContext,
+) -> CheckMeetingTopicSimilarOutput:
+    del context
+    from app.schemas.meeting_topic import MeetingTopicCheckSimilarRequest
+    from app.services.meeting_topic_service import MeetingTopicService
+
+    result = await MeetingTopicService().check_similar(
+        MeetingTopicCheckSimilarRequest.model_validate(payload.model_dump())
+    )
+    return CheckMeetingTopicSimilarOutput.model_validate(result.model_dump())
+
+
+class CheckMeetingTopicSimilarTool(Tool):
+    name = "check_meeting_topic_similar"
+    description = (
+        "Проверяет, есть ли у руководителя похожая активная тема совещания, "
+        "без создания новой."
+    )
+    agent_description = (
+        "Инструмент check_meeting_topic_similar запускается при постановке совещания, "
+        "когда нужно создать или выбрать тему в 1С. Ищет только среди активных тем "
+        "указанного руководителя (дата закрытия темы строго позже сегодня). "
+        "Сравнивает название (50%), участников (30%) и описание (20%) через embeddings. "
+        "Если похожая тема найдена — покажи пользователю карточку similar_topic и спроси: "
+        "использовать её или создать новую? Не создавай тему без явного решения пользователя."
+    )
+    input_model = CheckMeetingTopicSimilarInput
+    output_model = CheckMeetingTopicSimilarOutput
+    required_permissions = ["check_meeting_topic_similar"]
+    preview_default_params = {
+        "description": "Еженедельное совещание с главным метрологом",
+        "manager_fio": "Мегрелишвили Михаил Эмзарович",
+        "meeting_type": "Отчетное",
+        "participant_fios": ["Хозуян Иван Владимирович"],
+    }
+
+    async def execute(
+        self,
+        payload: CheckMeetingTopicSimilarInput,
+        context: ToolContext,
+    ) -> CheckMeetingTopicSimilarOutput:
+        return await check_meeting_topic_similar_tool(payload, context)
+
+
+register_tool(CheckMeetingTopicSimilarTool())
+
+
+class ResolveMeetingTopicInput(BaseModel):
+    decision: Literal["use_existing", "create_new"]
+    existing_topic_ref_key: str | None = Field(
+        default=None,
+        description="Ref_Key существующей темы при decision=use_existing",
+    )
+    description: str | None = None
+    manager_fio: str | None = None
+    meeting_type: str | None = Field(default="Отчетное")
+    reviewer_fio: str | None = None
+    closed_date: str | None = None
+    closed_end_of_year: bool = False
+    department_key: str | None = None
+    room_key: str | None = None
+    project_key: str | None = None
+    committee_key: str | None = None
+    organization_key: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    is_management_circle_topic: bool | None = None
+    topic_details: str | None = None
+    participant_fios: list[str] = Field(default_factory=list)
+    dry_run: bool = False
+
+
+class ResolveMeetingTopicOutput(BaseModel):
+    decision: Literal["use_existing", "create_new"]
+    used_existing: bool
+    created: bool
+    dry_run: bool = False
+    topic: MeetingTopicSummaryRead
+    participants_count: int = 0
+    message: str
+
+
+async def resolve_meeting_topic_tool(
+    payload: ResolveMeetingTopicInput,
+    context: ToolContext,
+) -> ResolveMeetingTopicOutput:
+    del context
+    from app.schemas.meeting_topic import MeetingTopicResolveRequest
+    from app.services.meeting_topic_service import MeetingTopicService
+
+    result = await MeetingTopicService().resolve(
+        MeetingTopicResolveRequest.model_validate(payload.model_dump())
+    )
+    return ResolveMeetingTopicOutput.model_validate(result.model_dump())
+
+
+class ResolveMeetingTopicTool(Tool):
+    name = "resolve_meeting_topic"
+    description = (
+        "Подтверждает использование существующей темы или создаёт новую "
+        "после решения пользователя."
+    )
+    agent_description = (
+        "Инструмент resolve_meeting_topic вызывается после check_meeting_topic_similar "
+        "и явного ответа пользователя. decision=use_existing — берём existing_topic_ref_key "
+        "из similar_topic, новую тему не создаём; для совещания используем название и вид "
+        "совещания из выбранной темы 1С. decision=create_new — создаём тему в 1С "
+        "с полями description, manager_fio, meeting_type и остальными реквизитами; "
+        "проверка похожих тем при этом не повторяется."
+    )
+    input_model = ResolveMeetingTopicInput
+    output_model = ResolveMeetingTopicOutput
+    required_permissions = ["resolve_meeting_topic"]
+    preview_default_params = {
+        "decision": "use_existing",
+        "existing_topic_ref_key": "00000000-0000-0000-0000-000000000001",
+    }
+
+    async def execute(
+        self,
+        payload: ResolveMeetingTopicInput,
+        context: ToolContext,
+    ) -> ResolveMeetingTopicOutput:
+        return await resolve_meeting_topic_tool(payload, context)
+
+
+register_tool(ResolveMeetingTopicTool())
 
 
 class MeetingTopicParticipantItem(BaseModel):

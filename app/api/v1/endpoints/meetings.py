@@ -56,6 +56,7 @@ from app.services.meeting_permission import (
 from app.services.meeting_exceptions import MeetingServiceError
 from app.services.meeting_service import MeetingService
 from app.schemas.scheduled_meeting import (
+    MeetingCategoryRead,
     ScheduledMeetingCreate,
     ScheduledMeetingDetailRead,
     ScheduledMeetingParticipantOptionRead,
@@ -63,9 +64,19 @@ from app.schemas.scheduled_meeting import (
     ScheduledMeetingUpdate,
     ScheduledMeetingUpdateRead,
 )
+from app.schemas.meeting_topic import (
+    MeetingTopicCheckSimilarRead,
+    MeetingTopicCheckSimilarRequest,
+    MeetingTopicResolveRead,
+    MeetingTopicResolveRequest,
+)
 from app.services.scheduled_meeting_service import (
     ScheduledMeetingService,
     ScheduledMeetingServiceError,
+)
+from app.services.meeting_topic_service import (
+    MeetingTopicService,
+    MeetingTopicServiceError,
 )
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -122,6 +133,23 @@ async def refresh_meetings_dashboard(db: DbSession, current_user: CurrentUser) -
 
 def _scheduled_meeting_error(exc: ScheduledMeetingServiceError) -> HTTPException:
     return HTTPException(exc.status_code, detail=str(exc))
+
+
+def _meeting_topic_error(exc: MeetingTopicServiceError) -> HTTPException:
+    return HTTPException(exc.status_code, detail=str(exc))
+
+
+@router.get(
+    "/scheduled/category-options",
+    response_model=list[MeetingCategoryRead],
+)
+async def list_scheduled_meeting_category_options(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[MeetingCategoryRead]:
+    """Виды совещаний для графика (внутренний классификатор)."""
+    await _require_agent_access(db, current_user)
+    return await ScheduledMeetingService(db).list_category_options()
 
 
 @router.get(
@@ -188,6 +216,40 @@ async def plan_scheduled_meeting(
     except ScheduledMeetingServiceError as exc:
         await db.rollback()
         raise _scheduled_meeting_error(exc) from exc
+
+
+@router.post("/topics/check-similar", response_model=MeetingTopicCheckSimilarRead)
+async def check_similar_meeting_topic(
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingTopicCheckSimilarRequest,
+) -> MeetingTopicCheckSimilarRead:
+    """Проверка похожей темы у руководителя перед созданием новой."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await MeetingTopicService().check_similar(payload)
+    except MeetingTopicServiceError as exc:
+        raise _meeting_topic_error(exc) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/topics/resolve", response_model=MeetingTopicResolveRead)
+async def resolve_meeting_topic(
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingTopicResolveRequest,
+) -> MeetingTopicResolveRead:
+    """Подтверждение существующей темы или создание новой после проверки."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await MeetingTopicService().resolve(payload)
+    except MeetingTopicServiceError as exc:
+        raise _meeting_topic_error(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 @router.get("/scheduled/{meeting_id}", response_model=ScheduledMeetingRead)

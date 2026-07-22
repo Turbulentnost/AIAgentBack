@@ -12,9 +12,11 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.enums import ScheduledMeetingStatus
+from app.models.meeting_category import MeetingCategory
 from app.models.scheduled_meeting import ScheduledMeeting, ScheduledMeetingParticipant
 from app.models.position import Position
 from app.schemas.scheduled_meeting import (
+    MeetingCategoryRead,
     ScheduledMeetingAppliedChangesRead,
     ScheduledMeetingCreate,
     ScheduledMeetingDetailRead,
@@ -40,6 +42,10 @@ from app.services.scheduled_meeting_outlook_update import update_series_end_date
 from app.services.scheduled_meeting_recurrence import (
     build_recurrence_rule,
     format_recurrence_label,
+)
+from app.services.scheduled_meeting_roles import (
+    merge_scheduled_meeting_participants,
+    protected_participant_position_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,13 +84,24 @@ class ScheduledMeetingService:
             if position.name.strip()
         ]
 
+    async def list_category_options(self) -> list[MeetingCategoryRead]:
+        result = await self.db.execute(
+            select(MeetingCategory)
+            .where(MeetingCategory.is_active.is_(True))
+            .order_by(MeetingCategory.sort_order.asc(), MeetingCategory.name.asc())
+        )
+        return [MeetingCategoryRead.model_validate(category) for category in result.scalars().all()]
+
     async def list(self) -> list[ScheduledMeetingRead]:
         result = await self.db.execute(
             select(ScheduledMeeting)
             .options(
+                selectinload(ScheduledMeeting.meeting_category),
+                selectinload(ScheduledMeeting.manager_position),
+                selectinload(ScheduledMeeting.responsible_position),
                 selectinload(ScheduledMeeting.participants).selectinload(
                     ScheduledMeetingParticipant.position
-                )
+                ),
             )
             .order_by(ScheduledMeeting.title.asc(), ScheduledMeeting.created_at.asc())
         )
@@ -93,11 +110,20 @@ class ScheduledMeetingService:
 
     async def create(self, payload: ScheduledMeetingCreate) -> ScheduledMeetingRead:
         recurrence_input = payload.resolved_recurrence_input()
-        position_ids = [item.position_id for item in payload.participants if item.position_id]
+        await self._ensure_meeting_category_exists(payload.meeting_category_id)
+        merged_participants = merge_scheduled_meeting_participants(
+            payload.participants,
+            manager_position_id=payload.manager_position_id,
+            responsible_position_id=payload.responsible_position_id,
+        )
+        position_ids = [item.position_id for item in merged_participants if item.position_id]
         await self._ensure_positions_exist(position_ids)
 
         meeting = ScheduledMeeting(
             title=payload.title.strip(),
+            meeting_category_id=payload.meeting_category_id,
+            manager_position_id=payload.manager_position_id,
+            responsible_position_id=payload.responsible_position_id,
             meeting_type=payload.meeting_type,
             status=payload.status,
             time_local=recurrence_input.time_local,
@@ -117,7 +143,7 @@ class ScheduledMeetingService:
         self.db.add(meeting)
         await self.db.flush()
 
-        for index, participant in enumerate(payload.participants):
+        for index, participant in enumerate(merged_participants):
             self.db.add(
                 ScheduledMeetingParticipant(
                     scheduled_meeting_id=meeting.id,
@@ -211,6 +237,9 @@ class ScheduledMeetingService:
             not change_set.series_end_changed
             and not change_set.comment_changed
             and not change_set.participants_changed
+            and not change_set.meeting_category_changed
+            and not change_set.manager_changed
+            and not change_set.responsible_changed
         ):
             return ScheduledMeetingUpdateRead(
                 series=self.to_read(meeting),
@@ -227,6 +256,136 @@ class ScheduledMeetingService:
         changes: list[str] = []
         participants_added_names: list[str] = []
         participants_removed_names: list[str] = []
+
+        if change_set.meeting_category_changed and change_set.new_meeting_category_id is not None:
+            await self._ensure_meeting_category_exists(change_set.new_meeting_category_id)
+            meeting.meeting_category_id = change_set.new_meeting_category_id
+            changes.append("meeting_category")
+
+        role_participants_need_sync = False
+        if change_set.manager_changed and change_set.new_manager_position_id is not None:
+            meeting.manager_position_id = change_set.new_manager_position_id
+            changes.append("manager")
+            role_participants_need_sync = True
+        if change_set.responsible_changed and change_set.new_responsible_position_id is not None:
+            meeting.responsible_position_id = change_set.new_responsible_position_id
+            changes.append("responsible")
+            role_participants_need_sync = True
+
+        participant_add_ids: tuple[uuid.UUID, ...] = ()
+        participant_remove_ids: tuple[uuid.UUID, ...] = ()
+        participants_updated = False
+
+        if role_participants_need_sync:
+            merged_participants = merge_scheduled_meeting_participants(
+                list(change_set.new_participants)
+                if change_set.new_participants
+                else [
+                    ScheduledMeetingParticipantCreate(
+                        position_id=participant.position_id,
+                        sort_order=participant.sort_order,
+                        is_required=participant.is_required,
+                    )
+                    for participant in sorted(meeting.participants, key=lambda item: item.sort_order)
+                ],
+                manager_position_id=meeting.manager_position_id,
+                responsible_position_id=meeting.responsible_position_id,
+            )
+            current_ids = [
+                participant.position_id
+                for participant in sorted(meeting.participants, key=lambda item: item.sort_order)
+            ]
+            new_ids = [item.position_id for item in merged_participants if item.position_id]
+            participant_add_ids = tuple(
+                position_id for position_id in new_ids if position_id not in set(current_ids)
+            )
+            participant_remove_ids = tuple(
+                position_id for position_id in current_ids if position_id not in set(new_ids)
+            )
+            participants_added_names, participants_removed_names = await self._apply_participant_changes(
+                meeting,
+                participants=tuple(merged_participants),
+                added_position_ids=participant_add_ids,
+                removed_position_ids=participant_remove_ids,
+            )
+            if participant_add_ids or participant_remove_ids or current_ids != new_ids:
+                participants_updated = True
+                changes.append("participants")
+
+        if change_set.participants_changed and not role_participants_need_sync:
+            new_ids = {
+                item.position_id
+                for item in change_set.new_participants
+                if item.position_id is not None
+            }
+            if not protected_participant_position_ids(meeting).issubset(new_ids):
+                raise ScheduledMeetingServiceError(
+                    "Нельзя удалить руководителя или ответственного из состава участников",
+                    status_code=400,
+                )
+            merged_participants = merge_scheduled_meeting_participants(
+                list(change_set.new_participants),
+                manager_position_id=meeting.manager_position_id,
+                responsible_position_id=meeting.responsible_position_id,
+            )
+            participant_add_ids = change_set.participants_added
+            participant_remove_ids = change_set.participants_removed
+            participants_added_names, participants_removed_names = await self._apply_participant_changes(
+                meeting,
+                participants=tuple(merged_participants),
+                added_position_ids=participant_add_ids,
+                removed_position_ids=participant_remove_ids,
+            )
+            participants_updated = True
+            changes.append("participants")
+
+        if (
+            participants_updated
+            and meeting.outlook_series_id
+            and meeting.status == ScheduledMeetingStatus.PLANNED
+        ):
+            add_emails: list[str] = []
+            remove_emails: list[str] = []
+            try:
+                add_emails = (
+                    await self._resolve_emails_for_position_ids(participant_add_ids)
+                    if participant_add_ids
+                    else []
+                )
+                remove_emails = (
+                    await resolve_removed_emails_from_outlook_series(
+                        self.db,
+                        meeting,
+                        participant_remove_ids,
+                    )
+                    if participant_remove_ids
+                    else []
+                )
+            except ScheduledMeetingOutlookError as exc:
+                raise ScheduledMeetingServiceError(
+                    str(exc),
+                    status_code=exc.status_code,
+                ) from exc
+            if add_emails or remove_emails:
+                try:
+                    outlook_result = await sync_series_participants_in_outlook(
+                        self.db,
+                        meeting,
+                        add_emails=add_emails,
+                        remove_emails=remove_emails,
+                    )
+                except ScheduledMeetingOutlookError as exc:
+                    raise ScheduledMeetingServiceError(
+                        str(exc),
+                        status_code=exc.status_code,
+                    ) from exc
+                outlook_updated = True
+                action = outlook_result.get("action")
+                if isinstance(action, str) and action:
+                    outlook_actions.append(action)
+                changekey = outlook_result.get("outlook_changekey")
+                if isinstance(changekey, str) and changekey.strip():
+                    meeting.outlook_changekey = changekey
 
         if change_set.series_end_changed:
             if meeting.outlook_series_id and meeting.status == ScheduledMeetingStatus.PLANNED:
@@ -265,65 +424,6 @@ class ScheduledMeetingService:
                 stored_payload.pop("comment", None)
             meeting.payload = stored_payload or None
             changes.append("comment")
-
-        if change_set.participants_changed:
-            participants_added_names, participants_removed_names = await self._apply_participant_changes(
-                meeting,
-                participants=change_set.new_participants,
-                added_position_ids=change_set.participants_added,
-                removed_position_ids=change_set.participants_removed,
-            )
-            add_emails: list[str] = []
-            remove_emails: list[str] = []
-            if (
-                meeting.outlook_series_id
-                and meeting.status == ScheduledMeetingStatus.PLANNED
-            ):
-                try:
-                    add_emails = (
-                        await self._resolve_emails_for_position_ids(change_set.participants_added)
-                        if change_set.participants_added
-                        else []
-                    )
-                    remove_emails = (
-                        await resolve_removed_emails_from_outlook_series(
-                            self.db,
-                            meeting,
-                            change_set.participants_removed,
-                        )
-                        if change_set.participants_removed
-                        else []
-                    )
-                except ScheduledMeetingOutlookError as exc:
-                    raise ScheduledMeetingServiceError(
-                        str(exc),
-                        status_code=exc.status_code,
-                    ) from exc
-            if (
-                meeting.outlook_series_id
-                and meeting.status == ScheduledMeetingStatus.PLANNED
-                and (add_emails or remove_emails)
-            ):
-                try:
-                    outlook_result = await sync_series_participants_in_outlook(
-                        self.db,
-                        meeting,
-                        add_emails=add_emails,
-                        remove_emails=remove_emails,
-                    )
-                except ScheduledMeetingOutlookError as exc:
-                    raise ScheduledMeetingServiceError(
-                        str(exc),
-                        status_code=exc.status_code,
-                    ) from exc
-                outlook_updated = True
-                action = outlook_result.get("action")
-                if isinstance(action, str) and action:
-                    outlook_actions.append(action)
-                changekey = outlook_result.get("outlook_changekey")
-                if isinstance(changekey, str) and changekey.strip():
-                    meeting.outlook_changekey = changekey
-            changes.append("participants")
 
         await self.db.flush()
 
@@ -524,14 +624,25 @@ class ScheduledMeetingService:
                 f"Не найдены активные должности: {', '.join(missing)}"
             )
 
+    async def _ensure_meeting_category_exists(self, category_id: uuid.UUID) -> None:
+        category = await self.db.get(MeetingCategory, category_id)
+        if category is None or not category.is_active:
+            raise ScheduledMeetingServiceError(
+                f"Не найден активный вид совещания: {category_id}",
+                status_code=400,
+            )
+
     async def _load_meeting(self, meeting_id: uuid.UUID) -> ScheduledMeeting | None:
         result = await self.db.execute(
             select(ScheduledMeeting)
             .where(ScheduledMeeting.id == meeting_id)
             .options(
+                selectinload(ScheduledMeeting.meeting_category),
+                selectinload(ScheduledMeeting.manager_position),
+                selectinload(ScheduledMeeting.responsible_position),
                 selectinload(ScheduledMeeting.participants).selectinload(
                     ScheduledMeetingParticipant.position
-                )
+                ),
             )
         )
         return result.scalar_one_or_none()
@@ -556,6 +667,20 @@ class ScheduledMeetingService:
         return ScheduledMeetingRead(
             id=meeting.id,
             title=meeting.title,
+            meeting_category_id=meeting.meeting_category_id,
+            meeting_category_name=(
+                meeting.meeting_category.name if meeting.meeting_category is not None else None
+            ),
+            manager_position_id=meeting.manager_position_id,
+            manager_position_name=(
+                meeting.manager_position.name if meeting.manager_position is not None else None
+            ),
+            responsible_position_id=meeting.responsible_position_id,
+            responsible_position_name=(
+                meeting.responsible_position.name
+                if meeting.responsible_position is not None
+                else None
+            ),
             meeting_type=meeting.meeting_type,
             status=meeting.status,
             time_local=meeting.time_local,

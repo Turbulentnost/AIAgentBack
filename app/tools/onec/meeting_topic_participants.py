@@ -27,8 +27,14 @@ from app.integrations.onec_odata import fetch_all
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import entity_url, odata_get_json
 from app.tools.onec.get_porucheniya import load_users_for_keys
-from app.tools.onec.lookup_user_ref import is_empty_key, load_persons_for_keys, user_fio
+from app.tools.onec.lookup_user_ref import (
+    is_empty_key,
+    load_persons_for_keys,
+    resolve_user_by_fio,
+    user_fio,
+)
 from app.tools.onec.meeting_topics_registry import (
+    CATALOG_ENTITY,
     build_filter_parts,
     build_list_url,
     fetch_topic_by_key,
@@ -37,6 +43,109 @@ from app.tools.onec.meeting_topics_registry import (
 REGISTER_ENTITY = "InformationRegister_ТД_СоответствиеТемыСовещанияИУчастниковСовещаний"
 TOPIC_KEY_FIELD = "Совещание_Key"
 PARTICIPANT_KEY_FIELD = "УчастникСовещания_Key"
+TOPIC_TYPE = f"StandardODATA.{CATALOG_ENTITY}"
+PARTICIPANT_TYPE = "StandardODATA.Catalog_Пользователи"
+
+
+def build_participant_record_payload(
+    *,
+    topic_ref_key: str,
+    participant_ref_key: str,
+) -> dict[str, Any]:
+    return {
+        TOPIC_KEY_FIELD: topic_ref_key,
+        "Совещание_Type": TOPIC_TYPE,
+        PARTICIPANT_KEY_FIELD: participant_ref_key,
+        "УчастникСовещания_Type": PARTICIPANT_TYPE,
+    }
+
+
+def post_topic_participant_record(
+    session: requests.Session,
+    config: ODataConfig,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    response = session.post(
+        f"{entity_url(config.url, REGISTER_ENTITY)}?$format=json",
+        json=payload,
+        timeout=config.timeout,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            "Ошибка добавления участника темы совещания: "
+            f"HTTP {response.status_code}: {response.text[:1200]}"
+        )
+    return response.json()
+
+
+def extract_participant_keys(rows: list[dict[str, Any]]) -> list[str]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        participant_key = row.get(PARTICIPANT_KEY_FIELD)
+        if is_empty_key(participant_key):
+            continue
+        normalized = str(participant_key).strip().lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        keys.append(str(participant_key))
+    return keys
+
+
+def resolve_participant_refs_by_fio(
+    session: requests.Session,
+    config: ODataConfig,
+    participant_fios: list[str],
+) -> list[dict[str, str]]:
+    resolved: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_fio in participant_fios:
+        fio = (raw_fio or "").strip()
+        if not fio:
+            continue
+        user_ref, resolved_fio, _ = resolve_user_by_fio(session, fio, config=config)
+        normalized = user_ref.strip().lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        resolved.append({"participant_ref_key": user_ref, "fio": resolved_fio})
+    return resolved
+
+
+def add_meeting_topic_participants(
+    session: requests.Session,
+    config: ODataConfig,
+    *,
+    topic_ref_key: str,
+    participant_refs: list[dict[str, str]],
+    dry_run: bool = False,
+) -> list[dict[str, Any]]:
+    added: list[dict[str, Any]] = []
+    for item in participant_refs:
+        payload = build_participant_record_payload(
+            topic_ref_key=topic_ref_key,
+            participant_ref_key=item["participant_ref_key"],
+        )
+        if dry_run:
+            added.append(
+                {
+                    "participant_ref_key": item["participant_ref_key"],
+                    "fio": item.get("fio"),
+                    "payload": payload,
+                    "dry_run": True,
+                }
+            )
+            continue
+        body = post_topic_participant_record(session, config, payload)
+        added.append(
+            {
+                "participant_ref_key": item["participant_ref_key"],
+                "fio": item.get("fio"),
+                "body": body,
+            }
+        )
+    return added
 
 
 def resolve_topic_ref_key(

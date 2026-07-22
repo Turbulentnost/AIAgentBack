@@ -63,12 +63,12 @@ def parse_closed_date(value: str | None) -> date | None:
 
 
 def is_topic_active(raw_closed_date: str | None, *, today: date | None = None) -> bool:
-    """Тема активна, если дата закрытия пустая или ещё не наступила."""
+    """Тема активна, если дата закрытия не задана или строго позже сегодня."""
     closed = parse_closed_date(raw_closed_date)
     if closed is None:
         return True
     current = today or date.today()
-    return closed >= current
+    return closed > current
 
 
 def related_description(value: Any) -> str | None:
@@ -83,6 +83,7 @@ def normalize_topic(row: dict[str, Any], *, expand_related: bool) -> dict[str, A
         "ref_key": row.get("Ref_Key"),
         "code": row.get("Code"),
         "description": (row.get("Description") or "").strip(),
+        "details": (row.get("Описание") or "").strip(),
         "meeting_type": row.get("ВидСовещания"),
         "priority": row.get("Приоритет"),
         "schedule_defined": bool(row.get("РасписаниеЗадано")),
@@ -153,7 +154,7 @@ def build_filter_parts(
         today = date.today().isoformat()
         parts.append(
             f"(ДатаЗакрытияТемы eq datetime'{EMPTY_DATE}' "
-            f"or ДатаЗакрытияТемы ge datetime'{today}T00:00:00')"
+            f"or ДатаЗакрытияТемы gt datetime'{today}T00:00:00')"
         )
 
     return parts
@@ -191,6 +192,13 @@ def fetch_topic_by_key(
     try:
         row = odata_get_json(session, url, timeout=config.timeout)
     except RuntimeError:
+        if expand_related:
+            return fetch_topic_by_key(
+                session,
+                config,
+                ref_key,
+                expand_related=False,
+            )
         return None
     if row.get("DeletionMark"):
         return None

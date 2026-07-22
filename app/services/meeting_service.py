@@ -326,6 +326,40 @@ class MeetingService:
         )
 
 
+    async def _approve_memo_in_onec(
+        self,
+        memo_ref_key: str,
+        *,
+        approver_fio: str | None,
+        comment: str | None = None,
+    ) -> dict[str, Any]:
+        """PATCH «Согласована» в 1С и синхронизация статуса в Redis-кэше."""
+        normalized_ref = memo_ref_key.strip().lower()
+        try:
+            raw = await asyncio.to_thread(
+                approve_service_memo,
+                ref_key=normalized_ref,
+                approver_fio=approver_fio,
+                comment=comment,
+                perform_approval=True,
+            )
+        except ServiceMemoWorkflowError as exc:
+            raise MeetingServiceError(str(exc)) from exc
+        except Exception as exc:
+            lowered = str(exc).lower()
+            if any(
+                token in lowered
+                for token in ("401", "403", "404", "timeout", "connection", "connect", "odata")
+            ):
+                raise MeetingServiceError(format_onec_load_error(exc), status_code=503) from exc
+            raise MeetingServiceError(f"Не удалось согласовать служебную записку в 1С: {exc}") from exc
+
+        if raw.get("status"):
+            await self._apply_memo_status_to_cache(normalized_ref, str(raw["status"]))
+        if raw.get("changed"):
+            self._schedule_memo_cache_refresh(normalized_ref)
+        return raw
+
     async def approve_agent_slot(
         self,
         memo_ref_key: str,
@@ -333,7 +367,7 @@ class MeetingService:
         *,
         current_user: User,
     ) -> MeetingAgentSlotApproveRead:
-        """Отправляет приглашения через Outlook/EWS. Без 1С: только e-mail и слот из запроса."""
+        """Отправляет приглашения через Outlook/EWS и согласует СЗ в 1С (кроме offline-кэша)."""
         await self._ensure_access(current_user)
         normalized_ref = memo_ref_key.strip().lower()
         memo_detail: dict | None = None
@@ -443,11 +477,19 @@ class MeetingService:
             attendee_details=attendee_details,
         )
 
-        await self._sync_approved_status_after_invite(
-            normalized_ref,
-            memo_detail=memo_detail,
-            approver_fio=_user_fio(current_user),
-        )
+        approver_fio = _user_fio(current_user)
+        use_offline_approve = memo_detail is not None and is_offline_cache_detail(memo_detail)
+        if use_offline_approve:
+            await self._sync_approved_status_after_invite(
+                normalized_ref,
+                memo_detail=memo_detail,
+                approver_fio=approver_fio,
+            )
+        else:
+            await self._approve_memo_in_onec(
+                normalized_ref,
+                approver_fio=approver_fio,
+            )
 
         return MeetingAgentSlotApproveRead(
             memo_ref_key=normalized_ref,
@@ -547,52 +589,11 @@ class MeetingService:
                 )
                 await self._apply_memo_status_to_cache(normalized_ref, APPROVED_STATUS)
         else:
-            try:
-                raw = await asyncio.to_thread(
-                    approve_service_memo,
-                    ref_key=normalized_ref,
-                    approver_fio=approver_fio,
-                    comment=payload.comment,
-                    perform_approval=True,
-                )
-            except ServiceMemoWorkflowError as exc:
-                raise MeetingServiceError(str(exc)) from exc
-            except Exception as exc:
-                lowered = str(exc).lower()
-                if cached is not None and any(
-                    token in lowered
-                    for token in ("401", "403", "404", "timeout", "connection", "connect", "odata", "500")
-                ):
-                    raw = build_offline_approve_result(
-                        cached["payload"],
-                        ref_key=normalized_ref,
-                        approver_fio=approver_fio,
-                        comment=payload.comment,
-                    )
-                    if raw.get("changed"):
-                        history_message = (
-                            f"Согласована офлайн ({approver_fio})"
-                            if approver_fio
-                            else "Согласована офлайн (кэш Redis)"
-                        )
-                        await cache_service.patch_status(
-                            normalized_ref,
-                            APPROVED_STATUS,
-                            history_message=history_message,
-                        )
-                        await self._apply_memo_status_to_cache(normalized_ref, APPROVED_STATUS)
-                elif any(
-                    token in lowered
-                    for token in ("401", "403", "404", "timeout", "connection", "connect", "odata")
-                ):
-                    raise MeetingServiceError(format_onec_load_error(exc), status_code=503) from exc
-                else:
-                    raise MeetingServiceError(f"Не удалось согласовать служебную записку в 1С: {exc}") from exc
-
-            if raw.get("status"):
-                await self._apply_memo_status_to_cache(normalized_ref, str(raw["status"]))
-            if raw.get("changed"):
-                self._schedule_memo_cache_refresh(normalized_ref)
+            raw = await self._approve_memo_in_onec(
+                normalized_ref,
+                approver_fio=approver_fio,
+                comment=payload.comment,
+            )
 
         await self.audit.log(
             action="meeting.memo_approved",

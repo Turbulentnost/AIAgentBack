@@ -16,6 +16,7 @@ class TaskStatus(str, enum.Enum):
     PLANNING = "planning"
     RUNNING = "running"
     WAITING_HUMAN = "waiting_human"
+    WAITING_EXTERNAL = "waiting_external"
     COMPLETED = "completed"
     COMPLETED_WITH_ISSUES = "completed_with_issues"
     FAILED = "failed"

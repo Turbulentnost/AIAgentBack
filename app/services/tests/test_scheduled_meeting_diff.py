@@ -22,10 +22,15 @@ from app.services.scheduled_meeting_diff import build_series_update_change_set
 
 def _meeting_stub() -> SimpleNamespace:
     position_id = uuid.uuid4()
+    category_id = uuid.uuid4()
     position = SimpleNamespace(id=position_id, name="Директор", is_active=True)
     return SimpleNamespace(
         id=uuid.uuid4(),
         title="Тест",
+        meeting_category_id=category_id,
+        manager_position_id=position_id,
+        responsible_position_id=position_id,
+        outlook_series_id="series-id",
         meeting_type=ScheduledMeetingType.PLANNED,
         status=ScheduledMeetingStatus.PLANNED,
         time_local=time(9, 0),
@@ -124,6 +129,15 @@ def test_change_set_rejects_recurrence_schedule_change() -> None:
     change_set = build_series_update_change_set(meeting, payload)
 
     assert "периодичность" in change_set.unsupported_fields
+
+
+def test_change_set_rejects_role_change_after_planning() -> None:
+    meeting = _meeting_stub()
+    payload = ScheduledMeetingUpdate(meeting_category_id=uuid.uuid4())
+
+    change_set = build_series_update_change_set(meeting, payload)
+
+    assert "вид совещания" in change_set.unsupported_fields
 
 
 def test_change_set_allows_comment_only_update() -> None:

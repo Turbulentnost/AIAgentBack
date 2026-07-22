@@ -30,6 +30,21 @@ from app.services.meeting_agent_slot_confirm import SlotConflictRescheduleTarget
 from app.services.meeting_agent_slot import MeetingAgentSlotService, PreviewBusyPrefetch
 from app.services.meeting_exceptions import MeetingServiceError
 from app.services.meeting_service import MeetingService
+from app.tools.onec.service_memo_shared import APPROVED_STATUS
+
+
+@pytest.fixture
+def stub_onec_memo_approve():
+    with patch(
+        "app.services.meeting_service.fetch_reschedule_targets_for_approve_sync",
+        return_value=[],
+    ):
+        with patch.object(
+            MeetingService,
+            "_approve_memo_in_onec",
+            new=AsyncMock(return_value={"status": APPROVED_STATUS, "changed": True}),
+        ) as mock:
+            yield mock
 
 
 def _find_slots_result(
@@ -777,7 +792,7 @@ async def test_suggest_agent_slot_no_slot_returns_company_calendar_conflicts(use
 
 
 @pytest.mark.asyncio
-async def test_approve_agent_slot_reschedules_conflicts_before_invite(user) -> None:
+async def test_approve_agent_slot_reschedules_conflicts_before_invite(user, stub_onec_memo_approve) -> None:
     db = AsyncMock()
     service = MeetingService(db)
     service._ensure_access = AsyncMock()
@@ -842,7 +857,7 @@ async def test_approve_agent_slot_reschedules_conflicts_before_invite(user) -> N
 
 
 @pytest.mark.asyncio
-async def test_approve_agent_slot_sends_outlook_invite_only(user) -> None:
+async def test_approve_agent_slot_sends_outlook_invite_only(user, stub_onec_memo_approve) -> None:
     db = AsyncMock()
     service = MeetingService(db)
     service._ensure_access = AsyncMock()
@@ -874,6 +889,7 @@ async def test_approve_agent_slot_sends_outlook_invite_only(user) -> None:
     assert result.sent is True
     assert result.attendees == ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"]
     send_invite.assert_called_once()
+    stub_onec_memo_approve.assert_awaited_once()
     kwargs = send_invite.call_args.kwargs
     assert kwargs["attendees"] == ["a@turbo-don.ru", "b@turbo-don.ru", "c@turbo-don.ru"]
     assert kwargs["resources"] == []
@@ -882,7 +898,7 @@ async def test_approve_agent_slot_sends_outlook_invite_only(user) -> None:
 
 
 @pytest.mark.asyncio
-async def test_approve_agent_slot_adds_room_as_participant_and_resource(user) -> None:
+async def test_approve_agent_slot_adds_room_as_participant_and_resource(user, stub_onec_memo_approve) -> None:
     db = AsyncMock()
     service = MeetingService(db)
     service._ensure_access = AsyncMock()
@@ -915,7 +931,7 @@ async def test_approve_agent_slot_adds_room_as_participant_and_resource(user) ->
 
 
 @pytest.mark.asyncio
-async def test_approve_agent_slot_works_without_memo_cache(user) -> None:
+async def test_approve_agent_slot_works_without_memo_cache(user, stub_onec_memo_approve) -> None:
     db = AsyncMock()
     service = MeetingService(db)
     service._ensure_access = AsyncMock()
@@ -944,7 +960,7 @@ async def test_approve_agent_slot_works_without_memo_cache(user) -> None:
 
 
 @pytest.mark.asyncio
-async def test_approve_agent_slot_accepts_attendee_emails(user) -> None:
+async def test_approve_agent_slot_accepts_attendee_emails(user, stub_onec_memo_approve) -> None:
     db = AsyncMock()
     service = MeetingService(db)
     service._ensure_access = AsyncMock()
@@ -980,20 +996,24 @@ async def test_approve_agent_slot_reports_outlook_error(user) -> None:
     service._ensure_access = AsyncMock()
 
     with patch(
-        "app.services.meeting_service.dispatch_meeting_invite",
-        side_effect=RuntimeError("EWS timeout"),
+        "app.services.meeting_service.fetch_reschedule_targets_for_approve_sync",
+        return_value=[],
     ):
-        with pytest.raises(MeetingServiceError, match="Outlook/Exchange"):
-            await service.approve_agent_slot(
-                "abc",
-                MeetingAgentSlotApproveRequest(
-                    slot_start="2026-06-20 11:00",
-                    slot_end="2026-06-20 11:20",
-                    subject="Совещание",
-                    attendee_emails=["a@turbo-don.ru"],
-                ),
-                current_user=user,
-            )
+        with patch(
+            "app.services.meeting_service.dispatch_meeting_invite",
+            side_effect=RuntimeError("EWS timeout"),
+        ):
+            with pytest.raises(MeetingServiceError, match="Outlook/Exchange"):
+                await service.approve_agent_slot(
+                    "abc",
+                    MeetingAgentSlotApproveRequest(
+                        slot_start="2026-06-20 11:00",
+                        slot_end="2026-06-20 11:20",
+                        subject="Совещание",
+                        attendee_emails=["a@turbo-don.ru"],
+                    ),
+                    current_user=user,
+                )
 
 
 @pytest.mark.asyncio

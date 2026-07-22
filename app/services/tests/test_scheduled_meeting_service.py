@@ -28,11 +28,30 @@ def _meeting_stub(
     title: str,
     position_id: uuid.UUID,
     position_name: str = "Главный инженер",
+    category_id: uuid.UUID | None = None,
+    manager_position_id: uuid.UUID | None = None,
+    responsible_position_id: uuid.UUID | None = None,
 ) -> SimpleNamespace:
+    category_id = category_id or uuid.uuid4()
+    manager_position_id = manager_position_id or position_id
+    responsible_position_id = responsible_position_id or position_id
     position = SimpleNamespace(id=position_id, name=position_name, is_active=True)
+    manager_position = SimpleNamespace(id=manager_position_id, name=position_name, is_active=True)
+    responsible_position = SimpleNamespace(
+        id=responsible_position_id,
+        name=position_name,
+        is_active=True,
+    )
+    category = SimpleNamespace(id=category_id, name="Комитет", sort_order=1, is_active=True)
     return SimpleNamespace(
         id=meeting_id,
         title=title,
+        meeting_category_id=category_id,
+        meeting_category=category,
+        manager_position_id=manager_position_id,
+        manager_position=manager_position,
+        responsible_position_id=responsible_position_id,
+        responsible_position=responsible_position,
         meeting_type=ScheduledMeetingType.PLANNED,
         status=ScheduledMeetingStatus.CREATED,
         time_local=time(10, 0),
@@ -126,25 +145,36 @@ async def test_get_scheduled_meeting_raises_404_when_missing() -> None:
 async def test_create_scheduled_meeting_persists_participants() -> None:
     db = AsyncMock()
     position_id = uuid.uuid4()
+    manager_id = uuid.uuid4()
+    responsible_id = uuid.uuid4()
+    category_id = uuid.uuid4()
     meeting_id = uuid.uuid4()
 
     meeting = _meeting_stub(
         meeting_id=meeting_id,
         title="Технический совет",
         position_id=position_id,
+        category_id=category_id,
+        manager_position_id=manager_id,
+        responsible_position_id=responsible_id,
     )
 
+    category_lookup = MagicMock()
+    category_lookup.scalar_one_or_none.return_value = SimpleNamespace(
+        id=category_id,
+        name="Комитет",
+        is_active=True,
+    )
     position_lookup = MagicMock()
     position_lookup.scalars.return_value.all.return_value = [
-        SimpleNamespace(
-            id=position_id,
-            name="Главный инженер",
-            is_active=True,
-        )
+        SimpleNamespace(id=position_id, name="Главный инженер", is_active=True),
+        SimpleNamespace(id=manager_id, name="Директор", is_active=True),
+        SimpleNamespace(id=responsible_id, name="Секретарь", is_active=True),
     ]
     loaded_result = MagicMock()
     loaded_result.scalar_one_or_none.return_value = meeting
 
+    db.get = AsyncMock(return_value=SimpleNamespace(id=category_id, is_active=True))
     db.execute = AsyncMock(side_effect=[position_lookup, loaded_result])
 
     def _assign_id(obj) -> None:
@@ -156,6 +186,9 @@ async def test_create_scheduled_meeting_persists_participants() -> None:
 
     payload = ScheduledMeetingCreate(
         title="Технический совет",
+        meeting_category_id=category_id,
+        manager_position_id=manager_id,
+        responsible_position_id=responsible_id,
         meeting_type=ScheduledMeetingType.PLANNED,
         status=ScheduledMeetingStatus.CREATED,
         series_start_date=date(2026, 1, 1),
@@ -173,12 +206,15 @@ async def test_create_scheduled_meeting_persists_participants() -> None:
     result = await ScheduledMeetingService(db).create(payload)
 
     assert result.title == "Технический совет"
+    assert result.meeting_category_id == category_id
+    assert result.manager_position_id == manager_id
+    assert result.responsible_position_id == responsible_id
     assert result.recurrence_label == "еженедельно, вторник 10:00"
     assert result.series_end_date == date(2026, 12, 31)
     assert len(result.participants) == 1
     assert result.participants[0].position_name == "Главный инженер"
     assert result.payload == {"comment": "Дополнительная информация"}
-    assert db.add.call_count == 2
+    assert db.add.call_count == 4
 
 
 @pytest.mark.asyncio
@@ -190,10 +226,14 @@ async def test_create_scheduled_meeting_rejects_inactive_position() -> None:
     execute_result.scalars.return_value.all.return_value = [
         SimpleNamespace(id=position_id, name="ФИНАНСОВЫЙ ДИРЕКТОР", is_active=False)
     ]
+    db.get = AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4(), is_active=True))
     db.execute = AsyncMock(return_value=execute_result)
 
     payload = ScheduledMeetingCreate(
         title="Технический совет",
+        meeting_category_id=uuid.uuid4(),
+        manager_position_id=position_id,
+        responsible_position_id=position_id,
         meeting_type=ScheduledMeetingType.PLANNED,
         recurrence=ScheduledMeetingRecurrencePayload(
             frequency=ScheduledMeetingFrequency.WEEKLY,
@@ -215,10 +255,14 @@ async def test_create_scheduled_meeting_rejects_unknown_position() -> None:
 
     execute_result = MagicMock()
     execute_result.scalars.return_value.all.return_value = []
+    db.get = AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4(), is_active=True))
     db.execute = AsyncMock(return_value=execute_result)
 
     payload = ScheduledMeetingCreate(
         title="Технический совет",
+        meeting_category_id=uuid.uuid4(),
+        manager_position_id=position_id,
+        responsible_position_id=position_id,
         meeting_type=ScheduledMeetingType.PLANNED,
         recurrence=ScheduledMeetingRecurrencePayload(
             frequency=ScheduledMeetingFrequency.WEEKLY,

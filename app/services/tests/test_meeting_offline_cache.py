@@ -87,31 +87,28 @@ async def test_approve_memo_without_offline_cache_uses_onec(user) -> None:
     service = MeetingService(db)
     service._ensure_access = AsyncMock()
     service.audit.log = AsyncMock()
-    service._apply_memo_status_to_cache = AsyncMock()
-    service._schedule_memo_cache_refresh = lambda _ref: None
+    service._approve_memo_in_onec = AsyncMock(
+        return_value={
+            "ref_key": "real-ref",
+            "number": "000010430",
+            "status": APPROVED_STATUS,
+            "changed": True,
+            "sto_ready": True,
+            "sto_issues": [],
+        }
+    )
 
     cache_service = AsyncMock()
     cache_service.read_cached = AsyncMock(return_value=None)
 
     with patch("app.services.meeting_service.MeetingMemoCacheService", return_value=cache_service):
-        with patch(
-            "app.services.meeting_service.approve_service_memo",
-            return_value={
-                "ref_key": "real-ref",
-                "number": "000010430",
-                "status": APPROVED_STATUS,
-                "changed": True,
-                "sto_ready": True,
-                "sto_issues": [],
-            },
-        ) as approve_onec:
-            result = await service.approve_memo(
-                "real-ref",
-                MeetingMemoApproveRequest(),
-                current_user=user,
-            )
+        result = await service.approve_memo(
+            "real-ref",
+            MeetingMemoApproveRequest(),
+            current_user=user,
+        )
 
-    approve_onec.assert_called_once()
+    service._approve_memo_in_onec.assert_awaited_once()
     assert result.changed is True
 
 
@@ -123,6 +120,7 @@ async def test_approve_agent_slot_syncs_offline_cache_status(user) -> None:
     service.audit.log = AsyncMock()
     service._apply_memo_status_to_cache = AsyncMock()
     service._sync_approved_status_after_invite = AsyncMock()
+    service._approve_memo_in_onec = AsyncMock()
 
     offline_detail = {
         "number": "000010703",
@@ -132,38 +130,103 @@ async def test_approve_agent_slot_syncs_offline_cache_status(user) -> None:
     }
 
     with patch(
-        "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
-        AsyncMock(return_value=(offline_detail, None, True)),
+        "app.services.meeting_service.fetch_reschedule_targets_for_approve_sync",
+        return_value=[],
     ):
         with patch(
-            "app.services.meeting_service.dispatch_meeting_invite",
-            return_value={"status": "sent", "attendees": ["a@turbo-don.ru"]},
+            "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
+            AsyncMock(return_value=(offline_detail, None, True)),
         ):
             with patch(
-                "app.services.meeting_service.MeetingRegistryService.upsert_from_invite",
-                AsyncMock(),
-            ) as upsert_registry:
-                from app.schemas.meeting import MeetingAgentSlotApproveRequest, MeetingAttendeeRead
+                "app.services.meeting_service.dispatch_meeting_invite",
+                return_value={"status": "sent", "attendees": ["a@turbo-don.ru"]},
+            ):
+                with patch(
+                    "app.services.meeting_service.MeetingRegistryService.upsert_from_invite",
+                    AsyncMock(),
+                ) as upsert_registry:
+                    from app.schemas.meeting import MeetingAgentSlotApproveRequest, MeetingAttendeeRead
 
-                result = await service.approve_agent_slot(
-                    "65050fe0-0e1a-53fc-88f4-dc0772a0c021",
-                    MeetingAgentSlotApproveRequest(
-                        slot_start="2026-07-08T12:00:00",
-                        slot_end="2026-07-08T13:00:00",
-                        subject="Совещание",
-                        attendees=[
-                            MeetingAttendeeRead(
-                                fio="A",
-                                email="a@turbo-don.ru",
-                                role="participant",
-                                role_label="Участник",
-                                found=True,
-                            )
-                        ],
-                    ),
-                    current_user=user,
-                )
+                    result = await service.approve_agent_slot(
+                        "65050fe0-0e1a-53fc-88f4-dc0772a0c021",
+                        MeetingAgentSlotApproveRequest(
+                            slot_start="2026-07-08T12:00:00",
+                            slot_end="2026-07-08T13:00:00",
+                            subject="Совещание",
+                            attendees=[
+                                MeetingAttendeeRead(
+                                    fio="A",
+                                    email="a@turbo-don.ru",
+                                    role="participant",
+                                    role_label="Участник",
+                                    found=True,
+                                )
+                            ],
+                        ),
+                        current_user=user,
+                    )
 
     assert result.sent is True
     upsert_registry.assert_awaited_once()
     service._sync_approved_status_after_invite.assert_awaited_once()
+    service._approve_memo_in_onec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_approve_agent_slot_approves_in_onec_after_invite(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+    service.audit.log = AsyncMock()
+    service._approve_memo_in_onec = AsyncMock(
+        return_value={"status": APPROVED_STATUS, "changed": True}
+    )
+
+    memo_detail = {
+        "number": "000010430",
+        "status": UNAPPROVED_STATUS,
+        "application": {"initiator": {"full_name": "A"}},
+    }
+
+    with patch(
+        "app.services.meeting_service.fetch_reschedule_targets_for_approve_sync",
+        return_value=[],
+    ):
+        with patch(
+            "app.services.meeting_service.MeetingMemoCacheService.get_memo_detail",
+            AsyncMock(return_value=(memo_detail, None, False)),
+        ):
+            with patch(
+                "app.services.meeting_service.dispatch_meeting_invite",
+                return_value={"status": "sent", "attendees": ["a@turbo-don.ru"]},
+            ):
+                with patch(
+                    "app.services.meeting_service.MeetingRegistryService.upsert_from_invite",
+                    AsyncMock(),
+                ):
+                    from app.schemas.meeting import MeetingAgentSlotApproveRequest, MeetingAttendeeRead
+
+                    result = await service.approve_agent_slot(
+                        "65050fe0-0e1a-53fc-88f4-dc0772a0c021",
+                        MeetingAgentSlotApproveRequest(
+                            slot_start="2026-07-08T12:00:00",
+                            slot_end="2026-07-08T13:00:00",
+                            subject="Совещание",
+                            attendees=[
+                                MeetingAttendeeRead(
+                                    fio="A",
+                                    email="a@turbo-don.ru",
+                                    role="participant",
+                                    role_label="Участник",
+                                    found=True,
+                                )
+                            ],
+                        ),
+                        current_user=user,
+                    )
+
+    assert result.sent is True
+    service._approve_memo_in_onec.assert_awaited_once_with(
+        "65050fe0-0e1a-53fc-88f4-dc0772a0c021",
+        approver_fio=None,
+    )
