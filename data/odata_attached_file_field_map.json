@@ -5,13 +5,16 @@
     "name": "Description",
     "extension": "Расширение",
     "owner_key": "ВладелецФайла_Key",
+    "volume_key": "Том_Key",
     "storage_binary": "ФайлХранилище_Base64Data",
     "storage_binary_type": "ФайлХранилище_Type",
+    "storage_stream": "ФайлХранилище",
     "storage_kind": "ТипХраненияФайла",
     "size": "Размер"
   },
   "defaults": {
     "storage_binary_type": "application/octet-stream",
-    "storage_kind": "ВИнформационнойБазе"
+    "storage_kind": "ВТомахНаДиске",
+    "upload_binary_via_stream": true
   }
 }

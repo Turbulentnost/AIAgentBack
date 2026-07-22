@@ -44,6 +44,7 @@ class ODataIntegrationService(IntegrationService):
         routing_rules_path: str = "",
         attached_file_field_map_path: str = "",
         attach_files_enabled: bool = True,
+        file_volume_key: str = "",
     ) -> None:
         self._entity = entity.strip("/")
         self._field_map = load_field_map(field_map_json)
@@ -64,8 +65,9 @@ class ODataIntegrationService(IntegrationService):
         self._department_names = build_department_name_lookup(
             load_routing_rules(routing_rules_path or None),
         )
-        self._attached_file_field_map = load_attached_file_field_map(
-            attached_file_field_map_path or None
+        self._attached_file_field_map = self._resolve_attached_file_field_map(
+            attached_file_field_map_path or None,
+            file_volume_key=file_volume_key,
         )
         self._attach_files_enabled = attach_files_enabled
         self._client = ODataClient(
@@ -74,6 +76,20 @@ class ODataIntegrationService(IntegrationService):
             password=password,
             timeout_sec=timeout_sec,
         )
+
+    @staticmethod
+    def _resolve_attached_file_field_map(
+        path: str | None,
+        *,
+        file_volume_key: str = "",
+    ) -> dict[str, Any]:
+        field_map = load_attached_file_field_map(path)
+        volume_key = (file_volume_key or "").strip()
+        if not volume_key:
+            return field_map
+        defaults = dict(field_map.get("defaults") or {})
+        defaults["volume_key"] = volume_key
+        return {**field_map, "defaults": defaults}
 
     def create_incoming_correspondence(
         self,
@@ -163,7 +179,11 @@ class ODataIntegrationService(IntegrationService):
         return [
             {
                 "ref_key": item.ref_key,
-                "filename": item.filename,
+                "filename": (
+                    f"{item.filename}.{item.extension}"
+                    if item.extension
+                    else item.filename
+                ),
                 "extension": item.extension,
                 "size_bytes": item.size_bytes,
                 "entity": item.entity,

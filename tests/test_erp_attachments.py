@@ -256,3 +256,17 @@ def test_erp_attachments_already_uploaded():
     payload = json.dumps({"erp_attachments": [{"ref_key": "x"}]})
     assert erp_attachments_already_uploaded(payload) is True
     assert erp_attachments_already_uploaded(json.dumps({})) is False
+
+
+def test_uploaded_erp_attachment_filenames_includes_extension():
+    from agent_pochta.services.erp_attachments import uploaded_erp_attachment_filenames
+
+    payload = json.dumps(
+        {
+            "erp_attachments": [
+                {"filename": "image001", "extension": "png", "ref_key": "x"},
+            ]
+        }
+    )
+    assert uploaded_erp_attachment_filenames(payload) == {"image001", "image001.png"}
+

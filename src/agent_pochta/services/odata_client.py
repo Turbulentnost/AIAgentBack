@@ -130,3 +130,42 @@ class ODataClient:
                 except json.JSONDecodeError:
                     pass
             response.raise_for_status()
+
+    def put_entity_stream(
+        self,
+        entity: str,
+        ref_key: str,
+        stream_property: str,
+        content: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+    ) -> None:
+        """Записывает двоичные данные в Edm.Stream-свойство сущности OData (PUT)."""
+        entity = entity.strip("/")
+        stream_property = stream_property.strip()
+        key = (ref_key or "").strip()
+        if not key:
+            raise ValueError("ref_key is required for OData stream PUT")
+        if not content:
+            raise ValueError("stream content is empty")
+        url = f"{self._base_url}{entity}(guid'{key}')/{stream_property}"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.put(
+                url,
+                content=content,
+                headers={"Content-Type": content_type},
+            )
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData PUT stream {entity}/{stream_property} failed "
+                                f"({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()

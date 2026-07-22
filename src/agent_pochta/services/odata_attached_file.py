@@ -55,15 +55,18 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "extension": "Расширение",
                 # 1С OData: ссылка на документ — *_Key, не ВладелецФайла.
                 "owner_key": "ВладелецФайла_Key",
+                "volume_key": "Том_Key",
                 "storage_binary": "ФайлХранилище_Base64Data",
                 "storage_binary_type": "ФайлХранилище_Type",
+                "storage_stream": "ФайлХранилище",
                 "storage_kind": "ТипХраненияФайла",
                 "size": "Размер",
             },
             "defaults": {
                 # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
                 "storage_binary_type": "application/octet-stream",
-                "storage_kind": "ВИнформационнойБазе",
+                "storage_kind": "ВТомахНаДиске",
+                "upload_binary_via_stream": True,
             },
         }
     data = json.loads(file_path.read_text(encoding="utf-8"))
@@ -110,6 +113,7 @@ def build_attached_file_payload(
     document_ref_key: str,
     file_input: AttachedFileInput,
     field_map: dict[str, Any] | None = None,
+    include_binary: bool | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Формирует OData POST payload для справочника присоединённых файлов."""
     cfg = field_map or load_attached_file_field_map()
@@ -120,6 +124,9 @@ def build_attached_file_payload(
     owner_key = normalize_document_ref_key(document_ref_key)
     content = validate_file_content(file_input.content)
     base_name, extension = split_filename(file_input.filename)
+    upload_via_stream = bool(defaults.get("upload_binary_via_stream", True))
+    if include_binary is None:
+        include_binary = not upload_via_stream
 
     payload: dict[str, Any] = {}
 
@@ -135,15 +142,20 @@ def build_attached_file_payload(
         owner_type_value = defaults.get("owner_type")
         if owner_type_value and not owner_field_name.endswith("_Key"):
             payload[str(owner_type_field)] = owner_type_value
-    if storage_field := fields.get("storage_binary"):
-        payload[str(storage_field)] = base64.b64encode(content).decode("ascii")
-    if storage_type_field := fields.get("storage_binary_type"):
-        payload[str(storage_type_field)] = defaults.get(
-            "storage_binary_type",
-            "application/octet-stream",
-        )
+    if volume_field := fields.get("volume_key"):
+        volume_value = (defaults.get("volume_key") or "").strip()
+        if volume_value and volume_value != _EMPTY_GUID:
+            payload[str(volume_field)] = volume_value
+    if include_binary:
+        if storage_field := fields.get("storage_binary"):
+            payload[str(storage_field)] = base64.b64encode(content).decode("ascii")
+        if storage_type_field := fields.get("storage_binary_type"):
+            payload[str(storage_type_field)] = defaults.get(
+                "storage_binary_type",
+                "application/octet-stream",
+            )
     if kind_field := fields.get("storage_kind"):
-        payload[str(kind_field)] = defaults.get("storage_kind", "ВИнформационнойБазе")
+        payload[str(kind_field)] = defaults.get("storage_kind", "ВТомахНаДиске")
     if size_field := fields.get("size"):
         payload[str(size_field)] = len(content)
     if file_input.author_key and (author_field := fields.get("author_key")):
@@ -155,6 +167,35 @@ def build_attached_file_payload(
         raise AttachedFileError("Маппинг полей присоединённого файла пуст — проверьте field_map")
 
     return entity, payload
+
+
+def upload_attached_file_binary(
+    client,
+    *,
+    entity: str,
+    ref_key: str,
+    content: bytes,
+    field_map: dict[str, Any] | None = None,
+    content_type: str | None = None,
+) -> None:
+    """PUT двоичных данных в Edm.Stream-свойство ФайлХранилище после POST метаданных."""
+    cfg = field_map or load_attached_file_field_map()
+    fields = cfg.get("fields") or {}
+    defaults = cfg.get("defaults") or {}
+    stream_property = str(fields.get("storage_stream") or "ФайлХранилище").strip()
+    binary = validate_file_content(content)
+    put_stream = getattr(client, "put_entity_stream", None)
+    if not callable(put_stream):
+        raise AttachedFileError("OData client does not support stream upload")
+    put_stream(
+        entity,
+        ref_key,
+        stream_property,
+        binary,
+        content_type=content_type
+        or defaults.get("storage_binary_type")
+        or "application/octet-stream",
+    )
 
 
 def attach_file_to_incoming_document(
@@ -195,6 +236,16 @@ def attach_file_to_incoming_document(
     if not ref_key:
         raise AttachedFileError(
             f"OData создал запись {entity}, но Ref_Key отсутствует в ответе"
+        )
+
+    defaults = cfg.get("defaults") or {}
+    if defaults.get("upload_binary_via_stream", True):
+        upload_attached_file_binary(
+            client,
+            entity=entity,
+            ref_key=ref_key,
+            content=file_input.content,
+            field_map=cfg,
         )
 
     base_name, extension = split_filename(file_input.filename)

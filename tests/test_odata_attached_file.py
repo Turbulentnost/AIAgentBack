@@ -30,7 +30,7 @@ def test_split_filename_rejects_empty():
         split_filename(".pdf")
 
 
-def test_build_attached_file_payload_contains_owner_and_binary():
+def test_build_attached_file_payload_stream_mode_excludes_binary_by_default():
     entity, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="scan.pdf", content=b"%PDF-1.4"),
@@ -39,10 +39,44 @@ def test_build_attached_file_payload_contains_owner_and_binary():
     assert payload["Description"] == "scan"
     assert payload["Расширение"] == "pdf"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
+    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+    assert "ФайлХранилище_Base64Data" not in payload
+    assert "ФайлХранилище_Type" not in payload
+    assert payload["Размер"] == 8
+
+
+def test_build_attached_file_payload_can_include_inline_binary():
+    entity, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(filename="scan.pdf", content=b"%PDF-1.4"),
+        include_binary=True,
+    )
     assert payload["ФайлХранилище_Base64Data"]
     assert payload["ФайлХранилище_Type"] == "application/octet-stream"
-    assert "ВладелецФайла" not in payload
-    assert payload["Размер"] == 8
+
+
+def test_build_attached_file_payload_sets_volume_key_from_defaults():
+    _, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(filename="scan.pdf", content=b"data"),
+        field_map={
+            "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            "fields": {
+                "name": "Description",
+                "extension": "Расширение",
+                "owner_key": "ВладелецФайла_Key",
+                "volume_key": "Том_Key",
+                "size": "Размер",
+                "storage_kind": "ТипХраненияФайла",
+            },
+            "defaults": {
+                "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+                "storage_kind": "ВТомахНаДиске",
+                "upload_binary_via_stream": True,
+            },
+        },
+    )
+    assert payload["Том_Key"] == "21886495-364e-11ea-82f2-ac1f6b05524c"
 
 
 def test_attach_file_validates_empty_document_ref():
@@ -92,6 +126,13 @@ def test_attach_file_posts_to_catalog():
     assert result.filename == "a"
     assert result.extension == "pdf"
     client.create_entity.assert_called_once()
+    client.put_entity_stream.assert_called_once_with(
+        "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "ФайлХранилище",
+        b"data",
+        content_type="application/octet-stream",
+    )
 
 
 def test_odata_integration_attach_files_delegates_to_client():
@@ -103,6 +144,7 @@ def test_odata_integration_attach_files_delegates_to_client():
     service._client.create_entity = MagicMock(
         return_value={"Ref_Key": "cccccccc-cccc-cccc-cccc-cccccccccccc"}
     )
+    service._client.put_entity_stream = MagicMock()
 
     out = service.attach_files_to_incoming_correspondence(
         document_ref_key=DOC_KEY,
@@ -111,4 +153,5 @@ def test_odata_integration_attach_files_delegates_to_client():
 
     assert len(out) == 1
     assert out[0]["ref_key"] == "cccccccc-cccc-cccc-cccc-cccccccccccc"
-    assert out[0]["filename"] == "doc"
+    assert out[0]["filename"] == "doc.pdf"
+    service._client.put_entity_stream.assert_called_once()

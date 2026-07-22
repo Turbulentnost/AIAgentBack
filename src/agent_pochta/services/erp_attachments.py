@@ -72,8 +72,11 @@ def uploaded_erp_attachment_filenames(raw_payload_json: str | None) -> set[str]:
     for item in uploaded:
         if isinstance(item, dict):
             name = (item.get("filename") or "").strip()
+            ext = (item.get("extension") or "").strip().lstrip(".")
             if name:
                 names.add(name)
+            if name and ext and "." not in name:
+                names.add(f"{name}.{ext}")
     return names
 
 
