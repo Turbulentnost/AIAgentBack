@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -176,3 +177,21 @@ def test_cache_email_attachment_bytes_stores_in_cache():
     restored = ensure_attachment_bytes_for_erp(empty, MagicMock())
     assert restored >= 1
     assert empty.attachments[0].content == b"pdf-bytes"
+
+
+def test_existing_erp_document_ref_key_from_row():
+    from agent_pochta.services.erp_attachments import existing_erp_document_ref_key
+
+    row = MagicMock(erp_task_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert existing_erp_document_ref_key(row) == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    assert existing_erp_document_ref_key(MagicMock(erp_task_id="SKIP-ERP")) is None
+    assert existing_erp_document_ref_key(MagicMock(erp_task_id=None)) is None
+
+
+def test_erp_attachments_already_uploaded():
+    from agent_pochta.services.erp_attachments import erp_attachments_already_uploaded
+
+    payload = json.dumps({"erp_attachments": [{"ref_key": "x"}]})
+    assert erp_attachments_already_uploaded(payload) is True
+    assert erp_attachments_already_uploaded(json.dumps({})) is False

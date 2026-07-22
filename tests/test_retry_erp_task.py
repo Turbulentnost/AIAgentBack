@@ -231,6 +231,80 @@ def test_retry_erp_task_attaches_files_after_document_create() -> None:
     integration.attach_files_to_incoming_correspondence.assert_called_once()
 
 
+def _done_row_with_existing_document(*, with_uploaded_attachments: bool = False) -> EmailMessageRow:
+    row = _info_error_row(erp_retry_count=0)
+    row.status = ProcessingStatus.DONE.value
+    row.erp_document_number = "ВК-000050"
+    row.erp_task_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    payload = json.loads(row.raw_payload_json)
+    payload["attachments"] = [
+        {"filename": "scan.pdf", "mime_type": "application/pdf", "size_bytes": 4}
+    ]
+    if with_uploaded_attachments:
+        payload["erp_attachments"] = [{"ref_key": "already", "filename": "scan.pdf", "size_bytes": 4}]
+    row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+    row.attachments_count = 1
+    return row
+
+
+def test_retry_erp_task_attach_only_skips_document_create() -> None:
+    from agent_pochta.schemas import Attachment
+
+    row = _done_row_with_existing_document()
+    integration = MagicMock()
+    integration.attach_files_to_incoming_correspondence.return_value = [
+        {"ref_key": "file-ref", "filename": "scan.pdf", "size_bytes": 4}
+    ]
+    email = _info_sample_email().model_copy(
+        update={
+            "attachments": [
+                Attachment(
+                    filename="scan.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=4,
+                    content=b"1234",
+                )
+            ]
+        }
+    )
+
+    with _mock_retry_deps(row=row, integration=integration, email=email):
+        task = retry_erp_task
+        task.push_request(retries=0, max_retries=5)
+        try:
+            result = task(row.message_id)
+        finally:
+            task.pop_request()
+
+    assert result["ok"] is True
+    assert result["attach_only"] is True
+    assert result["erp_attachments"][0]["ref_key"] == "file-ref"
+    integration.create_incoming_correspondence.assert_not_called()
+    integration.attach_files_to_incoming_correspondence.assert_called_once()
+
+
+def test_retry_erp_task_skips_when_attachments_already_uploaded() -> None:
+    row = _done_row_with_existing_document(with_uploaded_attachments=True)
+    integration = MagicMock()
+
+    with _mock_retry_deps(row=row, integration=integration, email=_info_sample_email()):
+        task = retry_erp_task
+        task.push_request(retries=0, max_retries=5)
+        try:
+            result = task(row.message_id)
+        finally:
+            task.pop_request()
+
+    assert result == {
+        "ok": True,
+        "skipped": True,
+        "reason": "erp_already_complete",
+        "erp_document_number": "ВК-000050",
+    }
+    integration.create_incoming_correspondence.assert_not_called()
+    integration.attach_files_to_incoming_correspondence.assert_not_called()
+
+
 def test_retry_erp_task_posts_minimal_payload_from_stored_xml(monkeypatch: pytest.MonkeyPatch) -> None:
     row = _info_error_row()
     info_xml = json.loads(row.raw_payload_json)["xml_document"]

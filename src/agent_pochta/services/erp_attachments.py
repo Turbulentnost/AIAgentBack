@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import structlog
 
 from agent_pochta.attachments.cache import (
@@ -19,6 +21,36 @@ from agent_pochta.services.odata_integration import ODataIntegrationService
 from agent_pochta.services.vault import VaultClient
 
 logger = structlog.get_logger(__name__)
+
+_SKIP_ERP_DOCUMENT_NUMBERS = frozenset({"SKIP-ERP", "DRY-RUN"})
+
+
+def existing_erp_document_ref_key(row) -> str | None:
+    """Ref_Key документа 1С из БД (erp_task_id хранит erp_document_id после create)."""
+    ref = (getattr(row, "erp_task_id", None) or "").strip()
+    if not ref or ref in _SKIP_ERP_DOCUMENT_NUMBERS:
+        return None
+    return ref
+
+
+def row_has_attachment_metadata(row, email: EmailMessage) -> bool:
+    """True, если у письма есть метаданные вложений (байты могут отсутствовать в БД)."""
+    if email.attachments:
+        return True
+    return int(getattr(row, "attachments_count", 0) or 0) > 0
+
+
+def erp_attachments_already_uploaded(raw_payload_json: str | None) -> bool:
+    if not raw_payload_json:
+        return False
+    try:
+        payload = json.loads(raw_payload_json)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    uploaded = payload.get("erp_attachments")
+    return isinstance(uploaded, list) and len(uploaded) > 0
 
 
 def _coerce_attachments(email: EmailMessage) -> None:
