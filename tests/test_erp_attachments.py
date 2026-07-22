@@ -6,12 +6,16 @@ import json
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+from agent_pochta.attachments.cache import clear_attachment_cache
 from agent_pochta.schemas import Attachment, EmailMessage
 from agent_pochta.services.erp_attachments import (
+    ERP_FULL_EMAIL_FILENAME,
     attach_email_files_to_document,
     cache_email_attachment_bytes,
     ensure_attachment_bytes_for_erp,
+    ensure_full_email_bytes_for_erp,
     erp_attachment_filename,
+    erp_full_email_filename,
 )
 from agent_pochta.services.integration_service import StubIntegrationService
 from agent_pochta.services.odata_integration import ODataIntegrationService
@@ -38,6 +42,17 @@ def _email_with_attachment(*, content: bytes | None = b"pdf-bytes") -> EmailMess
     )
 
 
+def _email_without_attachments() -> EmailMessage:
+    return EmailMessage(
+        message_id="<erp-no-att@test>",
+        mailbox="info@turbo-don.ru",
+        sender_email="vendor@example.com",
+        subject="Только текст",
+        body_text="Текст письма без файлов.",
+        received_at=datetime.now(timezone.utc),
+    )
+
+
 def test_attach_email_files_to_document_uses_integration():
     integration = StubIntegrationService()
     email = _email_with_attachment()
@@ -48,9 +63,10 @@ def test_attach_email_files_to_document_uses_integration():
         email=email,
     )
 
-    assert len(result) == 1
-    assert result[0]["filename"] == "scan.pdf"
-    assert result[0]["size_bytes"] == len(b"pdf-bytes")
+    assert len(result) == 2
+    filenames = {item["filename"] for item in result}
+    assert "scan.pdf" in filenames
+    assert ERP_FULL_EMAIL_FILENAME in filenames
 
 
 def test_attach_email_files_to_document_fetches_missing_content():
@@ -73,11 +89,26 @@ def test_attach_email_files_to_document_fetches_missing_content():
         )
 
     ensure_mock.assert_called_once_with(email, vault)
-    assert len(result) == 1
+    assert len(result) == 2
     assert result[0]["size_bytes"] == len(b"restored")
 
 
-def test_attach_email_files_skips_when_no_content_after_fetch():
+def test_attach_email_files_attaches_full_email_without_file_attachments():
+    integration = StubIntegrationService()
+    email = _email_without_attachments()
+
+    result = attach_email_files_to_document(
+        integration,
+        document_ref_key=DOC_KEY,
+        email=email,
+    )
+
+    assert len(result) == 1
+    assert result[0]["filename"] == ERP_FULL_EMAIL_FILENAME
+    assert result[0]["size_bytes"] > 0
+
+
+def test_attach_email_files_still_attaches_eml_when_file_fetch_fails():
     integration = StubIntegrationService()
     email = _email_with_attachment(content=None)
     vault = MagicMock()
@@ -93,7 +124,37 @@ def test_attach_email_files_skips_when_no_content_after_fetch():
             vault=vault,
         )
 
-    assert result == []
+    assert len(result) == 1
+    assert result[0]["filename"] == ERP_FULL_EMAIL_FILENAME
+
+
+def test_ensure_full_email_bytes_prefers_imap_rfc822():
+    clear_attachment_cache()
+    email = _email_without_attachments()
+    vault = MagicMock()
+
+    with patch(
+        "agent_pochta.services.erp_attachments._fetch_full_email_bytes_from_imap",
+        return_value=b"raw-rfc822-bytes",
+    ) as fetch_mock:
+        content = ensure_full_email_bytes_for_erp(email, vault)
+
+    fetch_mock.assert_called_once_with(email, vault)
+    assert content == b"raw-rfc822-bytes"
+
+
+def test_ensure_full_email_bytes_builds_synthetic_when_imap_missing():
+    clear_attachment_cache()
+    email = _email_without_attachments()
+
+    content = ensure_full_email_bytes_for_erp(email, vault=None)
+
+    assert b"Message-ID" in content
+    assert email.body_text.encode("utf-8") in content
+
+
+def test_erp_full_email_filename_is_stable():
+    assert erp_full_email_filename(_email_without_attachments()) == ERP_FULL_EMAIL_FILENAME
 
 
 def test_attach_email_files_skips_when_odata_attach_disabled():

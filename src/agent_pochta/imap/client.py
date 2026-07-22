@@ -298,6 +298,29 @@ class ImapMailboxClient:
             except Exception:
                 pass
 
+    def fetch_raw_rfc822_bytes(
+        self,
+        message_id: str,
+        *,
+        folder: str = "INBOX",
+        timeout_sec: int | None = None,
+    ) -> bytes | None:
+        """Возвращает сырой RFC822 (.eml) письма из IMAP."""
+        client = self._connect(timeout_sec=timeout_sec)
+        try:
+            uid = self._find_uid_by_message_id(client, message_id, folder=folder)
+            if uid is None:
+                return None
+            fetch_data = client.fetch([uid], ["RFC822"])
+            item = fetch_data.get(uid) or {}
+            raw = item.get(b"RFC822")
+            return bytes(raw) if raw else None
+        finally:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
     def fetch_by_message_id(
         self,
         message_id: str,
@@ -308,29 +331,18 @@ class ImapMailboxClient:
         timeout_sec: int | None = None,
     ) -> EmailMessage | None:
         """Ищет письмо по заголовку Message-ID и возвращает распарсенное содержимое."""
-        header_id = imap_header_message_id(message_id)
-        bare_id = header_id.strip("<>")
-
-        client = self._connect(timeout_sec=timeout_sec)
-        try:
-            client.select_folder(folder, readonly=not mark_seen)
-            for candidate in (header_id, bare_id):
-                uids = client.search(["HEADER", "Message-ID", candidate])
-                if uids:
-                    uid = max(uids)
-                    fetch_data = client.fetch([uid], ["RFC822"])
-                    raw = fetch_data[uid][b"RFC822"]
-                    return parse_raw_email(
-                        raw,
-                        self.mailbox,
-                        load_oversized_attachments=load_oversized_attachments,
-                    )
+        raw = self.fetch_raw_rfc822_bytes(
+            message_id,
+            folder=folder,
+            timeout_sec=timeout_sec,
+        )
+        if raw is None:
             return None
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
+        return parse_raw_email(
+            raw,
+            self.mailbox,
+            load_oversized_attachments=load_oversized_attachments,
+        )
 
 
 def fetch_unseen_messages(

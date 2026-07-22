@@ -11,7 +11,11 @@ import pytest
 
 from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.schemas import Attachment, EmailMessage, ProcessingStatus, Priority, RoutingResult
-from agent_pochta.services.erp_attachments import merge_erp_attachment_lists, uploaded_erp_attachment_filenames
+from agent_pochta.services.erp_attachments import (
+    ERP_FULL_EMAIL_FILENAME,
+    merge_erp_attachment_lists,
+    uploaded_erp_attachment_filenames,
+)
 from agent_pochta.services.erp_sync import merge_erp_sync_meta_into_payload, sync_existing_erp_document
 from agent_pochta.services.odata_incoming_mapper import build_incoming_document_update_payload
 from agent_pochta.services.odata_integration import ODataIntegrationService
@@ -144,7 +148,12 @@ def test_merge_erp_sync_meta_into_payload() -> None:
 
 
 def test_sync_existing_updates_and_skips_duplicate_attachments() -> None:
-    row = _done_row(erp_attachments=[{"filename": "scan.pdf", "ref_key": "already"}])
+    row = _done_row(
+        erp_attachments=[
+            {"filename": "scan.pdf", "ref_key": "already"},
+            {"filename": ERP_FULL_EMAIL_FILENAME, "ref_key": "eml-already"},
+        ]
+    )
     integration = MagicMock()
     integration.update_incoming_correspondence.return_value = {
         "updated": True,

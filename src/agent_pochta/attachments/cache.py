@@ -26,6 +26,12 @@ def attachment_cache_key(mailbox: str, message_id: str, index: int, filename: st
     return f"{mailbox.lower()}|{base}|{index}|{filename}"
 
 
+def full_email_cache_key(mailbox: str, message_id: str) -> str:
+    """Ключ in-memory кэша для полного RFC822 (.eml) письма."""
+    base = (message_id or "").split("#", 1)[0].strip()
+    return f"{mailbox.lower()}|{base}|__full_eml__"
+
+
 def get_cached_attachment(key: str) -> CachedAttachment | None:
     settings = get_settings()
     ttl = max(0, int(settings.attachment_cache_ttl_sec))

@@ -241,7 +241,10 @@ def _done_row_with_existing_document(*, with_uploaded_attachments: bool = False)
         {"filename": "scan.pdf", "mime_type": "application/pdf", "size_bytes": 4}
     ]
     if with_uploaded_attachments:
-        payload["erp_attachments"] = [{"ref_key": "already", "filename": "scan.pdf", "size_bytes": 4}]
+        payload["erp_attachments"] = [
+            {"ref_key": "already", "filename": "scan.pdf", "size_bytes": 4},
+            {"ref_key": "eml-already", "filename": "Входящее_письмо.eml", "size_bytes": 100},
+        ]
     row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
     row.attachments_count = 1
     return row
@@ -327,6 +330,9 @@ def test_retry_erp_task_posts_minimal_payload_from_stored_xml(monkeypatch: pytes
         "erp_task_id": None,
         "fields": {},
     }
+    integration.attach_files_to_incoming_correspondence.return_value = [
+        {"ref_key": "eml-ref", "filename": "Входящее_письмо.eml", "size_bytes": 100}
+    ]
 
     with _mock_retry_deps(row=row, integration=integration, email=_info_sample_email()):
         task = retry_erp_task

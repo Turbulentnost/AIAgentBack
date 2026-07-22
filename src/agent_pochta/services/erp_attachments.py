@@ -8,6 +8,7 @@ import structlog
 
 from agent_pochta.attachments.cache import (
     attachment_cache_key,
+    full_email_cache_key,
     get_cached_attachment,
     put_cached_attachment,
 )
@@ -23,6 +24,7 @@ from agent_pochta.services.vault import VaultClient
 logger = structlog.get_logger(__name__)
 
 _SKIP_ERP_DOCUMENT_NUMBERS = frozenset({"SKIP-ERP", "DRY-RUN"})
+ERP_FULL_EMAIL_FILENAME = "Входящее_письмо.eml"
 
 
 def existing_erp_document_ref_key(row) -> str | None:
@@ -265,6 +267,131 @@ def ensure_attachment_bytes_for_erp(email: EmailMessage, vault: VaultClient) -> 
     return restored
 
 
+def erp_full_email_filename(_email: EmailMessage | None = None) -> str:
+    """Стабильное имя .eml для идемпотентной догрузки в 1С."""
+    return ERP_FULL_EMAIL_FILENAME
+
+
+def _build_synthetic_eml_bytes(email: EmailMessage) -> bytes:
+    """Собирает .eml из полей EmailMessage, если IMAP недоступен."""
+    from email.message import EmailMessage as StdEmailMessage
+    from email.utils import format_datetime, formataddr
+
+    msg = StdEmailMessage()
+    header_id = email.message_id.split("#", 1)[0].strip()
+    if header_id:
+        if not header_id.startswith("<"):
+            header_id = f"<{header_id}>"
+        msg["Message-ID"] = header_id
+    if email.sender_name:
+        msg["From"] = formataddr((email.sender_name, email.sender_email))
+    else:
+        msg["From"] = email.sender_email
+    if email.to:
+        msg["To"] = ", ".join(email.to)
+    if email.cc:
+        msg["Cc"] = ", ".join(email.cc)
+    if email.reply_to:
+        msg["Reply-To"] = email.reply_to
+    msg["Subject"] = email.subject or ""
+    msg["Date"] = format_datetime(email.received_at)
+
+    body_text = email.body_text or ""
+    if email.body_html:
+        msg.set_content(body_text, subtype="plain", charset="utf-8")
+        msg.add_alternative(email.body_html, subtype="html", charset="utf-8")
+    else:
+        msg.set_content(body_text, subtype="plain", charset="utf-8")
+
+    for att in attachments_with_content(email):
+        mime = (att.mime_type or "application/octet-stream").split(";", 1)[0].strip()
+        maintype, _, subtype = mime.partition("/")
+        msg.add_attachment(
+            bytes(att.content),
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=erp_attachment_filename(att),
+        )
+    return msg.as_bytes()
+
+
+def _fetch_full_email_bytes_from_imap(email: EmailMessage, vault: VaultClient) -> bytes | None:
+    if not email.mailbox:
+        return None
+    imap_id = email.message_id.split("#", 1)[0]
+    settings = get_settings()
+    try:
+        credentials = resolve_imap_credentials(email.mailbox, vault)
+        client = ImapMailboxClient(email.mailbox, credentials, settings=settings)
+        raw = client.fetch_raw_rfc822_bytes(
+            imap_id,
+            timeout_sec=settings.imap_download_timeout_sec,
+        )
+    except Exception as exc:
+        logger.warning(
+            "erp_full_email_imap_fetch_failed",
+            message_id=email.message_id,
+            mailbox=email.mailbox,
+            error=str(exc),
+        )
+        return None
+    if not raw:
+        logger.info(
+            "erp_full_email_imap_not_found",
+            message_id=email.message_id,
+            mailbox=email.mailbox,
+        )
+        return None
+    logger.info(
+        "erp_full_email_imap_fetched",
+        message_id=email.message_id,
+        size_bytes=len(raw),
+    )
+    return raw
+
+
+def ensure_full_email_bytes_for_erp(email: EmailMessage, vault: VaultClient | None) -> bytes:
+    """RFC822 из IMAP (или синтетический .eml) для прикрепления к документу 1С."""
+    if email.mailbox:
+        key = full_email_cache_key(email.mailbox, email.message_id)
+        cached = get_cached_attachment(key)
+        if cached and cached.content:
+            return cached.content
+
+    raw: bytes | None = None
+    if vault is not None and email.mailbox:
+        raw = _fetch_full_email_bytes_from_imap(email, vault)
+    if not raw:
+        raw = _build_synthetic_eml_bytes(email)
+
+    if email.mailbox and raw:
+        put_cached_attachment(
+            full_email_cache_key(email.mailbox, email.message_id),
+            content=raw,
+            mime_type="message/rfc822",
+            filename=ERP_FULL_EMAIL_FILENAME,
+        )
+    return raw
+
+
+def _collect_erp_upload_files(
+    email: EmailMessage,
+    *,
+    full_email_bytes: bytes,
+    skip_filenames: set[str] | None = None,
+) -> list[AttachedFileInput]:
+    skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
+    files: list[AttachedFileInput] = []
+    for att in attachments_with_content(email):
+        name = erp_attachment_filename(att)
+        if name not in skip:
+            files.append(AttachedFileInput(filename=name, content=bytes(att.content)))
+    eml_name = erp_full_email_filename(email)
+    if eml_name not in skip and full_email_bytes:
+        files.append(AttachedFileInput(filename=eml_name, content=full_email_bytes))
+    return files
+
+
 def _supports_attachment_upload(integration: IntegrationService) -> bool:
     if isinstance(integration, ODataIntegrationService):
         return bool(getattr(integration, "_attach_files_enabled", True))
@@ -282,7 +409,7 @@ def attach_email_files_to_document(
     email: EmailMessage,
     vault: VaultClient | None = None,
 ) -> list[dict]:
-    """Прикрепляет вложения с content к существующему документу 1С."""
+    """Прикрепляет полное письмо (.eml) и файловые вложения к документу 1С."""
     if not _supports_attachment_upload(integration):
         logger.info(
             "erp_attach_files_skipped",
@@ -293,15 +420,13 @@ def attach_email_files_to_document(
 
     if vault is not None:
         ensure_attachment_bytes_for_erp(email, vault)
+    full_email_bytes = ensure_full_email_bytes_for_erp(email, vault)
 
-    files = [
-        AttachedFileInput(filename=erp_attachment_filename(att), content=bytes(att.content))
-        for att in attachments_with_content(email)
-    ]
+    files = _collect_erp_upload_files(email, full_email_bytes=full_email_bytes)
     if not files:
         logger.info(
             "erp_attach_files_skipped",
-            reason="no_attachments_with_content",
+            reason="no_files_to_attach",
             message_id=email.message_id,
             attachment_count=len(email.attachments or []),
         )
@@ -342,7 +467,7 @@ def attach_missing_email_files_to_document(
     vault: VaultClient | None = None,
     skip_filenames: set[str] | None = None,
 ) -> list[dict]:
-    """Прикрепляет только те вложения, которых ещё нет в 1С (по имени файла)."""
+    """Прикрепляет недостающие файловые вложения и .eml к документу 1С."""
     if not _supports_attachment_upload(integration):
         logger.info(
             "erp_attach_files_skipped",
@@ -353,19 +478,19 @@ def attach_missing_email_files_to_document(
 
     if vault is not None:
         ensure_attachment_bytes_for_erp(email, vault)
+    full_email_bytes = ensure_full_email_bytes_for_erp(email, vault)
 
-    skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
-    files = [
-        AttachedFileInput(filename=erp_attachment_filename(att), content=bytes(att.content))
-        for att in attachments_with_content(email)
-        if erp_attachment_filename(att) not in skip
-    ]
+    files = _collect_erp_upload_files(
+        email,
+        full_email_bytes=full_email_bytes,
+        skip_filenames=skip_filenames,
+    )
     if not files:
         logger.info(
             "erp_attach_files_skipped",
             reason="no_new_attachments",
             message_id=email.message_id,
-            skipped=len(skip),
+            skipped=len(skip_filenames or ()),
         )
         return []
 
@@ -392,6 +517,6 @@ def attach_missing_email_files_to_document(
         document_ref_key=document_ref_key,
         message_id=email.message_id,
         attached=len(results),
-        skipped_existing=len(skip),
+        skipped_existing=len(skip_filenames or ()),
     )
     return results
