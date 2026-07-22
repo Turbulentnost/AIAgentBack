@@ -34,6 +34,11 @@ def _quality_blob(source_data: dict[str, Any], role_context: dict[str, Any]) -> 
             "act_decision",
             "direction",
             "engineer_load",
+            "lot_qty",
+            "quantity",
+            "nomenclature_ref",
+            "supplier_ref",
+            "supplier_quality_rating",
         )
         if key in source_data
     } | {
@@ -44,9 +49,42 @@ def _quality_blob(source_data: dict[str, Any], role_context: dict[str, Any]) -> 
             "inspector_name",
             "act_ref",
             "act_decision",
+            "lot_qty",
+            "quantity",
+            "presentation_ref",
+            "supplier_quality_rating",
         )
         if key in role_context
     }
+
+
+def _sample_from_pipeline(pipeline: dict[str, Any]) -> dict[str, Any] | None:
+    sample = pipeline.get("sample_rule")
+    if isinstance(sample, dict) and sample:
+        return sample
+    qc = pipeline.get("quality_control")
+    if isinstance(qc, dict):
+        nested = qc.get("sample_rule")
+        if isinstance(nested, dict) and nested:
+            return nested
+    artifacts = pipeline.get("draft_artifacts")
+    if isinstance(artifacts, dict):
+        program = artifacts.get("control_program")
+        if isinstance(program, dict) and program:
+            return program
+    return None
+
+
+def _with_sample(output_kwargs: dict[str, Any], pipeline: dict[str, Any]) -> dict[str, Any]:
+    sample = _sample_from_pipeline(pipeline)
+    artifacts = dict(pipeline.get("draft_artifacts") or {})
+    if sample and "control_program" not in artifacts:
+        artifacts["control_program"] = sample
+    output_kwargs["quality_control"] = pipeline.get("quality_control") or {}
+    output_kwargs["draft_artifacts"] = artifacts
+    if sample:
+        output_kwargs["sample_rule"] = sample
+    return output_kwargs
 
 
 class OtkHeadService:
@@ -97,16 +135,20 @@ class OtkHeadService:
             decision = str(quality.get("act_decision") or "pending").lower()
             if decision == "annul":
                 output = OtkHeadOutput(
-                    action="annul_nc_act",
-                    act_ref=act_ref,
-                    act_decision="annul",
-                    next_status="quality_released",
-                    next_agent=None,
-                    findings=findings,
-                    actions=["ANNUL_NC_ACT"],
-                    summary=f"Проект аннулирования акта {act_ref} (только промышленное направление).",
-                    calculated_at=now,
-                    quality_control=pipeline.get("quality_control") or {},
+                    **_with_sample(
+                        {
+                            "action": "annul_nc_act",
+                            "act_ref": act_ref,
+                            "act_decision": "annul",
+                            "next_status": "quality_released",
+                            "next_agent": None,
+                            "findings": findings,
+                            "actions": ["ANNUL_NC_ACT"],
+                            "summary": f"Проект аннулирования акта {act_ref} (только промышленное направление).",
+                            "calculated_at": now,
+                        },
+                        pipeline,
+                    )
                 )
                 return self._result(
                     agent_id,
@@ -118,20 +160,24 @@ class OtkHeadService:
                 )
             if decision == "confirm":
                 output = OtkHeadOutput(
-                    action="handoff_zdk",
-                    act_ref=act_ref,
-                    act_decision="confirm",
-                    handoff_zdk_by=handoff_by,
-                    next_status="isolated",
-                    next_agent="quality_deputy_director_agent",
-                    findings=findings,
-                    actions=["CONFIRM_NC_ACT", "HANDOFF_ZDK"],
-                    summary=(
-                        f"Проект подтверждения акта {act_ref}. "
-                        f"Передача ЗДК до {handoff_by}."
-                    ),
-                    calculated_at=now,
-                    quality_control=pipeline.get("quality_control") or {},
+                    **_with_sample(
+                        {
+                            "action": "handoff_zdk",
+                            "act_ref": act_ref,
+                            "act_decision": "confirm",
+                            "handoff_zdk_by": handoff_by,
+                            "next_status": "isolated",
+                            "next_agent": "quality_deputy_director_agent",
+                            "findings": findings,
+                            "actions": ["CONFIRM_NC_ACT", "HANDOFF_ZDK"],
+                            "summary": (
+                                f"Проект подтверждения акта {act_ref}. "
+                                f"Передача ЗДК до {handoff_by}."
+                            ),
+                            "calculated_at": now,
+                        },
+                        pipeline,
+                    )
                 )
                 return self._result(
                     agent_id,
@@ -142,17 +188,21 @@ class OtkHeadService:
                     wait_reason="Требуется подтверждение акта начальником ОТК и передача ЗДК.",
                 )
             output = OtkHeadOutput(
-                action="confirm_nc_act",
-                act_ref=act_ref,
-                act_decision="pending",
-                handoff_zdk_by=handoff_by,
-                next_status="nonconformity",
-                next_agent="otk_head_agent",
-                findings=findings,
-                actions=["REVIEW_NC_ACT"],
-                summary=f"Акт {act_ref} ожидает решения confirm/annul (SLA ≤ 1 раб. ч).",
-                calculated_at=now,
-                quality_control=pipeline.get("quality_control") or {},
+                **_with_sample(
+                    {
+                        "action": "confirm_nc_act",
+                        "act_ref": act_ref,
+                        "act_decision": "pending",
+                        "handoff_zdk_by": handoff_by,
+                        "next_status": "nonconformity",
+                        "next_agent": "otk_head_agent",
+                        "findings": findings,
+                        "actions": ["REVIEW_NC_ACT"],
+                        "summary": f"Акт {act_ref} ожидает решения confirm/annul (SLA ≤ 1 раб. ч).",
+                        "calculated_at": now,
+                    },
+                    pipeline,
+                )
             )
             return self._result(
                 agent_id,
@@ -177,18 +227,22 @@ class OtkHeadService:
                 )
             )
             output = OtkHeadOutput(
-                action="await_presentation",
-                sla_assign_wh=SLA_ASSIGN_ENGINEER_WH,
-                next_status="quality_queued",
-                next_agent="otk_head_agent",
-                findings=findings,
-                actions=["ASSIGN_ENGINEER"],
-                summary=(
-                    f"Предъявление в очереди. Назначить инженера в течение "
-                    f"{SLA_ASSIGN_ENGINEER_WH} раб. ч."
-                ),
-                calculated_at=now,
-                quality_control=pipeline.get("quality_control") or {},
+                **_with_sample(
+                    {
+                        "action": "await_presentation",
+                        "sla_assign_wh": SLA_ASSIGN_ENGINEER_WH,
+                        "next_status": "quality_queued",
+                        "next_agent": "otk_head_agent",
+                        "findings": findings,
+                        "actions": ["ASSIGN_ENGINEER"],
+                        "summary": (
+                            f"Предъявление в очереди. Назначить инженера в течение "
+                            f"{SLA_ASSIGN_ENGINEER_WH} раб. ч."
+                        ),
+                        "calculated_at": now,
+                    },
+                    pipeline,
+                )
             )
             return self._result(
                 agent_id,
@@ -200,20 +254,24 @@ class OtkHeadService:
             )
 
         output = OtkHeadOutput(
-            action="assign_engineer",
-            assigned_engineer_id=str(engineer_id),
-            assigned_engineer_name=str(engineer_name) if engineer_name else None,
-            sla_assign_wh=SLA_ASSIGN_ENGINEER_WH,
-            next_status="quality_assigned",
-            next_agent="quality_engineer_agent",
-            findings=findings,
-            actions=["ASSIGN_ENGINEER", "QUALITY_ASSIGNED"],
-            summary=(
-                f"Проект назначения инженера {engineer_name or engineer_id}. "
-                f"SLA назначения ≤ {SLA_ASSIGN_ENGINEER_WH} раб. ч."
-            ),
-            calculated_at=now,
-            quality_control=pipeline.get("quality_control") or {},
+            **_with_sample(
+                {
+                    "action": "assign_engineer",
+                    "assigned_engineer_id": str(engineer_id),
+                    "assigned_engineer_name": str(engineer_name) if engineer_name else None,
+                    "sla_assign_wh": SLA_ASSIGN_ENGINEER_WH,
+                    "next_status": "quality_assigned",
+                    "next_agent": "quality_engineer_agent",
+                    "findings": findings,
+                    "actions": ["ASSIGN_ENGINEER", "QUALITY_ASSIGNED"],
+                    "summary": (
+                        f"Проект назначения инженера {engineer_name or engineer_id}. "
+                        f"SLA назначения ≤ {SLA_ASSIGN_ENGINEER_WH} раб. ч."
+                    ),
+                    "calculated_at": now,
+                },
+                pipeline,
+            )
         )
         return self._result(
             agent_id,

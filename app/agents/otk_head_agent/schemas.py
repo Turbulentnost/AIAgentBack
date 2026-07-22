@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.agents.quality_control_agent.schemas import QualityFinding
+from app.agents.quality_control_agent.schemas import QualityFinding, QualitySampleRule
 
 
 class OtkHeadOutput(BaseModel):
@@ -28,7 +28,9 @@ class OtkHeadOutput(BaseModel):
     actions: list[str] = Field(default_factory=list)
     summary: str
     calculated_at: datetime | None = None
+    sample_rule: QualitySampleRule | None = None
     quality_control: dict[str, Any] = Field(default_factory=dict)
+    draft_artifacts: dict[str, Any] = Field(default_factory=dict)
 
 
 __all__ = ["OtkHeadOutput"]

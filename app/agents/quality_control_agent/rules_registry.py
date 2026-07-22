@@ -139,34 +139,105 @@ def evaluate_document_completeness(
     return findings
 
 
+def _is_max_supplier_rating(rating: str | float | int | None) -> bool:
+    """Прил. В: промышленный поставщик с макс. рейтингом → выборка 1%."""
+    if rating is None or rating == "":
+        return False
+    try:
+        return float(rating) >= 40
+    except (TypeError, ValueError):
+        normalized = str(rating).casefold()
+        return normalized in {"max", "максимальный", "maximum", "40"}
+
+
 def build_sample_rule(
     category: str | None,
     *,
     lot_qty: float | int | None = None,
     analog_in_nomenclature: bool | None = True,
+    presentation_ref: str | None = None,
+    nomenclature_ref: str | None = None,
+    supplier_ref: str | None = None,
+    supplier_quality_rating: str | float | int | None = None,
+    require_second_sample: bool = False,
 ) -> QualitySampleRule:
+    """Рассчитать объём выборки для конкретной поставки (Прил. В)."""
     cat = normalize_category(category)
-    note_parts = [f"Правила выборки для группы «{cat}» (Прил. В)."]
+    note_parts = [f"Правила выборки для группы «{cat}» (Прил. В / СТО-10-095)."]
     sample_size: int | None = None
-    if cat == "fasteners":
-        note_parts.append("Крепёж: выборка из каждой тары.")
-        sample_size = None
-    if analog_in_nomenclature is False:
-        note_parts.append("Аналог отсутствует в номенклатуре → партия в брак.")
+    sample_pct: float | None = None
+    sample_basis: str | None = "category_default"
+    qty: float | None = None
+
+    if presentation_ref:
+        note_parts.append(f"Поставка / предъявление: {presentation_ref}.")
+    if nomenclature_ref:
+        note_parts.append(f"Номенклатура: {nomenclature_ref}.")
+    if supplier_ref:
+        note_parts.append(f"Поставщик: {supplier_ref}.")
+
     if lot_qty is not None:
         try:
             qty = float(lot_qty)
-            if qty > 0 and cat != "fasteners":
-                sample_size = max(1, int(round(qty * 0.1)))
-                note_parts.append(f"Базовая выборка ≈ 10% партии ({sample_size} шт.).")
         except (TypeError, ValueError):
-            pass
+            qty = None
+    if qty is not None and qty > 0:
+        note_parts.append(f"Объём партии: {qty:g} шт.")
+    else:
+        note_parts.append(
+            "Объём партии не указан — для числовой выборки задайте lot_qty / quantity поставки."
+        )
+
+    if cat == "fasteners":
+        note_parts.append("Крепёж (метизы): выборка из каждой тары / коробки.")
+        sample_size = None
+        sample_pct = None
+        sample_basis = "per_package"
+    elif qty is not None and qty > 0:
+        if _is_max_supplier_rating(supplier_quality_rating):
+            sample_pct = 1.0
+            sample_basis = "1pct_rating"
+            sample_size = max(1, int(round(qty * 0.01)))
+            note_parts.append(
+                f"Максимальный рейтинг поставщика — выборка 1% партии ({sample_size} шт.)."
+            )
+        else:
+            sample_pct = 10.0
+            sample_basis = "10pct"
+            sample_size = max(1, int(round(qty * 0.1)))
+            note_parts.append(f"Базовая выборка ≈ 10% партии ({sample_size} шт.).")
+
+    if analog_in_nomenclature is False:
+        note_parts.append("Аналог отсутствует в номенклатуре → партия в брак.")
+
+    second_sample_size: int | None = None
+    if require_second_sample:
+        sample_basis = "second_sample"
+        second_sample_size = sample_size
+        if second_sample_size:
+            note_parts.append(
+                f"Брак < {SCRAP_THRESHOLD_PCT}% — вторая выборка {second_sample_size} шт. и решение ЗДК."
+            )
+        else:
+            note_parts.append(
+                f"Брак < {SCRAP_THRESHOLD_PCT}% — требуется вторая выборка и решение ЗДК."
+            )
+
     return QualitySampleRule(
         rule_id=f"QC.SAMPLE.{cat.upper()}",
         category=cat,
         sample_size=sample_size,
         sample_note=" ".join(note_parts),
         scrap_threshold_pct=SCRAP_THRESHOLD_PCT,
+        lot_qty=qty,
+        presentation_ref=presentation_ref,
+        nomenclature_ref=nomenclature_ref,
+        supplier_ref=supplier_ref,
+        supplier_quality_rating=supplier_quality_rating,
+        sample_pct=sample_pct,
+        sample_basis=sample_basis,  # type: ignore[arg-type]
+        require_second_sample=require_second_sample,
+        second_sample_size=second_sample_size,
     )
 
 

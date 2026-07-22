@@ -38,6 +38,11 @@ def _quality_blob(source_data: dict[str, Any], role_context: dict[str, Any]) -> 
         "evidence_refs",
         "fitness_status",
         "lot_qty",
+        "quantity",
+        "presentation_ref",
+        "nomenclature_ref",
+        "supplier_ref",
+        "supplier_quality_rating",
     ):
         if key in role_context and key not in base:
             base[key] = role_context[key]
@@ -93,6 +98,24 @@ class QualityEngineerService:
             pipeline.get("sample_rule")
             or build_sample_rule(category).model_dump(mode="json")
         )
+        # Дозаполнить контекст поставки, если входные данные богаче пайплайна.
+        if (
+            sample.lot_qty is None
+            or sample.presentation_ref is None
+            or sample.sample_size is None
+        ):
+            sample = build_sample_rule(
+                category,
+                lot_qty=quality.get("lot_qty") or quality.get("quantity") or sample.lot_qty,
+                analog_in_nomenclature=quality.get("analog_in_nomenclature", True),
+                presentation_ref=quality.get("presentation_ref") or sample.presentation_ref,
+                nomenclature_ref=quality.get("nomenclature_ref") or sample.nomenclature_ref,
+                supplier_ref=quality.get("supplier_ref") or sample.supplier_ref,
+                supplier_quality_rating=(
+                    quality.get("supplier_quality_rating") or sample.supplier_quality_rating
+                ),
+                require_second_sample=sample.require_second_sample,
+            )
         now = datetime.now(timezone.utc)
         docs_ok = not findings
 

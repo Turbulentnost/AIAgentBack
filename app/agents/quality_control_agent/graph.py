@@ -30,6 +30,14 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _first_number(*values: Any) -> float | None:
+    for value in values:
+        parsed = _as_float(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _extract_context(state: QualityControlState) -> dict[str, Any]:
     source = dict(state.get("source_data") or {})
     nested = source.get("quality") if isinstance(source.get("quality"), dict) else {}
@@ -51,22 +59,43 @@ def _extract_context(state: QualityControlState) -> dict[str, Any]:
     )
     if isinstance(present_docs, str):
         present_docs = [present_docs]
+    lot_qty = _first_number(
+        nested.get("lot_qty"),
+        nested.get("quantity"),
+        nested.get("Количество"),
+        fields.get("quantity"),
+        fields.get("Количество"),
+        fields.get("lot_qty"),
+        role.get("lot_qty"),
+        role.get("quantity"),
+        source.get("quantity"),
+        source.get("lot_qty"),
+    )
     return {
         "category": normalize_category(str(category) if category else None),
         "present_docs": [str(d) for d in present_docs],
-        "lot_qty": _as_float(nested.get("lot_qty") or fields.get("quantity") or source.get("quantity")),
+        "lot_qty": lot_qty,
         "scrap_pct": _as_float(nested.get("scrap_pct") or role.get("scrap_pct")),
         "analog_in_nomenclature": nested.get(
             "analog_in_nomenclature",
             role.get("analog_in_nomenclature", True),
         ),
         "presentation_ref": nested.get("presentation_ref")
+        or nested.get("shipment_ref")
         or role.get("presentation_ref")
+        or source.get("presentation_ref")
         or state.get("case_id"),
         "nomenclature_ref": nested.get("nomenclature_ref")
         or fields.get("nomenclature")
+        or fields.get("Номенклатура")
         or source.get("nomenclature"),
-        "supplier_ref": nested.get("supplier_ref") or source.get("supplier_ref"),
+        "supplier_ref": nested.get("supplier_ref")
+        or nested.get("supplier")
+        or source.get("supplier_ref")
+        or source.get("supplier"),
+        "supplier_quality_rating": nested.get("supplier_quality_rating")
+        or role.get("supplier_quality_rating")
+        or source.get("supplier_quality_rating"),
         "inspector_id": nested.get("inspector_id") or role.get("inspector_id"),
         "quality_stage": str(
             role.get("quality_stage") or state.get("quality_stage") or "queued"
@@ -102,7 +131,9 @@ async def load_context(state: QualityControlState) -> QualityControlState:
             "presentation_ref": ctx["presentation_ref"],
             "nomenclature_ref": ctx["nomenclature_ref"],
             "supplier_ref": ctx["supplier_ref"],
+            "supplier_quality_rating": ctx["supplier_quality_rating"],
             "inspector_id": ctx["inspector_id"],
+            "lot_qty": ctx["lot_qty"],
         },
         "deadlines": deadlines,
     }
@@ -122,14 +153,20 @@ async def _run_doc_rules(state: QualityControlState) -> dict[str, Any]:
 
 
 async def _run_sample_rules(state: QualityControlState) -> dict[str, Any]:
-    sample = build_sample_rule(
-        state.get("category"),
-        lot_qty=state.get("lot_qty"),
-        analog_in_nomenclature=state.get("analog_in_nomenclature"),
-    )
+    presentation = dict(state.get("presentation") or {})
     scrap = evaluate_scrap_decision(
         state.get("scrap_pct"),
         analog_in_nomenclature=state.get("analog_in_nomenclature"),
+    )
+    sample = build_sample_rule(
+        state.get("category"),
+        lot_qty=state.get("lot_qty") or presentation.get("lot_qty"),
+        analog_in_nomenclature=state.get("analog_in_nomenclature"),
+        presentation_ref=presentation.get("presentation_ref"),
+        nomenclature_ref=presentation.get("nomenclature_ref"),
+        supplier_ref=presentation.get("supplier_ref"),
+        supplier_quality_rating=presentation.get("supplier_quality_rating"),
+        require_second_sample=bool(scrap.get("require_second_sample")),
     )
     return {
         "sample_rule": sample.model_dump(mode="json"),
@@ -208,6 +245,7 @@ async def route_by_role(state: QualityControlState) -> QualityControlState:
         nomenclature_ref=presentation.get("nomenclature_ref"),
         item_group=state.get("category"),
         supplier_ref=presentation.get("supplier_ref"),
+        supplier_quality_rating=presentation.get("supplier_quality_rating"),
         control_rule_ids=[
             str((state.get("sample_rule") or {}).get("rule_id") or ""),
             str(scrap.get("rule_id") or ""),
@@ -222,16 +260,21 @@ async def route_by_role(state: QualityControlState) -> QualityControlState:
         findings=state.get("doc_findings") or [],
         calculated_at=datetime.now(timezone.utc),
     )
+    sample_rule = dict(state.get("sample_rule") or {})
     return {
         **state,
         "next_role": next_role,
         "next_status": next_status,
         "actions": actions,
         "requires_human": requires_human,
+        "sample_rule": sample_rule,
         "quality_control": payload.model_dump(mode="json"),
         "draft_artifacts": {
             "rules_version": RULES_VERSION,
             "scrap_decision": scrap,
+            "control_program": sample_rule,
+            "lot_qty": state.get("lot_qty") or presentation.get("lot_qty"),
+            "presentation_ref": presentation.get("presentation_ref"),
         },
         "summary": (
             f"Quality pipeline: stage={state.get('quality_stage')}, "

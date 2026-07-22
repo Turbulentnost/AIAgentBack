@@ -67,11 +67,30 @@ class QualityDocumentRequirement(BaseModel):
 
 
 class QualitySampleRule(BaseModel):
+    """Правило выборки для конкретной поставки / предъявления (Прил. В / СТО-10-095)."""
+
     rule_id: str
     category: str
     sample_size: int | None = None
     sample_note: str
     scrap_threshold_pct: float = 15.0
+    # Контекст поставки
+    lot_qty: float | None = None
+    presentation_ref: str | None = None
+    nomenclature_ref: str | None = None
+    supplier_ref: str | None = None
+    supplier_quality_rating: str | float | int | None = None
+    # Алгоритм
+    sample_pct: float | None = None
+    sample_basis: Literal[
+        "10pct",
+        "1pct_rating",
+        "per_package",
+        "second_sample",
+        "category_default",
+    ] | None = None
+    require_second_sample: bool = False
+    second_sample_size: int | None = None
 
 
 class QualityControlPayload(BaseModel):
