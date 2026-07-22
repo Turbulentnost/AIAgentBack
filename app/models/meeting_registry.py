@@ -40,6 +40,11 @@ class MeetingRegistryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     protocol_number: Mapped[str | None] = mapped_column(String(128), index=True)
     protocol_ref_key: Mapped[str | None] = mapped_column(String(36))
+    protocol_draft_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    protocol_draft_celery_task_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    protocol_draft_enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    protocol_draft_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    protocol_draft_error: Mapped[str | None] = mapped_column(Text)
     approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,

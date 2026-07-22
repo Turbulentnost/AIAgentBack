@@ -498,6 +498,11 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
         invitations_sent_at=entry.invitations_sent_at.isoformat(),
         approved_at=entry.approved_at.isoformat() if entry.approved_at else None,
         protocol_number=entry.protocol_number,
+        protocol_draft_at=entry.protocol_draft_at.isoformat() if entry.protocol_draft_at else None,
+        protocol_draft_created_at=(
+            entry.protocol_draft_created_at.isoformat() if entry.protocol_draft_created_at else None
+        ),
+        protocol_draft_error=entry.protocol_draft_error,
         outlook_item_id=entry.outlook_item_id,
         outlook_changekey=entry.outlook_changekey,
         outlook_meeting_url=entry.outlook_meeting_url,

@@ -112,6 +112,61 @@ def warm_meeting_dashboard_cache() -> dict[str, Any]:
     return _run_async_task(_warm)
 
 
+@celery_app.task(name="create_registry_protocol_draft", bind=True, max_retries=2)
+def create_registry_protocol_draft(self, entry_id: str) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+    async def _create() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = MeetingProtocolDraftService(db)
+            try:
+                result = await service.create_protocol_draft_for_entry(uuid_module.UUID(entry_id))
+                await db.commit()
+                return {
+                    **result,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as exc:
+                await db.commit()
+                raise exc
+
+    try:
+        return _run_async_task(_create)
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60) from exc
+
+
+@celery_app.task(name="dispatch_meeting_protocol_drafts")
+def dispatch_meeting_protocol_drafts() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.services.meeting_protocol_dispatch_service import run_protocol_draft_dispatch
+
+    if not settings.MEETING_PROTOCOL_DRAFT_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "protocol_draft_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+    if not settings.MEETING_PROTOCOL_DISPATCH_BEAT_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "dispatch_beat_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _dispatch() -> dict[str, Any]:
+        result = await run_protocol_draft_dispatch()
+        return {
+            **result,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return _run_async_task(_dispatch)
+
+
 @celery_app.task(name="run_task", bind=True, max_retries=3)
 def run_task(self, task_id: str, task_type: str | None, input_payload: dict) -> dict[str, Any]:
     if task_type == "meeting":

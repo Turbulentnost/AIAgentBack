@@ -283,6 +283,7 @@ class ScheduledMeetingRegistrySyncService:
                     message="Нет будущих вхождений",
                 )
             created = await self._create_entry(meeting, target, registry=registry)
+            await registry.refresh_protocol_draft_schedule_for_entry(created)
             return SyncResult(
                 action="created",
                 series_id=series_id,
@@ -336,6 +337,7 @@ class ScheduledMeetingRegistrySyncService:
                 },
             )
             await self.db.flush()
+            await registry.recreate_protocol_draft_on_reschedule(entry)
             return SyncResult(
                 action="rolled",
                 series_id=series_id,
@@ -379,6 +381,7 @@ class ScheduledMeetingRegistrySyncService:
             },
         )
         await self.db.flush()
+        await registry.recreate_protocol_draft_on_reschedule(entry)
         return SyncResult(
             action="updated",
             series_id=series_id,

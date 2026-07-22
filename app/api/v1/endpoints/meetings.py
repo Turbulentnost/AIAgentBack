@@ -29,6 +29,7 @@ from app.schemas.meeting import (
     MeetingRegistryCancelRead,
     MeetingRegistryCancelRequest,
     MeetingRegistryHistoryRead,
+    MeetingRegistryMeetingTopicSaveRead,
     MeetingRegistryParticipantsRead,
     MeetingRegistryParticipantSearchRead,
     MeetingRegistryParticipantsApplyRead,
@@ -37,6 +38,7 @@ from app.schemas.meeting import (
     MeetingRegistryParticipantsAddConfirmRequest,
     MeetingRegistryParticipantsRemovalConfirmRead,
     MeetingRegistryParticipantsRemovalConfirmRequest,
+    MeetingRegistryProtocolDraftDispatchRead,
     MeetingRegistryRescheduleApproveRead,
     MeetingRegistryRescheduleApproveRequest,
     MeetingRegistryRescheduleSlotPreviewRead,
@@ -311,6 +313,56 @@ async def get_meetings_registry(
     try:
         return await MeetingService(db).list_registry(stage=stage, current_user=current_user)
     except MeetingServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/dispatch-protocol-drafts",
+    response_model=MeetingRegistryProtocolDraftDispatchRead,
+)
+async def dispatch_registry_protocol_drafts(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingRegistryProtocolDraftDispatchRead:
+    """Поставить в Celery создание черновиков протоколов для подходящих карточек реестра."""
+    try:
+        result = await MeetingService(db).dispatch_protocol_drafts(current_user=current_user)
+        await db.commit()
+        return MeetingRegistryProtocolDraftDispatchRead.model_validate(result)
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/{memo_ref_key}/meeting-topic",
+    response_model=MeetingRegistryMeetingTopicSaveRead,
+)
+async def save_registry_meeting_topic(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingTopicResolveRead,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingRegistryMeetingTopicSaveRead:
+    """Сохранить выбранную тему совещания в карточке реестра для автосоздания протокола."""
+    await _require_agent_access(db, current_user)
+    try:
+        item = await MeetingService(db).save_registry_meeting_topic(
+            str(memo_ref_key),
+            topic_resolution=payload,
+            current_user=current_user,
+        )
+        await db.commit()
+        return MeetingRegistryMeetingTopicSaveRead(
+            ref_key=item.ref_key,
+            topic_ref_key=payload.topic.ref_key,
+            topic_code=payload.topic.code,
+            topic_description=payload.topic.description,
+            meeting_type=payload.topic.meeting_type,
+            protocol_draft_at=item.protocol_draft_at,
+        )
+    except MeetingServiceError as exc:
+        await db.rollback()
         raise _service_error(exc) from exc
 
 

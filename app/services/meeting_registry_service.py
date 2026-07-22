@@ -296,6 +296,7 @@ class MeetingRegistryService:
         approved_at: datetime | None = None,
         participant_names: list[str] | None = None,
         attendee_details: list[Any] | None = None,
+        meeting_topic: dict[str, Any] | None = None,
     ) -> MeetingRegistryEntry:
         normalized_ref = memo_ref_key.strip().lower()
         now = datetime.now(timezone.utc)
@@ -402,7 +403,53 @@ class MeetingRegistryService:
             },
         )
         await self.db.flush()
+        if meeting_topic:
+            from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+            await MeetingProtocolDraftService(self.db).save_meeting_topic(
+                entry,
+                topic=meeting_topic,
+            )
+        await self.refresh_protocol_draft_schedule_for_entry(entry)
         return entry
+
+    async def save_meeting_topic_resolution(
+        self,
+        memo_ref_key: str,
+        *,
+        topic: dict[str, Any],
+    ) -> MeetingRegistryEntry:
+        entry = await self.get_entry(memo_ref_key)
+        if entry is None:
+            raise ValueError("Совещание не найдено в реестре")
+
+        from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+        return await MeetingProtocolDraftService(self.db).save_meeting_topic(entry, topic=topic)
+
+    async def refresh_protocol_draft_schedule_for_entry(
+        self,
+        entry: MeetingRegistryEntry,
+    ) -> MeetingRegistryEntry:
+        from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+        return await MeetingProtocolDraftService(self.db).refresh_protocol_draft_schedule(entry)
+
+    async def recreate_protocol_draft_on_reschedule(
+        self,
+        entry: MeetingRegistryEntry,
+    ) -> MeetingRegistryEntry:
+        from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+        return await MeetingProtocolDraftService(self.db).recreate_protocol_draft_on_reschedule(entry)
+
+    async def cancel_protocol_draft_schedule_for_entry(
+        self,
+        entry: MeetingRegistryEntry,
+    ) -> MeetingRegistryEntry:
+        from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+        return await MeetingProtocolDraftService(self.db).cancel_protocol_draft_schedule(entry)
 
     async def list_entries(
         self,
@@ -478,6 +525,12 @@ class MeetingRegistryService:
         )
         await self.db.flush()
         await self.db.refresh(entry)
+        from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+        await MeetingProtocolDraftService(self.db).cancel_protocol_draft_schedule(
+            entry,
+            clear_draft_at=True,
+        )
         return entry
 
     async def apply_reschedule(
@@ -555,6 +608,7 @@ class MeetingRegistryService:
         )
         await self.db.flush()
         await self.db.refresh(entry)
+        await self.recreate_protocol_draft_on_reschedule(entry)
         return entry
 
     async def apply_participants_update(

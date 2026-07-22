@@ -45,6 +45,15 @@ if settings.SCHEDULED_MEETINGS_CARD_SYNC_ENABLED:
         ),
         "options": {"queue": "default"},
     }
+if settings.MEETING_PROTOCOL_DRAFT_ENABLED and settings.MEETING_PROTOCOL_DISPATCH_BEAT_ENABLED:
+    _beat_schedule["dispatch-meeting-protocol-drafts"] = {
+        "task": "dispatch_meeting_protocol_drafts",
+        "schedule": crontab(
+            hour=settings.MEETING_PROTOCOL_DISPATCH_BEAT_HOURS,
+            minute=settings.MEETING_PROTOCOL_DISPATCH_BEAT_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -63,6 +72,8 @@ celery_app.conf.update(
         "warm_meeting_dashboard_cache": {"queue": "default"},
         "archive_expired_scheduled_meetings": {"queue": "default"},
         "sync_scheduled_meeting_registry_cards": {"queue": "default"},
+        "create_registry_protocol_draft": {"queue": "default"},
+        "dispatch_meeting_protocol_drafts": {"queue": "default"},
         "process_document": {"queue": "documents"},
         "run_agent": {"queue": "agents"},
         "index_document": {"queue": "indexing"},

@@ -519,6 +519,10 @@ class MeetingAgentSlotApproveRequest(BaseModel):
         default=None,
         description="Комментарий в уведомлении о переносе конфликтующих встреч",
     )
+    meeting_topic: dict[str, Any] | None = Field(
+        default=None,
+        description="Выбранная тема совещания из workflow check/resolve",
+    )
 
     @model_validator(mode="after")
     def require_recipients(self) -> MeetingAgentSlotApproveRequest:
@@ -646,6 +650,9 @@ class MeetingRegistryItemRead(BaseModel):
     invitations_sent_at: str
     approved_at: str | None = None
     protocol_number: str | None = None
+    protocol_draft_at: str | None = None
+    protocol_draft_created_at: str | None = None
+    protocol_draft_error: str | None = None
     outlook_item_id: str | None = None
     outlook_changekey: str | None = None
     outlook_meeting_url: str | None = None
@@ -688,6 +695,22 @@ class MeetingRegistryRead(BaseModel):
     stage_counts: dict[str, int] = Field(default_factory=dict)
     fetched_at: str
     error: str | None = None
+
+
+class MeetingRegistryProtocolDraftDispatchRead(BaseModel):
+    scheduled: int = 0
+    catchup_created: int = 0
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class MeetingRegistryMeetingTopicSaveRead(BaseModel):
+    ref_key: str
+    topic_ref_key: str | None = None
+    topic_code: str | None = None
+    topic_description: str | None = None
+    meeting_type: str | None = None
+    protocol_draft_at: str | None = None
 
 
 class MeetingRegistryParticipantsRead(BaseModel):

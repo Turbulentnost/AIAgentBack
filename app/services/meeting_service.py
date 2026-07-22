@@ -475,6 +475,7 @@ class MeetingService:
             memo_detail=memo_detail,
             sent_payload=sent_payload if isinstance(sent_payload, dict) else None,
             attendee_details=attendee_details,
+            meeting_topic=_meeting_topic_payload_from_request(payload.meeting_topic),
         )
 
         approver_fio = _user_fio(current_user)
@@ -819,6 +820,49 @@ class MeetingService:
             fetched_at=datetime.now(UTC).isoformat(),
             error=None,
         )
+
+    async def save_registry_meeting_topic(
+        self,
+        memo_ref_key: str,
+        *,
+        topic_resolution: Any,
+        current_user: User,
+    ) -> MeetingRegistryItemRead:
+        await self._ensure_access(current_user)
+        registry = MeetingRegistryService(self.db)
+        topic_payload = {
+            "ref_key": topic_resolution.topic.ref_key,
+            "code": topic_resolution.topic.code,
+            "description": topic_resolution.topic.description,
+            "meeting_type": topic_resolution.topic.meeting_type,
+            "used_existing": topic_resolution.used_existing,
+            "created": topic_resolution.created,
+        }
+        try:
+            entry = await registry.save_meeting_topic_resolution(
+                memo_ref_key.strip().lower(),
+                topic=topic_payload,
+            )
+        except ValueError as exc:
+            raise MeetingServiceError(str(exc), status_code=404) from exc
+        return registry_item_read(entry)
+
+    async def dispatch_protocol_drafts(
+        self,
+        *,
+        current_user: User,
+    ) -> dict[str, Any]:
+        if not can_manage_meetings(current_user):
+            raise MeetingServiceError("Недостаточно прав", status_code=403)
+        from app.services.meeting_protocol_dispatch_service import MeetingProtocolDispatchService
+
+        result = await MeetingProtocolDispatchService(self.db).dispatch_due_entries()
+        return {
+            "scheduled": result.scheduled,
+            "catchup_created": result.catchup_created,
+            "skipped": result.skipped,
+            "errors": result.errors,
+        }
 
     async def get_registry_participants(
         self,
@@ -2688,6 +2732,22 @@ class MeetingService:
             )
         except MeetingBackendError as exc:
             raise MeetingServiceError(str(exc)) from exc
+
+
+def _meeting_topic_payload_from_request(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    ref_key = str(raw.get("ref_key") or "").strip()
+    if not ref_key:
+        return None
+    return {
+        "ref_key": ref_key,
+        "code": raw.get("code"),
+        "description": raw.get("description"),
+        "meeting_type": raw.get("meeting_type"),
+        "used_existing": bool(raw.get("used_existing")),
+        "created": bool(raw.get("created")),
+    }
 
 
 def _user_fio(user: User) -> str | None:

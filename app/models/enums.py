@@ -494,6 +494,7 @@ class MeetingRegistryEventType(str, enum.Enum):
     PARTICIPANTS_UPDATED = "participants_updated"
     STAGE_CHANGED = "stage_changed"
     OCCURRENCE_ROLLED = "occurrence_rolled"
+    PROTOCOL_DRAFT_SCHEDULED = "protocol_draft_scheduled"
 
 
 class ScheduledMeetingType(str, enum.Enum):
