@@ -24,6 +24,7 @@ from agent_pochta.routing.organizations import (
     DIRECTION_DEFAULT,
     DIRECTION_UNCLEAR,
     KS_PAYER_DIRECTION_DEPARTMENT_CODES,
+    leadership_department_allowed,
     normalize_organization_code,
     resolve_direction_for_department,
 )
@@ -232,19 +233,23 @@ class RouteEngine:
         body: str,
         partner: str | None,
         sender_email: str = "",
+        *,
+        recipient: str = "",
     ) -> _Candidate | None:
         hit = match_deterministic_sales(
             subject=subject,
             body=body,
             sender_email=sender_email,
             partner=partner,
+            recipient=recipient,
+            email_aliases=self.rules.get("email_aliases"),
         )
         if hit is None:
             return None
         keywords = list(hit.matched_keywords)
         if hit.organization:
             keywords.append(f"org:{hit.organization}")
-        return _Candidate(
+        candidate = _Candidate(
             code=hit.code,
             name=self._dept_name(hit.code, hit.name),
             direction=hit.direction,
@@ -255,6 +260,7 @@ class RouteEngine:
             organization=hit.organization,
             matched_keywords=keywords,
         )
+        return self._accept_leadership_candidate(recipient, candidate)
 
     def _reserve_route(self) -> _Candidate:
         code = self.rules.get("reserve_code", "00-000066")
@@ -265,6 +271,32 @@ class RouteEngine:
             source="reserve",
             reasoning="Резервный маршрут при отсутствии однозначного правила",
         )
+
+    def _leadership_allowed(self, recipient: str, candidate: _Candidate) -> bool:
+        return leadership_department_allowed(
+            recipient=recipient,
+            department_code=candidate.code,
+            match_source=candidate.source,
+            email_aliases=self.rules.get("email_aliases"),
+        )
+
+    def _filter_leadership_candidates(
+        self,
+        recipient: str,
+        candidates: list[_Candidate],
+    ) -> list[_Candidate]:
+        return [c for c in candidates if self._leadership_allowed(recipient, c)]
+
+    def _accept_leadership_candidate(
+        self,
+        recipient: str,
+        candidate: _Candidate | None,
+    ) -> _Candidate | None:
+        if candidate is None:
+            return None
+        if self._leadership_allowed(recipient, candidate):
+            return candidate
+        return None
 
     def _info_strict_mailbox(self) -> str:
         cfg = self.rules.get("info_strict_rules") or {}
@@ -360,8 +392,10 @@ class RouteEngine:
         subject: str,
         body: str,
         partner: str | None = None,
+        *,
+        recipient: str = "",
     ) -> _Candidate | None:
-        """ТПП / АПГО и аналоги → Председатель СД (все ящики, до keyword/RAG)."""
+        """ТПП / АПГО и аналоги → Председатель СД (только info@, до keyword/RAG)."""
         cfg = self.rules.get("institution_chairman_rules")
         if not cfg or not cfg.get("code"):
             return None
@@ -374,7 +408,7 @@ class RouteEngine:
         if not hits:
             return None
         rule_code = cfg.get("rule_code", "INSTITUTION_CHAIRMAN")
-        return _Candidate(
+        candidate = _Candidate(
             code=str(cfg["code"]),
             name=cfg.get("name") or self._dept_name(str(cfg["code"])),
             direction=cfg.get("direction", DIRECTION_DEFAULT),
@@ -387,6 +421,7 @@ class RouteEngine:
             content_hits=max(1, len(hits)),
             matched_keywords=hits,
         )
+        return self._accept_leadership_candidate(recipient, candidate)
 
     def _institution_operational_director_match(
         self,
@@ -394,8 +429,10 @@ class RouteEngine:
         body: str,
         partner: str | None = None,
         sender_email: str = "",
+        *,
+        recipient: str = "",
     ) -> _Candidate | None:
-        """Министерство / администрация → Операционный директор (все ящики)."""
+        """Министерство / администрация → Операционный директор (только info@)."""
         cfg = self.rules.get("institution_operational_director_rules")
         if not cfg or not cfg.get("code"):
             return None
@@ -413,7 +450,7 @@ class RouteEngine:
         if not hits:
             return None
         rule_code = cfg.get("rule_code", "INSTITUTION_MINISTRY_ADMIN")
-        return _Candidate(
+        candidate = _Candidate(
             code=str(cfg["code"]),
             name=cfg.get("name") or self._dept_name(str(cfg["code"])),
             direction=cfg.get("direction", DIRECTION_DEFAULT),
@@ -426,12 +463,15 @@ class RouteEngine:
             content_hits=max(1, len(hits)),
             matched_keywords=hits,
         )
+        return self._accept_leadership_candidate(recipient, candidate)
 
     def _gazprom_np_reply_match(
         self,
         subject: str,
         body: str,
         sender_email: str = "",
+        *,
+        recipient: str = "",
     ) -> _Candidate | None:
         """Ответ в переписке по Газпрому: НП в теле → ОПГ, иначе → Операционный директор."""
         cfg = self.rules.get("gazprom_np_reply_rules")
@@ -463,7 +503,7 @@ class RouteEngine:
                 f"{rule_code}: ответ в переписке по Газпрому без пометки {marker} "
                 f"в теле → Операционный директор"
             )
-        return _Candidate(
+        candidate = _Candidate(
             code=code,
             name=name,
             direction=cfg.get("direction", DIRECTION_COMMERCIAL)
@@ -475,12 +515,15 @@ class RouteEngine:
             content_hits=max(1, len(hits)),
             matched_keywords=hits,
         )
+        return self._accept_leadership_candidate(recipient, candidate)
 
     def _ud_transfer_match(
         self,
         subject: str,
         body: str,
         partner: str | None = None,
+        *,
+        recipient: str = "",
     ) -> _Candidate | None:
         """Управление делами → помощник зам. операционного директора."""
         cfg = self.rules.get("ud_transfer_rules")
@@ -496,7 +539,7 @@ class RouteEngine:
             return None
         rule_code = cfg.get("rule_code", "UD_TRANSFER_DEPUTY_OD_ASSISTANT")
         code = str(cfg["code"])
-        return _Candidate(
+        candidate = _Candidate(
             code=code,
             name=cfg.get("name") or self._dept_name(code),
             direction=cfg.get("direction", DIRECTION_DEFAULT),
@@ -509,6 +552,7 @@ class RouteEngine:
             content_hits=max(1, len(hits)),
             matched_keywords=hits,
         )
+        return self._accept_leadership_candidate(recipient, candidate)
 
     def _info_unclear_route(self) -> _Candidate:
         cfg = (self.rules.get("info_strict_rules") or {}).get("unclear") or {}
@@ -563,26 +607,32 @@ class RouteEngine:
     ) -> list[_Candidate]:
         recipient = normalize_email_address(recipient, self.rules.get("email_aliases"))
         correction = self._correction_match(recipient, sender_email, subject, body)
-        if correction is not None:
+        if correction is not None and self._leadership_allowed(recipient, correction):
             return [correction]
-        gazprom_np_reply = self._gazprom_np_reply_match(subject, body, sender_email)
+        gazprom_np_reply = self._gazprom_np_reply_match(
+            subject, body, sender_email, recipient=recipient
+        )
         if gazprom_np_reply is not None:
             return [gazprom_np_reply]
         info_strict = self._info_strict_match(recipient, subject, body, sender_email)
         if info_strict is not None:
             return [info_strict]
-        institution = self._institution_chairman_match(subject, body, partner)
+        institution = self._institution_chairman_match(
+            subject, body, partner, recipient=recipient
+        )
         if institution is not None:
             return [institution]
         institution_od = self._institution_operational_director_match(
-            subject, body, partner, sender_email
+            subject, body, partner, sender_email, recipient=recipient
         )
         if institution_od is not None:
             return [institution_od]
-        ud_transfer = self._ud_transfer_match(subject, body, partner)
+        ud_transfer = self._ud_transfer_match(subject, body, partner, recipient=recipient)
         if ud_transfer is not None:
             return [ud_transfer]
-        det = self._deterministic_candidate(subject, body, partner, sender_email)
+        det = self._deterministic_candidate(
+            subject, body, partner, sender_email, recipient=recipient
+        )
         if det is not None:
             return [det]
         routes = self._exact_email_match(recipient, subject, body)
@@ -590,11 +640,13 @@ class RouteEngine:
             routes = self._email_keyword_match(recipient)
         if not routes:
             routes = self._content_match(recipient, subject, body)
+        routes = self._filter_leadership_candidates(recipient, routes)
         commercial_markers = ("ткп", "коммерческ", "кп ", "запрос цен", "счет", "счёт")
         text = normalize_text(f"{subject} {body}")
         if any(m in text for m in commercial_markers):
             sales = self._sales_rules(subject, body, partner)
             if sales:
+                sales = self._filter_leadership_candidates(recipient, sales)
                 routes = sales + routes
         if not routes:
             if recipient == self._info_strict_mailbox() and self.rules.get("info_strict_rules"):

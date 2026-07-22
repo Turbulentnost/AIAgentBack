@@ -92,37 +92,53 @@ def test_gazprom_routes_to_opg(engine):
     assert decision.match_source == "det_sales_gazprom"
 
 
-def test_chairman_marker_overrides_gazprom(engine):
+def test_chairman_marker_overrides_gazprom_on_info(engine):
+    decision = _route(
+        engine,
+        "ПАО Газпром направляет письмо председателю Совета Директоров.",
+        mailbox="info@turbo-don.ru",
+        routing_recipient="info@turbo-don.ru",
+    )
+
+    assert decision.services[0].code == "00-000001"
+    assert decision.direction == "КС"
+    assert decision.match_source in {"det_chairman", "info_strict"}
+
+
+def test_chairman_marker_not_routed_off_info(engine):
     decision = _route(
         engine,
         "ПАО Газпром направляет письмо председателю Совета Директоров.",
     )
 
-    assert decision.services[0].code == "00-000001"
-    assert decision.direction == "КС"
-    assert decision.match_source == "det_chairman"
+    assert decision.services[0].code != "00-000001"
+    assert decision.match_source != "det_chairman"
 
 
-def test_gazprom_igor_borisovich_routes_to_chairman(engine):
+def test_gazprom_igor_borisovich_routes_to_chairman_on_info(engine):
     decision = _route(
         engine,
         "ПАО Газпром направляет материалы для Игорь Борисович.",
+        mailbox="info@turbo-don.ru",
+        routing_recipient="info@turbo-don.ru",
     )
 
     assert decision.services[0].code == "00-000001"
     assert decision.direction == "КС"
-    assert decision.match_source == "det_chairman"
+    assert decision.match_source in {"det_chairman", "info_strict"}
 
 
-def test_predsedatel_igor_borisovich_routes_to_chairman_without_gazprom(engine):
+def test_predsedatel_igor_borisovich_routes_to_chairman_on_info(engine):
     decision = _route(
         engine,
         "Председателю Совета Директоров Игорь Борисович — материалы для рассмотрения.",
+        mailbox="info@turbo-don.ru",
+        routing_recipient="info@turbo-don.ru",
     )
 
     assert decision.services[0].code == "00-000001"
     assert decision.direction == "КС"
-    assert decision.match_source == "det_chairman"
+    assert decision.match_source in {"det_chairman", "info_strict"}
 
 
 @pytest.mark.parametrize("holding", ["СИБУР", "Роснефть"])

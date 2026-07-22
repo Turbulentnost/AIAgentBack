@@ -137,7 +137,7 @@ def test_info_strong_content_not_overridden_by_unclear(engine):
     assert decision.match_source == "content"
 
 
-def test_tpp_routes_to_chairman_on_any_mailbox(engine):
+def test_tpp_not_routed_to_chairman_off_info_mailbox(engine):
     decision = route_email(
         _email(
             mailbox="sales@turbo-don.ru",
@@ -148,10 +148,8 @@ def test_tpp_routes_to_chairman_on_any_mailbox(engine):
         recipient="sales@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000001"
-    assert decision.match_source == "institution_chairman"
-    assert decision.confidence_level == ConfidenceLevel.HIGH
-    assert not _needs_rag_fallback(decision)
+    assert decision.services[0].code != "00-000001"
+    assert decision.match_source != "institution_chairman"
 
 
 def test_apgo_routes_to_chairman(engine):
@@ -180,7 +178,7 @@ def test_other_mailbox_amural_not_forced_to_info_rules(engine):
     assert decision.services[0].code == "00-000044"
 
 
-def test_ministry_routes_to_operational_director_on_any_mailbox(engine):
+def test_ministry_not_routed_to_operational_director_off_info_mailbox(engine):
     decision = route_email(
         _email(
             mailbox="officemanager@turbo-don.ru",
@@ -191,13 +189,11 @@ def test_ministry_routes_to_operational_director_on_any_mailbox(engine):
         recipient="officemanager@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000152"
-    assert decision.match_source == "institution_operational_director"
-    assert decision.confidence_level == ConfidenceLevel.HIGH
-    assert not _needs_rag_fallback(decision)
+    assert decision.services[0].code != "00-000152"
+    assert decision.match_source != "institution_operational_director"
 
 
-def test_administration_routes_to_operational_director(engine):
+def test_administration_not_routed_to_operational_director(engine):
     decision = route_email(
         _email(
             mailbox="sales@turbo-don.ru",
@@ -208,8 +204,8 @@ def test_administration_routes_to_operational_director(engine):
         recipient="sales@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000152"
-    assert decision.match_source == "institution_operational_director"
+    assert decision.services[0].code != "00-000152"
+    assert decision.match_source != "institution_operational_director"
 
 
 def test_amural_beats_ministry_on_info(engine):

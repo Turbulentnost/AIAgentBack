@@ -8,7 +8,12 @@ from functools import lru_cache
 from pathlib import Path
 
 from agent_pochta.config import PROJECT_ROOT
-from agent_pochta.routing.organizations import DIRECTION_COMMERCIAL, DIRECTION_DEFAULT, DIRECTION_UNCLEAR
+from agent_pochta.routing.organizations import (
+    DIRECTION_COMMERCIAL,
+    DIRECTION_DEFAULT,
+    DIRECTION_UNCLEAR,
+    leadership_department_allowed,
+)
 from agent_pochta.routing.normalize import keyword_in_text, normalize_text
 
 _DEFAULT_PATH = PROJECT_ROOT / "data" / "deterministic_sales_rules.json"
@@ -81,10 +86,22 @@ def match_deterministic_sales(
     sender_email: str = "",
     partner: str | None = None,
     rules: dict | None = None,
+    recipient: str = "",
+    email_aliases: dict | None = None,
 ) -> DeterministicHit | None:
     """Возвращает первое сработавшее жёсткое правило или None."""
     cfg = rules if rules is not None else load_deterministic_sales_rules()
     if not cfg:
+        return None
+
+    def _accept(hit: DeterministicHit) -> DeterministicHit | None:
+        if leadership_department_allowed(
+            recipient=recipient,
+            department_code=hit.code,
+            match_source=hit.source,
+            email_aliases=email_aliases,
+        ):
+            return hit
         return None
 
     text = normalize_text(f"{subject} {body} {partner or ''}")
@@ -114,23 +131,27 @@ def match_deterministic_sales(
         if rule.get("id") == "bmi_equipment" and any(
             keyword_in_text(marker, text) for marker in commercial_markers
         ):
-            return DeterministicHit(
-                code="00-000128",
-                name="Отдел продаж БМИ",
-                direction="БМ",
-                source="det_product_bmi_equipment_commercial",
-                reasoning="Коммерческий запрос на оборудование БМИ",
-                matched_keywords=hits,
-                organization="БМ",
+            return _accept(
+                DeterministicHit(
+                    code="00-000128",
+                    name="Отдел продаж БМИ",
+                    direction="БМ",
+                    source="det_product_bmi_equipment_commercial",
+                    reasoning="Коммерческий запрос на оборудование БМИ",
+                    matched_keywords=hits,
+                    organization="БМ",
+                )
             )
-        return DeterministicHit(
-            code=str(rule["department_id"]),
-            name=str(rule.get("department_name") or rule["department_id"]),
-            direction=str(rule.get("direction") or DIRECTION_DEFAULT),
-            source=f"det_product_{rule.get('id') or 'x'}",
-            reasoning=str(rule.get("reasoning") or rule.get("id") or "product"),
-            matched_keywords=hits,
-            organization=rule.get("organization"),
+        return _accept(
+            DeterministicHit(
+                code=str(rule["department_id"]),
+                name=str(rule.get("department_name") or rule["department_id"]),
+                direction=str(rule.get("direction") or DIRECTION_DEFAULT),
+                source=f"det_product_{rule.get('id') or 'x'}",
+                reasoning=str(rule.get("reasoning") or rule.get("id") or "product"),
+                matched_keywords=hits,
+                organization=rule.get("organization"),
+            )
         )
 
     # 2) Продажи: нужен sales-context ИЛИ уже industrial/dealer/gazprom/orkk маркер
@@ -172,76 +193,92 @@ def match_deterministic_sales(
         or (igor_hits and predsedatel_hits)
     ):
         chairman_keywords = igor_hits or predsedatel_hits or chair_hits
-        return DeterministicHit(
-            code=str(cfg["chairman_department_id"]),
-            name=str(cfg.get("chairman_department_name") or "Председатель Совета Директоров"),
-            direction=DIRECTION_UNCLEAR,
-            source="det_chairman",
-            reasoning="Амураль / Игорь Борисович / Председатель СД",
-            matched_keywords=chairman_keywords,
+        chairman_hit = _accept(
+            DeterministicHit(
+                code=str(cfg["chairman_department_id"]),
+                name=str(cfg.get("chairman_department_name") or "Председатель Совета Директоров"),
+                direction=DIRECTION_UNCLEAR,
+                source="det_chairman",
+                reasoning="Амураль / Игорь Борисович / Председатель СД",
+                matched_keywords=chairman_keywords,
+            )
         )
+        if chairman_hit is not None:
+            return chairman_hit
 
     is_foreign, foreign_hits = _is_foreign(text, sender, cfg)
     if is_foreign:
-        return DeterministicHit(
-            code=str(cfg["foreign_department_id"]),
-            name=str(cfg.get("foreign_department_name") or "ВЭД"),
-            direction=DIRECTION_COMMERCIAL,
-            source="det_sales_foreign",
-            reasoning="Зарубежный/экспортный контур → ВЭД",
-            matched_keywords=foreign_hits or sales_hits,
+        return _accept(
+            DeterministicHit(
+                code=str(cfg["foreign_department_id"]),
+                name=str(cfg.get("foreign_department_name") or "ВЭД"),
+                direction=DIRECTION_COMMERCIAL,
+                source="det_sales_foreign",
+                reasoning="Зарубежный/экспортный контур → ВЭД",
+                matched_keywords=foreign_hits or sales_hits,
+            )
         )
 
     # Российские продажи
     if spu_hits:
-        return DeterministicHit(
-            code="00-000074",
-            name="Отдел продаж эталонного оборудования и услуг",
-            direction=DIRECTION_COMMERCIAL,
-            source="det_sales_spu",
-            reasoning="СПУ → ОПЭ",
-            matched_keywords=spu_hits,
+        return _accept(
+            DeterministicHit(
+                code="00-000074",
+                name="Отдел продаж эталонного оборудования и услуг",
+                direction=DIRECTION_COMMERCIAL,
+                source="det_sales_spu",
+                reasoning="СПУ → ОПЭ",
+                matched_keywords=spu_hits,
+            )
         )
 
     if dealer_hits:
-        return DeterministicHit(
-            code=str(cfg["dealer_department_id"]),
-            name=str(cfg.get("dealer_department_name") or "ОДП"),
-            direction=DIRECTION_COMMERCIAL,
-            source="det_sales_dealer",
-            reasoning="Гранд / UFG-H → ОДП",
-            matched_keywords=dealer_hits,
+        return _accept(
+            DeterministicHit(
+                code=str(cfg["dealer_department_id"]),
+                name=str(cfg.get("dealer_department_name") or "ОДП"),
+                direction=DIRECTION_COMMERCIAL,
+                source="det_sales_dealer",
+                reasoning="Гранд / UFG-H → ОДП",
+                matched_keywords=dealer_hits,
+            )
         )
 
     if gazprom_hits:
-        return DeterministicHit(
-            code=str(cfg["gazprom_department_id"]),
-            name=str(cfg.get("gazprom_department_name") or "ОПГ"),
-            direction=DIRECTION_COMMERCIAL,
-            source="det_sales_gazprom",
-            reasoning="Газпром / дочерние → ОПГ",
-            matched_keywords=gazprom_hits,
+        return _accept(
+            DeterministicHit(
+                code=str(cfg["gazprom_department_id"]),
+                name=str(cfg.get("gazprom_department_name") or "ОПГ"),
+                direction=DIRECTION_COMMERCIAL,
+                source="det_sales_gazprom",
+                reasoning="Газпром / дочерние → ОПГ",
+                matched_keywords=gazprom_hits,
+            )
         )
 
     if orkk_hits:
-        return DeterministicHit(
-            code=str(cfg["orkk_department_id"]),
-            name=str(cfg.get("orkk_department_name") or "ОРКК"),
-            direction=DIRECTION_COMMERCIAL,
-            source="det_sales_orkk",
-            reasoning="Ключевой холдинг → ОРКК",
-            matched_keywords=orkk_hits,
+        return _accept(
+            DeterministicHit(
+                code=str(cfg["orkk_department_id"]),
+                name=str(cfg.get("orkk_department_name") or "ОРКК"),
+                direction=DIRECTION_COMMERCIAL,
+                source="det_sales_orkk",
+                reasoning="Ключевой холдинг → ОРКК",
+                matched_keywords=orkk_hits,
+            )
         )
 
     # Промышленные без явного холдинга → ОРКК (базовый catch-all)
     if industrial_hits and sales_hits:
-        return DeterministicHit(
-            code=str(cfg["orkk_department_id"]),
-            name=str(cfg.get("orkk_department_name") or "ОРКК"),
-            direction=DIRECTION_COMMERCIAL,
-            source="det_sales_industrial",
-            reasoning="Промышленная тематика без холдинга → ОРКК",
-            matched_keywords=industrial_hits,
+        return _accept(
+            DeterministicHit(
+                code=str(cfg["orkk_department_id"]),
+                name=str(cfg.get("orkk_department_name") or "ОРКК"),
+                direction=DIRECTION_COMMERCIAL,
+                source="det_sales_industrial",
+                reasoning="Промышленная тематика без холдинга → ОРКК",
+                matched_keywords=industrial_hits,
+            )
         )
 
     return None

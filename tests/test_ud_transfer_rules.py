@@ -52,9 +52,11 @@ def test_ud_transfer_routes_to_deputy_od_assistant(engine):
     assert validate_xml_document(decision.xml_document)
 
 
-def test_ud_transfer_helper_name_pattern(engine):
+def test_ud_transfer_not_routed_off_info_mailbox(engine):
     decision = route_email(
         _email(
+            mailbox="officemanager@turbo-don.ru",
+            routing_recipient="officemanager@turbo-don.ru",
             subject="Документы",
             body_text="Для помощника зам. операционного директора.",
         ),
@@ -62,8 +64,8 @@ def test_ud_transfer_helper_name_pattern(engine):
         recipient="officemanager@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000182"
-    assert decision.match_source == "ud_transfer"
+    assert decision.services[0].code != "00-000182"
+    assert decision.match_source != "ud_transfer"
 
 
 def test_deputy_od_assistant_in_ui_allowlist():

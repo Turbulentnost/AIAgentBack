@@ -110,7 +110,7 @@ def test_ministry_bypasses_tz_spam():
     assert check_ministry_not_spam(email).is_spam is False
 
 
-def test_ministry_routes_to_operational_director_on_any_mailbox(engine):
+def test_ministry_not_routed_to_operational_director_off_info_mailbox(engine):
     decision = route_email(
         _email(
             mailbox="sales@turbo-don.ru",
@@ -122,10 +122,8 @@ def test_ministry_routes_to_operational_director_on_any_mailbox(engine):
         recipient="sales@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000152"
-    assert decision.services[0].name == "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
-    assert decision.direction == "КС"
-    assert decision.match_source == "institution_operational_director"
+    assert decision.services[0].code != "00-000152"
+    assert decision.match_source != "institution_operational_director"
 
 
 def test_non_ministry_spam_still_works():

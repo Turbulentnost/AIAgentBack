@@ -11,7 +11,10 @@ from zoneinfo import ZoneInfo
 from agent_pochta.config import PROJECT_ROOT
 from agent_pochta.routing.organizations import (
     DIRECTION_UNCLEAR,
+    INFO_LEADERSHIP_MAILBOX,
     KS_PAYER_DIRECTION_DEPARTMENT_CODES,
+    is_leadership_department,
+    leadership_department_allowed,
     normalize_organization_code,
     resolve_organization_key_code,
 )
@@ -388,6 +391,31 @@ def resolve_odata_direction(
     return ""
 
 
+def validate_leadership_routing_for_erp(
+    *,
+    department_id: str | None,
+    email_recipient: str | None,
+    match_source: str = "",
+    email_aliases: dict | None = None,
+) -> None:
+    """ERP: руководство только для info@ (или явного ящика / коррекции оператора)."""
+    code = (department_id or "").strip()
+    if not is_leadership_department(code):
+        return
+    recipient = (email_recipient or "").strip()
+    if leadership_department_allowed(
+        recipient=recipient,
+        department_code=code,
+        match_source=match_source,
+        email_aliases=email_aliases,
+    ):
+        return
+    raise ValueError(
+        f"Маршрут на руководство ({code}) недопустим для получателя {recipient!r}; "
+        f"только {INFO_LEADERSHIP_MAILBOX}"
+    )
+
+
 def _put_string(
     payload: dict[str, Any],
     fields: dict[str, str],
@@ -458,6 +486,14 @@ def build_incoming_document_payload(
     parsed = parse_document_xml(xml_document) if xml_document else None
     if not parsed:
         raise ValueError("xml_document is required for OData payload")
+
+    email_recipient = (
+        parsed.get("email_recipient") or email.routing_recipient or email.mailbox or ""
+    ).strip()
+    validate_leadership_routing_for_erp(
+        department_id=routing.department_id,
+        email_recipient=email_recipient,
+    )
 
     fields = field_map or DEFAULT_FIELD_MAP
 

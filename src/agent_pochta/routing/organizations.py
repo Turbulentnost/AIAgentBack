@@ -51,6 +51,42 @@ LEGAL_DEPARTMENT_CODES = frozenset({"00-000044"})
 
 KS_PAYER_DIRECTION_DEPARTMENT_CODES = LEADERSHIP_DEPARTMENT_CODES | LEGAL_DEPARTMENT_CODES
 
+INFO_LEADERSHIP_MAILBOX = "info@turbo-don.ru"
+
+# Явный адрес ящика директора (exact_email / email_keyword) — не content-эскалация.
+_LEADERSHIP_DEDICATED_MAILBOX_SOURCES = frozenset({"exact_email", "email_keyword"})
+
+
+def is_leadership_department(department_code: str | None) -> bool:
+    code = (department_code or "").strip()
+    return bool(code) and code in LEADERSHIP_DEPARTMENT_CODES
+
+
+def is_info_leadership_mailbox(recipient: str, *, email_aliases: dict | None = None) -> bool:
+    from agent_pochta.routing.normalize import normalize_email_address
+
+    normalized = normalize_email_address(recipient, email_aliases)
+    return normalized == INFO_LEADERSHIP_MAILBOX
+
+
+def leadership_department_allowed(
+    *,
+    recipient: str,
+    department_code: str,
+    match_source: str,
+    email_aliases: dict | None = None,
+) -> bool:
+    """Руководство (председатель/ОД/помощник) — только для info@ или явного ящика директора."""
+    if not is_leadership_department(department_code):
+        return True
+    if is_info_leadership_mailbox(recipient, email_aliases=email_aliases):
+        return True
+    if match_source in _LEADERSHIP_DEDICATED_MAILBOX_SOURCES:
+        return True
+    if match_source == "human_correction":
+        return True
+    return False
+
 
 def list_organizations_for_ui() -> list[dict[str, str]]:
     """Список организаций для выпадающего списка HITL."""
