@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -45,6 +45,7 @@ scripts/_*.py
 data/*
 !data/routing_rules.json
 !data/dialog_rules.json
+!data/odata_attached_file_field_map.json
 !data/rag_department_keywords.json
 !data/tz_department_topics.json
 !data/spam_learning_patterns.json

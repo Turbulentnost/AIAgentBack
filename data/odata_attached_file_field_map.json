@@ -1,0 +1,17 @@
+{
+  "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+  "owner_document_entity": "Document_ТД_ВходящаяКорреспонденция",
+  "fields": {
+    "name": "Description",
+    "extension": "Расширение",
+    "owner_key": "ВладелецФайла_Key",
+    "storage_binary": "ФайлХранилище_Base64Data",
+    "storage_binary_type": "ФайлХранилище_Type",
+    "storage_kind": "ТипХраненияФайла",
+    "size": "Размер"
+  },
+  "defaults": {
+    "storage_binary_type": "application/octet-stream",
+    "storage_kind": "ВИнформационнойБазе"
+  }
+}
