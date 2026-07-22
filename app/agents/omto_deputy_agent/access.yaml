@@ -1,0 +1,32 @@
+# access.yaml — разграничение доступа RBAC/ABAC (п. 4.6 ТЗ-ПЛАТФ-001).
+# Принцип минимальных прав: агент видит только объекты, необходимые роли и текущему кейсу.
+agent_id: omto_deputy_agent
+role_id: omto_deputy
+contour: "№3 — Закупка и выбор поставщика"
+model: abac
+
+subject:
+  service_account: svc_omto_deputy_agent
+  idp: keycloak            # + AD/LDAP, SSO
+
+allowed_sources:           # см. sources.yaml
+  - onec_erp:read          # только объекты раздела 7.2
+  - knowledge_base:read    # только документы раздела 8
+
+denied:
+  - onec_crm:*             # коммерческая переписка клиентов
+  - accounting_registers:* # бухгалтерские регистры
+  - internet:*             # только через integration-service
+
+write_gate:
+  requires_hitl: true      # запись возможна только после узла HITL (human_confirm)
+  whitelist_methods:       # белый список HTTP-сервиса 1С
+    - /hs/agents/v1/*
+
+# Уровневые ограничения (агентный/документный/инструментальный/процессный/аудиторский, TABLE 10):
+levels:
+  agent: "Только очередь закупочных позиций и профиль менеджеров ОМТО. Цены, счета, договоры, данные СБ и КД недоступны."
+  document: "СТО-28-020 и внутренние правила распределения; КД/ТД не требуются и не запрашиваются."
+  tool: "Только инструменты из tools.yaml. erp.set_responsible_manager — исключительно после узла human_confirm."
+  process: "Данные о производственном плане и критичности — только через оркестратор от контура №2."
+  audit: "Каждое назначение фиксируется в audit_logs с correlation_id, обоснованием и ссылкой на шаг 2.1 СТО-28-020."

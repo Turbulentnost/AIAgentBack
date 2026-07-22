@@ -1,0 +1,46 @@
+# tools.yaml — декларация инструментов (п. 4.5/4.6) → agent_tools, tool_calls.
+# Прямое обращение к 1С запрещено; реализация — в backend/app/tools/erp и integrations/onec.
+# Вызов — только через app.platform_sdk.call_tool (журнал tool_calls, write_gate).
+# Источник — TABLE 8 ТЗ-АГТ-ОМТО-НАЧ-001.
+agent_id: omto_head_agent
+
+tools:
+  - name: erp.read_procurement_cases
+    purpose: "Кейсы, заявки, закупочные задачи, ответственные, даты этапов"
+    onec: "OData: Документ.ЗаявкаНаЗакупку, Документ.ЗаказПоставщику"
+    rights: read
+
+  - name: erp.read_project_prices
+    purpose: "Проектная цена, срок действия, история пересмотра"
+    onec: "HTTP-сервис: /hs/agents/v1/project_prices"
+    rights: read
+
+  - name: erp.read_invoices_payments
+    purpose: "Счета, статусы оплаты, реестр платежей"
+    onec: "OData: Документ.СчетНаОплату; РегистрНакопления.Взаиморасчёты"
+    rights: read
+
+  - name: erp.read_delivery_status
+    purpose: "Статусы отгрузки, доставки, прогнозная дата"
+    onec: "HTTP-сервис: /hs/agents/v1/delivery_status"
+    rights: read
+
+  - name: erp.read_claims
+    purpose: "Претензии, рекламации, сроки реагирования"
+    onec: "OData: Документ.Претензия"
+    rights: read
+
+  - name: erp.write_decision
+    purpose: "Запись ПРОЕКТА решения / корректирующего действия (без проведения)"
+    onec: "HTTP-сервис: /hs/agents/v1/decision (белый список)"
+    rights: write                # запись проекта только после HITL
+
+  - name: rag.search_regulations
+    purpose: "Поиск пунктов СТО-28-020, СТО-10-095 и внутренних правил"
+    onec: "knowledge_base / Qdrant + полнотекстовый поиск"
+    rights: read
+
+  - name: notify.route
+    purpose: "Уведомление и маршрутизация (уровень У2)"
+    onec: "n8n / платформенный сервис уведомлений"
+    rights: notify

@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     porucheniya,
     positions,
     procurement,
+    omto,
     roles,
     tasks,
     users,
@@ -35,6 +36,7 @@ api_router.include_router(knowledge_bases.router)
 api_router.include_router(meetings.router)
 api_router.include_router(porucheniya.router)
 api_router.include_router(procurement.router)
+api_router.include_router(omto.router)
 api_router.include_router(knowledge_base_indexing_ws.router)
 api_router.include_router(roles.router)
 api_router.include_router(browser_runs.router)

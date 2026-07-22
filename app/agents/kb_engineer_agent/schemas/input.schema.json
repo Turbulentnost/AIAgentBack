@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "kb_engineer_agent.input",
+  "type": "object",
+  "required": ["correlation_id", "tenant_id", "task_type", "position_id"],
+  "properties": {
+    "correlation_id": { "type": "string", "format": "uuid" },
+    "tenant_id":      { "type": "string" },
+    "task_type":      { "enum": ["analog_review", "substitution_review",
+                                 "kd_deviation_review", "spec_clarification"] },
+    "position_id":    { "type": "string" },
+    "kd_ref":         { "type": "string", "description": "обозначение КД" },
+    "analog": {
+      "type": "object",
+      "properties": {
+        "supplier_id":  { "type": "string" },
+        "item_name":    { "type": "string" },
+        "document_ids": { "type": "array", "items": { "type": "string" },
+                          "description": "паспорт, сертификат, описание" }
+      }
+    },
+    "requested_by":   { "type": "string" }
+  },
+  "additionalProperties": false
+}

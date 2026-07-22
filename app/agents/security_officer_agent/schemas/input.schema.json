@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "security_officer_agent.input",
+  "type": "object",
+  "required": ["correlation_id", "tenant_id", "task_type", "counterparty"],
+  "properties": {
+    "correlation_id": { "type": "string", "format": "uuid" },
+    "tenant_id":      { "type": "string" },
+    "task_type":      { "enum": ["new_supplier_check", "periodic_recheck",
+                                 "contract_check", "exception_check"] },
+    "counterparty": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "inn":   { "type": "string", "pattern": "^[0-9]{10}([0-9]{2})?$" },
+        "ogrn":  { "type": "string" },
+        "name":  { "type": "string" },
+        "country": { "type": "string" }
+      }
+    },
+    "trigger":        { "enum": ["new_supplier", "high_risk",
+                                 "terms_change", "contract_stage"] },
+    "case_id":        { "type": "string" },
+    "requested_by":   { "type": "string" }
+  },
+  "additionalProperties": false
+}

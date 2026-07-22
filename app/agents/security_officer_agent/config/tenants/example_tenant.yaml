@@ -1,0 +1,30 @@
+# config/tenants/example_tenant.yaml — пример конфигурации арендатора (переопределяет default).
+# Значения-заглушки. Реальные критерии, пороги, исключения и маршруты задаёт владелец процесса.
+tenant_id: example_tenant
+extends: default
+
+thresholds:
+  min_criteria_coverage_pct: 100
+  source_freshness_days: 30
+  one_time_exception_limit_rub: 10000
+
+mandatory_criteria:
+  - id: registration
+    name: "Регистрация и статус в официальном реестре"
+  - id: settlements
+    name: "Взаиморасчёты и задолженность"
+  - id: history
+    name: "История исполнения договоров, претензии"
+  - id: affiliation
+    name: "Связанность и конфликт интересов"
+
+exceptions:
+  enabled: true
+  items:
+    - id: one_time_under_10k
+      name: "Одноразовое исключение до 10 000 руб."
+      approver: "Финансовый директор И служба безопасности"
+
+routes:
+  new_supplier_route: ["Начальник ОМТО", "СБ", "Юрист"]
+  critical_route: ["Руководитель службы безопасности (функция проверки контрагента)"]

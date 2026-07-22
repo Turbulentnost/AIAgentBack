@@ -1,0 +1,70 @@
+# backend/app/agents/kb_engineer_agent/agent.yaml
+# ПАСПОРТ АГЕНТА (п. 4.1 ТЗ-ПЛАТФ-001) → сущности agents, agent_versions.
+# Все изменения фиксируются в журнале версий. (Приложение Г ТЗ-АГТ-КБ-001.)
+
+agent_id: kb_engineer_agent
+name: "Агент инженера КБ / ГСПП"
+name_full: "ИИ-агент инженера конструкторского бюро / ГСПП"
+doc_ref: ТЗ-АГТ-КБ-001
+version: 1.0
+status: draft            # draft|testing|ope|rework|active|paused|archived
+
+contour:
+  primary: "№3 — Закупка и выбор поставщика"
+  secondary: "№5 — Поставка, логистика и входной контроль"
+
+owner:
+  role: "Инженер КБ / ГСПП"
+  process_owner: "Руководитель КБ / ГСПП (техническая функция); начальник ОМТО (владелец процесса закупки)"
+  reports_to: "Руководитель КБ / ГСПП"
+  registry_no: 19        # реестр ролевых агентов системного ТЗ
+
+purpose: >
+  Агент инженера КБ / ГСПП — ролевой агент контура №3 — Закупка и выбор поставщика.
+
+autonomy:
+  default: U1            # рекомендация
+  allowed: [U1, U2]      # U2 — только уведомления и маршрутизация
+  forbidden: [U3, U4]    # внешняя отправка, подпись, проведение — запрещены
+
+regulations:
+  - "СТО-28-020 «Закупки» (версия 07)"
+  - "СТО-10-095"
+
+prompts:
+  system: prompts/system.md
+
+io:
+  input_schema: schemas/input.schema.json
+  output_schema: schemas/output.schema.json
+
+runtime:
+  engine: langgraph
+  graph: graph.py:build_graph
+  checkpointer: postgres
+  worker: celery
+
+allowed_tools:  # полный перечень — tools.yaml
+  - rag.search_kd
+  - erp.read_item_card
+  - erp.read_specification
+  - docs.parse_analog_datasheet
+  - rag.search_gost
+  - erp.write_deviation_approval
+  - docs.render_template
+  - notify.route
+
+allowed_sources:  # полный перечень — sources.yaml
+  - onec_erp        # только через integration-service; прямой доступ запрещён
+  - knowledge_base  # RAG-контур: СТО-28-020 «Закупки» (версия 07)
+
+policies:
+  confidence: confidence.yaml
+  hitl: hitl.yaml
+  access: access.yaml
+  kpi: kpi.yaml
+
+ope:
+  required: true
+  card: ope/ope_card.md
+  checklist: ope/checklist.md

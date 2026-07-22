@@ -1,0 +1,28 @@
+# config/tenants/example_tenant.yaml — пример конфигурации арендатора (переопределяет default).
+# Значения-заглушки. Реальные ЦФО, справочники, маршруты и пороги задаёт владелец процесса.
+tenant_id: example_tenant
+extends: default
+
+thresholds:
+  queue_overdue_days: 2
+  workload_deviation_pct: 20
+
+cfo:                                     # центры финансовой ответственности (ЦФО)
+  - code: "ЦФО-01"
+    name: "ОМТО"
+
+item_groups:                             # справочник номенклатурных групп арендатора
+  - code: "НГ-МЕТ"
+    name: "метизы"
+  - code: "НГ-КРП"
+    name: "крепёж"
+
+managers:                                # специализация и доступность — из конфигурации
+  - id: "MGR-A"
+    name: "Иванов И.И."
+    specializations: ["метизы"]
+    available: true
+  - id: "MGR-B"
+    name: "Петров П.П."
+    specializations: ["метизы", "крепёж"]
+    available: true

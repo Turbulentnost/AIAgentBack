@@ -1,0 +1,40 @@
+# tools.yaml — декларация инструментов (п. 4.5/4.6) → agent_tools, tool_calls.
+# Прямое обращение к 1С запрещено; реализация — в backend/app/tools/erp и integrations/onec.
+# Вызов — только через app.platform_sdk.call_tool (журнал tool_calls, write_gate).
+agent_id: omto_deputy_agent
+
+tools:
+  - name: erp.read_unassigned_queue
+    purpose: "Позиции без ответственного, номенклатура, срок, приоритет, ЦФО"
+    onec: "OData: Документ.ЗаявкаНаЗакупку ($filter Ответственный eq null)"
+    rights: read
+
+  - name: erp.read_open_orders
+    purpose: "Открытые заказы поставщику для проверки дубля"
+    onec: "OData: Документ.ЗаказПоставщику"
+    rights: read
+
+  - name: erp.read_managers_workload
+    purpose: "Специализация, загрузка, доступность менеджеров"
+    onec: "HTTP-сервис: /hs/agents/v1/managers_workload"
+    rights: read
+
+  - name: erp.read_item_groups
+    purpose: "Справочник номенклатурных групп арендатора"
+    onec: "OData: Справочник.НоменклатурныеГруппы"
+    rights: read
+
+  - name: erp.set_responsible_manager
+    purpose: "Запись ответственного менеджера (реквизит «Ответственный»)"
+    onec: "HTTP-сервис: /hs/agents/v1/assign_manager (белый список)"
+    rights: write                # только после HITL (узел human_confirm)
+
+  - name: rag.search_regulations
+    purpose: "Поиск пунктов СТО-28-020 и правил распределения"
+    onec: "knowledge_base / Qdrant + полнотекстовый поиск"
+    rights: read
+
+  - name: notify.route
+    purpose: "Уведомление менеджера и начальника ОМТО (уровень У2)"
+    onec: "платформенный сервис уведомлений"
+    rights: notify

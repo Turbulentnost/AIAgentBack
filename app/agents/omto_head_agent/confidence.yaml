@@ -1,0 +1,53 @@
+# confidence.yaml — правила снижения уверенности и эскалации (п. 4.7 ТЗ-ПЛАТФ-001).
+# Узел assess_confidence понижает data_confidence и выставляет requires_human_review.
+# Источник — раздел 8.2 ТЗ-АГТ-ОМТО-НАЧ-001.
+agent_id: omto_head_agent
+version: 1
+
+# Условия обязательного снижения уверенности и передачи человеку (раздел 8.2 ТЗ):
+#  - отсутствуют обязательные данные по кейсу (ЦФО, статья, проект, дата потребности,
+#    номенклатура, количество);
+#  - данные 1С:ERP противоречат друг другу (например, статус оплаты и реестр платежей);
+#  - проектная цена отсутствует или срок её действия истёк;
+#  - вывод может повлечь приостановку закупки, влияющей на производственный план;
+#  - ссылка на пункт СТО не подтверждена в актуальной версии документа;
+#  - отклонение классифицировано как critical — уверенность не выше medium без подтверждения.
+rules:
+  - id: missing_required_fields
+    when: state.errors[?type=='missing_field']
+    set_confidence: low
+    requires_human_review: true
+
+  - id: source_conflict
+    when: conflicting_sources_detected
+    set_confidence: low
+    requires_human_review: true
+
+  - id: project_price_missing_or_expired
+    when: state.errors[?type=='project_price_missing']
+    set_confidence: low
+    requires_human_review: true
+
+  - id: may_suspend_procurement
+    when: finding_impacts_production_plan
+    set_confidence: low
+    requires_human_review: true
+
+  - id: sto_clause_unconfirmed
+    when: source_clause_not_confirmed_in_actual_version
+    set_confidence: low
+    requires_human_review: true
+
+  - id: critical_finding
+    when: any(findings[?severity=='critical'])
+    max_confidence: medium
+    requires_human_review: true
+
+degrade_on:
+  - metric: false_escalation_rate
+    threshold: 0.05
+    action: downgrade_to_U0     # автоматическое понижение автономности
+
+escalation:
+  default_role: "Начальник службы логистики"
+  critical_role: "Начальник ОМТО (владелец процесса закупки по СТО-28-020)"

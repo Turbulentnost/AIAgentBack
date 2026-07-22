@@ -1,0 +1,39 @@
+# kpi.yaml — целевые значения KPI (раздел 11 ТЗ). blocking препятствуют приёмке;
+# guardrail при нарушении порога вызывают автоматическое понижение автономности.
+agent_id: procurement_manager_agent
+targets:
+  - id: K1
+    name: "Доля закупок с требуемым числом сопоставимых предложений при наличии рынка"
+    target: "≥ 90%"
+    source: "quotes + comparison"
+  - id: K2
+    name: "Полнота сравнения цены, срока, качества, договора и рисков"
+    target: "100%"
+    blocking: true
+    source: "comparison"
+  - id: K3
+    name: "Доля рекомендаций поставщика, подтверждённых человеком"
+    target: "≥ 90%"
+    source: "журнал HITL"
+  - id: K4
+    name: "Критические ошибки в проекте заказа или договора"
+    target: "0"
+    blocking: true
+    source: "журнал HITL + ОПЭ"
+  - id: K5
+    name: "Своевременность проекта претензии"
+    target: "≥ 95%"
+    source: "draft_claim + audit_logs"
+  - id: K6
+    name: "Среднее количество циклов уточнения спецификации"
+    target: "≤ 1"
+    source: "request_clarification"
+  - id: K7
+    name: "Доля выводов со ссылкой на источник и пункт"
+    target: "100%"
+    source: "source_references"
+  - id: K8
+    name: "Заказы, размещённые без согласованного отклонения от КД"
+    target: "0"
+    blocking: true
+    source: "сверка kd_deviation с 1С"

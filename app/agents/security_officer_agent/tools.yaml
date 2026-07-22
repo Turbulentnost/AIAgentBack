@@ -1,0 +1,51 @@
+# tools.yaml — декларация инструментов (п. 4.5/4.6, TABLE 8) → agent_tools, tool_calls.
+# Прямое обращение к 1С и внешним ресурсам запрещено; реализация — в backend/app/tools/erp
+# и integrations/onec. Внешние реестры — только через integration-service (белый список).
+# Вызов — только через app.platform_sdk.call_tool (журнал tool_calls, write_gate).
+agent_id: security_officer_agent
+
+tools:
+  - name: erp.read_counterparty_card
+    purpose: "Карточка контрагента, реквизиты, статус, договоры"
+    onec: "OData: Справочник.Контрагенты ($filter ИНН)"
+    rights: read
+
+  - name: erp.read_settlements
+    purpose: "История взаиморасчётов, просрочки, задолженность"
+    onec: "OData: РегистрНакопления.Взаиморасчёты"
+    rights: read
+
+  - name: erp.read_supply_history
+    purpose: "Исполнение договоров, сроки, качество поставок"
+    onec: "HTTP-сервис: /hs/agents/v1/supplier_rating"
+    rights: read
+
+  - name: erp.read_claims
+    purpose: "Претензии и рекламации по контрагенту"
+    onec: "OData: Документ.Претензия"
+    rights: read
+
+  - name: ext.check_official_registries
+    purpose: "Сведения официальных реестров; фиксация ссылки, даты обращения, статуса источника"
+    onec: "integration-service (белый список внешних источников)"
+    rights: read
+
+  - name: erp.check_affiliation
+    purpose: "Связанность контрагентов, совпадение реквизитов, конфликт интересов"
+    onec: "HTTP-сервис: /hs/agents/v1/affiliation"
+    rights: read
+
+  - name: erp.write_counterparty_verdict
+    purpose: "Фиксация заключения, уровня риска и условий допуска"
+    onec: "HTTP-сервис: /hs/agents/v1/counterparty_check (белый список)"
+    rights: write                # только после HITL (узел human_approve)
+
+  - name: docs.render_template
+    purpose: "Формирование заключения по контрагенту по шаблону"
+    onec: "document-service"
+    rights: draft
+
+  - name: notify.route
+    purpose: "Уведомление закупщика, юриста и руководителя СБ (уровень У2)"
+    onec: "платформенный сервис уведомлений"
+    rights: notify

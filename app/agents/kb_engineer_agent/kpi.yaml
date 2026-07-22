@@ -1,0 +1,37 @@
+# kpi.yaml — целевые значения KPI (раздел 11 / [TABLE 13] ТЗ). blocking препятствуют
+# приёмке; guardrail при нарушении порога вызывают автоматическое понижение автономности.
+agent_id: kb_engineer_agent
+targets:
+  - id: K1
+    name: "Полнота технического заключения"
+    target: "100%"
+    blocking: true
+    source: "comparison + coverage"
+  - id: K2
+    name: "Критические ошибочные разрешения аналога или замены"
+    target: "0"
+    blocking: true
+    source: "сверка с результатами входного контроля и производства"
+  - id: K3
+    name: "Своевременность подготовки заключения"
+    target: "≥ 95%"
+    source: "audit_logs"
+  - id: K4
+    name: "Доля заключений, возвращённых из-за неполноты"
+    target: "≤ 5%"
+    source: "журнал HITL"
+  - id: K5
+    name: "Доля утверждений заключения со ссылкой на документ, пункт и версию"
+    target: "100%"
+    source: "source_references"
+  - id: K6
+    name: "Заказы, размещённые без согласованного отклонения"
+    target: "0"
+    blocking: true
+    source: "сверка erp.write_deviation_approval с ЗаказПоставщику"
+
+# guardrail: нарушение порога вызывает автоматическое понижение автономности (confidence.degrade_on).
+guardrail:
+  - metric: false_escalation_rate
+    threshold: 0.05
+    on_breach: downgrade_to_U0

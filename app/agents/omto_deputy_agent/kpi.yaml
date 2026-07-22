@@ -1,0 +1,36 @@
+# kpi.yaml — целевые значения KPI (раздел 11 / TABLE 13 ТЗ). blocking препятствуют приёмке;
+# guardrail при нарушении порога вызывают автоматическое понижение автономности.
+agent_id: omto_deputy_agent
+targets:
+  - id: K1
+    name: "Точность назначения по специализации"
+    target: "≥ 98%"
+    source: "журнал HITL + audit_logs"
+  - id: K2
+    name: "Позиции без ответственного сверх допустимого срока"
+    target: "0"
+    blocking: true
+    source: "erp.read_unassigned_queue"
+  - id: K3
+    name: "Повторные переназначения из-за ошибочного распределения"
+    target: "≤ 5%"
+    source: "audit_logs"
+  - id: K4
+    name: "Отклонение загрузки менеджеров от среднего"
+    target: "≤ 20%"
+    source: "erp.read_managers_workload"
+  - id: K5
+    name: "Дубли потребности, переданные в закупку"
+    target: "0"
+    blocking: true
+    source: "check_duplicates + сверка с 1С"
+  - id: K6
+    name: "Доля назначений с объяснимым обоснованием"
+    target: "100%"
+    source: "source_references"
+
+# guardrail-KPI: превышение порога ложных эскалаций → автоматическое понижение автономности.
+guardrail:
+  - metric: false_escalation_rate
+    threshold: 0.05
+    on_breach: downgrade_to_U0

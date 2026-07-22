@@ -1,0 +1,70 @@
+# backend/app/agents/security_officer_agent/agent.yaml
+# ПАСПОРТ АГЕНТА (п. 4.1 ТЗ-ПЛАТФ-001) → сущности agents, agent_versions.
+# Все изменения фиксируются в журнале версий.
+
+agent_id: security_officer_agent
+name: "Агент сотрудника службы безопасности"
+name_full: "ИИ-агент сотрудника службы безопасности (проверка контрагента)"
+doc_ref: ТЗ-АГТ-СБ-001
+version: 1.0
+status: draft            # draft|testing|ope|rework|active|paused|archived
+
+contour:
+  primary: "№3 — Закупка и выбор поставщика"
+  secondary: "№4 — Цены, проектные цены, оплаты и договоры"
+
+owner:
+  role: "Сотрудник службы безопасности"
+  process_owner: "Руководитель службы безопасности (функция проверки контрагента); начальник ОМТО (владелец процесса закупки)"
+  reports_to: "Руководитель службы безопасности"
+  registry_no: 25        # реестр ролевых агентов системного ТЗ
+
+purpose: >
+  Агент сотрудника службы безопасности — ролевой агент контура №3 — Закупка и выбор поставщика.
+
+autonomy:
+  default: U1            # рекомендация
+  allowed: [U1, U2]      # U2 — только уведомления и маршрутизация
+  forbidden: [U3, U4]    # внешняя отправка, подпись, проведение — запрещены
+
+regulations:
+  - "СТО-28-020 «Закупки» (версия 07)"
+
+prompts:
+  system: prompts/system.md
+
+io:
+  input_schema: schemas/input.schema.json
+  output_schema: schemas/output.schema.json
+
+runtime:
+  engine: langgraph
+  graph: graph.py:build_graph
+  checkpointer: postgres
+  worker: celery
+
+allowed_tools:  # полный перечень — tools.yaml
+  - erp.read_counterparty_card
+  - erp.read_settlements
+  - erp.read_supply_history
+  - erp.read_claims
+  - ext.check_official_registries
+  - erp.check_affiliation
+  - erp.write_counterparty_verdict
+  - docs.render_template
+  - notify.route
+
+allowed_sources:  # полный перечень — sources.yaml
+  - onec_erp        # только через integration-service; прямой доступ запрещён
+  - knowledge_base  # RAG-контур: СТО-28-020 «Закупки» (версия 07)
+
+policies:
+  confidence: confidence.yaml
+  hitl: hitl.yaml
+  access: access.yaml
+  kpi: kpi.yaml
+
+ope:
+  required: true
+  card: ope/ope_card.md
+  checklist: ope/checklist.md

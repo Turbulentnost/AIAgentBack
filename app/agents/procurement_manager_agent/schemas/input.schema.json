@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "procurement_manager_agent.input",
+  "type": "object",
+  "required": ["correlation_id", "tenant_id", "task_type", "position_id"],
+  "properties": {
+    "correlation_id": { "type": "string", "format": "uuid" },
+    "tenant_id":      { "type": "string" },
+    "task_type":      { "enum": ["validate_spec", "select_supplier",
+                                 "prepare_rfq", "compare_quotes",
+                                 "prepare_order", "prepare_claim"] },
+    "position_id":    { "type": "string" },
+    "need_date":      { "type": "string", "format": "date" },
+    "quantity":       { "type": "number", "exclusiveMinimum": 0 },
+    "quotes":         { "type": "array", "items": { "type": "object" },
+                        "description": "document_id загруженных КП" },
+    "requested_by":   { "type": "string" }
+  },
+  "additionalProperties": false
+}

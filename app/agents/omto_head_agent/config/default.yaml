@@ -1,0 +1,29 @@
+# config/default.yaml — значения по умолчанию.
+# Все регламенты, коды ЦФО, статьи расходов, маршруты согласования, нормативы и пороги
+# задаются конфигурацией арендатора (config/tenants/<tenant>.yaml), НЕ зашиваются в код (п. 5).
+agent_id: omto_head_agent
+
+autonomy:
+  level: U1
+
+thresholds:
+  assignment_sla_hours: 24               # норматив распределения заявки (Ф1, шаг 2.1)
+  procurement_overdue_share_max: 0.05    # целевая доля просроченных задач (K2)
+  assignment_timeliness_min: 0.98        # целевая своевременность распределения (K1)
+  price_deviation_pct: 0                 # порог отклонения цены для служебной записки (шаг 3.3)
+  comparable_offers_required: 3          # 2/3 сопоставимых предложений при отклонении (Ф3)
+  corrective_action_closure_min: 0.95    # закрытие корректирующих действий в срок (K4)
+
+severity_rules:                          # классификация критичности (переопределяется арендатором)
+  price_deviation_critical_pct: 15       # отклонение цены ≥ порога → critical
+  delivery_impacts_plan: critical        # срыв поставки с влиянием на произв.план → critical
+
+reports:                                 # регламентная отчётность контура (Ф6)
+  daily_report_to: "Начальник ОМТО"
+  summary_to: "Начальник службы логистики"
+  risk_card_to: "Операционный директор"
+
+templates:                               # идентификаторы шаблонов документов
+  daily_report: daily_report_default
+  decision_card: decision_card_default
+  escalation: escalation_default

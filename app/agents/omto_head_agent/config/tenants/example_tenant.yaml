@@ -1,0 +1,24 @@
+# config/tenants/example_tenant.yaml — пример конфигурации арендатора (переопределяет default).
+# Значения-заглушки. Реальные ЦФО, статьи, маршруты, нормативы и пороги задаёт владелец процесса.
+tenant_id: example_tenant
+extends: default
+
+thresholds:
+  assignment_sla_hours: 24
+  procurement_overdue_share_max: 0.05
+  comparable_offers_required: 3
+
+severity_rules:
+  price_deviation_critical_pct: 15
+
+cfo:                                     # центры финансовой ответственности (ЦФО)
+  - code: "ЦФО-01"
+    name: "ОМТО"
+expense_items:
+  - code: "СТ-МТО-001"
+    name: "Материалы основного производства"
+
+reports:
+  daily_report_to: "Начальник ОМТО"
+  summary_to: "Начальник службы логистики"
+  risk_card_to: "Операционный директор"

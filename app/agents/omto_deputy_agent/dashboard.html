@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дашборд KPI — Агент заместителя начальника ОМТО</title>
+<style>
+  :root{
+    --accent:#0d9488; --accent2:#14b8a6;
+    --bg:#f4f6fb; --panel:#ffffff; --ink:#0f172a; --muted:#64748b;
+    --line:#e2e8f0; --track:#eef2f7;
+    --ok:#16a34a; --ok-bg:#dcfce7; --warn:#d97706; --warn-bg:#fef3c7;
+    --bad:#dc2626; --bad-bg:#fee2e2;
+    --shadow:0 1px 2px rgba(15,23,42,.06),0 8px 24px rgba(15,23,42,.06);
+  }
+  html[data-theme="dark"]{
+    --bg:#0b1120; --panel:#111a2e; --ink:#e5edff; --muted:#94a3b8;
+    --line:#1e2a44; --track:#16233c;
+    --ok-bg:#0f2e1c; --warn-bg:#3a2a0c; --bad-bg:#3a1414;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+  }
+  @media (prefers-color-scheme: dark){
+    html:not([data-theme="light"]){
+      --bg:#0b1120; --panel:#111a2e; --ink:#e5edff; --muted:#94a3b8;
+      --line:#1e2a44; --track:#16233c;
+      --ok-bg:#0f2e1c; --warn-bg:#3a2a0c; --bad-bg:#3a1414;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
+    line-height:1.45; padding:28px 20px 48px;
+  }
+  .wrap{max-width:1160px;margin:0 auto}
+
+  header.hero{
+    position:relative; background:var(--panel); border:1px solid var(--line);
+    border-radius:18px; padding:26px 26px 22px; box-shadow:var(--shadow); overflow:hidden;
+  }
+  header.hero::before{
+    content:""; position:absolute; inset:0 0 auto 0; height:5px;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+  }
+  .hero-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+  .eyebrow{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+  h1{margin:6px 0 2px;font-size:26px;font-weight:800}
+  .aid{font-family:ui-monospace,"Cascadia Code",Consolas,monospace;font-size:13px;color:var(--muted)}
+  .theme-btn{
+    border:1px solid var(--line);background:transparent;color:var(--ink);
+    border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer;white-space:nowrap
+  }
+  .theme-btn:hover{border-color:var(--accent)}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;background:var(--track);
+    border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:12.5px;color:var(--muted)
+  }
+  .chip b{color:var(--ink);font-weight:600}
+  .chip.au{background:var(--ok-bg);border-color:transparent;color:var(--ok)}
+
+  .overview{
+    display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:20px 24px;margin:18px 0;box-shadow:var(--shadow)
+  }
+  .donut{
+    --sz:118px;width:var(--sz);height:var(--sz);border-radius:50%;
+    background:conic-gradient(var(--ok) 0 100.00%, var(--warn) 100.00% 100.00%, var(--bad) 100.00% 100%);display:grid;place-items:center;flex:none
+  }
+  .donut .hole{
+    width:78px;height:78px;border-radius:50%;background:var(--panel);
+    display:grid;place-items:center;text-align:center
+  }
+  .donut .hole b{font-size:22px;font-weight:800;display:block;line-height:1}
+  .donut .hole span{font-size:10.5px;color:var(--muted)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
+  .stat{background:var(--track);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stat b{display:block;font-size:22px;font-weight:800}
+  .stat span{font-size:12px;color:var(--muted)}
+  .stat.ok b{color:var(--ok)} .stat.warn b{color:var(--warn)} .stat.bad b{color:var(--bad)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--muted);
+    border-radius:14px;padding:16px 16px 18px;box-shadow:var(--shadow);
+    display:flex;flex-direction:column;min-height:186px
+  }
+  .card.ok{border-left-color:var(--ok)} .card.warn{border-left-color:var(--warn)} .card.bad{border-left-color:var(--bad)}
+  .card-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .kid{
+    font-weight:800;font-size:12px;letter-spacing:.06em;color:#fff;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    border-radius:7px;padding:3px 9px
+  }
+  .flags{display:flex;gap:6px}
+  .badge{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-radius:6px;padding:3px 7px}
+  .badge.blocking{background:var(--bad-bg);color:var(--bad)}
+  .badge.guardrail{background:var(--warn-bg);color:var(--warn)}
+  .kname{font-size:13.5px;font-weight:600;margin:12px 0 10px;color:var(--ink);min-height:38px}
+  .valrow{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:9px}
+  .val{font-size:27px;font-weight:800;letter-spacing:-.02em}
+  .card.ok .val{color:var(--ok)} .card.warn .val{color:var(--warn)} .card.bad .val{color:var(--bad)}
+  .target{font-size:12px;color:var(--muted)}
+  .track{position:relative;height:9px;background:var(--track);border-radius:999px;overflow:hidden;margin-top:auto}
+  .fill{height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width 1s cubic-bezier(.22,1,.36,1)}
+  .card.ok .fill{background:linear-gradient(90deg,#16a34a,#22c55e)}
+  .card.warn .fill{background:linear-gradient(90deg,#d97706,#f59e0b)}
+  .card.bad .fill{background:linear-gradient(90deg,#dc2626,#ef4444)}
+  body.go .fill{width:var(--w)}
+  .marker{position:absolute;top:-3px;width:2px;height:15px;background:var(--ink);opacity:.55;border-radius:2px}
+  .marker::after{content:"цель";position:absolute;top:-13px;left:50%;transform:translateX(-50%);font-size:8.5px;color:var(--muted);white-space:nowrap}
+  .pill{align-self:flex-start;margin-top:11px;font-size:11.5px;font-weight:700;border-radius:999px;padding:4px 11px}
+  .pill.ok{background:var(--ok-bg);color:var(--ok)}
+  .pill.warn{background:var(--warn-bg);color:var(--warn)}
+  .pill.bad{background:var(--bad-bg);color:var(--bad)}
+
+  footer{margin-top:26px;color:var(--muted);font-size:12px;text-align:center;line-height:1.6}
+  footer .note{display:inline-block;background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:6px 12px;font-weight:600;margin-bottom:8px}
+  section.hdr{margin:22px 2px 12px;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="hero-top">
+      <div>
+        <div class="eyebrow">Корпоративная платформа ИИ-агентов · контур №3</div>
+        <h1>Агент заместителя начальника ОМТО</h1>
+        <div class="aid">omto_deputy_agent</div>
+      </div>
+      <button class="theme-btn" id="themeBtn" type="button">◐ Тема</button>
+    </div>
+    <div class="meta">
+      <span class="chip"><b>Роль:</b> Заместитель начальника ОМТО</span>
+      <span class="chip"><b>ТЗ:</b> ТЗ-АГТ-ОМТО-ЗАМ-001</span>
+      <span class="chip"><b>Реестр:</b> №16</span>
+      <span class="chip"><b>Контур:</b> №3</span>
+      <span class="chip"><b>Подотчётен:</b> Начальник ОМТО</span>
+      <span class="chip au">Уровень автономности У1</span>
+    </div>
+  </header>
+
+  <div class="overview">
+    <div class="donut"><div class="hole"><div><b>100%</b><span>достигнуто</span></div></div></div>
+    <div class="stats">
+      <div class="stat"><b>6</b><span>Всего KPI</span></div>
+      <div class="stat ok"><b>6</b><span>Достигнуто</span></div>
+      <div class="stat warn"><b>0</b><span>На границе</span></div>
+      <div class="stat bad"><b>0</b><span>Ниже цели</span></div>
+      <div class="stat"><b>2</b><span>Блокирующих</span></div>
+      <div class="stat"><b>0</b><span>Guardrail</span></div>
+    </div>
+  </div>
+
+  <section class="hdr">Показатели эффективности (KPI) — раздел 11 ТЗ</section>
+  <div class="grid">
+
+      <article class="card ok">
+        <div class="card-top">
+          <span class="kid">K1</span>
+          <div class="flags"></div>
+        </div>
+        <h3 class="kname">Точность назначения по специализации</h3>
+        <div class="valrow">
+          <span class="val">98.6%</span>
+          <span class="target">цель ≥ 98%</span>
+        </div>
+        <div class="track" role="progressbar" aria-valuenow="99" aria-valuemin="0" aria-valuemax="100">
+          <div class="fill" style="--w:98.60%"></div>
+          <div class="marker" style="left:98.00%"></div>
+        </div>
+        <span class="pill ok">Достигнут</span>
+      </article>
+
+      <article class="card ok">
+        <div class="card-top">
+          <span class="kid">K2</span>
+          <div class="flags"><span class="badge blocking" title="Блокирующий KPI — препятствует приёмке">блокирующий</span></div>
+        </div>
+        <h3 class="kname">Позиции без ответственного сверх допустимого срока</h3>
+        <div class="valrow">
+          <span class="val">0</span>
+          <span class="target">цель 0</span>
+        </div>
+        <div class="track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+          <div class="fill" style="--w:0.00%"></div>
+          
+        </div>
+        <span class="pill ok">Достигнут</span>
+      </article>
+
+      <article class="card ok">
+        <div class="card-top">
+          <span class="kid">K3</span>
+          <div class="flags"></div>
+        </div>
+        <h3 class="kname">Повторные переназначения из-за ошибочного распределения</h3>
+        <div class="valrow">
+          <span class="val">3.9%</span>
+          <span class="target">цель ≤ 5%</span>
+        </div>
+        <div class="track" role="progressbar" aria-valuenow="39" aria-valuemin="0" aria-valuemax="100">
+          <div class="fill" style="--w:39.00%"></div>
+          <div class="marker" style="left:50.00%"></div>
+        </div>
+        <span class="pill ok">Достигнут</span>
+      </article>
+
+      <article class="card ok">
+        <div class="card-top">
+          <span class="kid">K4</span>
+          <div class="flags"></div>
+        </div>
+        <h3 class="kname">Отклонение загрузки менеджеров от среднего</h3>
+        <div class="valrow">
+          <span class="val">16.5%</span>
+          <span class="target">цель ≤ 20%</span>
+        </div>
+        <div class="track" role="progressbar" aria-valuenow="41" aria-valuemin="0" aria-valuemax="100">
+          <div class="fill" style="--w:41.25%"></div>
+          <div class="marker" style="left:50.00%"></div>
+        </div>
+        <span class="pill ok">Достигнут</span>
+      </article>
+
+      <article class="card ok">
+        <div class="card-top">
+          <span class="kid">K5</span>
+          <div class="flags"><span class="badge blocking" title="Блокирующий KPI — препятствует приёмке">блокирующий</span></div>
+        </div>
+        <h3 class="kname">Дубли потребности, переданные в закупку</h3>
+        <div class="valrow">
+          <span class="val">0</span>
+          <span class="target">цель 0</span>
+        </div>
+        <div class="track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+          <div class="fill" style="--w:0.00%"></div>
+          
+        </div>
+        <span class="pill ok">Достигнут</span>
+      </article>
+
+      <article class="card ok">
+        <div class="card-top">
+          <span class="kid">K6</span>
+          <div class="flags"></div>
+        </div>
+        <h3 class="kname">Доля назначений с объяснимым обоснованием</h3>
+        <div class="valrow">
+          <span class="val">100%</span>
+          <span class="target">цель 100%</span>
+        </div>
+        <div class="track" role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">
+          <div class="fill" style="--w:100.00%"></div>
+          <div class="marker" style="left:100.00%"></div>
+        </div>
+        <span class="pill ok">Достигнут</span>
+      </article>
+  </div>
+
+  <footer>
+    <div class="note">Демонстрационные значения (мок). Источник телеметрии не подключён — этап «архитектура».</div><br>
+    Цели KPI — из <b>ТЗ-АГТ-ОМТО-ЗАМ-001</b> (<code>kpi.yaml</code>). Блокирующие KPI препятствуют приёмке;
+    guardrail при нарушении порога вызывают понижение уровня автономности.<br>
+    Автономный HTML-файл: откройте двойным кликом в браузере.
+  </footer>
+</div>
+<script>
+  // Тема: переключатель + запоминание в localStorage
+  (function(){
+    var root=document.documentElement, btn=document.getElementById('themeBtn');
+    try{var s=localStorage.getItem('kpi-theme'); if(s) root.setAttribute('data-theme',s);}catch(e){}
+    btn.addEventListener('click',function(){
+      var cur=root.getAttribute('data-theme')==='dark'?'light':'dark';
+      root.setAttribute('data-theme',cur);
+      try{localStorage.setItem('kpi-theme',cur);}catch(e){}
+    });
+  })();
+  // Анимация заполнения полос после загрузки
+  requestAnimationFrame(function(){requestAnimationFrame(function(){document.body.classList.add('go');});});
+</script>
+</body>
+</html>

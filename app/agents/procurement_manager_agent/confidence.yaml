@@ -1,0 +1,54 @@
+# confidence.yaml — правила снижения уверенности и эскалации (п. 4.7 ТЗ-ПЛАТФ-001).
+# Узел assess_confidence понижает data_confidence и выставляет requires_human_review.
+agent_id: procurement_manager_agent
+version: 1
+
+# Условия обязательного снижения уверенности и передачи человеку (раздел 8.2 ТЗ):
+#  - спецификация неполна / допускает несколько толкований;
+#  - версия КД не подтверждена как актуальная либо КД не найдена;
+#  - получено менее требуемого числа сопоставимых предложений при наличии рынка;
+#  - КП не приводятся к единой базе сравнения;
+#  - поставщик новый/рисковый и заключение СБ не получено;
+#  - аналог предложен, но заключение КБ/ГСПП не получено (low, заказ блокируется);
+#  - данные рейтинга/истории противоречат данным договора;
+#  - срок не укладывается в дату потребности и альтернатив нет (low, эскалация).
+rules:
+  - id: missing_required_fields
+    when: state.errors[?type=='missing_field']
+    set_confidence: low
+    requires_human_review: true
+
+  - id: source_conflict
+    when: conflicting_sources_detected
+    set_confidence: low
+    requires_human_review: true
+
+  - id: kd_deviation_without_kb
+    when: state.kd_deviation == null && analog_proposed
+    set_confidence: low
+    requires_human_review: true
+    block_order: true
+
+  - id: new_supplier_without_sb
+    when: supplier_is_new && state.security_verdict == null
+    set_confidence: low
+    requires_human_review: true
+
+  - id: insufficient_quotes
+    when: comparable_quotes_count < required_quotes && market_available
+    set_confidence: low
+    requires_human_review: true
+
+  - id: critical_finding
+    when: any(findings[?severity=='critical'])
+    max_confidence: medium
+    requires_human_review: true
+
+degrade_on:
+  - metric: false_escalation_rate
+    threshold: 0.05
+    action: downgrade_to_U0     # автоматическое понижение автономности
+
+escalation:
+  default_role: "Начальник ОМТО / заместитель начальника ОМТО"
+  critical_role: "Начальник ОМТО (владелец процесса закупки по СТО-28-020)"

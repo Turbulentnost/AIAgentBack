@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "omto_deputy_agent.input",
+  "type": "object",
+  "required": ["correlation_id", "tenant_id", "task_type"],
+  "properties": {
+    "correlation_id": { "type": "string", "format": "uuid" },
+    "tenant_id":      { "type": "string" },
+    "task_type":      { "enum": ["assign_positions", "queue_review",
+                                 "rebalance_workload"] },
+    "position_ids":   { "type": "array", "items": { "type": "string" } },
+    "priority_hint":  { "enum": ["critical", "high", "normal"] },
+    "requested_by":   { "type": "string" }
+  },
+  "additionalProperties": false
+}
