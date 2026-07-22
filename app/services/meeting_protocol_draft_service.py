@@ -27,6 +27,42 @@ def compute_protocol_draft_at(slot_start: datetime, *, minutes_before: int) -> d
     return slot_start - timedelta(minutes=minutes_before)
 
 
+def read_topic_department_key(topic: dict[str, Any] | None) -> str | None:
+    if not topic:
+        return None
+    keys = topic.get("keys")
+    if isinstance(keys, dict):
+        raw = keys.get("department")
+        if raw:
+            return str(raw).strip() or None
+    raw = topic.get("department_key")
+    if raw:
+        return str(raw).strip() or None
+    return None
+
+
+async def resolve_topic_department_key(
+    topic_key: str,
+    topic: dict[str, Any] | None,
+) -> str | None:
+    department_key = read_topic_department_key(topic)
+    if department_key:
+        return department_key
+
+    def _fetch() -> str | None:
+        from app.tools.onec.connection import CONFIG, create_session
+        from app.tools.onec.meeting_topics_registry import fetch_topic_by_key, normalize_topic
+
+        session = create_session(CONFIG)
+        row = fetch_topic_by_key(session, CONFIG, topic_key, expand_related=False)
+        if not row:
+            return None
+        normalized = normalize_topic(row, expand_related=False)
+        return read_topic_department_key(normalized)
+
+    return await asyncio.to_thread(_fetch)
+
+
 def read_meeting_topic(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
     payload = entry.payload if isinstance(entry.payload, dict) else {}
     topic = payload.get("meeting_topic")
@@ -275,16 +311,16 @@ class MeetingProtocolDraftService:
 
         meeting_type = (topic or {}).get("meeting_type")
         comment = (entry.subject or entry.title or "").strip()
-        number = build_protocol_number_stub(entry)
+        department_key = await resolve_topic_department_key(str(topic_key), topic)
 
         def _create() -> dict[str, Any]:
             return create_meeting_protocol(
-                number=number,
                 comment=comment,
                 template_number_prefix=settings.MEETING_PROTOCOL_DRAFT_TEMPLATE_PREFIX,
                 manager_fio=entry.manager_name,
                 topic_key=str(topic_key),
                 meeting_type=str(meeting_type) if meeting_type else None,
+                department_key=department_key,
             )
 
         try:

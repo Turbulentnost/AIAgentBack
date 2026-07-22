@@ -35,6 +35,14 @@ def test_build_protocol_number_stub() -> None:
     assert "20260722" in number
 
 
+def test_read_topic_department_key_from_keys() -> None:
+    from app.services.meeting_protocol_draft_service import read_topic_department_key
+
+    assert read_topic_department_key({"keys": {"department": "dept-1"}}) == "dept-1"
+    assert read_topic_department_key({"department_key": "dept-2"}) == "dept-2"
+    assert read_topic_department_key({}) is None
+
+
 def test_read_meeting_topic_from_payload() -> None:
     entry = MeetingRegistryEntry(
         memo_ref_key="abc",
@@ -119,17 +127,27 @@ async def test_create_protocol_draft_success() -> None:
     service.registry = MagicMock()
     service.registry.append_event = AsyncMock()
 
-    with patch(
-        "app.services.meeting_protocol_draft_service.create_meeting_protocol",
-        return_value={
-            "protocol": {"ref_key": "proto-1", "number": "AUTO_001_20260722"},
-        },
+    with (
+        patch(
+            "app.services.meeting_protocol_draft_service.resolve_topic_department_key",
+            AsyncMock(return_value="dept-1"),
+        ),
+        patch(
+            "app.services.meeting_protocol_draft_service.create_meeting_protocol",
+            return_value={
+                "protocol": {"ref_key": "proto-1", "number": "НСР_001_О_042"},
+            },
+        ) as create_mock,
     ):
         result = await service.create_protocol_draft_for_entry(entry_id)
 
     assert result["created"] is True
     assert entry.protocol_ref_key == "proto-1"
+    assert entry.protocol_number == "НСР_001_О_042"
     assert entry.stage == MeetingRegistryStage.PROTOCOL_CREATED
+    create_mock.assert_called_once()
+    assert "number" not in create_mock.call_args.kwargs
+    assert create_mock.call_args.kwargs["department_key"] == "dept-1"
 
 
 @pytest.mark.asyncio

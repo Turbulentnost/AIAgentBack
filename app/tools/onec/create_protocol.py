@@ -7,6 +7,7 @@
 
 CLI:
   python -m app.tools.onec.create_protocol create --number "НСР_001_О_001" --comment "Тест"
+  python -m app.tools.onec.create_protocol create --topic-key ... --manager-fio "..." --meeting-type Отчетное --department-key ...
   python -m app.tools.onec.create_protocol delete --number "НСР_001_О_001"
 """
 
@@ -80,7 +81,7 @@ def fetch_template_protocol(
     if template_ref_key:
         return fetch_protocol_by_ref(session, config, template_ref_key)
 
-    limit = 200
+    limit = 1 if not number_prefix else 200
     url = (
         f"{entity_url(config.url, PROTOCOL_DOCUMENT)}"
         f"?$filter=DeletionMark eq false&$orderby=Date desc&$top={limit}&$format=json"
@@ -139,13 +140,14 @@ def _apply_user_ref(
 def build_protocol_payload(
     template: dict[str, Any],
     *,
-    number: str,
+    number: str | None = None,
     comment: str = "",
     manager_fio: str | None = None,
     responsible_fio: str | None = None,
     prepared_by_fio: str | None = None,
     topic_key: str | None = None,
     meeting_type: str | None = None,
+    department_key: str | None = None,
     session: requests.Session | None = None,
     config: ODataConfig = CONFIG,
 ) -> dict[str, Any]:
@@ -154,7 +156,6 @@ def build_protocol_payload(
     payload.update(
         {
             "Ref_Key": str(uuid.uuid4()),
-            "Number": number,
             "Date": now,
             "DeletionMark": False,
             "Posted": False,
@@ -163,10 +164,18 @@ def build_protocol_payload(
             "ВидСовещания": meeting_type or template.get("ВидСовещания") or DEFAULT_MEETING_TYPE,
         }
     )
+    normalized_number = (number or "").strip()
+    if normalized_number:
+        payload["Number"] = normalized_number
     if topic_key:
         payload["ТемаСовещания_Key"] = topic_key
         payload["ТемаСовещания_Type"] = template.get("ТемаСовещания_Type") or (
             "StandardODATA.Catalog_ТД_ТемыСовещаний"
+        )
+    if department_key and not is_empty_key(department_key):
+        payload["Подразделение_Key"] = department_key
+        payload["Подразделение_Type"] = template.get("Подразделение_Type") or (
+            "StandardODATA.Catalog_ПодразделенияОрганизаций"
         )
 
     if session is not None:
@@ -240,9 +249,26 @@ def post_protocol_task(
     return response.json()
 
 
+def ensure_protocol_number_in_body(
+    session: requests.Session,
+    config: ODataConfig,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """OData POST иногда не возвращает Number — перечитываем документ по Ref_Key."""
+    if (body.get("Number") or "").strip():
+        return body
+    ref_key = (body.get("Ref_Key") or "").strip()
+    if not ref_key:
+        return body
+    refreshed = fetch_protocol_by_ref(session, config, ref_key)
+    if (refreshed.get("Number") or "").strip():
+        body["Number"] = refreshed["Number"]
+    return body
+
+
 def create_meeting_protocol(
     *,
-    number: str,
+    number: str | None = None,
     comment: str = "",
     template_ref_key: str | None = None,
     template_number_prefix: str | None = None,
@@ -251,33 +277,36 @@ def create_meeting_protocol(
     prepared_by_fio: str | None = None,
     topic_key: str | None = None,
     meeting_type: str | None = None,
+    department_key: str | None = None,
     tasks: list[dict[str, Any]] | None = None,
     config: ODataConfig = CONFIG,
 ) -> dict[str, Any]:
-    number = number.strip()
-    if not number:
-        raise ValueError("Номер протокола обязателен")
+    normalized_number = (number or "").strip() or None
 
     session = create_session(config)
     template = fetch_template_protocol(
         session,
         config,
         template_ref_key=template_ref_key,
-        number_prefix=template_number_prefix or _number_prefix(number),
+        number_prefix=template_number_prefix or (
+            _number_prefix(normalized_number) if normalized_number else None
+        ),
     )
     payload = build_protocol_payload(
         template,
-        number=number,
+        number=normalized_number,
         comment=comment,
         manager_fio=manager_fio,
         responsible_fio=responsible_fio,
         prepared_by_fio=prepared_by_fio,
         topic_key=topic_key,
         meeting_type=meeting_type,
+        department_key=department_key,
         session=session,
         config=config,
     )
     body = post_protocol_document(session, config, payload)
+    body = ensure_protocol_number_in_body(session, config, body)
 
     created_tasks: list[dict[str, Any]] = []
     for index, task in enumerate(tasks or [], start=1):
@@ -367,7 +396,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     create_parser = subparsers.add_parser("create", help="Создать протокол")
-    create_parser.add_argument("--number", required=True, help="Номер протокола, например НСР_001_О_001")
+    create_parser.add_argument(
+        "--number",
+        help="Номер протокола, например НСР_001_О_001; если не указан — нумерация 1С",
+    )
     create_parser.add_argument("--comment", default="", help="Комментарий документа")
     create_parser.add_argument("--template-ref-key", help="Ref_Key протокола-шаблона")
     create_parser.add_argument("--manager-fio", help="ФИО руководителя")
@@ -375,6 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_parser.add_argument("--prepared-by-fio", help="ФИО подготовившего")
     create_parser.add_argument("--topic-key", help="Ref_Key темы совещания")
     create_parser.add_argument("--meeting-type", help="Вид совещания, например Отчетное")
+    create_parser.add_argument("--department-key", help="Ref_Key подразделения протокола")
     create_parser.add_argument("--task", action="append", default=[], help="Текст пункта протокола")
     create_parser.add_argument("-o", "--output", help="Путь к JSON-файлу результата")
 
@@ -402,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
                 prepared_by_fio=args.prepared_by_fio,
                 topic_key=args.topic_key,
                 meeting_type=args.meeting_type,
+                department_key=args.department_key,
                 tasks=tasks or None,
             )
         else:

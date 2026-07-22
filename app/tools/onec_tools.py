@@ -626,7 +626,10 @@ class ProtocolTaskInput(BaseModel):
 
 
 class CreateProtocolInput(BaseModel):
-    number: str = Field(description="Номер протокола, например НСР_001_О_001")
+    number: str | None = Field(
+        default=None,
+        description="Номер протокола, например НСР_001_О_001; если не указан — нумерация 1С",
+    )
     comment: str = Field(default="", description="Комментарий документа")
     template_ref_key: str | None = Field(
         default=None,
@@ -643,6 +646,10 @@ class CreateProtocolInput(BaseModel):
     meeting_type: str | None = Field(
         default=None,
         description="Вид совещания, например Отчетное",
+    )
+    department_key: str | None = Field(
+        default=None,
+        description="Ref_Key подразделения протокола (для префикса номера в 1С)",
     )
     tasks: list[ProtocolTaskInput] = Field(
         default_factory=list,
@@ -694,6 +701,7 @@ async def create_protocol_tool(
         prepared_by_fio=payload.prepared_by_fio,
         topic_key=payload.topic_key,
         meeting_type=payload.meeting_type,
+        department_key=payload.department_key,
         tasks=[task.model_dump(exclude_none=True) for task in payload.tasks],
     )
     return CreateProtocolOutput.model_validate(raw)
@@ -704,7 +712,7 @@ class CreateProtocolTool(Tool):
     description = "Создаёт протокол совещания в 1С:ERP и при необходимости пункты в регистре задач."
     agent_description = (
         "Инструмент create_protocol создаёт Document_ТД_Протокол в 1С:ERP через OData. "
-        "number — номер документа (серия задаётся явно, например НСР_001_О_001); "
+        "number — номер документа (если не указан, 1С назначит по правилам конфигурации); "
         "template_ref_key или template_number_prefix — откуда взять реквизиты по умолчанию; "
         "manager_fio, responsible_fio, prepared_by_fio — переопределение участников; "
         "tasks — пункты для InformationRegister_ТД_ЗадачиПротоколов. "
