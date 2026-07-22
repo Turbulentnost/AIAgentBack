@@ -10,6 +10,7 @@ from agent_pochta.services.odata_client import ODataClient
 from agent_pochta.services.odata_incoming_mapper import (
     build_department_name_lookup,
     build_incoming_document_payload,
+    build_incoming_document_update_payload,
     load_field_map,
     resolve_guid_map,
     resolve_incoming_extra_fields,
@@ -103,6 +104,43 @@ class ODataIntegrationService(IntegrationService):
             "erp_document_id": ref_key,
             "fields": payload,
             "odata_response": data,
+        }
+
+    def update_incoming_correspondence(
+        self,
+        document_ref_key: str,
+        email: EmailMessage,
+        routing: RoutingResult,
+        summary_ru: str,
+        *,
+        xml_document: str | None = None,
+    ) -> dict:
+        """PATCH полей документа после коррекции оператора."""
+        ref_key = (document_ref_key or "").strip()
+        if not ref_key:
+            raise ValueError("document_ref_key is required")
+        payload = build_incoming_document_update_payload(
+            email,
+            routing,
+            summary_ru,
+            xml_document=xml_document,
+            field_map=self._field_map,
+            extra_fields=None,
+            organization_keys=self._organization_keys,
+            department_keys=self._department_keys,
+            department_names=self._department_names,
+        )
+        if not payload:
+            return {
+                "updated": False,
+                "erp_document_id": ref_key,
+                "fields": {},
+            }
+        self._client.patch_entity(self._entity, ref_key, payload)
+        return {
+            "updated": True,
+            "erp_document_id": ref_key,
+            "fields": payload,
         }
 
     def attach_files_to_incoming_correspondence(

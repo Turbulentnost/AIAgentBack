@@ -208,14 +208,52 @@ def extract_xml_document_from_row(row: EmailMessageRow) -> str | None:
 def _merge_attachment_meta_into_payload(raw_payload_json: str | None, attachment_meta: dict) -> str | None:
     if not attachment_meta or not raw_payload_json:
         return raw_payload_json
-    try:
-        payload = json.loads(raw_payload_json)
-    except json.JSONDecodeError:
-        return raw_payload_json
-    if not isinstance(payload, dict):
-        return raw_payload_json
-    payload.update(attachment_meta)
-    return json.dumps(payload, ensure_ascii=False)
+    from agent_pochta.services.erp_sync import merge_erp_sync_meta_into_payload
+
+    return merge_erp_sync_meta_into_payload(raw_payload_json, attachment_meta)
+
+
+def _persist_erp_sync_result(message_id: str, sync_result: dict) -> None:
+    sync_meta = sync_result.get("erp_sync_meta")
+    if not sync_meta:
+        return
+    factory = get_session_factory()
+    with factory() as session:
+        db_row = EmailRepository(session).get_by_message_id(message_id)
+        if db_row is None:
+            return
+        merged = _merge_attachment_meta_into_payload(db_row.raw_payload_json, sync_meta)
+        if merged is not None:
+            db_row.raw_payload_json = merged
+        db_row.human_review = False
+        session.commit()
+
+
+def _sync_existing_erp_document(
+    *,
+    message_id: str,
+    row: EmailMessageRow,
+    email: EmailMessage,
+    routing,
+    summary_ru: str,
+    container,
+) -> dict:
+    """PATCH полей + догрузка вложений к уже созданному документу 1С."""
+    from agent_pochta.services.erp_sync import sync_existing_erp_document
+
+    xml_document = extract_xml_document_from_row(row)
+    result = sync_existing_erp_document(
+        message_id=message_id,
+        row=row,
+        email=email,
+        routing=routing,
+        summary_ru=summary_ru or "",
+        integration=container.integration,
+        vault=container.vault,
+        xml_document=xml_document,
+    )
+    _persist_erp_sync_result(message_id, result)
+    return result
 
 
 def _attach_files_to_existing_erp_document(
@@ -224,71 +262,40 @@ def _attach_files_to_existing_erp_document(
     row: EmailMessageRow,
     email: EmailMessage,
     container,
+    routing=None,
+    summary_ru: str = "",
 ) -> dict:
-    """Прикрепляет вложения к уже созданному документу 1С без повторного POST."""
-    from agent_pochta.services.erp_attachments import (
-        attach_email_files_to_document,
-        existing_erp_document_ref_key,
+    """Обратная совместимость: attach-only через sync_existing."""
+    from agent_pochta.db.repository import EmailRepository
+
+    if routing is None:
+        factory = get_session_factory()
+        with factory() as session:
+            routing = EmailRepository(session).build_routing_from_row(row)
+    if routing is None:
+        return {"ok": False, "reason": "no_routing"}
+
+    return _sync_existing_erp_document(
+        message_id=message_id,
+        row=row,
+        email=email,
+        routing=routing,
+        summary_ru=summary_ru or (row.summary_ru or ""),
+        container=container,
     )
-
-    doc_ref = existing_erp_document_ref_key(row)
-    if not doc_ref:
-        return {"ok": False, "reason": "no_existing_document"}
-
-    attachment_meta: dict = {}
-    try:
-        attached = attach_email_files_to_document(
-            container.integration,
-            document_ref_key=doc_ref,
-            email=email,
-            vault=container.vault,
-        )
-        if attached:
-            attachment_meta["erp_attachments"] = attached
-            attachment_meta.pop("erp_attachment_errors", None)
-        elif not attachment_meta:
-            attachment_meta["erp_attachment_errors"] = ["no_attachments_with_content"]
-    except Exception as attach_exc:
-        attachment_meta["erp_attachment_errors"] = [str(attach_exc)]
-
-    factory = get_session_factory()
-    with factory() as session:
-        db_row = EmailRepository(session).get_by_message_id(message_id)
-        if db_row and attachment_meta:
-            merged = _merge_attachment_meta_into_payload(db_row.raw_payload_json, attachment_meta)
-            if merged is not None:
-                db_row.raw_payload_json = merged
-            db_row.human_review = False
-            session.commit()
-
-    ok = bool(attachment_meta.get("erp_attachments"))
-    return {
-        "ok": ok,
-        "attach_only": True,
-        "erp_document_number": row.erp_document_number,
-        "erp_document_id": doc_ref,
-        **attachment_meta,
-        **({"reason": "attachment_upload_failed"} if not ok else {}),
-    }
 
 
 def _resolve_retry_erp_mode(row: EmailMessageRow, email: EmailMessage) -> str:
-    """create | attach_only | skip_complete | skip_no_attachments."""
+    """create | sync_existing."""
     from agent_pochta.services.erp_attachments import (
-        erp_attachments_already_uploaded,
         existing_erp_document_ref_key,
-        row_has_attachment_metadata,
     )
 
     doc_ref = existing_erp_document_ref_key(row)
     doc_number = (row.erp_document_number or "").strip()
     if not doc_ref or not doc_number or doc_number in {"SKIP-ERP", "DRY-RUN"}:
         return "create"
-    if erp_attachments_already_uploaded(row.raw_payload_json):
-        return "skip_complete"
-    if not row_has_attachment_metadata(row, email):
-        return "skip_no_attachments"
-    return "attach_only"
+    return "sync_existing"
 
 
 def _schedule_erp_retry(message_id: str) -> None:
@@ -445,28 +452,14 @@ def retry_erp_task(self, message_id: str) -> dict:
             }
 
         retry_mode = _resolve_retry_erp_mode(row, email)
-        if retry_mode == "skip_complete":
+        if retry_mode == "sync_existing":
             session.commit()
-            return {
-                "ok": True,
-                "skipped": True,
-                "reason": "erp_already_complete",
-                "erp_document_number": row.erp_document_number,
-            }
-        if retry_mode == "skip_no_attachments":
-            session.commit()
-            return {
-                "ok": True,
-                "skipped": True,
-                "reason": "no_attachments_to_add",
-                "erp_document_number": row.erp_document_number,
-            }
-        if retry_mode == "attach_only":
-            session.commit()
-            return _attach_files_to_existing_erp_document(
+            return _sync_existing_erp_document(
                 message_id=message_id,
                 row=row,
                 email=email,
+                routing=routing,
+                summary_ru=summary_ru or "",
                 container=container,
             )
 
@@ -535,6 +528,55 @@ def retry_erp_task(self, message_id: str) -> dict:
                 row.human_review = True
                 session.commit()
         return {"ok": False, "attempt": attempt, "error": str(exc)}
+
+
+@celery_app.task(
+    name="agent_pochta.sync_erp_correction",
+    queue="erp",
+    soft_time_limit=240,
+    time_limit=300,
+)
+def sync_erp_correction_task(message_id: str) -> dict:
+    """PATCH документа 1С и догрузка вложений после коррекции оператора."""
+    from agent_pochta.workers.runtime import get_worker_container
+
+    factory = get_session_factory()
+    container = get_worker_container()
+
+    with factory() as session:
+        repo = EmailRepository(session)
+        row = repo.get_by_message_id(message_id)
+        if row is None:
+            return {"ok": False, "reason": "not_found"}
+
+        email = repo.load_email_from_row(row)
+        routing = repo.build_routing_from_row(row)
+        summary_ru = row.summary_ru
+        if email is None or routing is None:
+            return {"ok": False, "reason": "incomplete_record"}
+
+        from agent_pochta.db.message_filters import email_eligible_for_erp, load_payload_dict
+
+        payload = load_payload_dict(row.raw_payload_json)
+        if not email_eligible_for_erp(
+            mailbox=row.mailbox or email.mailbox,
+            to=email.to,
+            cc=email.cc,
+            routing_recipient=email.routing_recipient,
+            payload=payload,
+        ):
+            return {"ok": True, "skipped": True, "reason": "not_info_mailbox"}
+
+        session.commit()
+
+    return _sync_existing_erp_document(
+        message_id=message_id,
+        row=row,
+        email=email,
+        routing=routing,
+        summary_ru=summary_ru or "",
+        container=container,
+    )
 
 
 def _hitl_meta_from_row(row: EmailMessageRow) -> dict:

@@ -560,3 +560,56 @@ def build_incoming_document_payload(
         payload.update(extra_fields)
 
     return payload
+
+
+# Поля, которые синхронизируются в 1С после коррекции оператора (PATCH).
+CORRECTION_UPDATE_LOGICAL_KEYS: tuple[str, ...] = (
+    "department_name",
+    "department_executor_key",
+    "department_assignee_key",
+    "partner",
+    "payer",
+    "direction",
+    "organization_key",
+    "assignee",
+)
+
+
+def build_incoming_document_update_payload(
+    email: EmailMessage,
+    routing: RoutingResult,
+    summary_ru: str,
+    *,
+    xml_document: str | None = None,
+    field_map: dict[str, str] | None = None,
+    extra_fields: dict[str, Any] | None = None,
+    organization_keys: dict[str, str] | None = None,
+    department_keys: dict[str, str] | None = None,
+    department_names: dict[str, str] | None = None,
+    payer_direction_map: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Подмножество POST-payload для PATCH существующего Document_ТД_ВходящаяКорреспонденция."""
+    full = build_incoming_document_payload(
+        email,
+        routing,
+        summary_ru,
+        xml_document=xml_document,
+        field_map=field_map,
+        extra_fields=extra_fields,
+        organization_keys=organization_keys,
+        department_keys=department_keys,
+        department_names=department_names,
+        payer_direction_map=payer_direction_map,
+    )
+    fields = field_map or DEFAULT_FIELD_MAP
+    update: dict[str, Any] = {}
+    for logical_key in CORRECTION_UPDATE_LOGICAL_KEYS:
+        odata_key = _odata_field(fields, logical_key)
+        if not odata_key:
+            continue
+        if odata_key in full:
+            update[odata_key] = full[odata_key]
+        type_key = f"{odata_key}_Type"
+        if type_key in full:
+            update[type_key] = full[type_key]
+    return update

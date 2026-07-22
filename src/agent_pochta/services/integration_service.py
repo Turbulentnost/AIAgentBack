@@ -39,6 +39,18 @@ class IntegrationService(ABC):
         """
         raise NotImplementedError("attach_files_to_incoming_correspondence is not configured")
 
+    def update_incoming_correspondence(
+        self,
+        document_ref_key: str,
+        email: EmailMessage,
+        routing: RoutingResult,
+        summary_ru: str,
+        *,
+        xml_document: str | None = None,
+    ) -> dict:
+        """PATCH полей существующего документа «Входящая корреспонденция» в 1С."""
+        raise NotImplementedError("update_incoming_correspondence is not configured")
+
 
 class StubIntegrationService(IntegrationService):
     """Заглушка: имитирует успешное создание документа в тест-контуре 1С."""
@@ -95,3 +107,21 @@ class StubIntegrationService(IntegrationService):
                 }
             )
         return results
+
+    def update_incoming_correspondence(
+        self,
+        document_ref_key: str,
+        email: EmailMessage,
+        routing: RoutingResult,
+        summary_ru: str,
+        *,
+        xml_document: str | None = None,
+    ) -> dict:
+        return {
+            "updated": True,
+            "erp_document_id": document_ref_key,
+            "fields": {
+                "Кому": routing.department_id,
+                "Партнер": "",
+            },
+        }

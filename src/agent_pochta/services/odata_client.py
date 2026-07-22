@@ -99,3 +99,34 @@ class ODataClient:
             response.raise_for_status()
             data = response.json()
             return data if isinstance(data, dict) else None
+
+    def patch_entity(self, entity: str, ref_key: str, payload: dict[str, Any]) -> None:
+        """Обновляет запись OData (PATCH). Для документов 1С — If-Match: *."""
+        entity = entity.strip("/")
+        key = (ref_key or "").strip()
+        if not key:
+            raise ValueError("ref_key is required for OData PATCH")
+        url = f"{self._base_url}{entity}(guid'{key}')?$format=json"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.patch(
+                url,
+                json=payload,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "If-Match": "*",
+                },
+            )
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData PATCH {entity}(guid'{key}') failed ({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()

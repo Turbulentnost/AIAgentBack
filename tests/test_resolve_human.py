@@ -218,6 +218,45 @@ def test_mark_verified_rejected_for_awaiting_human():
     assert "done or error" in response.json()["detail"]
 
 
+def test_approve_routing_on_done_schedules_erp_sync_when_document_exists():
+    row = _email_row(status=ProcessingStatus.DONE.value)
+    row.erp_task_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    row.erp_document_number = "ВК-000001"
+    client = TestClient(app)
+    sync_task = MagicMock(id="sync-task-1")
+
+    with _mock_repo(row) as (repo, _session):
+        with patch("agent_pochta.api.app.continue_after_human_task") as continue_task:
+            with patch("agent_pochta.api.app.sync_erp_correction_task") as sync_erp_task:
+                sync_erp_task.delay.return_value = sync_task
+                with patch(
+                    "agent_pochta.api.app.learn_from_routing_correction",
+                    return_value={
+                        "correction_saved": True,
+                        "correction_id": "c1",
+                        "keywords_added": 0,
+                        "qdrant_updated": False,
+                        "learning_keywords": [],
+                    },
+                ):
+                    response = client.post(
+                        f"/api/v1/email-messages/{row.id}/resolve-human",
+                        json={
+                            "decision": "approve_routing",
+                            "department_id": "00-000002",
+                            "department_name": "Бухгалтерия",
+                        },
+                    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "correction_saved"
+    assert payload["erp_sync_scheduled"] is True
+    assert payload["erp_sync_task_id"] == "sync-task-1"
+    continue_task.delay.assert_not_called()
+    sync_erp_task.delay.assert_called_once_with(row.message_id)
+
+
 def test_approve_routing_on_done_keeps_status_and_skips_pipeline():
     row = _email_row(status=ProcessingStatus.DONE.value)
     client = TestClient(app)

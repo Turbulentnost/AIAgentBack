@@ -252,6 +252,11 @@ def test_retry_erp_task_attach_only_skips_document_create() -> None:
 
     row = _done_row_with_existing_document()
     integration = MagicMock()
+    integration.update_incoming_correspondence.return_value = {
+        "updated": True,
+        "erp_document_id": row.erp_task_id,
+        "fields": {},
+    }
     integration.attach_files_to_incoming_correspondence.return_value = [
         {"ref_key": "file-ref", "filename": "scan.pdf", "size_bytes": 4}
     ]
@@ -277,15 +282,23 @@ def test_retry_erp_task_attach_only_skips_document_create() -> None:
             task.pop_request()
 
     assert result["ok"] is True
-    assert result["attach_only"] is True
+    assert result["sync_existing"] is True
+    assert result["updated"] is True
+    assert result["attached_count"] == 1
     assert result["erp_attachments"][0]["ref_key"] == "file-ref"
     integration.create_incoming_correspondence.assert_not_called()
+    integration.update_incoming_correspondence.assert_called_once()
     integration.attach_files_to_incoming_correspondence.assert_called_once()
 
 
-def test_retry_erp_task_skips_when_attachments_already_uploaded() -> None:
+def test_retry_erp_task_sync_existing_when_attachments_already_uploaded() -> None:
     row = _done_row_with_existing_document(with_uploaded_attachments=True)
     integration = MagicMock()
+    integration.update_incoming_correspondence.return_value = {
+        "updated": True,
+        "erp_document_id": row.erp_task_id,
+        "fields": {},
+    }
 
     with _mock_retry_deps(row=row, integration=integration, email=_info_sample_email()):
         task = retry_erp_task
@@ -295,13 +308,12 @@ def test_retry_erp_task_skips_when_attachments_already_uploaded() -> None:
         finally:
             task.pop_request()
 
-    assert result == {
-        "ok": True,
-        "skipped": True,
-        "reason": "erp_already_complete",
-        "erp_document_number": "ВК-000050",
-    }
+    assert result["ok"] is True
+    assert result["sync_existing"] is True
+    assert result["updated"] is True
+    assert result["attached_count"] == 0
     integration.create_incoming_correspondence.assert_not_called()
+    integration.update_incoming_correspondence.assert_called_once()
     integration.attach_files_to_incoming_correspondence.assert_not_called()
 
 

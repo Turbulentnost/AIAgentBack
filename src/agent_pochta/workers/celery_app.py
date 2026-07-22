@@ -42,6 +42,7 @@ celery_app.conf.update(
     task_routes={
         "agent_pochta.poll_imap": {"queue": "imap"},
         "agent_pochta.retry_erp": {"queue": "erp"},
+        "agent_pochta.sync_erp_correction": {"queue": "erp"},
     },
     beat_schedule={
         "poll-imap-mailboxes": {

@@ -53,6 +53,44 @@ def erp_attachments_already_uploaded(raw_payload_json: str | None) -> bool:
     return isinstance(uploaded, list) and len(uploaded) > 0
 
 
+def uploaded_erp_attachment_filenames(raw_payload_json: str | None) -> set[str]:
+    """Имена файлов, уже отправленных в 1С (для идемпотентной догрузки)."""
+    if not raw_payload_json:
+        return set()
+    try:
+        payload = json.loads(raw_payload_json)
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    uploaded = payload.get("erp_attachments")
+    if not isinstance(uploaded, list):
+        return set()
+    names: set[str] = set()
+    for item in uploaded:
+        if isinstance(item, dict):
+            name = (item.get("filename") or "").strip()
+            if name:
+                names.add(name)
+    return names
+
+
+def merge_erp_attachment_lists(existing: list | None, new_items: list) -> list:
+    """Объединяет списки erp_attachments без дублей по filename."""
+    by_name: dict[str, dict] = {}
+    for item in existing or []:
+        if isinstance(item, dict):
+            name = (item.get("filename") or "").strip()
+            if name:
+                by_name[name] = item
+    for item in new_items:
+        if isinstance(item, dict):
+            name = (item.get("filename") or "").strip()
+            if name:
+                by_name[name] = item
+    return list(by_name.values())
+
+
 def _coerce_attachments(email: EmailMessage) -> None:
     normalized: list[Attachment] = []
     for att in email.attachments or []:
@@ -288,5 +326,64 @@ def attach_email_files_to_document(
         document_ref_key=document_ref_key,
         message_id=email.message_id,
         attached=len(results),
+    )
+    return results
+
+
+def attach_missing_email_files_to_document(
+    integration: IntegrationService,
+    *,
+    document_ref_key: str,
+    email: EmailMessage,
+    vault: VaultClient | None = None,
+    skip_filenames: set[str] | None = None,
+) -> list[dict]:
+    """Прикрепляет только те вложения, которых ещё нет в 1С (по имени файла)."""
+    if not _supports_attachment_upload(integration):
+        logger.info(
+            "erp_attach_files_skipped",
+            reason="integration_does_not_support_attachments",
+            message_id=email.message_id,
+        )
+        return []
+
+    if vault is not None:
+        ensure_attachment_bytes_for_erp(email, vault)
+
+    skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
+    files = [
+        AttachedFileInput(filename=erp_attachment_filename(att), content=bytes(att.content))
+        for att in attachments_with_content(email)
+        if erp_attachment_filename(att) not in skip
+    ]
+    if not files:
+        logger.info(
+            "erp_attach_files_skipped",
+            reason="no_new_attachments",
+            message_id=email.message_id,
+            skipped=len(skip),
+        )
+        return []
+
+    try:
+        results = integration.attach_files_to_incoming_correspondence(
+            document_ref_key=document_ref_key,
+            files=files,
+        )
+    except Exception:
+        logger.exception(
+            "erp_attach_files_failed",
+            document_ref_key=document_ref_key,
+            message_id=email.message_id,
+            files=len(files),
+        )
+        raise
+
+    logger.info(
+        "erp_attach_files_done",
+        document_ref_key=document_ref_key,
+        message_id=email.message_id,
+        attached=len(results),
+        skipped_existing=len(skip),
     )
     return results

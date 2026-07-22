@@ -60,6 +60,7 @@ from agent_pochta.workers.tasks import (
     continue_after_human_task,
     reprocess_message_task,
     retry_erp_task,
+    sync_erp_correction_task,
 )
 from agent_pochta.api.email_messages_export import collect_export_data
 from agent_pochta.api.list_table_fields import row_to_table_fields
@@ -766,6 +767,16 @@ def restore_from_spam(row_id: uuid.UUID) -> dict[str, Any]:
     }
 
 
+def _schedule_erp_sync_if_needed(row) -> dict[str, Any]:
+    """Планирует PATCH + догрузку вложений, если документ уже есть в 1С."""
+    from agent_pochta.services.erp_attachments import existing_erp_document_ref_key
+
+    if not existing_erp_document_ref_key(row):
+        return {}
+    task = sync_erp_correction_task.delay(row.message_id)
+    return {"erp_sync_scheduled": True, "erp_sync_task_id": task.id}
+
+
 def _apply_operator_routing_save(
     session,
     repo: EmailRepository,
@@ -989,6 +1000,7 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
                 return {
                     "status": "correction_saved",
                     "id": str(row_id),
+                    **_schedule_erp_sync_if_needed(row),
                     **learning,
                 }
             task = continue_after_human_task.delay(str(row_id))
@@ -1022,6 +1034,7 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
                 "status": "verified",
                 "id": str(row_id),
                 "operator_verified": True,
+                **_schedule_erp_sync_if_needed(row),
                 **learning,
             }
         else:
