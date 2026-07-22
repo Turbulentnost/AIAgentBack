@@ -22,68 +22,139 @@ from app.agents.quality_kpi_agent.formulas import (
 from app.agents.quality_kpi_agent.schemas import AgentKpiBlock, QualityKpiReport
 from app.models.enums import ConfidenceLevel
 
-DEFAULT_AGENT_IDS = (
-    config.OTK_HEAD_AGENT_ID,
-    config.QUALITY_ENGINEER_AGENT_ID,
-    config.QUALITY_DEPUTY_DIRECTOR_AGENT_ID,
-    config.OMTO_SUPPORT_MANAGER_AGENT_ID,
-    config.PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+DEFAULT_AGENT_IDS = config.KPI_EVALUATED_AGENT_IDS
+
+_EXPLICIT_TASK_FLAGS = (
+    "confirmed_without_material_error",
+    "completeness_ok",
+    "sla_met",
+    "substantially_reworked",
+    "traceability_ok",
+    "critical_unauthorized",
+    "assigned_within_2wh",
+    "act_confirmed_within_1wh",
+    "handed_to_zdk_by_1600",
+    "missed_critical",
+    "quarterly_report_complete",
+    "docs_complete",
+    "program_ok",
+    "results_complete",
+    "false_releasing_status",
+    "act_label_timely",
+    "recontrol_linked",
+    "resolution_within_8wh",
+    "disposition_allowed",
+    "conditions_complete",
+    "contradictory_resolution",
+    "status_accuracy_ok",
+    "missed_control_date",
+    "docs_pack_complete",
+    "delivery_forecast_ok",
+    "bom_coverage_ok",
+    "need_calc_ok",
+    "material_order_complete",
+    "missed_critical_position",
+    "minmax_ok",
+    "replenish_signal_timely",
+    "duplicate_replenish_signal",
+    "missed_rop_deficit",
+    "requisites_complete",
+    "route_classified_ok",
+    "clarify_cycles_ok",
+    "request_without_basis",
+    "warehouse_task_ok",
+    "defect_zone_ok",
+    "receipt_without_docs",
+    "warehouse_task_overdue",
+    "comparable_quotes_ok",
+    "comparison_complete",
+    "supplier_confirmed",
+    "critical_order_error",
+    "budget_check_ok",
+    "exception_justified",
+    "finance_decision_timely",
+    "over_limit_approval",
+    "payment_basis_ok",
+    "resolution_timely",
+    "resolution_returned",
+    "illegal_exception",
+    "missed_accounting_error",
+    "accounting_docs_ok",
+    "accounting_opinion_timely",
+    "accounting_corrected",
+    "payment_status_ok",
+    "payment_without_approval",
+    "primary_docs_ok",
+    "discrepancy_handled_timely",
+    "contract_terms_ok",
+    "missed_legal_risk",
+    "legal_edit_accepted",
+    "legal_opinion_timely",
+    "cfo_article_ok",
+    "priority_justified",
+    "approval_timely",
+    "budget_conflict",
 )
 
 
 def _task_from_event(event: dict[str, Any], agent_id: str) -> dict[str, Any] | None:
-    if event.get("agent_id") and event.get("agent_id") != agent_id:
+    """Build KPI task row only for matching agent; no optimistic defaults."""
+    event_agent = event.get("agent_id")
+    if not event_agent or event_agent != agent_id:
         return None
+
     output = event.get("output_data") or {}
     if not isinstance(output, dict):
         output = {}
     role_status = event.get("role_status") or event.get("status")
-    checked = role_status in {"completed", "waiting_human"} or bool(event.get("checked"))
+    checked = bool(event.get("checked")) or role_status in {
+        "completed",
+        "waiting_human",
+        "completed_with_issues",
+    }
     findings = output.get("findings") or []
     has_critical = any(
         isinstance(f, dict) and f.get("severity") == "critical" for f in findings
     )
-    return {
-        "checked": checked or bool(event.get("checked", True)),
-        "confirmed_without_material_error": event.get(
-            "confirmed_without_material_error",
-            not has_critical and role_status != "failed",
-        ),
-        "completeness_ok": event.get(
-            "completeness_ok",
-            not any(
-                isinstance(f, dict) and "не заполнен" in str(f.get("message", "")).lower()
-                for f in findings
-            ),
-        ),
-        "sla_met": event.get("sla_met", True),
-        "substantially_reworked": event.get("substantially_reworked", False),
-        "traceability_ok": event.get(
-            "traceability_ok",
-            bool(output.get("quality_control") or output.get("actions") or event.get("rule_refs")),
-        ),
-        "critical_unauthorized": event.get("critical_unauthorized", False),
-        # Special flags — default optimistic for MVP when absent.
-        "assigned_within_2wh": event.get("assigned_within_2wh", True),
-        "act_confirmed_within_1wh": event.get("act_confirmed_within_1wh", True),
-        "handed_to_zdk_by_1600": event.get("handed_to_zdk_by_1600", True),
-        "missed_critical": event.get("missed_critical", False),
-        "docs_complete": event.get("docs_complete", not has_critical),
-        "program_ok": event.get("program_ok", True),
-        "results_complete": event.get("results_complete", True),
-        "false_releasing_status": event.get("false_releasing_status", False),
-        "act_label_timely": event.get("act_label_timely", True),
-        "resolution_within_8wh": event.get("resolution_within_8wh", True),
-        "disposition_allowed": event.get(
-            "disposition_allowed",
-            output.get("within_allowed_list", True),
-        ),
-        "conditions_complete": event.get(
-            "conditions_complete",
-            bool(output.get("execution_conditions")),
-        ),
-        "contradictory_resolution": event.get("contradictory_resolution", False),
-    }
+
+    task: dict[str, Any] = {"checked": checked}
+    for flag in _EXPLICIT_TASK_FLAGS:
+        if flag in event:
+            task[flag] = event[flag]
+
+    # Derive only when explicit KPI flags are absent — never invent success.
+    if "confirmed_without_material_error" not in task and checked:
+        if role_status == "failed" or has_critical:
+            task["confirmed_without_material_error"] = False
+    if "completeness_ok" not in task and checked:
+        missing = any(
+            isinstance(f, dict) and "не заполнен" in str(f.get("message", "")).lower()
+            for f in findings
+        )
+        if missing:
+            task["completeness_ok"] = False
+    if "traceability_ok" not in task and checked:
+        has_refs = bool(
+            output.get("quality_control") or output.get("actions") or event.get("rule_refs")
+        )
+        if has_refs:
+            task["traceability_ok"] = True
+    if "critical_unauthorized" not in task and has_critical:
+        task["critical_unauthorized"] = True
+    if "disposition_allowed" not in task and "within_allowed_list" in output:
+        task["disposition_allowed"] = bool(output.get("within_allowed_list"))
+    if "conditions_complete" not in task and "execution_conditions" in output:
+        task["conditions_complete"] = bool(output.get("execution_conditions"))
+
+    return task
+
+
+def _worst_tone(tones: list[str]) -> str:
+    if "bad" in tones:
+        return "bad"
+    if "warn" in tones or "unknown" in tones:
+        return "warn"
+    return "ok"
 
 
 async def _compute_agent_block(
@@ -95,13 +166,12 @@ async def _compute_agent_block(
         item = _task_from_event(event, agent_id)
         if item is not None:
             tasks.append(item)
-    # If no events for agent, still emit empty metrics block.
     common = compute_common_kpis(tasks)
     special = compute_special_kpis(agent_id, tasks)
     below = [
         m.id
         for m in [*common, *special]
-        if m.tone in {"warn", "bad"}
+        if m.tone in {"warn", "bad", "unknown"}
     ]
     return AgentKpiBlock(
         agent_id=agent_id,
@@ -114,7 +184,6 @@ async def _compute_agent_block(
 
 class QualityKpiService:
     async def run(self, payload: dict[str, Any], *, agent_id: str) -> ProcurementRoleAgentResult:
-        # KPI agent accepts either role-agent request or loose dashboard payload.
         case_id = str(payload.get("case_id") or "kpi-dashboard")
         correlation_id = str(payload.get("correlation_id") or case_id)
         try:
@@ -154,19 +223,39 @@ class QualityKpiService:
             *[_compute_agent_block(aid, events) for aid in agent_ids]
         )
         system = compute_system_quality_kpis(cases)
+        all_tones = [m.tone for b in blocks for m in [*b.common, *b.special]] + [
+            m.tone for m in system
+        ]
         below_agents = [b.agent_id for b in blocks if b.below_target]
+        no_data_agents = [
+            b.agent_id
+            for b in blocks
+            if all(m.tone == "unknown" for m in [*b.common, *b.special])
+        ]
+        bad_count = sum(1 for tone in all_tones if tone == "bad")
+        warn_count = sum(1 for tone in all_tones if tone in {"warn", "unknown"})
+        worst = _worst_tone(all_tones)
+        if worst == "ok":
+            summary = f"KPI по {len(blocks)} агентам — отклонения не выявлены."
+        elif bad_count:
+            summary = (
+                f"KPI по {len(blocks)} агентам: критических отклонений {bad_count}, "
+                f"предупреждений {warn_count} "
+                f"(агентов ниже цели / без данных: {len(below_agents)})."
+            )
+        else:
+            summary = (
+                f"KPI по {len(blocks)} агентам: предупреждений {warn_count} "
+                f"(без выполненных работ: {len(no_data_agents)})."
+            )
+
         now = datetime.now(timezone.utc)
         report = QualityKpiReport(
             period_from=str(period_from) if period_from else None,
             period_to=str(period_to) if period_to else None,
             agents=list(blocks),
             system=system,
-            summary=(
-                f"KPI по {len(blocks)} агентам. "
-                f"Ниже цели: {len(below_agents)}."
-                if below_agents
-                else f"KPI по {len(blocks)} агентам — отклонения не выявлены."
-            ),
+            summary=summary,
             calculated_at=now,
             actions=["KPI_REPORT"],
         )
@@ -174,8 +263,8 @@ class QualityKpiService:
             agent_id=agent_id,
             status="completed",
             summary=report.summary,
-            data_confidence=ConfidenceLevel.HIGH,
-            requires_human_review=False,
+            data_confidence=ConfidenceLevel.MEDIUM if worst != "ok" else ConfidenceLevel.HIGH,
+            requires_human_review=worst in {"warn", "bad"},
             case_id=case_id,
             correlation_id=correlation_id,
             role_status="completed",
@@ -183,7 +272,6 @@ class QualityKpiService:
         )
 
 
-# Thin BaseAgent for non-procurement dashboard invocation.
 class QualityKpiStandaloneAgent(BaseAgent):
     agent_id = config.QUALITY_KPI_AGENT_ID
     name = config.AGENT_LABELS[agent_id]

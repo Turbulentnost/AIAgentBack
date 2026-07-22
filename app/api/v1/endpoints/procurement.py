@@ -334,12 +334,21 @@ async def get_quality_kpi_dashboard(
         for case in group.get("cases") or []:
             status_value = str(case.get("status") or "")
             if status_value in _QUALITY_CASE_STATUSES or case.get("assigned_agents"):
+                meta = case.get("metadata") if isinstance(case.get("metadata"), dict) else {}
+                quality_meta = meta.get("quality_kpi") if isinstance(meta.get("quality_kpi"), dict) else {}
+                # Не подставляем «успех» без фактических флагов KPI / СТО.
                 quality_cases.append(
                     {
-                        "incoming_control_sla_met": status_value
-                        not in {"blocked", "failed"},
-                        "available_without_releasing_status": False,
-                        "control_traceability_ok": True,
+                        "incoming_control_sla_met": quality_meta.get("incoming_control_sla_met"),
+                        "available_without_releasing_status": quality_meta.get(
+                            "available_without_releasing_status"
+                        ),
+                        "control_traceability_ok": quality_meta.get("control_traceability_ok"),
+                        "mandatory_data_ok": quality_meta.get("mandatory_data_ok"),
+                        "purchase_without_basis": quality_meta.get("purchase_without_basis"),
+                        "procurement_sla_met": quality_meta.get("procurement_sla_met"),
+                        "receipt_sla_met": quality_meta.get("receipt_sla_met"),
+                        "hx_action_by_ai": quality_meta.get("hx_action_by_ai"),
                     }
                 )
             for event in case.get("events") or []:
