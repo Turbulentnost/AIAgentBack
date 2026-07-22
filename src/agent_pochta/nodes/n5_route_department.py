@@ -196,7 +196,10 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
     recipient = email.routing_recipient or email.mailbox
 
     existing_spam = state.get("spam")
-    skip_spam = existing_spam is not None and existing_spam.rule_hit == "trusted_sender"
+    skip_spam = existing_spam is not None and existing_spam.rule_hit in (
+        "trusted_sender",
+        "ministry_not_spam",
+    )
     meta = dict(state.get("meta") or {})
     restored_from_spam = bool(meta.get("restored_from_spam"))
     reanalyze = bool(meta.get("reanalyze"))

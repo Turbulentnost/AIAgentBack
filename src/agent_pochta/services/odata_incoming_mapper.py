@@ -6,11 +6,18 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from agent_pochta.config import PROJECT_ROOT
+from agent_pochta.routing.organizations import (
+    DIRECTION_UNCLEAR,
+    KS_PAYER_DIRECTION_DEPARTMENT_CODES,
+    normalize_organization_code,
+    resolve_organization_key_code,
+)
 from agent_pochta.routing.xml_builder import resolve_document_theme
 from agent_pochta.routing.xml_parser import parse_document_xml
-from agent_pochta.schemas import EmailMessage, Priority, RoutingResult
+from agent_pochta.schemas import EmailMessage, RoutingResult
 
 DEFAULT_PAYER_DIRECTION_MAP_FILE = (
     PROJECT_ROOT / "data" / "odata_payer_direction_map.json"
@@ -46,14 +53,65 @@ DEFAULT_FIELD_MAP: dict[str, str] = {
 
 DEFAULT_STATUS = "Подготовлен"
 DEFAULT_SOURCE = "EMAIL"
-DEFAULT_AUTHOR = "ИИ 1С"
-_COMMENT_MAX_LEN = 32_000
+DEFAULT_AUTHOR = "Искусственный интеллект 1С"
+_MSK = ZoneInfo("Europe/Moscow")
 _EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 _COMPOSITE_STRING_TYPE = "Edm.String"
-# В минимальном POST разрешены только GUID/boolean из extra_fields (не составные строки вроде Партнер).
-_EXTRA_FIELDS_ALLOW_SUFFIX = ("_Key", "_Type")
-_EXTRA_FIELDS_ALLOW_EXACT = frozenset({"Posted", "DeletionMark"})
 _ORG_AS_PAYER_DIRECTION = frozenset({"АЛ", "МГ", "АМ", "МИ", "БМ"})
+
+# Enum 1С «ТД_НаправленияСлужебныхЗаписок» (поле OData «Направление»).
+# Коды XML (<направление> ПР/КС/СС) сюда не входят — это отдельный enum «ПлательщикНаправление».
+_VALID_ODATA_DIRECTIONS = frozenset(
+    {
+        "ГенеральныйДиректор",
+        "ГлавныйМетролог",
+        "ДиректорГлавныйКонструктор",
+        "ДиректорМГС",
+        "ДиректорНПО",
+        "ДиректорПоКачеству",
+        "ДиректорПоЛогистике",
+        "ДиректорПоПерсоналу",
+        "ДиректорПоПродажамКлючевымКлиентам",
+        "ДиректорПоПроизводству",
+        "ДиректорПоПроизводствуБМИ",
+        "ДиректорПоРазвитию",
+        "ДиректорПоРазвитиюПроизводства",
+        "ДиректорПоСервисномуОбслуживанию",
+        "ДиректорПроизводства1",
+        "ДиректорПроизводства2",
+        "ДиректорТорговогоДома",
+        "ЗамКоммерческогоДиректора",
+        "ЗаместительГлавногоКонструктораПоПроектнойДеятельности",
+        "ЗаместительДиректораПоЭкономическойБезопасности",
+        "ИПКорниенко",
+        "ИсполнительныйДиректор",
+        "КоммерческийДиректор",
+        "НачальникСервиснойСлужбы",
+        "ОперационныйДиректор",
+        "ПрочиеВнутренние",
+        "РевизионнаяКомиссия",
+        "ТехническийДиректор",
+        "УправлениеДелами",
+        "ФинансовыйДиректор",
+    }
+)
+
+_DEPARTMENT_ODATA_DIRECTION: dict[str, str] = {
+    "00-000001": "ГенеральныйДиректор",
+    "00-000152": "ОперационныйДиректор",
+    "00-000182": "ОперационныйДиректор",
+    "00-000066": "УправлениеДелами",
+}
+
+_XML_DIRECTION_TO_ODATA: dict[str, str] = {
+    "ПР": "ДиректорПроизводства1",
+    "КС": "ПрочиеВнутренние",
+    "СС": "ДиректорПоСервисномуОбслуживанию",
+    "МС": "ДиректорПоПроизводству",
+    "РУ": "ДиректорПоРазвитию",
+    "БМ": "ДиректорПоПроизводствуБМИ",
+    "МГ": "ДиректорМГС",
+}
 
 
 def load_field_map(raw: str = "") -> dict[str, str]:
@@ -171,7 +229,8 @@ def resolve_organization_key(
     org_code: str,
     organization_keys: dict[str, str] | None,
 ) -> str:
-    code = (org_code or "НП").strip() or "НП"
+    """GUID организации по коду из XML `<organization>` (НП, АЛ, …)."""
+    code = resolve_organization_key_code(org_code)
     if not organization_keys:
         return ""
     return (organization_keys.get(code) or organization_keys.get(code.upper()) or "").strip()
@@ -198,16 +257,14 @@ def _parse_mail_datetime(value: str | None, fallback: datetime) -> datetime:
     return fallback
 
 
+def _as_msk(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=_MSK)
+    return value.astimezone(_MSK)
+
+
 def _format_odata_datetime(value: datetime) -> str:
-    return value.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
-
-
-def _priority_label(priority: Priority) -> str:
-    return {
-        Priority.URGENT: "срочный",
-        Priority.HIGH: "высокий",
-        Priority.NORMAL: "обычный",
-    }.get(priority, priority.value)
+    return _as_msk(value).replace(microsecond=0, tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _odata_field(fields: dict[str, str], logical_key: str) -> str:
@@ -303,6 +360,34 @@ def resolve_payer_direction(
     return "ТурбулентностьДОНКС"
 
 
+def resolve_odata_direction(
+    department_id: str | None,
+    xml_direction: str | None,
+) -> str:
+    """Преобразует код отдела / XML-направление в enum OData «Направление».
+
+    XML-коды ПР/КС/СС относятся к «ПлательщикНаправление», а не к этому полю.
+    Невалидные значения не отправляются (пустая строка).
+    """
+    code = (department_id or "").strip()
+    mapped = _DEPARTMENT_ODATA_DIRECTION.get(code)
+    if mapped:
+        return mapped
+
+    direction = (xml_direction or "").strip()
+    if not direction:
+        return ""
+
+    upper = direction.upper()
+    if upper in _XML_DIRECTION_TO_ODATA:
+        return _XML_DIRECTION_TO_ODATA[upper]
+
+    if direction in _VALID_ODATA_DIRECTIONS:
+        return direction
+
+    return ""
+
+
 def _put_string(
     payload: dict[str, Any],
     fields: dict[str, str],
@@ -356,36 +441,6 @@ def _put_guid(
     payload[odata_key] = value
 
 
-def _build_comment(
-    *,
-    xml_document: str | None,
-    parsed: dict[str, Any] | None,
-    summary_ru: str,
-    routing: RoutingResult,
-) -> str:
-    parts: list[str] = []
-    if parsed:
-        if parsed.get("confidence_level"):
-            parts.append(f"Уверенность: {parsed['confidence_level']}")
-        if parsed.get("matching_keywords"):
-            parts.append(f"Ключевые слова: {parsed['matching_keywords']}")
-        if parsed.get("processing_notes"):
-            parts.append(f"Примечание: {parsed['processing_notes']}")
-        if parsed.get("spam"):
-            parts.append("Спам: да")
-    parts.append(f"Приоритет: {_priority_label(routing.priority)}")
-    parts.append(f"Отдел: {routing.department_id} — {routing.department_name}")
-    if summary_ru.strip():
-        parts.append(f"Обзор: {summary_ru.strip()}")
-    if xml_document and xml_document.strip():
-        parts.append("XML:")
-        parts.append(xml_document.strip())
-    comment = "\n".join(parts).strip()
-    if len(comment) > _COMMENT_MAX_LEN:
-        return comment[: _COMMENT_MAX_LEN - 3] + "..."
-    return comment
-
-
 def build_incoming_document_payload(
     email: EmailMessage,
     routing: RoutingResult,
@@ -399,33 +454,73 @@ def build_incoming_document_payload(
     department_names: dict[str, str] | None = None,
     payer_direction_map: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Минимальный POST: только Автор и ПлательщикНаправление из XML."""
-    del email, routing, summary_ru, organization_keys, department_keys, department_names
-
+    """Формирует тело POST для Document_ТД_ВходящаяКорреспонденция."""
     parsed = parse_document_xml(xml_document) if xml_document else None
     if not parsed:
         raise ValueError("xml_document is required for OData payload")
 
     fields = field_map or DEFAULT_FIELD_MAP
-    org_code = (parsed.get("organization") or "НП").strip() or "НП"
+
+    mail_dt = _parse_mail_datetime(parsed.get("mail_datetime"), email.received_at)
+    theme = resolve_document_theme(
+        email,
+        explicit_theme=parsed.get("theme") or "",
+        combined_text=email.body_text or "",
+        process_type=parsed.get("process") or "",
+        claim=bool(parsed.get("claim")),
+    )
+    partner = parsed.get("partner") or ""
+    if partner == "-":
+        partner = ""
+    xml_direction = (parsed.get("direction") or "").strip()
+    payer_direction_code = xml_direction
+    if (routing.department_id or "").strip() in KS_PAYER_DIRECTION_DEPARTMENT_CODES:
+        payer_direction_code = DIRECTION_UNCLEAR
+    odata_direction = resolve_odata_direction(routing.department_id, xml_direction)
+    org_code = normalize_organization_code(parsed.get("organization")) or "НП"
+    department_name = resolve_department_name(routing, department_names=department_names)
+    department_key = resolve_department_key(routing.department_id, department_keys)
+    organization_key = resolve_organization_key(org_code, organization_keys)
     payer_direction = resolve_payer_direction(
         org_code,
-        (parsed.get("direction") or "").strip(),
+        payer_direction_code,
         payer_direction_map=payer_direction_map,
     )
+    ai_task = summary_ru.strip() or str(theme).strip()
 
-    payload: dict[str, Any] = {}
-    _put_composite_string(payload, fields, "author", DEFAULT_AUTHOR, max_len=100)
+    payload: dict[str, Any] = {
+        _odata_field(fields, "date"): _format_odata_datetime(mail_dt),
+        _odata_field(fields, "source"): DEFAULT_SOURCE,
+        _odata_field(fields, "status"): DEFAULT_STATUS,
+    }
+    payload = {key: value for key, value in payload.items() if key}
+
+    _put_composite_string(payload, fields, "theme", theme, max_len=200)
+    _put_composite_string(payload, fields, "department_name", department_name, max_len=200)
+    _put_composite_string(payload, fields, "partner", partner, max_len=200)
     _put_composite_string(payload, fields, "payer", payer_direction, max_len=200)
+    _put_string(payload, fields, "direction", odata_direction, max_len=50)
+    _put_guid(payload, fields, "organization_key", organization_key)
+    _put_guid(payload, fields, "department_executor_key", department_key)
+    _put_guid(payload, fields, "department_assignee_key", department_key)
+
+    _put_string(payload, fields, "ai_task_theme", ai_task, max_len=800)
+    _put_composite_string(payload, fields, "author", DEFAULT_AUTHOR, max_len=100)
+    _put_string(payload, fields, "assignee", routing.department_id, max_len=50)
+    _put_string(payload, fields, "email_sender", email.sender_email, max_len=200)
+    _put_string(
+        payload,
+        fields,
+        "email_recipient",
+        parsed.get("email_recipient") or email.routing_recipient or email.mailbox,
+        max_len=200,
+    )
+
+    claim_key = _odata_field(fields, "claim")
+    if claim_key:
+        payload[claim_key] = bool(parsed.get("claim"))
 
     if extra_fields:
-        for key, value in extra_fields.items():
-            if not isinstance(key, str) or not key.strip():
-                continue
-            name = key.strip()
-            if name in _EXTRA_FIELDS_ALLOW_EXACT or any(
-                name.endswith(suffix) for suffix in _EXTRA_FIELDS_ALLOW_SUFFIX
-            ):
-                payload[name] = value
+        payload.update(extra_fields)
 
     return payload

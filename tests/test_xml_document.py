@@ -16,6 +16,7 @@ from agent_pochta.routing.normalize import contains_claim_marker
 from agent_pochta.routing.xml_builder import (
     RESERVE_DEPARTMENT_CODE,
     SPAM_DEPARTMENT_CODE,
+    _format_mail_datetime_for_xml,
     build_stub_xml_theme,
     build_subject_xml_theme,
     build_xml_document,
@@ -102,6 +103,13 @@ def test_parse_document_xml_invalid_returns_none():
     assert parse_document_xml("") is None
     assert parse_document_xml("<broken") is None
     assert parse_document_xml("<other><x>1</x></other>") is None
+
+
+def test_format_mail_datetime_for_xml_uses_moscow_time():
+    utc = datetime(2026, 7, 22, 7, 37, 41, tzinfo=timezone.utc)
+    assert _format_mail_datetime_for_xml(utc) == "2026-07-22 10:37:41"
+    naive_utc = utc.replace(tzinfo=None)
+    assert _format_mail_datetime_for_xml(naive_utc) == "2026-07-22 10:37:41"
 
 
 def test_build_and_validate_roundtrip():

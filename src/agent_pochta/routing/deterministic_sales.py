@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from agent_pochta.config import PROJECT_ROOT
-from agent_pochta.routing.organizations import DIRECTION_COMMERCIAL, DIRECTION_DEFAULT
+from agent_pochta.routing.organizations import DIRECTION_COMMERCIAL, DIRECTION_DEFAULT, DIRECTION_UNCLEAR
 from agent_pochta.routing.normalize import keyword_in_text, normalize_text
 
 _DEFAULT_PATH = PROJECT_ROOT / "data" / "deterministic_sales_rules.json"
@@ -175,7 +175,7 @@ def match_deterministic_sales(
         return DeterministicHit(
             code=str(cfg["chairman_department_id"]),
             name=str(cfg.get("chairman_department_name") or "Председатель Совета Директоров"),
-            direction=DIRECTION_COMMERCIAL,
+            direction=DIRECTION_UNCLEAR,
             source="det_chairman",
             reasoning="Амураль / Игорь Борисович / Председатель СД",
             matched_keywords=chairman_keywords,

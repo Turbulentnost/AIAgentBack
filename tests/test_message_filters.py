@@ -17,6 +17,7 @@ from agent_pochta.db.message_filters import (
     INFO_MAILBOX,
     INFO_RECIPIENT_Q,
     TEST_II_MAILBOX,
+    compute_is_info_recipient,
     info_to_test_ii_sql_filter,
     is_info_to_test_ii_routing,
     is_only_info_to,
@@ -32,6 +33,7 @@ from agent_pochta.db.message_filters import (
     parse_optional_date,
 )
 from agent_pochta.db.models import EmailMessageRow
+from agent_pochta.api.list_table_fields import operator_review_state
 from agent_pochta.db.repository import EmailRepository
 from agent_pochta.db.session import get_session_factory
 
@@ -100,7 +102,13 @@ def _email_row(*, status: str = "done") -> EmailMessageRow:
 
 @contextmanager
 
-def _mock_repo(*, rows: list[EmailMessageRow], total: int, by_status: dict[str, int] | None = None):
+def _mock_repo(
+    *,
+    rows: list[EmailMessageRow],
+    total: int,
+    by_status: dict[str, int] | None = None,
+    operator_review_counts: dict[str, int] | None = None,
+):
 
     repo = MagicMock()
 
@@ -109,6 +117,13 @@ def _mock_repo(*, rows: list[EmailMessageRow], total: int, by_status: dict[str, 
     repo.count_messages.return_value = total
 
     repo.count_by_status.return_value = by_status or {row.status: 1 for row in rows}
+
+    repo.count_operator_review_states.return_value = operator_review_counts or {
+        "all": total,
+        "verified": 0,
+        "corrected": 0,
+        "pending": total,
+    }
 
     session = MagicMock()
 
@@ -180,7 +195,12 @@ def test_email_messages_stats_endpoint():
 
     client = TestClient(app)
 
-    with _mock_repo(rows=[], total=3, by_status={"done": 2, "spam": 1}):
+    with _mock_repo(
+        rows=[],
+        total=3,
+        by_status={"done": 2, "spam": 1},
+        operator_review_counts={"all": 3, "verified": 1, "corrected": 1, "pending": 1},
+    ):
         with patch(
             "agent_pochta.api.app.collect_operator_approvals",
             return_value={"saved": 4, "changed": 1, "rate": 0.8},
@@ -197,7 +217,27 @@ def test_email_messages_stats_endpoint():
 
     assert payload["by_status"]["spam"] == 1
 
+    assert payload["operator_review_counts"] == {
+        "all": 3,
+        "verified": 1,
+        "corrected": 1,
+        "pending": 1,
+    }
+
     assert payload["operator_approvals"] == {"saved": 4, "changed": 1, "rate": 0.8}
+
+
+def test_email_messages_stats_passes_status_filter():
+    client = TestClient(app)
+    with _mock_repo(rows=[], total=2, by_status={"done": 2}) as mock_repo:
+        with patch(
+            "agent_pochta.api.app.collect_operator_approvals",
+            return_value={"saved": 0, "changed": 0, "rate": None},
+        ):
+            response = client.get("/api/v1/email-messages/stats", params={"status": "done"})
+    assert response.status_code == 200
+    mock_repo.count_operator_review_states.assert_called_once()
+    assert mock_repo.count_operator_review_states.call_args.kwargs["status"] == "done"
 
 
 
@@ -450,8 +490,14 @@ def _insert_filter_probe_row(
     suffix: str,
     mailbox: str,
     payload_json: str,
+    is_info_recipient: bool | None = None,
 ) -> uuid.UUID:
     row_id = uuid.uuid4()
+    if is_info_recipient is None:
+        is_info_recipient = compute_is_info_recipient(
+            mailbox=mailbox,
+            raw_payload_json=payload_json,
+        )
     session.add(
         EmailMessageRow(
             id=row_id,
@@ -463,9 +509,22 @@ def _insert_filter_probe_row(
             subject=f"only_info filter probe {suffix}",
             status="done",
             raw_payload_json=payload_json,
+            is_info_recipient=is_info_recipient,
         )
     )
     return row_id
+
+
+def test_compute_is_info_recipient_matches_python():
+    cases = [
+        (INFO_MAILBOX, _payload_json(to=[], routing=INFO_MAILBOX), True),
+        (INFO_MAILBOX, _payload_json(to=["tender@turbo-don.ru"]), False),
+        (INFO_MAILBOX, None, False),
+    ]
+    for mailbox, payload_json, expected in cases:
+        assert (
+            compute_is_info_recipient(mailbox=mailbox, raw_payload_json=payload_json) is expected
+        )
 
 
 @pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL is not configured")
@@ -580,6 +639,47 @@ def test_info_recipient_only_filter_on_postgres():
         filtered_ids = {row.id for row in filtered}
         for (name, _mailbox, _payload, expected), row_id in zip(cases, row_ids, strict=True):
             assert (row_id in filtered_ids) is expected, name
+
+        session.query(EmailMessageRow).filter(EmailMessageRow.id.in_(row_ids)).delete(
+            synchronize_session=False
+        )
+        session.commit()
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL is not configured")
+def test_info_recipient_only_uses_denormalized_column():
+    """Filter reads is_info_recipient column, not raw_payload_json on each row."""
+    suffix = uuid.uuid4().hex[:8]
+    info_payload = _payload_json(to=[INFO_MAILBOX], routing=INFO_MAILBOX)
+    tender_payload = _payload_json(to=["tender@turbo-don.ru"], routing="tender@turbo-don.ru")
+    row_ids: list[uuid.UUID] = []
+
+    factory = get_session_factory()
+    with factory() as session:
+        row_ids.append(
+            _insert_filter_probe_row(
+                session,
+                suffix=f"{suffix}-column-true",
+                mailbox=INFO_MAILBOX,
+                payload_json=tender_payload,
+                is_info_recipient=True,
+            )
+        )
+        row_ids.append(
+            _insert_filter_probe_row(
+                session,
+                suffix=f"{suffix}-column-false",
+                mailbox=INFO_MAILBOX,
+                payload_json=info_payload,
+                is_info_recipient=False,
+            )
+        )
+        session.commit()
+
+        repo = EmailRepository(session)
+        filtered_ids = {row.id for row in repo.list_messages(info_recipient_only=True, limit=500)}
+        assert row_ids[0] in filtered_ids
+        assert row_ids[1] not in filtered_ids
 
         session.query(EmailMessageRow).filter(EmailMessageRow.id.in_(row_ids)).delete(
             synchronize_session=False
@@ -796,3 +896,154 @@ def test_list_email_messages_only_info_to_test_ii_endpoint_on_postgres():
                 synchronize_session=False
             )
             session.commit()
+
+
+def _payload_with_operator_flags(
+    *,
+    to: list[str] | None = None,
+    operator_verified: bool | None = None,
+    operator_corrected: bool | None = None,
+) -> str:
+    payload: dict[str, object] = {"to": to or [INFO_MAILBOX], "cc": []}
+    if operator_verified is not None:
+        payload["operator_verified"] = operator_verified
+    if operator_corrected is not None:
+        payload["operator_corrected"] = operator_corrected
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL is not configured")
+def test_count_operator_review_states_on_postgres():
+    suffix = uuid.uuid4().hex[:8]
+    row_ids: list[uuid.UUID] = []
+    cases = [
+        ("pending", _payload_with_operator_flags(), "pending"),
+        ("verified", _payload_with_operator_flags(operator_verified=True), "verified"),
+        ("corrected", _payload_with_operator_flags(operator_corrected=True), "corrected"),
+        (
+            "verified-and-corrected",
+            _payload_with_operator_flags(operator_verified=True, operator_corrected=True),
+            "corrected",
+        ),
+    ]
+
+    factory = get_session_factory()
+    with factory() as session:
+        for name, payload_json, _expected_state in cases:
+            row_ids.append(
+                _insert_filter_probe_row(
+                    session,
+                    suffix=f"{suffix}-{name}",
+                    mailbox=INFO_MAILBOX,
+                    payload_json=payload_json,
+                )
+            )
+        session.commit()
+
+        repo = EmailRepository(session)
+        counts = repo.count_operator_review_states(
+            search=f"only_info filter probe {suffix}",
+        )
+        assert counts["all"] == len(cases)
+        assert counts["pending"] == 1
+        assert counts["verified"] == 1
+        assert counts["corrected"] == 2
+
+        rows = repo.list_messages(search=f"only_info filter probe {suffix}", limit=500)
+        event_hints = repo.batch_operator_review_event_hints([row.id for row in rows])
+        python_counts = {"pending": 0, "verified": 0, "corrected": 0}
+        for row in rows:
+            payload = json.loads(row.raw_payload_json or "{}")
+            hints = event_hints.get(row.id) or {}
+            state = operator_review_state(
+                payload,
+                has_operator_approve=hints.get("has_operator_approve", False),
+                has_operator_change=hints.get("has_operator_change", False),
+            )
+            python_counts[state] += 1
+        assert python_counts["pending"] == counts["pending"]
+        assert python_counts["verified"] == counts["verified"]
+        assert python_counts["corrected"] == counts["corrected"]
+
+        session.query(EmailMessageRow).filter(EmailMessageRow.id.in_(row_ids)).delete(
+            synchronize_session=False
+        )
+        session.commit()
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL is not configured")
+def test_operator_review_state_infers_from_classification_events_on_postgres():
+    from datetime import datetime, timezone
+
+    from agent_pochta.db.models import ClassificationEventRow
+
+    suffix = uuid.uuid4().hex[:8]
+    factory = get_session_factory()
+    row_ids: list[uuid.UUID] = []
+
+    with factory() as session:
+        approve_id = _insert_filter_probe_row(
+            session,
+            suffix=f"{suffix}-approve",
+            mailbox=INFO_MAILBOX,
+            payload_json=_payload_with_operator_flags(),
+        )
+        change_id = _insert_filter_probe_row(
+            session,
+            suffix=f"{suffix}-change",
+            mailbox=INFO_MAILBOX,
+            payload_json=_payload_with_operator_flags(),
+        )
+        row_ids.extend([approve_id, change_id])
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(
+            ClassificationEventRow(
+                created_at=now,
+                message_id=f"<only-info-filter-{suffix}-approve@pytest>",
+                email_id=approve_id,
+                category="department",
+                event_type="operator_approve",
+                actor="operator",
+                source="pytest",
+            )
+        )
+        session.add(
+            ClassificationEventRow(
+                created_at=now,
+                message_id=f"<only-info-filter-{suffix}-change@pytest>",
+                email_id=change_id,
+                category="department",
+                event_type="operator_change",
+                actor="operator",
+                source="pytest",
+            )
+        )
+        session.commit()
+
+        repo = EmailRepository(session)
+        counts = repo.count_operator_review_states(search=f"only_info filter probe {suffix}")
+        assert counts["verified"] == 1
+        assert counts["corrected"] == 1
+        assert counts["pending"] == 0
+
+        hints = repo.batch_operator_review_event_hints(row_ids)
+        assert hints[approve_id]["has_operator_approve"] is True
+        assert hints[change_id]["has_operator_change"] is True
+
+        client = TestClient(app)
+        response = client.get(
+            "/api/v1/email-messages",
+            params={"q": f"only_info filter probe {suffix}", "limit": 10},
+        )
+        assert response.status_code == 200
+        by_id = {item["id"]: item for item in response.json()["items"]}
+        assert by_id[str(approve_id)]["operator_review_state"] == "verified"
+        assert by_id[str(change_id)]["operator_review_state"] == "corrected"
+
+        session.query(ClassificationEventRow).filter(
+            ClassificationEventRow.email_id.in_(row_ids)
+        ).delete(synchronize_session=False)
+        session.query(EmailMessageRow).filter(EmailMessageRow.id.in_(row_ids)).delete(
+            synchronize_session=False
+        )
+        session.commit()

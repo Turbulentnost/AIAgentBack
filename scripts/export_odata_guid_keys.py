@@ -33,12 +33,14 @@ DEPT_CODE_RE = re.compile(r"^00-\d{6}$")
 
 # Код ТЗ → подстроки в Description организации 1С (см. export_departments_excel.ORG_FULL_NAMES)
 TZ_ORG_HINTS: dict[str, list[str]] = {
-    "НП": ["турбулентность-дон", "нпо", "сктб"],
+    # «нпо» однозначно отличает НПО от СКТБ и «Турбулентность-Дон ООО» без НПО.
+    "НП": ["нпо"],
     "АЛ": ["алмаз"],
     "МГ": ["метрогаз"],
-    "АМ": ["амурская легенда", "акваген"],
+    "АМ": ["амурская легенда"],
     "МИ": ["милака"],
-    "БМ": ["бми", "блочно-модульн", "блочно модульн"],
+    # БМИ — направление внутри НПО; GUID организации = НП (см. ORGANIZATION_KEY_ALIASES).
+    "БМ": ["нпо"],
 }
 
 
@@ -46,10 +48,14 @@ def _normalize(text: str) -> str:
     return (text or "").lower().replace("ё", "е")
 
 
-def match_tz_organization(code: str, description: str) -> bool:
+def count_tz_organization_hints(code: str, description: str) -> int:
     hints = TZ_ORG_HINTS.get(code.upper(), [])
     desc = _normalize(description)
-    return any(hint in desc for hint in hints)
+    return sum(1 for hint in hints if hint in desc)
+
+
+def match_tz_organization(code: str, description: str) -> bool:
+    return count_tz_organization_hints(code, description) > 0
 
 
 def collect_department_codes(rules: dict) -> set[str]:
@@ -81,14 +87,21 @@ def collect_department_codes(rules: dict) -> set[str]:
 def build_organization_map(rows: list[dict]) -> dict[str, str]:
     result: dict[str, str] = {}
     for tz_code in TZ_ORG_HINTS:
+        best_ref = ""
+        best_score = 0
         for row in rows:
             desc = str(row.get("Description") or "").strip()
             ref = str(row.get("Ref_Key") or "").strip()
             if not desc or not ref:
                 continue
-            if match_tz_organization(tz_code, desc):
-                result[tz_code] = ref
-                break
+            score = count_tz_organization_hints(tz_code, desc)
+            if score > best_score:
+                best_score = score
+                best_ref = ref
+        if best_ref:
+            result[tz_code] = best_ref
+    if "НП" in result:
+        result["БМ"] = result["НП"]
     return result
 
 

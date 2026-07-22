@@ -61,6 +61,8 @@ from agent_pochta.workers.tasks import (
     reprocess_message_task,
     retry_erp_task,
 )
+from agent_pochta.api.email_messages_export import collect_export_data
+from agent_pochta.api.list_table_fields import row_to_table_fields
 
 app = FastAPI(title="Agent-Pochta API", version="0.2.0")
 app.add_middleware(
@@ -109,6 +111,7 @@ def _payload_meta(row) -> dict[str, Any]:
         "routing_decision": routing_decision,
         "rag_fallback": bool(payload.get("rag_fallback")) if "rag_fallback" in payload else None,
         "operator_verified": bool(payload.get("operator_verified")),
+        "operator_corrected": bool(payload.get("operator_corrected")),
     }
 
 
@@ -209,8 +212,13 @@ def _row_partner_fields(row) -> dict[str, Any]:
     }
 
 
-def _row_to_list_dict(row) -> dict[str, Any]:
+def _row_to_list_dict(
+    row,
+    *,
+    operator_event_hints: dict[str, bool] | None = None,
+) -> dict[str, Any]:
     """Lightweight serializer for list endpoints (no body_text)."""
+    payload = _load_raw_payload(row)
     meta = _payload_meta(row)
     decision = meta.get("routing_decision") or {}
     dept_conf = _dept_confidence_for_api(row, meta)
@@ -245,6 +253,7 @@ def _row_to_list_dict(row) -> dict[str, Any]:
         "attachments_count": row.attachments_count,
         "operator_verified": bool(meta.get("operator_verified")),
         **_row_partner_fields(row),
+        **row_to_table_fields(row, payload=payload, operator_event_hints=operator_event_hints),
     }
 
 
@@ -398,6 +407,7 @@ def _message_list_filters(
 
 @app.get("/api/v1/email-messages/stats")
 def email_messages_stats(
+    status: str | None = Query(default=None),
     date_from: str | None = Query(default=None, description="YYYY-MM-DD (MSK)"),
     date_to: str | None = Query(default=None, description="YYYY-MM-DD (MSK)"),
     q: str | None = Query(default=None, min_length=1, max_length=200),
@@ -432,14 +442,19 @@ def email_messages_stats(
 
     with get_session_factory()() as session:
         repo = EmailRepository(session)
-        by_status = repo.count_by_status(
-            date_from=parsed_from,
-            date_to=parsed_to,
-            search=q,
-            recipient_q=recipient_q,
-            info_recipient_only=info_recipient_only,
-            only_info_to_test_ii=only_info_to_test_ii,
-            only_info_to=only_info_to,
+        filter_kwargs = {
+            "date_from": parsed_from,
+            "date_to": parsed_to,
+            "search": q,
+            "recipient_q": recipient_q,
+            "info_recipient_only": info_recipient_only,
+            "only_info_to_test_ii": only_info_to_test_ii,
+            "only_info_to": only_info_to,
+        }
+        by_status = repo.count_by_status(**filter_kwargs)
+        operator_review_counts = repo.count_operator_review_states(
+            status=status,
+            **filter_kwargs,
         )
         operator_approvals = collect_operator_approvals(
             session,
@@ -449,6 +464,7 @@ def email_messages_stats(
         return {
             "total": sum(by_status.values()),
             "by_status": by_status,
+            "operator_review_counts": operator_review_counts,
             "operator_approvals": operator_approvals,
         }
 
@@ -478,6 +494,24 @@ def classification_events_summary(
 
     with get_session_factory()() as session:
         return collect_classification_summary(session, start_utc=start_utc, end_utc=end_utc)
+
+
+@app.get("/api/v1/email-messages/export")
+def export_email_messages_report(
+    period: str = Query(default="day", pattern="^(day|week|month)$"),
+) -> Response:
+    """Excel-отчёт для «Таняфикации»: сводка + детализация писем за период (MSK)."""
+    with get_session_factory()() as session:
+        content, filename = collect_export_data(
+            session,
+            period=period,  # type: ignore[arg-type]
+            row_to_list_dict=_row_to_list_dict,
+        )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": content_disposition_header(filename)},
+    )
 
 
 @app.get("/api/v1/email-messages")
@@ -532,8 +566,12 @@ def list_email_messages(
             only_info_to_test_ii=only_info_to_test_ii,
             only_info_to=only_info_to,
         )
+        event_hints = repo.batch_operator_review_event_hints([row.id for row in rows])
         return {
-            "items": [_row_to_list_dict(row) for row in rows],
+            "items": [
+                _row_to_list_dict(row, operator_event_hints=event_hints.get(row.id))
+                for row in rows
+            ],
             "total": total,
             "limit": limit,
             "offset": offset,
@@ -788,6 +826,7 @@ def _apply_operator_routing_save(
         department_name=department_name,
         force_changed=fields_changed,
     )
+    repo.set_operator_corrected(row, fields_changed)
     repo.apply_human_resolution(
         row.id,
         status=resolve_status,
@@ -1022,6 +1061,7 @@ def reanalyze_message(row_id: uuid.UUID) -> dict[str, Any]:
         row.status = ProcessingStatus.PROCESSING.value
         row.human_review = False
         repo.set_operator_verified(row, False)
+        repo.set_operator_corrected(row, False)
         session.commit()
 
     task = reprocess_message_task.delay(str(row_id), reanalyze=True)

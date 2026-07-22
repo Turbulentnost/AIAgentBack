@@ -9,6 +9,7 @@ import pytest
 from agent_pochta.graph import build_graph
 from agent_pochta.routing import RouteEngine, route_email
 from agent_pochta.routing.models import ConfidenceLevel
+from agent_pochta.routing.organizations import DIRECTION_UNCLEAR
 from agent_pochta.routing.recipients import (
     normalize_routing_email,
     parse_routing_message_id,
@@ -117,6 +118,7 @@ def test_t07_legal_claim(engine):
     )
     assert decision.services[0].code == "00-000044"
     assert decision.claim is True
+    assert decision.direction == DIRECTION_UNCLEAR
 
 
 def test_t08_service_repair(engine):

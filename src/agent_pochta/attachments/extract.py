@@ -5,8 +5,19 @@ from __future__ import annotations
 import re
 from io import BytesIO
 from pathlib import PurePath
+from typing import TYPE_CHECKING
+
+import structlog
 
 from agent_pochta.schemas import Attachment
+
+if TYPE_CHECKING:
+    from PIL import Image as PILImage
+
+logger = structlog.get_logger(__name__)
+
+_PDF_OCR_MAX_PAGES = 20
+_PDF_OCR_DPI = 150
 
 SUPPORTED_MIME = {
     "application/pdf",
@@ -73,7 +84,27 @@ def is_meaningful_extracted_text(text: str | None) -> bool:
     return True
 
 
-def extract_pdf(content: bytes) -> str:
+def _ocr_pil_image(image: PILImage.Image) -> str:
+    import pytesseract
+
+    try:
+        return pytesseract.image_to_string(image, lang="rus+eng")
+    except pytesseract.TesseractNotFoundError as exc:
+        raise RuntimeError("Tesseract OCR не установлен в системе") from exc
+    except pytesseract.TesseractError:
+        return pytesseract.image_to_string(image)
+
+
+def _ocr_pdf_page(page: object, *, dpi: int = _PDF_OCR_DPI) -> str:
+    from PIL import Image
+
+    pixmap = page.get_pixmap(dpi=dpi)  # type: ignore[union-attr]
+    mode = "RGBA" if pixmap.alpha else "RGB"
+    image = Image.frombytes(mode, (pixmap.width, pixmap.height), pixmap.samples)
+    return _ocr_pil_image(image)
+
+
+def extract_pdf(content: bytes, *, max_chars: int | None = None) -> tuple[str, bool]:
     import fitz  # pymupdf
 
     doc = fitz.open(stream=content, filetype="pdf")
@@ -83,7 +114,30 @@ def extract_pdf(content: bytes) -> str:
             page_text = page.get_text().strip()
             if page_text:
                 parts.append(page_text)
-        return "\n\n".join(parts)
+        if parts:
+            return "\n\n".join(parts), False
+
+        ocr_parts: list[str] = []
+        char_budget = max_chars
+        for page_num, page in enumerate(doc):
+            if page_num >= _PDF_OCR_MAX_PAGES:
+                break
+            if char_budget is not None and char_budget <= 0:
+                break
+            try:
+                page_text = _ocr_pdf_page(page).strip()
+            except Exception:
+                logger.warning(
+                    "pdf_page_ocr_failed",
+                    page=page_num,
+                    exc_info=True,
+                )
+                continue
+            if page_text:
+                ocr_parts.append(page_text)
+                if char_budget is not None:
+                    char_budget -= len(page_text)
+        return "\n\n".join(ocr_parts), bool(ocr_parts)
     finally:
         doc.close()
 
@@ -139,15 +193,9 @@ def extract_plain_text(content: bytes) -> str:
 
 def extract_image_ocr(content: bytes) -> str:
     from PIL import Image
-    import pytesseract
 
     image = Image.open(BytesIO(content))
-    try:
-        return pytesseract.image_to_string(image, lang="rus+eng")
-    except pytesseract.TesseractNotFoundError as exc:
-        raise RuntimeError("Tesseract OCR не установлен в системе") from exc
-    except pytesseract.TesseractError:
-        return pytesseract.image_to_string(image)
+    return _ocr_pil_image(image)
 
 
 def extract_zip(content: bytes, *, max_chars: int) -> str:
@@ -206,7 +254,8 @@ def extract_attachment_text(
     ocr_used = False
     try:
         if mime == "application/pdf":
-            raw = extract_pdf(attachment.content)
+            raw, pdf_ocr = extract_pdf(attachment.content, max_chars=max_chars)
+            ocr_used = pdf_ocr
         elif mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             raw = extract_docx(attachment.content)
         elif mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":

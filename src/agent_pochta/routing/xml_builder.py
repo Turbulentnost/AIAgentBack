@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from agent_pochta.routing.models import RoutingDecision, ServiceRoute
 from agent_pochta.routing.organizations import DIRECTION_DEFAULT
@@ -14,6 +15,7 @@ _DEPT_CODE_RE = re.compile(r"^00-\d{6}$")
 _THEME_MAX_LEN = 200
 RESERVE_DEPARTMENT_CODE = "00-000066"
 SPAM_DEPARTMENT_CODE = "00-999999"
+_MSK = ZoneInfo("Europe/Moscow")
 _INTERNAL_KEYWORD_SOURCES = frozenset(
     {
         "exact_email",
@@ -410,6 +412,17 @@ def _ensure_service_routes(
     return services
 
 
+def _format_mail_datetime_for_xml(received_at: datetime) -> str:
+    """mail_datetime в XML: received_at (UTC) в Europe/Moscow без tz suffix."""
+    dt = received_at
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    msk = dt.astimezone(_MSK)
+    return msk.replace(tzinfo=None, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _service_title_block(service_code: str, department_name: str) -> str:
     title = (department_name or "").strip()
     if not title or title == service_code or _DEPT_CODE_RE.match(title):
@@ -444,7 +457,7 @@ def build_xml_document(
             "</service>"
         )
 
-    mail_dt = email.received_at.strftime("%Y-%m-%d %H:%M:%S")
+    mail_dt = _format_mail_datetime_for_xml(email.received_at)
     document_process = (
         (decision.process or "").strip()
         or (services[0].process if services else "")

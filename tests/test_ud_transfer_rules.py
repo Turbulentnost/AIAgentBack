@@ -46,6 +46,7 @@ def test_ud_transfer_routes_to_deputy_od_assistant(engine):
     )
     assert decision.services[0].code == "00-000182"
     assert decision.services[0].name == "Помощник зам. операционного директора"
+    assert decision.direction == "КС"
     assert decision.match_source == "ud_transfer"
     assert decision.confidence_level in {ConfidenceLevel.HIGH, ConfidenceLevel.MEDIUM}
     assert validate_xml_document(decision.xml_document)

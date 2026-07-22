@@ -3,13 +3,28 @@
   "reserve_code": "00-000066",
   "reserve_name": "Управление делами (офис-менеджер)",
   "spam_code": "00-999999",
+  "ministry_content_patterns": [
+    "министерство",
+    "министерств",
+    "минпром",
+    "минэнерго",
+    "минтранс",
+    "минстрой",
+    "минприроды",
+    "минэконом",
+    "минфин",
+    "минздрав",
+    "минобр",
+    "минобороны",
+    "минпромторг"
+  ],
   "info_strict_rules": {
     "mailbox": "info@turbo-don.ru",
     "ilchenko_ud": {
       "rule_code": "INFO_STRICT_ILCHENKO",
       "code": "00-000001",
       "name": "Председатель Совета Директоров",
-      "direction": "ПР",
+      "direction": "КС",
       "name_patterns": [
         "амураль игорь борисович",
         "игорь борисович амураль",
@@ -39,15 +54,7 @@
       "rule_code": "INFO_STRICT_MINISTRY",
       "code": "00-000152",
       "name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
-      "direction": "ПР",
-      "content_patterns": [
-        "министерство",
-        "минпром",
-        "минэнерго",
-        "минтранс",
-        "минстрой",
-        "минприроды"
-      ]
+      "direction": "КС"
     },
     "unclear": {
       "rule_code": "INFO_STRICT_UNCLEAR",
@@ -60,7 +67,7 @@
     "rule_code": "INSTITUTION_CHAIRMAN",
     "code": "00-000001",
     "name": "Председатель Совета Директоров",
-    "direction": "ПР",
+    "direction": "КС",
     "content_patterns": [
       "торгово-промышленная палата",
       "торгово промышленная палата",
@@ -75,7 +82,7 @@
     "rule_code": "INSTITUTION_MINISTRY_ADMIN",
     "code": "00-000152",
     "name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
-    "direction": "ПР",
+    "direction": "КС",
     "content_patterns": [
       "министерство",
       "министерств",
@@ -107,7 +114,7 @@
     "source_code": "00-000066",
     "code": "00-000182",
     "name": "Помощник зам. операционного директора",
-    "direction": "ПР",
+    "direction": "КС",
     "content_patterns": [
       "помощник заместителя операционного директора",
       "помощника заместителя операционного директора",
@@ -128,7 +135,7 @@
     "direction": "КС",
     "operational_director_code": "00-000152",
     "operational_director_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
-    "operational_director_direction": "ПР",
+    "operational_director_direction": "КС",
     "gazprom_content_patterns": [
       "пао газпром",
       "газпром",
@@ -185,7 +192,7 @@
       "keyword": "uprdir",
       "code": "00-000152",
       "name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
-      "direction": "ПР"
+      "direction": "КС"
     },
     {
       "keyword": "jurist",
@@ -359,7 +366,7 @@
       "email": "npo_uprdir@turbo-don.ru",
       "code": "00-000152",
       "name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
-      "direction": "ПР",
+      "direction": "КС",
       "about": "управление"
     },
     {
@@ -509,14 +516,14 @@
       "email": "gd@turbo-don.ru",
       "code": "00-000001",
       "name": "Председатель Совета Директоров",
-      "direction": "ПР",
+      "direction": "КС",
       "about": "Председатель Совета Директоров"
     },
     {
       "email": "gk_secretar@turbo-don.ru",
       "code": "00-000001",
       "name": "Председатель Совета Директоров",
-      "direction": "ПР",
+      "direction": "КС",
       "about": "Председатель Совета Директоров, помощник председателя СД"
     },
     {
@@ -969,7 +976,7 @@
       ],
       "code": "00-000152",
       "name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
-      "direction": "ПР",
+      "direction": "КС",
       "about": "Минпромторг, министерство, администрация, проектные работы, проектирование узлов учета, инженерные изыскания"
     },
     {
@@ -3338,6 +3345,285 @@
           "opmu",
           "ufg 191593 газпром",
           "ооо привольненское лпумг"
+        ]
+      },
+      {
+        "id": "86c5c4e8-34ae-43ca-b880-13831e026137",
+        "created_at": "2026-07-21T11:03:18.838447+00:00",
+        "partner": "ООО НПО «Турбулентность-ДОН»",
+        "organization": "НП",
+        "department_id": "00-000065",
+        "department_name": "Отдел МТО",
+        "sender_email": "mr@kupi-sport.ru",
+        "recipient": "uk_omto10@turbo-don.ru",
+        "subject": "ксения , высылаем счет на оплату по вашему запросу.",
+        "keywords": [
+          "ксения , высылаем счет на оплату по вашему запросу",
+          "uk_omto10",
+          "турбулентность-дон"
+        ]
+      },
+      {
+        "id": "c1fe8714-3358-46e2-8778-6d50c695d198",
+        "created_at": "2026-07-21T11:03:56.491829+00:00",
+        "partner": "ООО «Завод «Нефтегазоборудование»",
+        "organization": "АЛ",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "andryuhina@ngosar.ru",
+        "recipient": "td_sales1.9@turbo-don.ru",
+        "subject": "re: заявка распор.242",
+        "keywords": [
+          "заявка распор.242",
+          "td_sales1.9",
+          "газа гранд",
+          "алмаз необходимо"
+        ]
+      },
+      {
+        "id": "57cd9a79-b3d7-441c-acb2-83f08d2b5ce8",
+        "created_at": "2026-07-21T11:06:20.590743+00:00",
+        "partner": "ООО «ЗНГС»",
+        "organization": "НП",
+        "department_id": "00-000159",
+        "department_name": "Сектор сопровождения производства и продаж",
+        "sender_email": "g.melnikov@zngs.ru",
+        "recipient": "uk_omto10@turbo-don.ru",
+        "subject": "re: знгс",
+        "keywords": [
+          "знгс",
+          "uk_omto10",
+          "2026",
+          "aka.ms/o0ukef от",
+          "friday 17",
+          "g.melnikov zngs.ru",
+          "https aka.ms/o0ukef",
+          "ios https"
+        ]
+      },
+      {
+        "id": "ab226608-90c6-4826-a37c-c8e80751bcac",
+        "created_at": "2026-07-21T11:07:45.669326+00:00",
+        "partner": "АО 'Мособлгаз'",
+        "organization": "АЛ",
+        "department_id": "00-000074",
+        "department_name": "Отдел продаж эталонного оборудования и услуг",
+        "sender_email": "burlachukse@mosoblgaz.ru",
+        "recipient": "opmu@turbo-don.ru",
+        "subject": "re: запрос документов ао \"мособлгаз\"",
+        "keywords": [
+          "запрос документов ао \"мособлгаз",
+          "opmu",
+          "документов ао мособлгаз"
+        ]
+      },
+      {
+        "id": "36070375-0a31-4139-a0c0-fb5ff9900e4a",
+        "created_at": "2026-07-21T11:59:56.717015+00:00",
+        "partner": "Минпромэнерго РО",
+        "organization": "НП",
+        "department_id": "00-000152",
+        "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+        "sender_email": "aro-minprom@yandex.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "",
+        "keywords": [
+          "info",
+          "27-30 октября",
+          "i всероссийского",
+          "а ну-ка",
+          "в москве",
+          "в план",
+          "включения конкурса"
+        ]
+      },
+      {
+        "id": "6712ca0d-bf6c-400d-8cff-d63cfd0696b4",
+        "created_at": "2026-07-21T12:01:36.677957+00:00",
+        "partner": "Минпромэнерго РО",
+        "organization": "НП",
+        "department_id": "00-000152",
+        "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+        "sender_email": "aro-minprom@yandex.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "",
+        "keywords": [
+          "info",
+          "240-16-32 факс",
+          "240-17-39 в",
+          "240-18-27 240-16-32",
+          "240-51-56 240-18-27"
+        ]
+      },
+      {
+        "id": "55559e8d-41ad-44bf-bc34-a1dd20fcbb0b",
+        "created_at": "2026-07-21T12:20:44.571399+00:00",
+        "partner": "Минпромэнерго РО",
+        "organization": "НП",
+        "department_id": "00-000152",
+        "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+        "sender_email": "aro-minprom@yandex.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "",
+        "keywords": [
+          "info",
+          "27-30 октября",
+          "всероссийского",
+          "а ну-ка",
+          "в двух"
+        ]
+      },
+      {
+        "id": "fa28ce9d-2db9-4846-ac01-0f52fb4e5513",
+        "created_at": "2026-07-21T12:20:52.585771+00:00",
+        "partner": "Минпромэнерго РО",
+        "organization": "НП",
+        "department_id": "00-000152",
+        "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+        "sender_email": "aro-minprom@yandex.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "",
+        "keywords": [
+          "info",
+          "27-30 октября",
+          "всероссийского",
+          "а ну-ка",
+          "в двух"
+        ]
+      },
+      {
+        "id": "4d069fa4-9ec3-4292-93d4-5d28aebbc621",
+        "created_at": "2026-07-21T12:25:26.650051+00:00",
+        "partner": "АО 'Арктикгаз'",
+        "organization": "НП",
+        "department_id": "00-000152",
+        "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+        "sender_email": "sergey.khrol@jsc-arcticgas.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "отправка исходящего письма",
+        "keywords": [
+          "отправка исходящего письма",
+          "info",
+          "требуется",
+          "21.07.2026 с"
+        ]
+      },
+      {
+        "id": "6b9ad3a8-6d4f-43e1-9ef7-d7c358182f41",
+        "created_at": "2026-07-21T12:26:45.954325+00:00",
+        "partner": "Unitex Composite",
+        "organization": "НП",
+        "department_id": "00-000015",
+        "department_name": "Отдел внешнеэкономической деятельности",
+        "sender_email": "kelly.q@unitexcomposite.com",
+        "recipient": "info@turbo-don.ru",
+        "subject": "re: fire blankets request",
+        "keywords": [
+          "fire blankets request",
+          "info",
+          "a professional"
+        ]
+      },
+      {
+        "id": "8f21de84-1be2-400c-813f-ef604735bbbd",
+        "created_at": "2026-07-21T12:36:10.020983+00:00",
+        "partner": "Амина Забитова",
+        "organization": "НП",
+        "department_id": "00-000099",
+        "department_name": "Отдел технической поддержки",
+        "sender_email": "zabitova8247@icloud.com",
+        "recipient": "info@turbo-don.ru",
+        "subject": "газовый счетчик (нужен паспорт) адрес каспийск ул. каспийская 6-166",
+        "keywords": [
+          "газовый счетчик (нужен паспорт) адрес каспийск ул. каспийская 6-166",
+          "info",
+          "газовый счетчик нужен",
+          "каспийск ул каспийская"
+        ]
+      },
+      {
+        "id": "df7f6398-ea56-42d0-b43b-501e8d92f529",
+        "created_at": "2026-07-21T12:39:17.506194+00:00",
+        "partner": "ФКП \"Комбинат \"Каменский\"",
+        "organization": "НП",
+        "department_id": "00-000056",
+        "department_name": "Метрологическая служба",
+        "sender_email": "hicom@kamensk.donpac.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "фкп \"комбинат \"каменский\"",
+        "keywords": [
+          "фкп \"комбинат \"каменский",
+          "info",
+          "фкп комбинат каменский",
+          "pdf текст"
+        ]
+      },
+      {
+        "id": "fd83bc88-a12e-4685-ad2f-1a2b7551e30e",
+        "created_at": "2026-07-21T13:03:45.129583+00:00",
+        "partner": "Амина Забитова",
+        "organization": "НП",
+        "department_id": "00-000099",
+        "department_name": "Отдел технической поддержки",
+        "sender_email": "zabitova8247@icloud.com",
+        "recipient": "info@turbo-don.ru",
+        "subject": "газовый счетчик (нужен паспорт) адрес каспийск ул. каспийская 6-166",
+        "keywords": [
+          "газовый счетчик (нужен паспорт) адрес каспийск ул. каспийская 6-166",
+          "info",
+          "газовый счетчик нужен",
+          "каспийск ул каспийская"
+        ]
+      },
+      {
+        "id": "bf83328e-ba83-4185-8127-8aea8112f2ab",
+        "created_at": "2026-07-22T06:14:57.357144+00:00",
+        "partner": "ООО \"РН-Ванкор\"",
+        "organization": "НП",
+        "department_id": "00-000054",
+        "department_name": "Тендерный офис",
+        "sender_email": "no-reply@tektorg.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "уведомление о проверке в рамках должной осмотрительности в ооо \"рн-ванкор\"",
+        "keywords": [
+          "уведомление о проверке в рамках должной осмотрительности в ооо \"рн-ванкор",
+          "info",
+          "в ооо рн-ванкор"
+        ]
+      },
+      {
+        "id": "84050283-5cf2-4e4e-9c29-970883a50050",
+        "created_at": "2026-07-22T06:18:42.095898+00:00",
+        "partner": "ООО \"РОССИЙСКАЯ ИННОВАЦИОННАЯ ТОПЛИВНО-ЭНЕРГЕТИЧЕСКАЯ КОМПАНИЯ\"",
+        "organization": "НП",
+        "department_id": "00-000042",
+        "department_name": "Отдел по работе с ключевыми клиентами",
+        "sender_email": "mikhaleva.oe@roseltorg.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "приглашение на поставку системы погружной телеметрии с расходомером для нужд ооо \"российская инновационная топливно-энергетическая компания\"",
+        "keywords": [
+          "приглашение на поставку системы погружной телеметрии с расходомером для нужд ооо \"российская инновационная топливно-энергетическая компания",
+          "info"
+        ]
+      },
+      {
+        "id": "9655815d-2a0c-4f67-a284-e913a51addb7",
+        "created_at": "2026-07-22T08:43:04.455266+00:00",
+        "partner": "ОсОО «Газпром Кыргызстан»",
+        "organization": "АЛ",
+        "department_id": "00-000074",
+        "department_name": "Отдел продаж эталонного оборудования и услуг",
+        "sender_email": "spirov.ia@gazprom.kg",
+        "recipient": "almaz_proizvodstvo@turbo-don.ru",
+        "subject": "re: счетчик",
+        "keywords": [
+          "счетчик",
+          "поверка",
+          "almaz_proizvodstvo turbo-don.ru",
+          "friday may",
+          "from ачимова",
+          "gazprom.kg mailto",
+          "gazprom.kg subject"
         ]
       }
     ]

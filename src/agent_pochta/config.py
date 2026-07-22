@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     imap_connect_retry_delay_sec: int = Field(default=300, alias="IMAP_CONNECT_RETRY_DELAY_SEC")
     imap_catchup_days: int = Field(default=7, alias="IMAP_CATCHUP_DAYS")
     imap_fetch_batch_size: int = Field(default=20, alias="IMAP_FETCH_BATCH_SIZE")
-    imap_catchup_max_uids: int = Field(default=400, alias="IMAP_CATCHUP_MAX_UIDS")
+    imap_catchup_max_uids: int = Field(default=50, alias="IMAP_CATCHUP_MAX_UIDS")
     attachment_cache_ttl_sec: int = Field(default=1800, alias="ATTACHMENT_CACHE_TTL_SEC")
     attachment_cache_max_mb: int = Field(default=256, alias="ATTACHMENT_CACHE_MAX_MB")
     attachment_imap_partial_fetch: bool = Field(default=True, alias="ATTACHMENT_IMAP_PARTIAL_FETCH")

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from agent_pochta.nodes.n7_create_erp_task import node_create_erp_task
-from agent_pochta.schemas import EmailMessage, ProcessingStatus, Priority, RoutingResult
+from agent_pochta.schemas import Attachment, EmailMessage, ProcessingStatus, Priority, RoutingResult
 
 
 def _state(*, trace: list[str] | None = None) -> dict:
@@ -77,3 +77,37 @@ def test_create_erp_task_skips_non_info_mailbox(monkeypatch):
     assert result["meta"]["erp_skipped"] is True
     assert "info@turbo-don.ru" in result["meta"]["erp_skip_reason"]
     container.integration.create_incoming_correspondence.assert_not_called()
+
+
+def test_create_erp_task_attaches_files_after_document_create(monkeypatch):
+    container = MagicMock()
+    container.integration.create_incoming_correspondence.return_value = {
+        "erp_document_number": "ВК-000001",
+        "erp_document_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "erp_task_id": None,
+    }
+    container.integration.attach_files_to_incoming_correspondence.return_value = [
+        {"ref_key": "file-ref", "filename": "scan", "size_bytes": 4}
+    ]
+
+    monkeypatch.setattr("agent_pochta.nodes.n7_create_erp_task.get_settings", lambda: MagicMock(agent_mode="live"))
+
+    state = _state()
+    state["email"] = state["email"].model_copy(
+        update={
+            "attachments": [
+                Attachment(
+                    filename="scan.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=4,
+                    content=b"1234",
+                )
+            ]
+        }
+    )
+
+    result = node_create_erp_task(state, container)
+
+    assert result["erp"].success is True
+    container.integration.attach_files_to_incoming_correspondence.assert_called_once()
+    assert result["meta"]["erp_attachments"][0]["ref_key"] == "file-ref"

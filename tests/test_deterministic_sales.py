@@ -99,6 +99,7 @@ def test_chairman_marker_overrides_gazprom(engine):
     )
 
     assert decision.services[0].code == "00-000001"
+    assert decision.direction == "КС"
     assert decision.match_source == "det_chairman"
 
 
@@ -109,6 +110,7 @@ def test_gazprom_igor_borisovich_routes_to_chairman(engine):
     )
 
     assert decision.services[0].code == "00-000001"
+    assert decision.direction == "КС"
     assert decision.match_source == "det_chairman"
 
 
@@ -119,6 +121,7 @@ def test_predsedatel_igor_borisovich_routes_to_chairman_without_gazprom(engine):
     )
 
     assert decision.services[0].code == "00-000001"
+    assert decision.direction == "КС"
     assert decision.match_source == "det_chairman"
 
 

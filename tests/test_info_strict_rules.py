@@ -39,7 +39,7 @@ def test_info_amural_routes_to_chairman(engine):
         engine=engine,
     )
     assert decision.services[0].code == "00-000001"
-    assert decision.direction == "ПР"
+    assert decision.direction == "КС"
     assert decision.match_source == "info_strict"
     assert decision.confidence_level == ConfidenceLevel.HIGH
     assert not _needs_rag_fallback(decision)
@@ -106,7 +106,7 @@ def test_info_ministry_routes_to_operational_director(engine):
         engine=engine,
     )
     assert decision.services[0].code == "00-000152"
-    assert decision.direction == "ПР"
+    assert decision.direction == "КС"
     assert decision.match_source == "info_strict"
     assert decision.confidence_level == ConfidenceLevel.HIGH
     assert not _needs_rag_fallback(decision)

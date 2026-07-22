@@ -7,15 +7,16 @@ import uuid
 from datetime import date, datetime, timezone
 
 import structlog
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from agent_pochta.db.message_filters import (
-    INFO_RECIPIENT_Q,
+    compute_is_info_recipient,
     msk_day_end_exclusive_utc,
     msk_day_start_utc,
     info_to_test_ii_sql_filter,
     only_info_to_sql_filter,
+    operator_review_state_sql_flags,
     recipient_q_sql_filter,
 )
 from agent_pochta.demo_filter import demo_row_filter
@@ -87,13 +88,7 @@ class EmailRepository:
                 )
             )
         if info_recipient_only:
-            query = query.filter(
-                recipient_q_sql_filter(
-                    EmailMessageRow.mailbox,
-                    EmailMessageRow.raw_payload_json,
-                    INFO_RECIPIENT_Q,
-                )
-            )
+            query = query.filter(EmailMessageRow.is_info_recipient.is_(True))
         if only_info_to_test_ii:
             query = query.filter(
                 info_to_test_ii_sql_filter(
@@ -138,6 +133,86 @@ class EmailRepository:
             only_info_to=only_info_to,
         )
         return query.offset(offset).limit(limit).all()
+
+    def list_all_messages(
+        self,
+        *,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
+    ) -> list[EmailMessageRow]:
+        """Все письма по фильтрам (без пагинации) — для Excel-выгрузки."""
+        query = self._session.query(EmailMessageRow).order_by(EmailMessageRow.received_at.desc())
+        query = self._apply_message_filters(
+            query,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
+        )
+        return query.all()
+
+    def count_erp_created(
+        self,
+        *,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
+    ) -> int:
+        query = self._session.query(func.count(EmailMessageRow.id)).filter(
+            EmailMessageRow.erp_task_id.is_not(None),
+            EmailMessageRow.erp_task_id != "",
+        )
+        query = self._apply_message_filters(
+            query,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
+        )
+        return int(query.scalar() or 0)
+
+    def count_erp_skipped(
+        self,
+        *,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
+    ) -> int:
+        query = self._session.query(func.count(EmailMessageRow.id)).filter(
+            EmailMessageRow.erp_document_number == "SKIP-ERP",
+        )
+        query = self._apply_message_filters(
+            query,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
+        )
+        return int(query.scalar() or 0)
 
     def count_messages(
         self,
@@ -197,6 +272,82 @@ class EmailRepository:
         rows = query.group_by(EmailMessageRow.status).all()
         return {status: int(count) for status, count in rows}
 
+    def count_operator_review_states(
+        self,
+        *,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
+    ) -> dict[str, int]:
+        is_corrected, is_verified, is_pending = operator_review_state_sql_flags(
+            EmailMessageRow.raw_payload_json,
+            EmailMessageRow.id,
+        )
+        query = self._session.query(
+            func.count(EmailMessageRow.id).label("all"),
+            func.sum(case((is_corrected, 1), else_=0)).label("corrected"),
+            func.sum(case((is_verified, 1), else_=0)).label("verified"),
+            func.sum(case((is_pending, 1), else_=0)).label("pending"),
+        )
+        query = self._apply_message_filters(
+            query,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
+        )
+        row = query.one()
+        return {
+            "all": int(row.all or 0),
+            "corrected": int(row.corrected or 0),
+            "verified": int(row.verified or 0),
+            "pending": int(row.pending or 0),
+        }
+
+    def batch_operator_review_event_hints(
+        self, email_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, dict[str, bool]]:
+        """operator_approve / operator_change по email_id для inference operator_review_state."""
+        if not email_ids:
+            return {}
+        from agent_pochta.db.models import ClassificationEventRow
+
+        rows = (
+            self._session.query(
+                ClassificationEventRow.email_id,
+                ClassificationEventRow.event_type,
+            )
+            .filter(
+                ClassificationEventRow.email_id.in_(email_ids),
+                ClassificationEventRow.category == "department",
+                ClassificationEventRow.event_type.in_(("operator_approve", "operator_change")),
+                ClassificationEventRow.actor == "operator",
+            )
+            .all()
+        )
+        hints: dict[uuid.UUID, dict[str, bool]] = {}
+        for email_id, event_type in rows:
+            if email_id is None:
+                continue
+            entry = hints.setdefault(
+                email_id,
+                {"has_operator_approve": False, "has_operator_change": False},
+            )
+            if event_type == "operator_approve":
+                entry["has_operator_approve"] = True
+            elif event_type == "operator_change":
+                entry["has_operator_change"] = True
+        return hints
+
     def touch_processing_lease(self, row: EmailMessageRow) -> None:
         """Продлевает lease обработки — защита от повторной постановки в очередь."""
         payload: dict
@@ -242,6 +393,7 @@ class EmailRepository:
             row.human_review = False
             row.raw_payload_json = payload_json
 
+        self._sync_is_info_recipient(row)
         self._session.flush()
         return row.id
 
@@ -284,6 +436,10 @@ class EmailRepository:
             payload["routing_recipient"] = routing_recipient
         if dialog := meta.get("dialog"):
             payload["dialog"] = dialog
+        if erp_attachments := meta.get("erp_attachments"):
+            payload["erp_attachments"] = erp_attachments
+        if erp_attachment_errors := meta.get("erp_attachment_errors"):
+            payload["erp_attachment_errors"] = erp_attachment_errors
         row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
 
         spam = state.get("spam")
@@ -331,6 +487,8 @@ class EmailRepository:
                 row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
             elif not row.spam_reason:
                 row.spam_reason = escalation
+
+        self._sync_is_info_recipient(row)
 
         row.attachments.clear()
         settings = get_settings()
@@ -404,6 +562,13 @@ class EmailRepository:
         return row
 
     @staticmethod
+    def _sync_is_info_recipient(row: EmailMessageRow) -> None:
+        row.is_info_recipient = compute_is_info_recipient(
+            mailbox=row.mailbox,
+            raw_payload_json=row.raw_payload_json,
+        )
+
+    @staticmethod
     def _payload_dict(row: EmailMessageRow) -> dict:
         if not row.raw_payload_json:
             return {}
@@ -438,6 +603,15 @@ class EmailRepository:
         else:
             payload.pop("operator_verified", None)
             payload.pop("operator_verified_at", None)
+        row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+
+    def set_operator_corrected(self, row: EmailMessageRow, corrected: bool) -> None:
+        """Флаг «оператор вносил правки» для табличного вида и статистики."""
+        payload = self._payload_dict(row)
+        if corrected:
+            payload["operator_corrected"] = True
+        else:
+            payload["operator_corrected"] = False
         row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
 
     def rebuild_xml_after_human_correction(

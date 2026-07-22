@@ -98,7 +98,7 @@ def _extract_xml_from_row(row) -> str | None:
     return None
 
 
-def _load_from_db(message_id: str) -> tuple[EmailMessage, RoutingResult, str, str | None]:
+def _load_from_db(message_id: str) -> tuple[EmailMessage, RoutingResult, str, str | None, EmailMessageRow]:
     factory = get_session_factory()
     with factory() as session:
         repo = EmailRepository(session)
@@ -110,10 +110,10 @@ def _load_from_db(message_id: str) -> tuple[EmailMessage, RoutingResult, str, st
         if email is None or routing is None:
             raise SystemExit("Неполная запись: нет payload или routing")
         summary = row.summary_ru or ""
-        return email, routing, summary, _extract_xml_from_row(row)
+        return email, routing, summary, _extract_xml_from_row(row), row
 
 
-def _load_latest_info_from_db() -> tuple[EmailMessage, RoutingResult, str, str | None, str]:
+def _load_latest_info_from_db() -> tuple[EmailMessage, RoutingResult, str, str | None, str, EmailMessageRow]:
     factory = get_session_factory()
     with factory() as session:
         repo = EmailRepository(session)
@@ -141,7 +141,7 @@ def _load_latest_info_from_db() -> tuple[EmailMessage, RoutingResult, str, str |
             routing = repo.build_routing_from_row(row)
             if email is None or routing is None:
                 continue
-            return email, routing, row.summary_ru or "", xml_document, row.message_id
+            return email, routing, row.summary_ru or "", xml_document, row.message_id, row
     raise SystemExit("Не найдено письмо info@ с xml_document в PostgreSQL")
 
 
@@ -177,11 +177,12 @@ def main() -> None:
         )
 
     source_message_id = ""
+    db_row: EmailMessageRow | None = None
     if args.from_info_db:
-        email, routing, summary, xml_document, source_message_id = _load_latest_info_from_db()
+        email, routing, summary, xml_document, source_message_id, db_row = _load_latest_info_from_db()
         print(f"Источник: info@ из БД, message_id={source_message_id}")
     elif args.message_id:
-        email, routing, summary, xml_document = _load_from_db(args.message_id)
+        email, routing, summary, xml_document, db_row = _load_from_db(args.message_id)
         source_message_id = args.message_id
         print(f"Источник: message_id={source_message_id}")
     else:
@@ -202,9 +203,20 @@ def main() -> None:
         xml_document=xml_document,
         field_map=service._field_map,
         extra_fields=service._extra_fields or None,
+        organization_keys=service._organization_keys,
+        department_keys=service._department_keys,
+        department_names=service._department_names,
     )
 
     print(json.dumps(body, ensure_ascii=False, indent=2))
+
+    existing_doc = (db_row.erp_document_number or "").strip() if db_row else ""
+    if existing_doc:
+        print(f"\n[skip-post] Документ 1С уже создан: {existing_doc} — POST пропущен")
+        if args.post:
+            print("           (удалите --post или выберите письмо без erp_document_number)")
+        return
+
     if not args.post:
         print("\n[dry-run] POST не выполнялся (для записи в 1С добавьте --post)")
         return

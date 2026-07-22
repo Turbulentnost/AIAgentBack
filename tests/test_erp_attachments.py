@@ -1,0 +1,178 @@
+"""Тесты прикрепления вложений письма к документу 1С после создания."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
+
+from agent_pochta.schemas import Attachment, EmailMessage
+from agent_pochta.services.erp_attachments import (
+    attach_email_files_to_document,
+    cache_email_attachment_bytes,
+    ensure_attachment_bytes_for_erp,
+    erp_attachment_filename,
+)
+from agent_pochta.services.integration_service import StubIntegrationService
+from agent_pochta.services.odata_integration import ODataIntegrationService
+
+DOC_KEY = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def _email_with_attachment(*, content: bytes | None = b"pdf-bytes") -> EmailMessage:
+    payload = content if content is not None else b""
+    return EmailMessage(
+        message_id="<erp-attach@test>",
+        mailbox="info@turbo-don.ru",
+        sender_email="vendor@example.com",
+        subject="Скан",
+        received_at=datetime.now(timezone.utc),
+        attachments=[
+            Attachment(
+                filename="scan.pdf",
+                mime_type="application/pdf",
+                size_bytes=max(len(payload), 4),
+                content=content,
+            )
+        ],
+    )
+
+
+def test_attach_email_files_to_document_uses_integration():
+    integration = StubIntegrationService()
+    email = _email_with_attachment()
+
+    result = attach_email_files_to_document(
+        integration,
+        document_ref_key=DOC_KEY,
+        email=email,
+    )
+
+    assert len(result) == 1
+    assert result[0]["filename"] == "scan.pdf"
+    assert result[0]["size_bytes"] == len(b"pdf-bytes")
+
+
+def test_attach_email_files_to_document_fetches_missing_content():
+    integration = StubIntegrationService()
+    email = _email_with_attachment(content=None)
+    vault = MagicMock()
+
+    with patch(
+        "agent_pochta.services.erp_attachments.ensure_attachment_bytes_for_erp",
+        side_effect=lambda target, _vault: setattr(
+            target.attachments[0], "content", b"restored"
+        )
+        or 1,
+    ) as ensure_mock:
+        result = attach_email_files_to_document(
+            integration,
+            document_ref_key=DOC_KEY,
+            email=email,
+            vault=vault,
+        )
+
+    ensure_mock.assert_called_once_with(email, vault)
+    assert len(result) == 1
+    assert result[0]["size_bytes"] == len(b"restored")
+
+
+def test_attach_email_files_skips_when_no_content_after_fetch():
+    integration = StubIntegrationService()
+    email = _email_with_attachment(content=None)
+    vault = MagicMock()
+
+    with patch(
+        "agent_pochta.services.erp_attachments.ensure_attachment_bytes_for_erp",
+        return_value=0,
+    ):
+        result = attach_email_files_to_document(
+            integration,
+            document_ref_key=DOC_KEY,
+            email=email,
+            vault=vault,
+        )
+
+    assert result == []
+
+
+def test_attach_email_files_skips_when_odata_attach_disabled():
+    service = ODataIntegrationService(
+        "http://example/odata/standard.odata/",
+        entity="Document_ТД_ВходящаяКорреспонденция",
+        attach_files_enabled=False,
+    )
+    email = _email_with_attachment()
+
+    result = attach_email_files_to_document(
+        service,
+        document_ref_key=DOC_KEY,
+        email=email,
+    )
+
+    assert result == []
+
+
+def test_ensure_attachment_bytes_for_erp_restores_from_cache():
+    email = _email_with_attachment(content=None)
+    vault = MagicMock()
+    cached = MagicMock(content=b"cached-bytes", mime_type="application/pdf")
+
+    with patch(
+        "agent_pochta.services.erp_attachments.get_cached_attachment",
+        return_value=cached,
+    ), patch(
+        "agent_pochta.services.erp_attachments.ensure_attachments_from_imap",
+    ) as imap_mock:
+        restored = ensure_attachment_bytes_for_erp(email, vault)
+
+    assert restored == 1
+    assert email.attachments[0].content == b"cached-bytes"
+    imap_mock.assert_not_called()
+
+
+def test_ensure_attachment_bytes_for_erp_falls_back_to_partial_imap():
+    email = _email_with_attachment(content=None)
+    vault = MagicMock()
+
+    with patch(
+        "agent_pochta.services.erp_attachments.get_cached_attachment",
+        return_value=None,
+    ), patch(
+        "agent_pochta.services.erp_attachments.ensure_attachments_from_imap",
+        return_value=0,
+    ), patch(
+        "agent_pochta.services.erp_attachments.resolve_imap_credentials",
+        return_value=MagicMock(),
+    ), patch(
+        "agent_pochta.services.erp_attachments.ImapMailboxClient",
+    ) as client_cls:
+        client = client_cls.return_value
+        client.fetch_attachment_bytes.return_value = (
+            b"partial-bytes",
+            "application/pdf",
+            "scan.pdf",
+        )
+        restored = ensure_attachment_bytes_for_erp(email, vault)
+
+    assert restored == 1
+    assert email.attachments[0].content == b"partial-bytes"
+    client.fetch_attachment_bytes.assert_called_once()
+
+
+def test_erp_attachment_filename_adds_extension_from_mime():
+    att = Attachment(
+        filename="scan",
+        mime_type="application/pdf",
+        size_bytes=100,
+        content=b"x",
+    )
+    assert erp_attachment_filename(att) == "scan.pdf"
+
+
+def test_cache_email_attachment_bytes_stores_in_cache():
+    email = _email_with_attachment()
+    assert cache_email_attachment_bytes(email) == 1
+    empty = _email_with_attachment(content=None)
+    restored = ensure_attachment_bytes_for_erp(empty, MagicMock())
+    assert restored >= 1
+    assert empty.attachments[0].content == b"pdf-bytes"

@@ -23,6 +23,7 @@ from agent_pochta.routing.organizations import (
     DIRECTION_COMMERCIAL,
     DIRECTION_DEFAULT,
     DIRECTION_UNCLEAR,
+    KS_PAYER_DIRECTION_DEPARTMENT_CODES,
     normalize_organization_code,
     resolve_direction_for_department,
 )
@@ -333,9 +334,12 @@ class RouteEngine:
             )
 
         rule2 = cfg.get("ministry_od") or {}
+        ministry_patterns = self.rules.get("ministry_content_patterns") or rule2.get(
+            "content_patterns"
+        ) or []
         ministry_hits = [
             str(pattern)
-            for pattern in (rule2.get("content_patterns") or [])
+            for pattern in ministry_patterns
             if keyword_in_text(str(pattern), text)
         ]
         if ministry_hits and rule2.get("code"):
@@ -672,6 +676,8 @@ class RouteEngine:
         direction = self.detect_direction(organization, primary.direction)
         if primary.code in COMMERCIAL_DEPARTMENT_CODES:
             direction = DIRECTION_COMMERCIAL
+        elif primary.code in KS_PAYER_DIRECTION_DEPARTMENT_CODES:
+            direction = DIRECTION_UNCLEAR
         claim = contains_claim_marker(f"{subject} {body}")
 
         info_no_topic = (

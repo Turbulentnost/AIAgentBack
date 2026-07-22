@@ -157,6 +157,24 @@ def test_rebuild_decision_xml_updates_commercial_direction(engine) -> None:
 
 @pytest.mark.parametrize(
     "department_id",
+    ["00-000001", "00-000152", "00-000182", "00-000044"],
+)
+def test_leadership_departments_use_ks_direction(engine, department_id: str) -> None:
+    from agent_pochta.routing.organizations import resolve_direction_for_department
+
+    assert (
+        resolve_direction_for_department(
+            department_id,
+            "НП",
+            rules=engine.rules,
+            fallback_direction=DIRECTION_DEFAULT,
+        )
+        == DIRECTION_UNCLEAR
+    )
+
+
+@pytest.mark.parametrize(
+    "department_id",
     ["00-000054", "00-000042", "00-000076", "00-000155"],
 )
 def test_commercial_departments_use_pr_direction(engine, department_id: str) -> None:

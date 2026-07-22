@@ -14,7 +14,8 @@ from fastapi.testclient import TestClient
 from agent_pochta.api.app import app
 from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.schemas import EmailMessage, ProcessingStatus, Priority, RoutingResult
-from agent_pochta.services.odata_incoming_mapper import resolve_payer_direction
+from agent_pochta.services.odata_incoming_mapper import resolve_odata_direction, resolve_payer_direction
+from agent_pochta.routing.xml_builder import resolve_document_theme
 from agent_pochta.workers.tasks import extract_xml_document_from_row, retry_erp_task
 
 # Реальный XML из error-строки БД (lunda.ru → td_sales2.8, org=НП, направление=КС).
@@ -184,6 +185,52 @@ def test_extract_xml_document_from_row() -> None:
     assert extract_xml_document_from_row(row) == ERROR_CASE_XML
 
 
+def test_retry_erp_task_attaches_files_after_document_create() -> None:
+    from agent_pochta.schemas import Attachment
+
+    row = _info_error_row()
+    payload = json.loads(row.raw_payload_json)
+    payload["attachments"] = [
+        {"filename": "scan.pdf", "mime_type": "application/pdf", "size_bytes": 4}
+    ]
+    row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+
+    integration = MagicMock()
+    integration.create_incoming_correspondence.return_value = {
+        "erp_document_number": "ВК-000099",
+        "erp_document_id": "11111111-2222-3333-4444-555555555555",
+        "erp_task_id": None,
+        "fields": {},
+    }
+    integration.attach_files_to_incoming_correspondence.return_value = [
+        {"ref_key": "file-ref", "filename": "scan", "size_bytes": 4}
+    ]
+    email = _info_sample_email().model_copy(
+        update={
+            "attachments": [
+                Attachment(
+                    filename="scan.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=4,
+                    content=b"1234",
+                )
+            ]
+        }
+    )
+
+    with _mock_retry_deps(row=row, integration=integration, email=email):
+        task = retry_erp_task
+        task.push_request(retries=0, max_retries=5)
+        try:
+            result = task(row.message_id)
+        finally:
+            task.pop_request()
+
+    assert result["ok"] is True
+    assert result["erp_attachments"][0]["ref_key"] == "file-ref"
+    integration.attach_files_to_incoming_correspondence.assert_called_once()
+
+
 def test_retry_erp_task_posts_minimal_payload_from_stored_xml(monkeypatch: pytest.MonkeyPatch) -> None:
     row = _info_error_row()
     info_xml = json.loads(row.raw_payload_json)["xml_document"]
@@ -229,8 +276,8 @@ def test_retry_erp_task_skips_non_info_mailbox() -> None:
     integration.create_incoming_correspondence.assert_not_called()
 
 
-def test_retry_erp_task_minimal_payload_author_and_payer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Повтор в 1С через ODataIntegrationService шлёт только Автор + ПлательщикНаправление."""
+def test_retry_erp_task_full_payload_author_and_payer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Повтор в 1С через ODataIntegrationService шлёт полный payload из XML."""
     from agent_pochta.services.odata_integration import ODataIntegrationService
 
     row = _info_error_row()
@@ -253,14 +300,20 @@ def test_retry_erp_task_minimal_payload_author_and_payer(monkeypatch: pytest.Mon
 
     assert result["ok"] is True
     payload = create_mock.call_args[0][1]
-    assert set(payload.keys()) == {
-        "Автор",
-        "Автор_Type",
-        "ПлательщикНаправление",
-        "ПлательщикНаправление_Type",
-    }
-    assert payload["Автор"] == "ИИ 1С"
+    email = _info_sample_email()
+    expected_theme = resolve_document_theme(
+        email,
+        explicit_theme='Запрос: Счёт для ООО «Лунда» 00000320781',
+        combined_text=email.body_text or "",
+        process_type="исполнение",
+        claim=False,
+    )
+    assert payload["Автор"] == "Искусственный интеллект 1С"
+    assert payload["Партнер"] == "ООО «Лунда»"
+    assert payload["ТемаСлужебнойЗаписки"] == expected_theme
     assert payload["ПлательщикНаправление"] == resolve_payer_direction("НП", "КС")
+    assert payload["Направление"] == resolve_odata_direction("00-000155", "КС")
+    assert payload["Партнер_Type"] == "Edm.String"
 
 
 def test_retry_erp_task_missing_xml_does_not_call_integration() -> None:

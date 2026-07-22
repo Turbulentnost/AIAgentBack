@@ -4864,6 +4864,84 @@
       ],
       "label": "spam",
       "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (500): Не удалось записать: \"Входящая корреспонденция\"!. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "6fe57d37-6453-4b64-8cbe-7944c48313fe",
+      "created_at": "2026-07-21T11:59:31.734661+00:00",
+      "message_id": "<130151784632497@mail.yandex.ru>#info@turbo-don.ru",
+      "sender_email": "aro-minprom@yandex.ru",
+      "keywords": [
+        "aro-minprom"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "015ca42b-4f18-48ee-96b9-d304de55354f",
+      "created_at": "2026-07-21T11:59:31.903210+00:00",
+      "message_id": "<130151784632497@mail.yandex.ru>#info@turbo-don.ru",
+      "sender_email": "aro-minprom@yandex.ru",
+      "keywords": [
+        "aro-minprom"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "9fbe845b-a63b-4393-a15f-eb4e58c3ec67",
+      "created_at": "2026-07-21T12:26:12.243465+00:00",
+      "message_id": "<32c22a72-8bcb-b491-4742-2d86d7ddfc88@greatest-vitamins.com>#info@turbo-don.ru",
+      "sender_email": "rtinh@greatest-vitamins.com",
+      "keywords": [
+        "soa for your",
+        "for your review",
+        "rtinh"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "dda35003-e0e8-46ce-913c-56da7cb7d0b9",
+      "created_at": "2026-07-21T12:34:31.194893+00:00",
+      "message_id": "<508163880583748.417@mail.yandex.ru>#info@turbo-don.ru",
+      "sender_email": "pryazhnikov@corphealts.ru",
+      "keywords": [
+        "корпоративное здоровье x",
+        "здоровье x турбулентность",
+        "x турбулентность дон",
+        "pryazhnikov"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "7b8b5604-4175-423c-be1a-a5d80d32a1db",
+      "created_at": "2026-07-22T06:06:45.495719+00:00",
+      "message_id": "<ADR510000207510251000050569C908C1FD1A1A625CF10BBC51A@GAZPROM-NEFT.RU>#info@turbo-don.ru",
+      "sender_email": "no_reply_sap_gpn@gazprom-neft.ru",
+      "keywords": [
+        "напоминание о необходимости",
+        "о необходимости рассмотреть",
+        "необходимости рассмотреть документ",
+        "no_reply_sap_gpn"
+      ],
+      "label": "spam",
+      "reason": "Сбой интеграции с 1С: OData POST Document_ТД_ВходящаяКорреспонденция failed (400): Перечисление 'ТД_НаправленияСлужебныхЗаписок' не содержит элемент 'КС'.. Запланирован повтор через Celery; уведомление администратору при исчерпании попыток."
+    },
+    {
+      "id": "0e73b88c-acfc-4a9d-8e67-db0bfe01c8b0",
+      "created_at": "2026-07-22T06:17:49.818070+00:00",
+      "message_id": "<20260722025519.A79ACA2452@relay.etm.spb.ru>#info@turbo-don.ru",
+      "sender_email": "robot@etm.ru",
+      "keywords": [
+        "spam претензия от",
+        "претензия от этм",
+        "от этм исх.n",
+        "этм исх.n 6242522",
+        "robot"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
     }
   ]
 }

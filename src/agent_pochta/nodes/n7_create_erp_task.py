@@ -76,6 +76,7 @@ def node_create_erp_task(state: AgentState, container: ServiceContainer) -> Agen
                     container.integration,
                     document_ref_key=str(doc_id),
                     email=email,
+                    vault=container.vault,
                 )
                 if attached:
                     meta["erp_attachments"] = attached

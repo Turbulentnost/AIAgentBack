@@ -59,6 +59,44 @@ def safe_payload_jsonb(raw_payload_column):
     return cast(sanitized, JSONB)
 
 
+def operator_review_state_sql_flags(raw_payload_column, email_id_column):
+    """SQL-выражения corrected / verified / pending (как operator_review_state в list API)."""
+    from agent_pochta.db.models import ClassificationEventRow
+
+    payload = safe_payload_jsonb(raw_payload_column)
+    is_corrected_payload = payload["operator_corrected"] == cast("true", JSONB)
+    has_operator_change = (
+        select(literal(1))
+        .select_from(ClassificationEventRow)
+        .where(
+            ClassificationEventRow.email_id == email_id_column,
+            ClassificationEventRow.category == "department",
+            ClassificationEventRow.event_type == "operator_change",
+            ClassificationEventRow.actor == "operator",
+        )
+        .exists()
+    )
+    has_operator_approve = (
+        select(literal(1))
+        .select_from(ClassificationEventRow)
+        .where(
+            ClassificationEventRow.email_id == email_id_column,
+            ClassificationEventRow.category == "department",
+            ClassificationEventRow.event_type == "operator_approve",
+            ClassificationEventRow.actor == "operator",
+        )
+        .exists()
+    )
+    is_corrected = or_(is_corrected_payload, has_operator_change)
+    is_verified_raw = or_(
+        payload["operator_verified"] == cast("true", JSONB),
+        has_operator_approve,
+    )
+    is_verified = and_(is_verified_raw, ~is_corrected)
+    is_pending = and_(~is_corrected, ~is_verified_raw)
+    return is_corrected, is_verified, is_pending
+
+
 
 def _jsonb_contains_email(payload, key: str, email: str):
     """SQL: JSON-массив key содержит email (без учёта регистра)."""
@@ -203,6 +241,14 @@ def matches_recipient_q(*, mailbox: str, payload: dict[str, Any] | None, query: 
 def matches_info_recipient_only(*, mailbox: str, payload: dict[str, Any] | None) -> bool:
     """Outlook-style имяполучателя:(info) — «Кому» содержит info (без учёта регистра)."""
     return matches_recipient_q(mailbox=mailbox, payload=payload, query=INFO_RECIPIENT_Q)
+
+
+def compute_is_info_recipient(*, mailbox: str, raw_payload_json: str | None) -> bool:
+    """Denormalized flag for info_recipient_only list/stats filters."""
+    return matches_info_recipient_only(
+        mailbox=mailbox,
+        payload=load_payload_dict(raw_payload_json),
+    )
 
 
 def recipient_q_sql_filter(mailbox_column, raw_payload_column, query: str):

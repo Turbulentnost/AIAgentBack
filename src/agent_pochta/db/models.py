@@ -57,6 +57,7 @@ class EmailMessageRow(Base):
     attachments_count: Mapped[int] = mapped_column(Integer, default=0)
     agent_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_info_recipient: Mapped[bool] = mapped_column(Boolean, default=False)
     erp_retry_count: Mapped[int] = mapped_column(Integer, default=0)
 
     attachments: Mapped[list["EmailAttachmentRow"]] = relationship(

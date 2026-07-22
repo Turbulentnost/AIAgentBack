@@ -8,6 +8,11 @@ from datetime import date
 
 from imapclient import IMAPClient
 
+try:
+    from billiard.exceptions import SoftTimeLimitExceeded
+except ImportError:  # pragma: no cover — outside Celery worker
+    SoftTimeLimitExceeded = None  # type: ignore[misc, assignment]
+
 from agent_pochta.config import Settings, get_settings
 from agent_pochta.imap.parser import parse_raw_email
 from agent_pochta.imap.attachment_parts import ImapAttachmentPart, list_attachment_parts
@@ -128,11 +133,16 @@ class ImapMailboxClient:
 
             batch_size = max(1, int(getattr(self.settings, "imap_fetch_batch_size", 20) or 20))
             exclude = exclude_message_id_bases or set()
-            # Newest-first: mailbox SINCE windows are huge; full header scans hit SoftTimeLimit.
+            # Newest-first: SINCE on busy mailboxes (e.g. info@) can match thousands of UIDs.
             scan_uids = sorted(uids, reverse=True)
-            max_scan = max(0, int(getattr(self.settings, "imap_catchup_max_uids", 400) or 0))
-            if max_scan and exclude:
-                scan_uids = scan_uids[:max_scan]
+            max_scan = max(0, int(getattr(self.settings, "imap_catchup_max_uids", 50) or 0))
+            if max_scan:
+                if exclude:
+                    # Scan a wider header window, but stop after max_scan unknown targets.
+                    header_cap = max(max_scan * 10, 200)
+                    scan_uids = scan_uids[:header_cap]
+                else:
+                    scan_uids = scan_uids[:max_scan]
             target_uids = list(scan_uids)
 
             if exclude:
@@ -153,18 +163,26 @@ class ImapMailboxClient:
                         if mid and mid in exclude:
                             continue
                         target_uids.append(uid)
+                        if max_scan and len(target_uids) >= max_scan:
+                            break
+                    if max_scan and len(target_uids) >= max_scan:
+                        break
 
             emails: list[EmailMessage] = []
-            for offset in range(0, len(target_uids), batch_size):
-                batch = target_uids[offset : offset + batch_size]
-                fetch_data = client.fetch(batch, ["RFC822"])
-                for uid in batch:
-                    item = fetch_data.get(uid)
-                    if not item or b"RFC822" not in item:
-                        continue
-                    emails.append(parse_raw_email(item[b"RFC822"], self.mailbox))
-                    if mark_seen:
-                        client.add_flags([uid], [b"\\Seen"])
+            try:
+                for offset in range(0, len(target_uids), batch_size):
+                    batch = target_uids[offset : offset + batch_size]
+                    fetch_data = client.fetch(batch, ["RFC822"])
+                    for uid in batch:
+                        item = fetch_data.get(uid)
+                        if not item or b"RFC822" not in item:
+                            continue
+                        emails.append(parse_raw_email(item[b"RFC822"], self.mailbox))
+                        if mark_seen:
+                            client.add_flags([uid], [b"\\Seen"])
+            except Exception as exc:
+                if SoftTimeLimitExceeded is None or not isinstance(exc, SoftTimeLimitExceeded):
+                    raise
             return emails
         finally:
             try:

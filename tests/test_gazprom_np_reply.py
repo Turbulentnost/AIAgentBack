@@ -167,6 +167,7 @@ def test_re_without_np_marker_routes_to_operational_director(engine):
     )
     assert decision.services[0].code == "00-000152"
     assert decision.services[0].name == "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    assert decision.direction == "КС"
     assert decision.match_source == "gazprom_np_reply"
 
 

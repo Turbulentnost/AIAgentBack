@@ -272,7 +272,13 @@ def process_email_task(self, email_payload: dict) -> dict:
     return {"multi_recipient": True, "results": results}
 
 
-@celery_app.task(name="agent_pochta.poll_imap", queue="imap")
+@celery_app.task(
+    name="agent_pochta.poll_imap",
+    queue="imap",
+    # IMAP catch-up on large mailboxes (info@) can exceed the global 600s soft limit.
+    soft_time_limit=900,
+    time_limit=1080,
+)
 def poll_imap_task() -> dict:
     from agent_pochta.imap.poller import poll_mailboxes
 
@@ -292,8 +298,9 @@ def recover_stale_processing_task(*, limit: int = 30) -> dict:
     queue="erp",
     # Не дать волне ERP 403/500 занять пул process_email (отдельная очередь erp).
     rate_limit="6/m",
-    soft_time_limit=90,
-    time_limit=120,
+    # IMAP fetch (до 120 с) + OData POST вложений — больше стандартного soft limit.
+    soft_time_limit=240,
+    time_limit=300,
 )
 def retry_erp_task(self, message_id: str) -> dict:
     """Повтор создания документа в 1С (ТЗ §5.2: 10 мин, max 5 попыток)."""
@@ -375,6 +382,7 @@ def retry_erp_task(self, message_id: str) -> dict:
                     container.integration,
                     document_ref_key=str(doc_id),
                     email=email,
+                    vault=container.vault,
                 )
                 if attached:
                     attachment_meta["erp_attachments"] = attached
