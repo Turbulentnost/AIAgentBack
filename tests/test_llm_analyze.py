@@ -226,7 +226,7 @@ def test_parse_analyze_fills_xml_theme_when_missing():
         subject="Акт сверки",
         combined_text="Направляем акт сверки за квартал.",
     )
-    assert analysis.xml_theme.startswith("Запрос:")
+    assert analysis.xml_theme.startswith("Рассмотреть:")
     assert "акт сверки" in analysis.xml_theme.lower()
 
 
