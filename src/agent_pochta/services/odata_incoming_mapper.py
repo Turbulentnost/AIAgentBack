@@ -61,6 +61,7 @@ _MSK = ZoneInfo("Europe/Moscow")
 _EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 _COMPOSITE_STRING_TYPE = "Edm.String"
 _ORG_AS_PAYER_DIRECTION = frozenset({"АЛ", "МГ", "АМ", "МИ", "БМ"})
+_ALMAZ_DEFAULT_PARTNER = 'ООО "АЛМАЗ"'
 
 # Enum 1С «ТД_НаправленияСлужебныхЗаписок» (поле OData «Направление»).
 # Коды XML (<направление> ПР/КС/СС) сюда не входят — это отдельный enum «ПлательщикНаправление».
@@ -522,6 +523,8 @@ def build_incoming_document_payload(
         payer_direction_code,
         payer_direction_map=payer_direction_map,
     )
+    if not partner and org_code == "АЛ" and payer_direction == "АЛМАЗ":
+        partner = _ALMAZ_DEFAULT_PARTNER
     ai_task = summary_ru.strip() or str(theme).strip()
 
     payload: dict[str, Any] = {

@@ -576,3 +576,25 @@ def test_gazprom_and_yandex_payer_direction_from_xml_direction() -> None:
     """Направление из XML, не partner — как у писем gazprom/yandex в production."""
     assert resolve_payer_direction("НП", "СС") == "ТурбулентностьДОНСС"
     assert resolve_payer_direction("НП", "ПР") == "ТурбулентностьДОНПроизводство1"
+
+
+def test_almaz_default_partner_when_xml_partner_dash(
+    sample_email: EmailMessage,
+    sample_routing: RoutingResult,
+) -> None:
+    xml = (
+        SAMPLE_XML.replace("<organization>НП</organization>", "<organization>АЛ</organization>")
+        .replace("<partner>ООО Пример</partner>", "<partner>-</partner>")
+        .replace("<направление>КС</направление>", "<направление>АЛ</направление>")
+    )
+    payload = build_incoming_document_payload(
+        sample_email,
+        sample_routing,
+        "",
+        xml_document=xml,
+        organization_keys=SAMPLE_ORG_KEYS,
+        department_keys=SAMPLE_DEPT_KEYS,
+    )
+    assert payload["ПлательщикНаправление"] == "АЛМАЗ"
+    assert payload["Партнер"] == 'ООО "АЛМАЗ"'
+    assert payload["Партнер_Type"] == "Edm.String"
