@@ -3,6 +3,31 @@
   "reserve_code": "00-000066",
   "reserve_name": "Управление делами (офис-менеджер)",
   "spam_code": "00-999999",
+  "dialog_category": {
+    "enabled": true,
+    "rules_file": "data/dialog_rules.json",
+    "label": "Диалог",
+    "document_kind": "dialog",
+    "status": "dialog",
+    "description": "Переписка без нового поручения в начале письма; dormant не регистрируется в 1С",
+    "detection": {
+      "company_name_min_occurrences": 2,
+      "company_name_patterns": [
+        "турбулентность-дон",
+        "турбулентность дон",
+        "турбулентность"
+      ],
+      "subject_thread_prefixes": [
+        "re:",
+        "fw:",
+        "fwd:",
+        "ответ:",
+        "пересл:",
+        "пересылка:"
+      ],
+      "body_top_no_action": true
+    }
+  },
   "ministry_content_patterns": [
     "министерство",
     "министерств",
@@ -3624,6 +3649,156 @@
           "from ачимова",
           "gazprom.kg mailto",
           "gazprom.kg subject"
+        ]
+      },
+      {
+        "id": "42f72066-f3c0-41ae-b628-ed6aaf9dfd06",
+        "created_at": "2026-07-22T10:30:13.799727+00:00",
+        "partner": "ООО «Стройгазсервис»",
+        "organization": "НП",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "i.n.konyuxov@sgservice.org",
+        "recipient": "info@turbo-don.ru",
+        "subject": "поставка расходомеров ультразвуковых для объекта \"техническое перевооружение грс ново-успенка\"",
+        "keywords": [
+          "поставка расходомеров ультразвуковых для объекта \"техническое перевооружение грс ново-успенка",
+          "info",
+          "газа",
+          "для объекта техническое",
+          "объекта техническое перевооружение"
+        ]
+      },
+      {
+        "id": "1784af3e-d232-4007-8430-538a25642b98",
+        "created_at": "2026-07-22T10:30:55.969979+00:00",
+        "partner": "llc.ru",
+        "organization": "НП",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "vetrov_i@mercury-llc.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "кп 21.07. электрика",
+        "keywords": [
+          "кп 21.07. электрика",
+          "info",
+          "turbo flow",
+          "кп 21.07 электрика"
+        ]
+      },
+      {
+        "id": "599c9792-8fc4-4203-af18-b25c8a4bedba",
+        "created_at": "2026-07-22T10:31:52.115868+00:00",
+        "partner": "ООО «ВодоГазСервис»",
+        "organization": "НП",
+        "department_id": "00-000001",
+        "department_name": "Председатель Совета Директоров",
+        "sender_email": "vgs-61@yandex.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "задолженность ип амураль и ооо турбулентность-дон",
+        "keywords": [
+          "задолженность ип амураль и ооо турбулентность-дон",
+          "info"
+        ]
+      },
+      {
+        "id": "854805c3-0d0c-4ed1-8636-8280451c1318",
+        "created_at": "2026-07-22T10:47:16.477981+00:00",
+        "partner": "ООО 'Бантер Групп'",
+        "organization": "НП",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "andreev.m@bunter.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "эб3825 запрос кп на расходомеры",
+        "keywords": [
+          "эб3825 запрос кп на расходомеры",
+          "info",
+          "расходомеров",
+          "газа"
+        ]
+      },
+      {
+        "id": "16f94ff1-e758-45db-af3d-7f4be8c560fb",
+        "created_at": "2026-07-22T10:49:31.558567+00:00",
+        "partner": "ИП Прохорова Светлана Анатольевна",
+        "organization": "НП",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "olgakez1@yandex.by",
+        "recipient": "info@turbo-don.ru",
+        "subject": "запрос стоимости и наличия",
+        "keywords": [
+          "запрос стоимости и наличия",
+          "info"
+        ]
+      },
+      {
+        "id": "2e682c00-96d0-44d3-83a7-1cfcac747373",
+        "created_at": "2026-07-22T10:52:05.766762+00:00",
+        "partner": "ООО «Бантер Групп»",
+        "organization": "НП",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "andreev.m@bunter.ru",
+        "recipient": "test_ii@turbo-don.ru",
+        "subject": "эб3825 запрос кп на расходомеры",
+        "keywords": [
+          "эб3825 запрос кп на расходомеры",
+          "test_ii"
+        ]
+      },
+      {
+        "id": "96f9aeb4-3323-4485-b6f2-1d8202005a79",
+        "created_at": "2026-07-22T10:53:32.307371+00:00",
+        "partner": "АО ЧИП и ДИП",
+        "organization": "НП",
+        "department_id": "00-000065",
+        "department_name": "Отдел МТО",
+        "sender_email": "tatyana.stepanchuk@chipdip.ru",
+        "recipient": "uk_omto7@turbo-don.ru",
+        "subject": "заказ 17594765",
+        "keywords": [
+          "заказ 17594765",
+          "uk_omto7",
+          "на оплату",
+          "счет на"
+        ]
+      },
+      {
+        "id": "36d976fa-300a-4eac-8147-ff08daebce6d",
+        "created_at": "2026-07-22T10:56:25.922117+00:00",
+        "partner": "ООО \"Экспортёр\"",
+        "organization": "НП",
+        "department_id": "00-000015",
+        "department_name": "Отдел внешнеэкономической деятельности",
+        "sender_email": "nizomiddinusmonov12@gmail.com",
+        "recipient": "info@turbo-don.ru",
+        "subject": "срочна кп",
+        "keywords": [
+          "срочна кп",
+          "info",
+          "flow ufg-f",
+          "turbo flow",
+          "ufg-f 1",
+          "а также",
+          "благодарим за"
+        ]
+      },
+      {
+        "id": "cc2689cc-27ba-4bc8-afde-5e4d93644b5b",
+        "created_at": "2026-07-22T11:11:15.422832+00:00",
+        "partner": "ООО \"ГТН ГАЗ\"",
+        "organization": "НП",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "gtngaz@mail.ru",
+        "recipient": "td_odppo7@turbo-don.ru",
+        "subject": "re: fw: запрос ооо гтн газ для цветковой анастасии",
+        "keywords": [
+          "запрос ооо гтн газ для цветковой анастасии",
+          "td_odppo7",
+          "техническое"
         ]
       }
     ]

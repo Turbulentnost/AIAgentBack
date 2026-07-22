@@ -53,17 +53,17 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
             "fields": {
                 "name": "Description",
                 "extension": "Расширение",
-                "owner_key": "ВладелецФайла",
-                "owner_type": "ВладелецФайла_Type",
-                "storage_binary": "ФайлХранилище",
+                # 1С OData: ссылка на документ — *_Key, не ВладелецФайла.
+                "owner_key": "ВладелецФайла_Key",
+                "storage_binary": "ФайлХранилище_Base64Data",
                 "storage_binary_type": "ФайлХранилище_Type",
                 "storage_kind": "ТипХраненияФайла",
                 "size": "Размер",
             },
             "defaults": {
+                # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
                 "storage_binary_type": "application/octet-stream",
                 "storage_kind": "ВИнформационнойБазе",
-                "owner_type": "StandardODATA.Document_ТД_ВходящаяКорреспонденция",
             },
         }
     data = json.loads(file_path.read_text(encoding="utf-8"))
@@ -127,13 +127,14 @@ def build_attached_file_payload(
         payload[str(name_field)] = base_name
     if ext_field := fields.get("extension"):
         payload[str(ext_field)] = extension
-    if owner_field := fields.get("owner_key"):
-        payload[str(owner_field)] = owner_key
+    owner_field_name = str(fields.get("owner_key") or "")
+    if owner_field_name:
+        payload[owner_field_name] = owner_key
+    # При *_Key поле типа владельца не передаём (формат OData 1С).
     if owner_type_field := fields.get("owner_type"):
-        payload[str(owner_type_field)] = defaults.get(
-            "owner_type",
-            "StandardODATA.Document_ТД_ВходящаяКорреспонденция",
-        )
+        owner_type_value = defaults.get("owner_type")
+        if owner_type_value and not owner_field_name.endswith("_Key"):
+            payload[str(owner_type_field)] = owner_type_value
     if storage_field := fields.get("storage_binary"):
         payload[str(storage_field)] = base64.b64encode(content).decode("ascii")
     if storage_type_field := fields.get("storage_binary_type"):

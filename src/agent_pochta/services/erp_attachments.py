@@ -318,6 +318,10 @@ def attach_email_files_to_document(
             document_ref_key=document_ref_key,
             message_id=email.message_id,
             files=len(files),
+            payload_fields=list(
+                erp_attachment_filename(att)
+                for att in attachments_with_content(email)
+            ),
         )
         raise
 
@@ -376,6 +380,10 @@ def attach_missing_email_files_to_document(
             document_ref_key=document_ref_key,
             message_id=email.message_id,
             files=len(files),
+            payload_fields=list(
+                erp_attachment_filename(att)
+                for att in attachments_with_content(email)
+            ),
         )
         raise
 

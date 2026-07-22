@@ -10,6 +10,7 @@ from agent_pochta.api.app import _row_to_list_dict
 from agent_pochta.api import list_table_fields
 from agent_pochta.api.list_table_fields import (
     default_responsible_label,
+    dialog_category_fields,
     operator_review_state,
     row_to_table_fields,
 )
@@ -133,6 +134,33 @@ def test_row_to_list_dict_corrected_state():
     row = _make_row(payload_extra={"operator_verified": True, "operator_corrected": True})
     data = _row_to_list_dict(row)
     assert data["operator_review_state"] == "corrected"
+
+
+def test_dialog_category_fields_from_payload():
+    payload = {
+        "dialog": {
+            "mode": "dormant",
+            "document_kind": "dialog",
+            "reasoning": "dialog_dormant",
+        },
+        "routing_decision": {"document_kind": "dialog"},
+    }
+    fields = dialog_category_fields(payload, status="dialog")
+    assert fields["is_dialog"] is True
+    assert fields["document_category_label"] == "Диалог"
+    assert fields["dialog_mode"] == "dormant"
+
+
+def test_row_to_table_fields_includes_dialog_category():
+    row = _make_row(
+        status="dialog",
+        payload_extra={
+            "dialog": {"mode": "dormant", "document_kind": "dialog"},
+        },
+    )
+    fields = row_to_table_fields(row)
+    assert fields["is_dialog"] is True
+    assert fields["document_category_label"] == "Диалог"
 
 
 def test_default_responsible_label_skips_ai_placeholder(monkeypatch):

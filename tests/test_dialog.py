@@ -10,6 +10,7 @@ from agent_pochta.routing.dialog import (
     DialogMode,
     build_dialog_dormant_theme,
     classify_dialog,
+    is_dialog_email,
     load_dialog_rules,
     reset_dialog_rules_cache,
 )
@@ -131,3 +132,63 @@ def test_dialog_rules_file_loads():
     assert rules.get("enabled") is True
     assert "activation_markers" in rules
     assert "dormant_markers" in rules
+    assert "company_thread_signals" in rules
+    assert "body_top" in rules
+
+
+def test_is_dialog_email_strict_criteria():
+    body = (
+        "Спасибо, принято.\n\n"
+        "10.07.2026, manager@turbo-don.ru пишет:\n"
+        "> Уточните срок отгрузки\n"
+        "С уважением, ООО НПО «Турбулентность-ДОН»"
+    )
+    subject = "Re: сроки поставки"
+    full_body = (
+        f"ООО НПО «Турбулентность-ДОН»\n{body}\n"
+        "ПАО «Газпром» — партнёр\n"
+        "NPO Turbulentnost-DON"
+    )
+    assert is_dialog_email(subject, full_body) is True
+
+
+def test_is_dialog_email_false_without_company_repeats():
+    body = (
+        "Спасибо, принято.\n\n"
+        "10.07.2026, manager@turbo-don.ru пишет:\n"
+        "> Уточните срок отгрузки"
+    )
+    assert is_dialog_email("Re: сроки", body) is False
+
+
+def test_is_dialog_email_false_with_action_at_top():
+    body = (
+        "Просим направить акт сверки до пятницы.\n\n"
+        "ООО НПО «Турбулентность-ДОН»\n"
+        "ООО НПО «Турбулентность-ДОН»\n"
+        "10.07.2026, info@turbo-don.ru пишет:\n"
+        "> Добрый день"
+    )
+    assert is_dialog_email("Re: документы", body) is False
+
+
+def test_is_dialog_email_false_without_thread_subject():
+    body = "Турбулентность-Дон\nТурбулентность-Дон\nСпасибо"
+    assert is_dialog_email("Сроки поставки", body) is False
+
+
+def test_classify_dormant_via_company_name_repeats():
+    body = (
+        "Спасибо, принято.\n\n"
+        "С уважением, ООО НПО «Турбулентность-ДОН»\n"
+        "10.07.2026, manager@turbo-don.ru пишет:\n"
+        "> Уточните срок\n"
+        "ООО НПО «Турбулентность-ДОН» — ответ"
+    )
+    result = classify_dialog(
+        subject="Re: сроки поставки",
+        body=body,
+        sender_email="partner@example.ru",
+    )
+    assert result.is_dialog is True
+    assert result.mode == DialogMode.DORMANT

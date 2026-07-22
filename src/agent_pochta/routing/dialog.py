@@ -75,16 +75,131 @@ def _marker_hits(markers: list[str], text: str) -> list[str]:
     return found
 
 
-def _thread_signals(subject: str, body: str, cfg: dict) -> list[str]:
-    thread_cfg = cfg.get("thread_markers") or {}
+def _thread_cfg(cfg: dict) -> dict:
+    return cfg.get("thread_markers") or {}
+
+
+def _subject_thread_hits(subject: str, cfg: dict) -> list[str]:
+    """Маркеры цепочки в теме: RE:, FWD:, Ответ:, Пересылка: и т.п."""
+    thread_cfg = _thread_cfg(cfg)
     hits: list[str] = []
     subj = (subject or "").strip().lower()
-    body_l = (body or "").lower()
-
     for prefix in thread_cfg.get("subject_prefixes") or []:
         p = (prefix or "").strip().lower()
-        if p and subj.startswith(p):
+        if not p:
+            continue
+        if subj.startswith(p):
             hits.append(p)
+            continue
+        inline = re.search(rf"(?:^|\s|\[){re.escape(p.rstrip(':'))}\s*:", subj)
+        if inline:
+            hits.append(p)
+    return hits
+
+
+def _count_company_name_occurrences(text: str, cfg: dict) -> int:
+    """Сколько раз в тексте встречаются варианты «Турбулентность» (цитаты переписки)."""
+    signals = cfg.get("company_thread_signals") or {}
+    patterns = signals.get("patterns") or [
+        "турбулентность-дон",
+        "турбулентность дон",
+        "турбулентность",
+    ]
+    text_l = (text or "").lower()
+    total = 0
+    for pattern in patterns:
+        marker = (pattern or "").strip().lower()
+        if marker:
+            total += text_l.count(marker)
+    return total
+
+
+def _company_thread_hits(subject: str, body: str, cfg: dict) -> list[str]:
+    signals = cfg.get("company_thread_signals") or {}
+    min_occurrences = int(signals.get("min_occurrences") or 2)
+    combined = f"{subject}\n{body}"
+    count = _count_company_name_occurrences(combined, cfg)
+    if count >= min_occurrences:
+        return [f"company_name_x{count}"]
+    return []
+
+
+def _quote_line_prefixes(cfg: dict) -> tuple[str, ...]:
+    top_cfg = cfg.get("body_top") or {}
+    defaults = (
+        ">",
+        "пишет:",
+        " wrote:",
+        "отправлено:",
+        "original message",
+        "исходное сообщение",
+        "---------- переслан",
+        "---------- forwarded",
+    )
+    raw = top_cfg.get("quote_line_prefixes") or defaults
+    return tuple(str(p).lower() for p in raw if str(p).strip())
+
+
+def _body_top_text(body: str, cfg: dict) -> str:
+    """Верх письма до блока цитирования переписки."""
+    top_cfg = cfg.get("body_top") or {}
+    max_lines = int(top_cfg.get("max_lines") or 12)
+    max_chars = int(top_cfg.get("max_chars") or 600)
+    body_norm = (body or "").replace("\r\n", "\n")
+    quote_prefixes = _quote_line_prefixes(cfg)
+    top_lines: list[str] = []
+    for line in body_norm.split("\n"):
+        stripped = line.strip().lower()
+        if any(stripped.startswith(prefix) or prefix in stripped for prefix in quote_prefixes):
+            break
+        top_lines.append(line)
+        if len(top_lines) >= max_lines:
+            break
+    return "\n".join(top_lines)[:max_chars]
+
+
+def _body_top_action_markers(cfg: dict) -> list[str]:
+    top_cfg = cfg.get("body_top") or {}
+    markers = top_cfg.get("action_markers")
+    if markers:
+        return [str(m) for m in markers if str(m).strip()]
+    activation = list(cfg.get("activation_markers") or [])
+    extra = top_cfg.get("extra_action_markers") or [
+        "счёт",
+        "счет",
+        "счет-фактур",
+        "счёт-фактур",
+        "отчёт",
+        "отчет",
+        "запрос",
+        "акт сверки",
+        "накладн",
+        "упд",
+        "договор",
+        "протокол",
+        "коммерческ",
+        "кп ",
+        " кп",
+        "счет на оплату",
+        "счёт на оплату",
+    ]
+    return activation + [str(m) for m in extra if str(m).strip()]
+
+
+def _body_top_has_action(body: str, cfg: dict) -> bool:
+    """В начале письма есть поручение/запрос/счёт и т.п."""
+    top_text = normalize_text(_body_top_text(body, cfg))
+    if not top_text:
+        return False
+    return bool(_marker_hits(_body_top_action_markers(cfg), top_text))
+
+
+def _thread_signals(subject: str, body: str, cfg: dict) -> list[str]:
+    thread_cfg = _thread_cfg(cfg)
+    hits: list[str] = []
+    hits.extend(_subject_thread_hits(subject, cfg))
+    body_l = (body or "").lower()
+    subj = (subject or "").strip().lower()
 
     for pattern in thread_cfg.get("body_patterns") or []:
         p = (pattern or "").strip().lower()
@@ -97,6 +212,31 @@ def _thread_signals(subject: str, body: str, cfg: dict) -> list[str]:
     if len(hits) < min_signals:
         return []
     return hits
+
+
+def is_dialog_email(
+    subject: str,
+    body: str = "",
+    *,
+    rules: dict | None = None,
+) -> bool:
+    """True, если письмо — переписка без нового поручения в начале.
+
+    Критерии (все три):
+    1. «Турбулентность» / «Турбулентность-Дон» / «Турбулентность Дон» ≥ 2 раз в тексте;
+    2. тема содержит RE:/FWD:/Ответ:/Пересылка: и аналоги;
+    3. в начале тела письма нет явного поручения (запрос, счёт, отчёт и т.п.).
+    """
+    cfg = rules if rules is not None else load_dialog_rules()
+    if not cfg or not cfg.get("enabled", True):
+        return False
+    if not _subject_thread_hits(subject, cfg):
+        return False
+    if not _company_thread_hits(subject, body, cfg):
+        return False
+    if _body_top_has_action(body, cfg):
+        return False
+    return True
 
 
 def _has_reply_exchange(body: str, cfg: dict, sender_email: str) -> bool:
@@ -179,7 +319,8 @@ def classify_dialog(
     if not thread_hits:
         return DialogClassification(is_dialog=False)
 
-    activation_hits = _marker_hits(list(cfg.get("activation_markers") or []), text)
+    top_text = normalize_text(f"{subject}\n{_body_top_text(body, cfg)}")
+    activation_hits = _marker_hits(list(cfg.get("activation_markers") or []), top_text)
     if activation_hits:
         process = _resolve_activation_process_type(cfg, activation_hits)
         theme_action = _resolve_activation_theme_action(cfg, activation_hits)
@@ -201,8 +342,29 @@ def classify_dialog(
 
     dormant_hits = _marker_hits(list(cfg.get("dormant_markers") or []), text)
     has_exchange = _has_reply_exchange(body, cfg, sender_email)
-    if not dormant_hits and not has_exchange:
+    company_hits = _company_thread_hits(subject, body, cfg)
+    strict_dialog = is_dialog_email(subject, body, rules=cfg)
+    signals = cfg.get("company_thread_signals") or {}
+    allow_exchange = bool(signals.get("allow_exchange_markers", True))
+    allow_dormant = bool(signals.get("allow_dormant_markers", True))
+    has_body_signal = strict_dialog
+    if allow_exchange and has_exchange:
+        has_body_signal = True
+    if allow_dormant and dormant_hits and not _body_top_has_action(body, cfg):
+        has_body_signal = True
+    if company_hits and not _body_top_has_action(body, cfg):
+        has_body_signal = True
+    if not has_body_signal:
         return DialogClassification(is_dialog=False)
+
+    dormant_reason = "dialog_dormant: переписка без явного поручения"
+    if strict_dialog:
+        dormant_reason = (
+            f"dialog_dormant: {', '.join(company_hits or ['company_thread'])}; "
+            "нет поручения в начале"
+        )
+    elif company_hits:
+        dormant_reason = f"dialog_dormant: {', '.join(company_hits)}"
 
     return DialogClassification(
         is_dialog=True,
@@ -212,9 +374,9 @@ def classify_dialog(
         queue_tier=int(cfg.get("queue_tier_dormant") or 2),
         process_type=str(cfg.get("dormant_process_type") or PROCESS_OZNAKOMLENIYE),
         theme_action=str(cfg.get("dormant_theme_action") or "Диалог"),
-        thread_markers=thread_hits,
+        thread_markers=thread_hits + company_hits,
         dormant_markers=dormant_hits,
-        reasoning="dialog_dormant: переписка без явного поручения",
+        reasoning=dormant_reason,
     )
 
 

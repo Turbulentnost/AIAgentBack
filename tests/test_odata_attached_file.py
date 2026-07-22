@@ -38,8 +38,10 @@ def test_build_attached_file_payload_contains_owner_and_binary():
     assert entity == "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
     assert payload["Description"] == "scan"
     assert payload["Расширение"] == "pdf"
-    assert payload["ВладелецФайла"] == DOC_KEY
-    assert payload["ФайлХранилище"]
+    assert payload["ВладелецФайла_Key"] == DOC_KEY
+    assert payload["ФайлХранилище_Base64Data"]
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
+    assert "ВладелецФайла" not in payload
     assert payload["Размер"] == 8
 
 

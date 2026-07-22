@@ -189,6 +189,28 @@ def operator_review_state(
     return "pending"
 
 
+def dialog_category_fields(payload: dict[str, Any], *, status: str = "") -> dict[str, Any]:
+    """Категория «Диалог» для табличного UI."""
+    dialog = payload.get("dialog") if isinstance(payload.get("dialog"), dict) else {}
+    routing_decision = (
+        payload.get("routing_decision") if isinstance(payload.get("routing_decision"), dict) else {}
+    )
+    document_kind = str(
+        dialog.get("document_kind")
+        or routing_decision.get("document_kind")
+        or ""
+    ).strip()
+    dialog_mode = dialog.get("mode")
+    is_dialog = bool(dialog) or document_kind == "dialog" or status == "dialog"
+    category_label = "Диалог" if is_dialog else None
+    return {
+        "is_dialog": is_dialog,
+        "document_kind": document_kind or None,
+        "document_category_label": category_label,
+        "dialog_mode": dialog_mode,
+    }
+
+
 def row_to_table_fields(
     row,
     *,
@@ -246,4 +268,5 @@ def row_to_table_fields(
             has_operator_approve=bool((operator_event_hints or {}).get("has_operator_approve")),
             has_operator_change=bool((operator_event_hints or {}).get("has_operator_change")),
         ),
+        **dialog_category_fields(payload, status=str(getattr(row, "status", "") or "")),
     }
