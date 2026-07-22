@@ -44,6 +44,7 @@ scripts/_*.py
 # Данные: по умолчанию не пушим, только RAG/маршрутизация агента
 data/*
 !data/routing_rules.json
+!data/dialog_rules.json
 !data/rag_department_keywords.json
 !data/tz_department_topics.json
 !data/spam_learning_patterns.json
