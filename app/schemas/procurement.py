@@ -149,6 +149,14 @@ class ProcurementCaseSummary(BaseModel):
     picker_workspace_archived_at: datetime | None = None
     picker_action_at: datetime | None = None
     picker_critical_acknowledged_at: datetime | None = None
+    purchase_manager_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    purchase_manager_bucket: Literal["success", "attention", "critical"] | None = None
+    purchase_manager_bucket_reason: str | None = None
+    purchase_manager_invoked_at: datetime | None = None
+    purchase_manager_workspace_archived_at: datetime | None = None
+    supplier_coverage_status: Literal["none", "partial", "full"] | None = None
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):

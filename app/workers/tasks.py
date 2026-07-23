@@ -1051,6 +1051,67 @@ def poll_procurement_reorder_points(self) -> dict[str, Any]:
     )
 
 
+@celery_app.task(name="reconcile_procurement_supplier_orders", bind=True, max_retries=0)
+def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
+    from redis import Redis
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.procurement_orchestrator_service import build_poll_lock_key
+    from app.services.supplier_order_reconciliation_service import (
+        SupplierOrderReconciliationService,
+    )
+
+    if not settings.PROCUREMENT_SUPPLIER_RECONCILIATION_ENABLED:
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "reconcile_procurement_supplier_orders",
+            "status": "disabled",
+        }
+    lock_key = build_poll_lock_key("supplier-orders")
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    acquired = bool(
+        redis_client.set(
+            lock_key,
+            self.request.id or "supplier-orders",
+            nx=True,
+            ex=settings.PROCUREMENT_SUPPLIER_RECONCILIATION_LOCK_TTL_SECONDS,
+        )
+    )
+    if not acquired:
+        redis_client.close()
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "reconcile_procurement_supplier_orders",
+            "status": "skipped_locked",
+        }
+
+    async def _run() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                summary = await SupplierOrderReconciliationService(db).reconcile()
+                await db.commit()
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "reconcile_procurement_supplier_orders",
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+        summary["celery_task_id"] = self.request.id
+        summary["task_name"] = "reconcile_procurement_supplier_orders"
+        summary["finished_at"] = datetime.now(timezone.utc).isoformat()
+        return summary
+
+    try:
+        return _run_async_task(_run)
+    finally:
+        redis_client.delete(lock_key)
+        redis_client.close()
+
+
 @celery_app.task(name="run_procurement_case_task", bind=True, max_retries=2)
 def run_procurement_case_task(self, case_id: str, task_id: str) -> dict[str, Any]:
     from uuid import UUID

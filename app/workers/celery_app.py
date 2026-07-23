@@ -38,6 +38,12 @@ if settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
         "schedule": float(settings.PROCUREMENT_ORCHESTRATOR_REORDER_INTERVAL_SECONDS),
         "options": {"queue": "procurement_poll"},
     }
+if settings.PROCUREMENT_SUPPLIER_RECONCILIATION_ENABLED:
+    _beat_schedule["reconcile-procurement-supplier-orders"] = {
+        "task": "reconcile_procurement_supplier_orders",
+        "schedule": float(settings.PROCUREMENT_SUPPLIER_RECONCILIATION_INTERVAL_SECONDS),
+        "options": {"queue": "procurement_poll"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -67,6 +73,7 @@ celery_app.conf.update(
         "run_department_analysis": {"queue": "default"},
         "poll_procurement_sources": {"queue": "procurement_poll"},
         "poll_procurement_reorder_points": {"queue": "procurement_poll"},
+        "reconcile_procurement_supplier_orders": {"queue": "procurement_poll"},
         "run_procurement_case_task": {"queue": "agents"},
     },
     task_serializer="json",

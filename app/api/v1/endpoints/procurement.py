@@ -21,9 +21,11 @@ from app.schemas.procurement import (
 from app.agents.warehouse_picker_agent.department import is_montage_section_2_department
 from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
 from app.services.procurement_permission import (
+    PURCHASE_MANAGER_AGENT_SLUG,
     PRODUCTION_DISPATCHER_AGENT_SLUG,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG,
     WAREHOUSE_PICKER_AGENT_SLUG,
+    can_access_purchase_manager,
     can_access_procurement_orchestrator,
     can_access_production_dispatcher,
     can_access_production_preparation_engineer,
@@ -68,6 +70,13 @@ async def _require_role_workspace(
                 detail="Рабочее место доступно только кладовщику-комплектовщику",
             )
         return agent_id
+    if agent_id == PURCHASE_MANAGER_AGENT_SLUG:
+        if not await can_access_purchase_manager(db, user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Рабочее место доступно только менеджеру по закупкам",
+            )
+        return agent_id
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ролевой агент не найден")
 
 
@@ -92,6 +101,7 @@ async def get_procurement_permissions(
     can_access_engineer = await can_access_production_preparation_engineer(db, current_user)
     can_access_dispatcher = await can_access_production_dispatcher(db, current_user)
     can_access_picker = await can_access_warehouse_picker(db, current_user)
+    can_access_purchase = await can_access_purchase_manager(db, current_user)
     accessible = []
     if can_access_engineer:
         accessible.append(PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG)
@@ -99,6 +109,8 @@ async def get_procurement_permissions(
         accessible.append(PRODUCTION_DISPATCHER_AGENT_SLUG)
     if can_access_picker:
         accessible.append(WAREHOUSE_PICKER_AGENT_SLUG)
+    if can_access_purchase:
+        accessible.append(PURCHASE_MANAGER_AGENT_SLUG)
     return ProcurementPermissionsRead(
         can_access_orchestrator=can_access,
         can_access_role_workspace=bool(accessible),
@@ -132,6 +144,12 @@ async def get_procurement_role_dashboard(
             view=view,
             source_type="production_material_order",
             picker_workspace=True,
+        )
+    elif agent_id == PURCHASE_MANAGER_AGENT_SLUG:
+        payload = await service.list_dashboard(
+            view=view,
+            source_type="production_material_order",
+            purchase_manager_workspace=True,
         )
     else:
         payload = await service.list_dashboard(
@@ -229,6 +247,7 @@ async def get_procurement_role_case(
                 "picker_critical_acknowledged_at"
             ),
             "production_order_1c_ref": metadata.get("production_order_1c_ref"),
+            "supplier_order_coverage": metadata.get("supplier_order_coverage"),
         }
         payload["assigned_agents"] = [WAREHOUSE_PICKER_AGENT_SLUG]
         payload["route_stages"] = []
@@ -258,6 +277,49 @@ async def get_procurement_role_case(
                 "picker_conclusion_confirmed",
                 "picker_critical_acknowledged",
                 "picker_handoff_to_omto_chief",
+            }
+        ]
+    elif agent_id == PURCHASE_MANAGER_AGENT_SLUG:
+        if payload.get("source_type") != "production_material_order" or not (
+            metadata.get("purchase_manager_invoked_at")
+            or metadata.get("purchase_manager_output")
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
+        payload["case_metadata"] = {
+            "purchase_manager_invoked_at": metadata.get("purchase_manager_invoked_at"),
+            "purchase_manager_workspace_status": metadata.get(
+                "purchase_manager_workspace_status"
+            ),
+            "purchase_manager_workspace_archived_at": metadata.get(
+                "purchase_manager_workspace_archived_at"
+            ),
+            "purchase_manager_output": metadata.get("purchase_manager_output"),
+            "supplier_order_coverage": metadata.get("supplier_order_coverage"),
+        }
+        payload["assigned_agents"] = [PURCHASE_MANAGER_AGENT_SLUG]
+        payload["route_stages"] = []
+        payload["events"] = [
+            event
+            for event in payload.get("events") or []
+            if event.get("event_type")
+            in {
+                "supplier_order_detected",
+                "supplier_coverage_changed",
+                "purchase_manager_assigned",
+                "picker_auto_archived",
+                "case_archived_from_source",
+            }
+        ]
+        payload["timeline"] = [
+            item
+            for item in payload.get("timeline") or []
+            if item.get("kind")
+            in {
+                "supplier_order_detected",
+                "supplier_coverage_changed",
+                "purchase_manager_assigned",
+                "picker_auto_archived",
+                "case_archived_from_source",
             }
         ]
     else:

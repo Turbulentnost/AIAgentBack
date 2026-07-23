@@ -13,6 +13,7 @@ from app.agents.production_dispatcher_agent.service import ProductionDispatcherS
 from app.agents.production_preparation_engineer_agent.service import (
     ProductionPreparationEngineerService,
 )
+from app.agents.purchase_manager_agent.service import PurchaseManagerService
 from app.agents.warehouse_picker_agent.service import WarehousePickerService
 from app.models.enums import ConfidenceLevel
 
@@ -127,6 +128,20 @@ class WarehousePickerAgent(_WaitingProcurementRoleAgent):
 
 
 @agent_registry.register
+class PurchaseManagerAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.PURCHASE_MANAGER_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Контролирует связанные заказы поставщику по заказам материалов "
+        "и показывает покрытие номенклатур."
+    )
+    allowed_tools = ["read_procurement_list_supplier_orders"]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await PurchaseManagerService().run(payload, agent_id=self.agent_id)
+
+
+@agent_registry.register
 class OmtoChiefAgent(_WaitingProcurementRoleAgent):
     agent_id = config.OMTO_CHIEF_AGENT_ID
     name = config.AGENT_LABELS[agent_id]
@@ -150,6 +165,7 @@ class WarehouseManagerAgent(_WaitingProcurementRoleAgent):
 __all__ = [
     "DepartmentInitiatorAgent",
     "OmtoChiefAgent",
+    "PurchaseManagerAgent",
     "ProductionDispatcherAgent",
     "ProductionPreparationEngineerAgent",
     "WarehouseManagerAgent",

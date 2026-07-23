@@ -21,3 +21,4 @@ alembic/versions/*.py
 !alembic/versions/0055_production_dispatcher_agent.py
 !alembic/versions/0056_warehouse_picker_agent.py
 !alembic/versions/0060_legal_specialist_agent.py
+!alembic/versions/0064_supplier_order_reconciliation.py

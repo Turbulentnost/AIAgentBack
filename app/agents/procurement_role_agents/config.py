@@ -5,6 +5,7 @@ from app.models.enums import ProcurementSourceType
 PRODUCTION_DISPATCHER_AGENT_ID = "production_dispatcher_agent"
 PRODUCTION_PREPARATION_ENGINEER_AGENT_ID = "production_preparation_engineer_agent"
 WAREHOUSE_PICKER_AGENT_ID = "warehouse_picker_agent"
+PURCHASE_MANAGER_AGENT_ID = "purchase_manager_agent"
 OMTO_CHIEF_AGENT_ID = "omto_chief_agent"
 DEPARTMENT_INITIATOR_AGENT_ID = "department_initiator_agent"
 WAREHOUSE_MANAGER_AGENT_ID = "warehouse_manager_agent"
@@ -13,6 +14,7 @@ AGENT_LABELS = {
     PRODUCTION_DISPATCHER_AGENT_ID: "Агент диспетчера производства",
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID: "Агент закупок и логистики",
     WAREHOUSE_PICKER_AGENT_ID: "ИИ-агент по закупке",
+    PURCHASE_MANAGER_AGENT_ID: "ИИ-агент менеджера по закупкам",
     OMTO_CHIEF_AGENT_ID: "Агент начальника ОМТО",
     DEPARTMENT_INITIATOR_AGENT_ID: "Агент руководителя подразделения / инициатора",
     WAREHOUSE_MANAGER_AGENT_ID: "Агент начальника склада",
@@ -50,6 +52,7 @@ __all__ = [
     "OMTO_CHIEF_AGENT_ID",
     "PRODUCTION_DISPATCHER_AGENT_ID",
     "PRODUCTION_PREPARATION_ENGINEER_AGENT_ID",
+    "PURCHASE_MANAGER_AGENT_ID",
     "SOURCE_AGENT_MAP",
     "WAREHOUSE_MANAGER_AGENT_ID",
     "WAREHOUSE_PICKER_AGENT_ID",

@@ -11,6 +11,7 @@
           "read_schema_list_entities": "read.schema.list_entities",
           "read_schema_describe_entity": "read.schema.describe_entity",
           "read_procurement_get_active_document_refs": "read.procurement.get_active_document_refs",
+          "read_procurement_list_supplier_orders": "read.procurement.list_supplier_orders",
           "read_document_get_documents": "read.document.get_document",
           "read_document_search_documents": "read.document.search_documents",
           "read_reference_get_presentations": "read.reference.get_presentations",
