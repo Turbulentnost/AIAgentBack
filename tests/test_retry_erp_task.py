@@ -294,6 +294,32 @@ def test_retry_erp_task_attach_only_skips_document_create() -> None:
     integration.attach_files_to_incoming_correspondence.assert_called_once()
 
 
+def test_retry_erp_task_sync_existing_force_reattach_eml() -> None:
+    row = _done_row_with_existing_document(with_uploaded_attachments=True)
+    integration = MagicMock()
+    integration.update_incoming_correspondence.return_value = {
+        "updated": True,
+        "erp_document_id": row.erp_task_id,
+        "fields": {},
+    }
+    integration.attach_files_to_incoming_correspondence.return_value = [
+        {"ref_key": "eml-new", "filename": "Входящее_письмо.eml", "size_bytes": 5000},
+    ]
+
+    with _mock_retry_deps(row=row, integration=integration, email=_info_sample_email()):
+        task = retry_erp_task
+        task.push_request(retries=0, max_retries=5)
+        try:
+            result = task(row.message_id, force_reattach_eml=True)
+        finally:
+            task.pop_request()
+
+    assert result["ok"] is True
+    assert result["sync_existing"] is True
+    assert result["attached_count"] == 1
+    integration.attach_files_to_incoming_correspondence.assert_called_once()
+
+
 def test_retry_erp_task_sync_existing_when_attachments_already_uploaded() -> None:
     row = _done_row_with_existing_document(with_uploaded_attachments=True)
     integration = MagicMock()
@@ -474,4 +500,4 @@ def test_api_retry_erp_schedules_celery_task() -> None:
     assert row.erp_retry_count == 0
     assert row.human_review is False
     session.commit.assert_called_once()
-    celery_task.delay.assert_called_once_with(ERROR_CASE_MESSAGE_ID)
+    celery_task.delay.assert_called_once_with(ERROR_CASE_MESSAGE_ID, force_reattach_eml=True)

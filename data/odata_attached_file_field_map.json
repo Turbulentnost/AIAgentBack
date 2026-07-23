@@ -10,11 +10,13 @@
     "storage_binary_type": "ФайлХранилище_Type",
     "storage_stream": "ФайлХранилище",
     "storage_kind": "ТипХраненияФайла",
-    "size": "Размер"
+    "size": "Размер",
+    "created_at": "ДатаСоздания",
+    "modified_at": "ДатаМодификацииУниверсальная"
   },
   "defaults": {
     "storage_binary_type": "application/octet-stream",
     "storage_kind": "ВИнформационнойБазе",
-    "upload_binary_via_stream": true
+    "upload_binary_via_stream": false
   }
 }

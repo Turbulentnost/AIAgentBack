@@ -12,8 +12,10 @@ from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.schemas import EmailMessage, RoutingResult
 from agent_pochta.services.erp_attachments import (
     attach_missing_email_files_to_document,
+    clear_erp_attachment_entries,
     existing_erp_document_ref_key,
     merge_erp_attachment_lists,
+    resolve_skip_filenames_for_erp_sync,
     uploaded_erp_attachment_filenames,
 )
 from agent_pochta.services.integration_service import IntegrationService
@@ -65,6 +67,7 @@ def sync_existing_erp_document(
     integration: IntegrationService,
     vault,
     xml_document: str | None = None,
+    force_reattach_filenames: set[str] | None = None,
 ) -> dict[str, Any]:
     """PATCH полей документа + догрузка недостающих вложений."""
     doc_ref = existing_erp_document_ref_key(row)
@@ -105,7 +108,19 @@ def sync_existing_erp_document(
             message_id=message_id,
         )
 
-    skip_filenames = uploaded_erp_attachment_filenames(row.raw_payload_json)
+    skip_filenames = resolve_skip_filenames_for_erp_sync(
+        row.raw_payload_json,
+        force_reattach_filenames=force_reattach_filenames,
+    )
+    payload_modified = False
+    if force_reattach_filenames:
+        cleared = clear_erp_attachment_entries(
+            row.raw_payload_json,
+            filenames=force_reattach_filenames,
+        )
+        if cleared is not None and cleared != row.raw_payload_json:
+            row.raw_payload_json = cleared
+            payload_modified = True
     try:
         attached = attach_missing_email_files_to_document(
             integration,
@@ -145,5 +160,6 @@ def sync_existing_erp_document(
         "attached_count": len(attached),
         "erp_attachments": attached or None,
         "erp_sync_meta": sync_meta,
+        "raw_payload_json": row.raw_payload_json if payload_modified else None,
         **({"reason": sync_errors[0]} if sync_errors and not ok else {}),
     }

@@ -1087,7 +1087,13 @@ def reanalyze_message(row_id: uuid.UUID) -> dict[str, Any]:
 
 
 @app.post("/api/v1/email-messages/{row_id}/retry-erp")
-def retry_erp(row_id: uuid.UUID) -> dict[str, Any]:
+def retry_erp(
+    row_id: uuid.UUID,
+    force_reattach_eml: bool = Query(
+        default=True,
+        description="Перезагрузить Входящее_письмо.eml даже если уже в erp_attachments",
+    ),
+) -> dict[str, Any]:
     with get_session_factory()() as session:
         repo = EmailRepository(session)
         row = repo.get_by_id(row_id)
@@ -1099,5 +1105,10 @@ def retry_erp(row_id: uuid.UUID) -> dict[str, Any]:
         row.human_review = False
         session.commit()
 
-    task = retry_erp_task.delay(message_id)
-    return {"task_id": task.id, "message_id": message_id, "status": "erp_retry_scheduled"}
+    task = retry_erp_task.delay(message_id, force_reattach_eml=force_reattach_eml)
+    return {
+        "task_id": task.id,
+        "message_id": message_id,
+        "status": "erp_retry_scheduled",
+        "force_reattach_eml": force_reattach_eml,
+    }

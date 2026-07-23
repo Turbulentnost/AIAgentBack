@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from datetime import datetime, timezone
+
 import pytest
 
 from agent_pochta.services.odata_attached_file import (
@@ -11,6 +13,8 @@ from agent_pochta.services.odata_attached_file import (
     AttachedFileInput,
     attach_file_to_incoming_document,
     build_attached_file_payload,
+    format_attached_file_created_at,
+    format_attached_file_modified_universal,
     resolve_stream_content_type,
     split_filename,
 )
@@ -31,7 +35,7 @@ def test_split_filename_rejects_empty():
         split_filename(".pdf")
 
 
-def test_build_attached_file_payload_stream_mode_excludes_binary_by_default():
+def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
     entity, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="scan.pdf", content=b"%PDF-1.4"),
@@ -42,9 +46,53 @@ def test_build_attached_file_payload_stream_mode_excludes_binary_by_default():
     assert payload["ВладелецФайла_Key"] == DOC_KEY
     assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
     assert "Том_Key" not in payload
+    assert payload["ФайлХранилище_Base64Data"]
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
+    assert payload["Размер"] == 8
+    assert payload["ДатаСоздания"]
+    assert payload["ДатаМодификацииУниверсальная"]
+    assert not str(payload["ДатаСоздания"]).startswith("0001")
+
+
+def test_build_attached_file_payload_uses_explicit_processed_at():
+    ts = datetime(2026, 7, 23, 10, 30, 0, tzinfo=timezone.utc)
+    _, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="Входящее_письмо.eml",
+            content=b"From: a@b.com\r\n\r\n",
+            processed_at=ts,
+        ),
+    )
+    assert payload["ДатаСоздания"] == format_attached_file_created_at(ts)
+    assert payload["ДатаМодификацииУниверсальная"] == format_attached_file_modified_universal(ts)
+
+
+def test_build_attached_file_payload_stream_mode_excludes_binary():
+    entity, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(filename="scan.pdf", content=b"%PDF-1.4"),
+        field_map={
+            "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            "fields": {
+                "name": "Description",
+                "extension": "Расширение",
+                "owner_key": "ВладелецФайла_Key",
+                "storage_binary": "ФайлХранилище_Base64Data",
+                "storage_binary_type": "ФайлХранилище_Type",
+                "storage_kind": "ТипХраненияФайла",
+                "size": "Размер",
+            },
+            "defaults": {
+                "storage_kind": "ВИнформационнойБазе",
+                "upload_binary_via_stream": True,
+            },
+        },
+    )
+    assert entity == "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
     assert "ФайлХранилище_Base64Data" not in payload
     assert "ФайлХранилище_Type" not in payload
-    assert payload["Размер"] == 8
 
 
 def test_build_attached_file_payload_can_include_inline_binary():
@@ -160,6 +208,40 @@ def test_attach_file_posts_to_catalog():
     assert result.filename == "a"
     assert result.extension == "pdf"
     client.create_entity.assert_called_once()
+    _entity, payload = client.create_entity.call_args[0]
+    assert payload["ФайлХранилище_Base64Data"]
+    client.put_entity_stream.assert_not_called()
+
+
+def test_attach_file_stream_mode_uses_put():
+    client = MagicMock()
+    client.get_by_key.return_value = {"Ref_Key": DOC_KEY}
+    client.create_entity.return_value = {"Ref_Key": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+
+    attach_file_to_incoming_document(
+        client,
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(filename="a.pdf", content=b"data"),
+        field_map={
+            "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            "owner_document_entity": "Document_ТД_ВходящаяКорреспонденция",
+            "fields": {
+                "name": "Description",
+                "extension": "Расширение",
+                "owner_key": "ВладелецФайла_Key",
+                "storage_binary": "ФайлХранилище_Base64Data",
+                "storage_binary_type": "ФайлХранилище_Type",
+                "storage_stream": "ФайлХранилище",
+                "storage_kind": "ТипХраненияФайла",
+                "size": "Размер",
+            },
+            "defaults": {
+                "storage_kind": "ВИнформационнойБазе",
+                "upload_binary_via_stream": True,
+            },
+        },
+    )
+
     client.put_entity_stream.assert_called_once_with(
         "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
         "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -183,13 +265,9 @@ def test_attach_file_uploads_eml_with_rfc822_content_type():
         ),
     )
 
-    client.put_entity_stream.assert_called_once_with(
-        "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
-        "dddddddd-dddd-dddd-dddd-dddddddddddd",
-        "ФайлХранилище",
-        b"From: a@b.com\r\nTo: c@d.com\r\nSubject: test\r\n\r\nbody\r\n",
-        content_type="message/rfc822",
-    )
+    _entity, payload = client.create_entity.call_args[0]
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
+    client.put_entity_stream.assert_not_called()
 
 
 def test_odata_integration_attach_files_delegates_to_client():
@@ -211,4 +289,4 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert len(out) == 1
     assert out[0]["ref_key"] == "cccccccc-cccc-cccc-cccc-cccccccccccc"
     assert out[0]["filename"] == "doc.pdf"
-    service._client.put_entity_stream.assert_called_once()
+    service._client.put_entity_stream.assert_not_called()

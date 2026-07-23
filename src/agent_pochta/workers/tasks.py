@@ -222,6 +222,8 @@ def _persist_erp_sync_result(message_id: str, sync_result: dict) -> None:
         db_row = EmailRepository(session).get_by_message_id(message_id)
         if db_row is None:
             return
+        if cleared_payload := sync_result.get("raw_payload_json"):
+            db_row.raw_payload_json = cleared_payload
         merged = _merge_attachment_meta_into_payload(db_row.raw_payload_json, sync_meta)
         if merged is not None:
             db_row.raw_payload_json = merged
@@ -237,6 +239,7 @@ def _sync_existing_erp_document(
     routing,
     summary_ru: str,
     container,
+    force_reattach_filenames: set[str] | None = None,
 ) -> dict:
     """PATCH полей + догрузка вложений к уже созданному документу 1С."""
     from agent_pochta.services.erp_sync import sync_existing_erp_document
@@ -251,6 +254,7 @@ def _sync_existing_erp_document(
         integration=container.integration,
         vault=container.vault,
         xml_document=xml_document,
+        force_reattach_filenames=force_reattach_filenames,
     )
     _persist_erp_sync_result(message_id, result)
     return result
@@ -395,7 +399,7 @@ def recover_stale_processing_task(*, limit: int = 30) -> dict:
     soft_time_limit=240,
     time_limit=300,
 )
-def retry_erp_task(self, message_id: str) -> dict:
+def retry_erp_task(self, message_id: str, *, force_reattach_eml: bool = False) -> dict:
     """Повтор создания документа в 1С (ТЗ §5.2: 10 мин, max 5 попыток)."""
     settings = get_settings()
     from agent_pochta.workers.runtime import get_worker_container
@@ -453,6 +457,11 @@ def retry_erp_task(self, message_id: str) -> dict:
 
         retry_mode = _resolve_retry_erp_mode(row, email)
         if retry_mode == "sync_existing":
+            from agent_pochta.services.erp_attachments import ERP_FULL_EMAIL_FILENAME
+
+            force_reattach: set[str] | None = None
+            if force_reattach_eml:
+                force_reattach = {ERP_FULL_EMAIL_FILENAME}
             session.commit()
             return _sync_existing_erp_document(
                 message_id=message_id,
@@ -461,6 +470,7 @@ def retry_erp_task(self, message_id: str) -> dict:
                 routing=routing,
                 summary_ru=summary_ru or "",
                 container=container,
+                force_reattach_filenames=force_reattach,
             )
 
         xml_document = extract_xml_document_from_row(row)

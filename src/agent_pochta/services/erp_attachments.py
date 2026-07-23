@@ -96,6 +96,52 @@ def merge_erp_attachment_lists(existing: list | None, new_items: list) -> list:
     return list(by_name.values())
 
 
+def clear_erp_attachment_entries(
+    raw_payload_json: str | None,
+    *,
+    filenames: set[str],
+) -> str | None:
+    """Удаляет записи erp_attachments по имени (перед принудительной перезагрузкой)."""
+    if not raw_payload_json or not filenames:
+        return raw_payload_json
+    try:
+        payload = json.loads(raw_payload_json)
+    except json.JSONDecodeError:
+        return raw_payload_json
+    if not isinstance(payload, dict):
+        return raw_payload_json
+    uploaded = payload.get("erp_attachments")
+    if not isinstance(uploaded, list):
+        return raw_payload_json
+    targets = {name.strip() for name in filenames if name and name.strip()}
+    if not targets:
+        return raw_payload_json
+    filtered = [
+        item
+        for item in uploaded
+        if not (
+            isinstance(item, dict)
+            and (item.get("filename") or "").strip() in targets
+        )
+    ]
+    if len(filtered) == len(uploaded):
+        return raw_payload_json
+    payload["erp_attachments"] = filtered
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def resolve_skip_filenames_for_erp_sync(
+    raw_payload_json: str | None,
+    *,
+    force_reattach_filenames: set[str] | None = None,
+) -> set[str]:
+    """Имена файлов, уже отправленных в 1С; force_reattach исключает их из skip."""
+    skip = uploaded_erp_attachment_filenames(raw_payload_json)
+    if force_reattach_filenames:
+        skip -= {name.strip() for name in force_reattach_filenames if name and name.strip()}
+    return skip
+
+
 def _coerce_attachments(email: EmailMessage) -> None:
     normalized: list[Attachment] = []
     for att in email.attachments or []:
@@ -385,6 +431,7 @@ def _collect_erp_upload_files(
     full_email_bytes: bytes,
     skip_filenames: set[str] | None = None,
 ) -> list[AttachedFileInput]:
+    """Только полное письмо .eml; MIME-вложения отдельно не отправляются."""
     skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
     files: list[AttachedFileInput] = []
     for att in attachments_with_content(email):
@@ -414,7 +461,7 @@ def attach_email_files_to_document(
     email: EmailMessage,
     vault: VaultClient | None = None,
 ) -> list[dict]:
-    """Прикрепляет полное письмо (.eml) и файловые вложения к документу 1С."""
+    """Прикрепляет только полное письмо (.eml) к документу 1С."""
     if not _supports_attachment_upload(integration):
         logger.info(
             "erp_attach_files_skipped",
@@ -448,10 +495,7 @@ def attach_email_files_to_document(
             document_ref_key=document_ref_key,
             message_id=email.message_id,
             files=len(files),
-            payload_fields=list(
-                erp_attachment_filename(att)
-                for att in attachments_with_content(email)
-            ),
+            payload_fields=[erp_full_email_filename(email)],
         )
         raise
 
@@ -472,7 +516,7 @@ def attach_missing_email_files_to_document(
     vault: VaultClient | None = None,
     skip_filenames: set[str] | None = None,
 ) -> list[dict]:
-    """Прикрепляет недостающие файловые вложения и .eml к документу 1С."""
+    """Прикрепляет недостающее полное письмо (.eml) к документу 1С."""
     if not _supports_attachment_upload(integration):
         logger.info(
             "erp_attach_files_skipped",
@@ -510,10 +554,7 @@ def attach_missing_email_files_to_document(
             document_ref_key=document_ref_key,
             message_id=email.message_id,
             files=len(files),
-            payload_fields=list(
-                erp_attachment_filename(att)
-                for att in attachments_with_content(email)
-            ),
+            payload_fields=[erp_full_email_filename(email)],
         )
         raise
 

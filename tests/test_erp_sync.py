@@ -179,6 +179,46 @@ def test_sync_existing_updates_and_skips_duplicate_attachments() -> None:
     integration.attach_files_to_incoming_correspondence.assert_not_called()
 
 
+def test_sync_existing_force_reattach_eml() -> None:
+    row = _done_row(
+        erp_attachments=[
+            {"filename": "scan.pdf", "ref_key": "already"},
+            {"filename": ERP_FULL_EMAIL_FILENAME, "ref_key": "eml-broken", "size_bytes": 32815},
+        ]
+    )
+    integration = MagicMock()
+    integration.update_incoming_correspondence.return_value = {
+        "updated": True,
+        "erp_document_id": row.erp_task_id,
+        "fields": {},
+    }
+    integration.attach_files_to_incoming_correspondence.return_value = [
+        {"ref_key": "eml-new", "filename": ERP_FULL_EMAIL_FILENAME, "size_bytes": 1000},
+    ]
+
+    result = sync_existing_erp_document(
+        message_id=row.message_id,
+        row=row,
+        email=_email(),
+        routing=_routing(),
+        summary_ru=row.summary_ru or "",
+        integration=integration,
+        vault=None,
+        xml_document=ERROR_CASE_XML,
+        force_reattach_filenames={ERP_FULL_EMAIL_FILENAME},
+    )
+
+    assert result["ok"] is True
+    assert result["attached_count"] == 1
+    integration.attach_files_to_incoming_correspondence.assert_called_once()
+    files = integration.attach_files_to_incoming_correspondence.call_args.kwargs["files"]
+    assert any(item.filename == ERP_FULL_EMAIL_FILENAME for item in files)
+    payload = json.loads(result["raw_payload_json"] or row.raw_payload_json or "{}")
+    assert ERP_FULL_EMAIL_FILENAME not in {
+        item.get("filename") for item in payload.get("erp_attachments", [])
+    }
+
+
 def test_odata_integration_update_calls_patch() -> None:
     service = ODataIntegrationService(
         "http://1c.local/odata/standard.odata",

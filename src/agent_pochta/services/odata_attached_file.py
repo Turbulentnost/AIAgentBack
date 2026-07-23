@@ -6,13 +6,16 @@ import base64
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from agent_pochta.config import PROJECT_ROOT
 
 _DEFAULT_MAP_PATH = PROJECT_ROOT / "data" / "odata_attached_file_field_map.json"
 _EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
+_MSK = ZoneInfo("Europe/Moscow")
 _GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -30,6 +33,7 @@ class AttachedFileInput:
     content: bytes
     author_key: str | None = None
     comment: str | None = None
+    processed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -61,13 +65,15 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "storage_stream": "ФайлХранилище",
                 "storage_kind": "ТипХраненияФайла",
                 "size": "Размер",
+                "created_at": "ДатаСоздания",
+                "modified_at": "ДатаМодификацииУниверсальная",
             },
             "defaults": {
                 # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
                 "storage_binary_type": "application/octet-stream",
-                # PUT /ФайлХранилище работает только для хранения в ИБ (не в томе).
+                # Base64 в POST надёжнее PUT Edm.Stream (PUT даёт 200, но 0 байт в ИБ).
                 "storage_kind": "ВИнформационнойБазе",
-                "upload_binary_via_stream": True,
+                "upload_binary_via_stream": False,
             },
         }
     data = json.loads(file_path.read_text(encoding="utf-8"))
@@ -125,6 +131,26 @@ def resolve_stream_content_type(
     return str(cfg_defaults.get("storage_binary_type") or "application/octet-stream")
 
 
+def _coerce_processing_timestamp(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def format_attached_file_created_at(value: datetime) -> str:
+    """ДатаСоздания: локальное MSK без tz (как в рабочих записях 1С)."""
+    ts = _coerce_processing_timestamp(value).astimezone(_MSK)
+    return ts.replace(microsecond=0, tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def format_attached_file_modified_universal(value: datetime) -> str:
+    """ДатаМодификацииУниверсальная: UTC без tz."""
+    ts = _coerce_processing_timestamp(value).astimezone(timezone.utc)
+    return ts.replace(microsecond=0, tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def build_attached_file_payload(
     *,
     document_ref_key: str,
@@ -141,7 +167,7 @@ def build_attached_file_payload(
     owner_key = normalize_document_ref_key(document_ref_key)
     content = validate_file_content(file_input.content)
     base_name, extension = split_filename(file_input.filename)
-    upload_via_stream = bool(defaults.get("upload_binary_via_stream", True))
+    upload_via_stream = bool(defaults.get("upload_binary_via_stream", False))
     if include_binary is None:
         include_binary = not upload_via_stream
     if upload_via_stream:
@@ -175,14 +201,25 @@ def build_attached_file_payload(
         if storage_field := fields.get("storage_binary"):
             payload[str(storage_field)] = base64.b64encode(content).decode("ascii")
         if storage_type_field := fields.get("storage_binary_type"):
-            payload[str(storage_type_field)] = defaults.get(
-                "storage_binary_type",
-                "application/octet-stream",
-            )
+            if upload_via_stream:
+                binary_type = resolve_stream_content_type(
+                    file_input.filename,
+                    defaults=defaults,
+                )
+            else:
+                binary_type = str(
+                    defaults.get("storage_binary_type") or "application/octet-stream"
+                )
+            payload[str(storage_type_field)] = binary_type
     if kind_field := fields.get("storage_kind"):
         payload[str(kind_field)] = storage_kind
     if size_field := fields.get("size"):
         payload[str(size_field)] = len(content)
+    processed_at = _coerce_processing_timestamp(file_input.processed_at)
+    if created_field := fields.get("created_at"):
+        payload[str(created_field)] = format_attached_file_created_at(processed_at)
+    if modified_field := fields.get("modified_at"):
+        payload[str(modified_field)] = format_attached_file_modified_universal(processed_at)
     if file_input.author_key and (author_field := fields.get("author_key")):
         payload[str(author_field)] = file_input.author_key
     if file_input.comment and (comment_field := fields.get("comment")):
@@ -270,7 +307,7 @@ def attach_file_to_incoming_document(
         )
 
     defaults = cfg.get("defaults") or {}
-    if defaults.get("upload_binary_via_stream", True):
+    if defaults.get("upload_binary_via_stream", False):
         upload_attached_file_binary(
             client,
             entity=entity,
