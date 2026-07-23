@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -15,14 +16,19 @@ from agent_pochta.services.odata_attached_file import (
     build_attached_file_payload,
     format_attached_file_created_at,
     format_attached_file_modified_universal,
+    now_attached_file_processed_at,
     read_attached_file_storage_bytes,
     resolve_stream_content_type,
     split_filename,
     verify_attached_file_storage,
 )
-from agent_pochta.services.odata_integration import ODataIntegrationService
+from agent_pochta.services.odata_integration import (
+    ODataIntegrationService,
+    resolve_attached_file_author_key,
+)
 
 DOC_KEY = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+AUTHOR_KEY = "a5e55eea-3a0a-11f0-9679-6cb31113810c"
 
 
 def test_split_filename_pdf():
@@ -57,17 +63,42 @@ def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
 
 
 def test_build_attached_file_payload_uses_explicit_processed_at():
-    ts = datetime(2026, 7, 23, 10, 30, 0, tzinfo=timezone.utc)
+    ts = datetime(2026, 7, 23, 10, 30, 0, tzinfo=ZoneInfo("Europe/Moscow"))
     _, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(
-            filename="Входящее_письмо.eml",
+            filename="НП00-003877.eml",
             content=b"From: a@b.com\r\n\r\n",
             processed_at=ts,
+            author_key=AUTHOR_KEY,
         ),
     )
+    assert payload["Description"] == "НП00-003877"
     assert payload["ДатаСоздания"] == format_attached_file_created_at(ts)
     assert payload["ДатаМодификацииУниверсальная"] == format_attached_file_modified_universal(ts)
+    assert payload["Автор_Key"] == AUTHOR_KEY
+    assert payload["Редактировал_Key"] == AUTHOR_KEY
+
+
+def test_build_attached_file_payload_defaults_to_msk_now(monkeypatch):
+    fixed = datetime(2026, 7, 23, 10, 27, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr("agent_pochta.services.odata_attached_file.datetime", FixedDatetime)
+    _, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(filename="НП00-003877.eml", content=b"eml"),
+    )
+    assert payload["ДатаСоздания"] == "2026-07-23T10:27:00"
+
+
+def test_resolve_attached_file_author_key_from_defaults():
+    assert resolve_attached_file_author_key() == AUTHOR_KEY
+    assert resolve_attached_file_author_key(explicit_key=AUTHOR_KEY) == AUTHOR_KEY
 
 
 def test_build_attached_file_payload_stream_mode_excludes_binary():
@@ -158,9 +189,23 @@ def test_stream_mode_skips_volume_key_even_if_configured():
     assert "Том_Key" not in payload
 
 
-def test_resolve_stream_content_type_for_eml():
+def test_resolve_stream_content_type_for_eml_and_msg():
     assert resolve_stream_content_type("Входящее_письмо.eml") == "message/rfc822"
+    assert resolve_stream_content_type("НП00-003877.msg") == "application/vnd.ms-outlook"
     assert resolve_stream_content_type("scan.pdf") == "application/octet-stream"
+
+
+def test_build_attached_file_payload_msg_uses_outlook_content_type():
+    _, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="НП00-003877.msg",
+            content=b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64,
+        ),
+    )
+    assert payload["Description"] == "НП00-003877"
+    assert payload["Расширение"] == "msg"
+    assert payload["ФайлХранилище_Type"] == "application/vnd.ms-outlook"
 
 
 def test_attach_file_validates_empty_document_ref():
@@ -274,13 +319,14 @@ def test_attach_file_uploads_eml_with_rfc822_content_type():
     )
 
     _entity, payload = client.create_entity.call_args[0]
-    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
+    assert payload["ФайлХранилище_Type"] == "message/rfc822"
     client.put_entity_stream.assert_not_called()
 
 
 def test_odata_integration_attach_files_delegates_to_client():
     service = ODataIntegrationService(
         "http://example/odata/standard.odata/",
+        file_author_key=AUTHOR_KEY,
         entity="Document_ТД_ВходящаяКорреспонденция",
     )
     service._client.get_by_key = MagicMock(return_value={"Ref_Key": DOC_KEY, "Размер": 3})
@@ -292,12 +338,16 @@ def test_odata_integration_attach_files_delegates_to_client():
 
     out = service.attach_files_to_incoming_correspondence(
         document_ref_key=DOC_KEY,
-        files=[AttachedFileInput(filename="doc.pdf", content=b"123")],
+        files=[AttachedFileInput(filename="НП00-003877.eml", content=b"123")],
     )
 
     assert len(out) == 1
     assert out[0]["ref_key"] == "cccccccc-cccc-cccc-cccc-cccccccccccc"
-    assert out[0]["filename"] == "doc.pdf"
+    assert out[0]["filename"] == "НП00-003877.eml"
+    _entity, payload = service._client.create_entity.call_args[0]
+    assert payload["Автор_Key"] == AUTHOR_KEY
+    assert payload["Редактировал_Key"] == AUTHOR_KEY
+    assert payload["Description"] == "НП00-003877"
     service._client.put_entity_stream.assert_not_called()
 
 

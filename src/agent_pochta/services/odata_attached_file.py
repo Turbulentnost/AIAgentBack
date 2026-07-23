@@ -32,6 +32,7 @@ class AttachedFileInput:
     filename: str
     content: bytes
     author_key: str | None = None
+    edited_by_key: str | None = None
     comment: str | None = None
     processed_at: datetime | None = None
 
@@ -67,6 +68,8 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "size": "Размер",
                 "created_at": "ДатаСоздания",
                 "modified_at": "ДатаМодификацииУниверсальная",
+                "author_key": "Автор_Key",
+                "edited_by_key": "Редактировал_Key",
             },
             "defaults": {
                 # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
@@ -128,12 +131,19 @@ def resolve_stream_content_type(
         extension = ""
     if extension == "eml":
         return "message/rfc822"
+    if extension == "msg":
+        return "application/vnd.ms-outlook"
     return str(cfg_defaults.get("storage_binary_type") or "application/octet-stream")
+
+
+def now_attached_file_processed_at() -> datetime:
+    """Момент прикрепления файла в MSK (для ДатаСоздания в 1С)."""
+    return datetime.now(_MSK)
 
 
 def _coerce_processing_timestamp(value: datetime | None) -> datetime:
     if value is None:
-        return datetime.now(timezone.utc)
+        return now_attached_file_processed_at()
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
@@ -201,15 +211,10 @@ def build_attached_file_payload(
         if storage_field := fields.get("storage_binary"):
             payload[str(storage_field)] = base64.b64encode(content).decode("ascii")
         if storage_type_field := fields.get("storage_binary_type"):
-            if upload_via_stream:
-                binary_type = resolve_stream_content_type(
-                    file_input.filename,
-                    defaults=defaults,
-                )
-            else:
-                binary_type = str(
-                    defaults.get("storage_binary_type") or "application/octet-stream"
-                )
+            binary_type = resolve_stream_content_type(
+                file_input.filename,
+                defaults=defaults,
+            )
             payload[str(storage_type_field)] = binary_type
     if kind_field := fields.get("storage_kind"):
         payload[str(kind_field)] = storage_kind
@@ -222,6 +227,9 @@ def build_attached_file_payload(
         payload[str(modified_field)] = format_attached_file_modified_universal(processed_at)
     if file_input.author_key and (author_field := fields.get("author_key")):
         payload[str(author_field)] = file_input.author_key
+    edited_by_key = file_input.edited_by_key or file_input.author_key
+    if edited_by_key and (edited_by_field := fields.get("edited_by_key")):
+        payload[str(edited_by_field)] = edited_by_key
     if file_input.comment and (comment_field := fields.get("comment")):
         payload[str(comment_field)] = file_input.comment.strip()
 

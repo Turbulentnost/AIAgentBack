@@ -84,6 +84,7 @@ def _build_integration(settings: Settings) -> IntegrationService:
             attached_file_field_map_path=settings.odata_attached_file_field_map_file,
             attach_files_enabled=settings.odata_attach_files_enabled,
             file_volume_key=settings.odata_file_volume_key,
+            file_author_key=settings.odata_file_author_key,
         )
     if mode == "http":
         return HttpIntegrationService(settings.integration_service_url)

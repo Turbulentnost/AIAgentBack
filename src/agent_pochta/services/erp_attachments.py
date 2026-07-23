@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import structlog
 
@@ -17,14 +18,17 @@ from agent_pochta.config import get_settings
 from agent_pochta.imap.client import ImapMailboxClient, resolve_imap_credentials
 from agent_pochta.schemas import Attachment, EmailMessage
 from agent_pochta.services.integration_service import IntegrationService
-from agent_pochta.services.odata_attached_file import AttachedFileInput
+from agent_pochta.services.odata_attached_file import AttachedFileInput, now_attached_file_processed_at
 from agent_pochta.services.odata_integration import ODataIntegrationService
 from agent_pochta.services.vault import VaultClient
 
 logger = structlog.get_logger(__name__)
 
 _SKIP_ERP_DOCUMENT_NUMBERS = frozenset({"SKIP-ERP", "DRY-RUN"})
-ERP_FULL_EMAIL_FILENAME = "Входящее_письмо.eml"
+ERP_LEGACY_EMAIL_FILENAME = "Входящее_письмо.eml"
+# Обратная совместимость тестов и retry API
+ERP_FULL_EMAIL_FILENAME = ERP_LEGACY_EMAIL_FILENAME
+ERP_LEGACY_EML_BASENAME = "Входящее_письмо"
 
 
 def existing_erp_document_ref_key(row) -> str | None:
@@ -316,9 +320,56 @@ def ensure_attachment_bytes_for_erp(email: EmailMessage, vault: VaultClient) -> 
     return restored
 
 
-def erp_full_email_filename(_email: EmailMessage | None = None) -> str:
-    """Стабильное имя .eml для идемпотентной догрузки в 1С."""
-    return ERP_FULL_EMAIL_FILENAME
+def erp_full_email_filename(
+    _email: EmailMessage | None = None,
+    erp_document_number: str | None = None,
+) -> str:
+    """Имя .msg для OData: номер документа 1С (НП00-003877.msg)."""
+    number = (erp_document_number or "").strip()
+    if number and number not in _SKIP_ERP_DOCUMENT_NUMBERS:
+        return f"{number}.msg"
+    return "Входящее_письмо.msg"
+
+
+def erp_email_upload_marker_names(erp_document_number: str | None) -> set[str]:
+    """Варианты имени одного письма (.msg по номеру 1С и legacy .eml/.msg)."""
+    names = {
+        ERP_LEGACY_EMAIL_FILENAME,
+        ERP_LEGACY_EML_BASENAME,
+        "Входящее_письмо.msg",
+    }
+    number = (erp_document_number or "").strip()
+    if number and number not in _SKIP_ERP_DOCUMENT_NUMBERS:
+        names.add(number)
+        names.add(f"{number}.msg")
+        names.add(f"{number}.eml")
+    return names
+
+
+def erp_email_skip_filenames(
+    erp_document_number: str | None,
+    skip_filenames: set[str] | None = None,
+) -> set[str]:
+    """Расширяет skip множеством имён письма для идемпотентной догрузки."""
+    skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
+    skip |= erp_email_upload_marker_names(erp_document_number)
+    return skip
+
+
+def erp_email_already_uploaded(
+    erp_document_number: str | None,
+    skip_filenames: set[str] | None = None,
+) -> bool:
+    skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
+    if not skip:
+        return False
+    return bool(skip & erp_email_upload_marker_names(erp_document_number))
+
+
+# Обратная совместимость имён функций (ранее .eml)
+erp_eml_upload_marker_names = erp_email_upload_marker_names
+erp_eml_skip_filenames = erp_email_skip_filenames
+erp_eml_already_uploaded = erp_email_already_uploaded
 
 
 def _build_synthetic_eml_bytes(email: EmailMessage) -> bytes:
@@ -429,15 +480,29 @@ def _collect_erp_upload_files(
     email: EmailMessage,
     *,
     full_email_bytes: bytes,
+    erp_document_number: str | None = None,
     skip_filenames: set[str] | None = None,
+    processed_at: datetime | None = None,
 ) -> list[AttachedFileInput]:
-    """Только полное письмо .eml; MIME-вложения отдельно не отправляются."""
-    skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
-    files: list[AttachedFileInput] = []
-    eml_name = erp_full_email_filename(email)
-    if eml_name not in skip and full_email_bytes:
-        files.append(AttachedFileInput(filename=eml_name, content=full_email_bytes))
-    return files
+    """Только полное письмо .msg; MIME-вложения отдельно не отправляются."""
+    if erp_email_already_uploaded(erp_document_number, skip_filenames):
+        return []
+
+    msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
+    if not full_email_bytes:
+        return []
+
+    from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes
+
+    msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes)
+    attach_time = processed_at or now_attached_file_processed_at()
+    return [
+        AttachedFileInput(
+            filename=msg_name,
+            content=msg_bytes,
+            processed_at=attach_time,
+        )
+    ]
 
 
 def _supports_attachment_upload(integration: IntegrationService) -> bool:
@@ -456,6 +521,7 @@ def attach_email_files_to_document(
     document_ref_key: str,
     email: EmailMessage,
     vault: VaultClient | None = None,
+    erp_document_number: str | None = None,
 ) -> list[dict]:
     """Прикрепляет только полное письмо (.eml) к документу 1С."""
     if not _supports_attachment_upload(integration):
@@ -470,7 +536,11 @@ def attach_email_files_to_document(
         ensure_attachment_bytes_for_erp(email, vault)
     full_email_bytes = ensure_full_email_bytes_for_erp(email, vault)
 
-    files = _collect_erp_upload_files(email, full_email_bytes=full_email_bytes)
+    files = _collect_erp_upload_files(
+        email,
+        full_email_bytes=full_email_bytes,
+        erp_document_number=erp_document_number,
+    )
     if not files:
         logger.info(
             "erp_attach_files_skipped",
@@ -491,7 +561,7 @@ def attach_email_files_to_document(
             document_ref_key=document_ref_key,
             message_id=email.message_id,
             files=len(files),
-            payload_fields=[erp_full_email_filename(email)],
+            payload_fields=[erp_full_email_filename(email, erp_document_number=erp_document_number)],
         )
         raise
 
@@ -500,6 +570,7 @@ def attach_email_files_to_document(
         document_ref_key=document_ref_key,
         message_id=email.message_id,
         attached=len(results),
+        erp_document_number=erp_document_number,
     )
     return results
 
@@ -511,6 +582,7 @@ def attach_missing_email_files_to_document(
     email: EmailMessage,
     vault: VaultClient | None = None,
     skip_filenames: set[str] | None = None,
+    erp_document_number: str | None = None,
 ) -> list[dict]:
     """Прикрепляет недостающее полное письмо (.eml) к документу 1С."""
     if not _supports_attachment_upload(integration):
@@ -528,6 +600,7 @@ def attach_missing_email_files_to_document(
     files = _collect_erp_upload_files(
         email,
         full_email_bytes=full_email_bytes,
+        erp_document_number=erp_document_number,
         skip_filenames=skip_filenames,
     )
     if not files:
@@ -550,7 +623,7 @@ def attach_missing_email_files_to_document(
             document_ref_key=document_ref_key,
             message_id=email.message_id,
             files=len(files),
-            payload_fields=[erp_full_email_filename(email)],
+            payload_fields=[erp_full_email_filename(email, erp_document_number=erp_document_number)],
         )
         raise
 
@@ -560,5 +633,6 @@ def attach_missing_email_files_to_document(
         message_id=email.message_id,
         attached=len(results),
         skipped_existing=len(skip_filenames or ()),
+        erp_document_number=erp_document_number,
     )
     return results

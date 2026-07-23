@@ -10,17 +10,22 @@ from agent_pochta.attachments.cache import clear_attachment_cache
 from agent_pochta.schemas import Attachment, EmailMessage
 from agent_pochta.services.erp_attachments import (
     ERP_FULL_EMAIL_FILENAME,
+    ERP_LEGACY_EMAIL_FILENAME,
     attach_email_files_to_document,
     cache_email_attachment_bytes,
     ensure_attachment_bytes_for_erp,
     ensure_full_email_bytes_for_erp,
     erp_attachment_filename,
+    erp_email_upload_marker_names,
     erp_full_email_filename,
 )
+from agent_pochta.services.email_msg import is_msg_bytes
 from agent_pochta.services.integration_service import StubIntegrationService
 from agent_pochta.services.odata_integration import ODataIntegrationService
 
 DOC_KEY = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+ERP_DOC_NUMBER = "НП00-003877"
+DOC_NUMBER = "НП00-003877"
 
 
 def _email_with_attachment(*, content: bytes | None = b"pdf-bytes") -> EmailMessage:
@@ -61,10 +66,11 @@ def test_attach_email_files_to_document_uses_integration():
         integration,
         document_ref_key=DOC_KEY,
         email=email,
+        erp_document_number=DOC_NUMBER,
     )
 
     assert len(result) == 1
-    assert result[0]["filename"] == ERP_FULL_EMAIL_FILENAME
+    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
     assert "scan.pdf" not in {item["filename"] for item in result}
 
 
@@ -85,11 +91,12 @@ def test_attach_email_files_to_document_fetches_missing_content():
             document_ref_key=DOC_KEY,
             email=email,
             vault=vault,
+            erp_document_number=DOC_NUMBER,
         )
 
     ensure_mock.assert_called_once_with(email, vault)
     assert len(result) == 1
-    assert result[0]["filename"] == ERP_FULL_EMAIL_FILENAME
+    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
 
 
 def test_attach_email_files_attaches_full_email_without_file_attachments():
@@ -100,14 +107,15 @@ def test_attach_email_files_attaches_full_email_without_file_attachments():
         integration,
         document_ref_key=DOC_KEY,
         email=email,
+        erp_document_number=DOC_NUMBER,
     )
 
     assert len(result) == 1
-    assert result[0]["filename"] == ERP_FULL_EMAIL_FILENAME
+    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
     assert result[0]["size_bytes"] > 0
 
 
-def test_attach_email_files_still_attaches_eml_when_file_fetch_fails():
+def test_attach_email_files_still_attaches_msg_when_file_fetch_fails():
     integration = StubIntegrationService()
     email = _email_with_attachment(content=None)
     vault = MagicMock()
@@ -121,10 +129,11 @@ def test_attach_email_files_still_attaches_eml_when_file_fetch_fails():
             document_ref_key=DOC_KEY,
             email=email,
             vault=vault,
+            erp_document_number=DOC_NUMBER,
         )
 
     assert len(result) == 1
-    assert result[0]["filename"] == ERP_FULL_EMAIL_FILENAME
+    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
 
 
 def test_ensure_full_email_bytes_prefers_imap_rfc822():
@@ -198,8 +207,30 @@ def test_synthetic_eml_includes_headers_for_outlook():
     assert parsed["MIME-Version"] == "1.0"
 
 
-def test_erp_full_email_filename_is_stable():
-    assert erp_full_email_filename(_email_without_attachments()) == ERP_FULL_EMAIL_FILENAME
+def test_erp_full_email_filename_uses_document_number():
+    assert erp_full_email_filename(erp_document_number=DOC_NUMBER) == f"{DOC_NUMBER}.msg"
+
+
+def test_erp_email_upload_marker_names_includes_legacy_and_msg():
+    names = erp_email_upload_marker_names(DOC_NUMBER)
+    assert f"{DOC_NUMBER}.msg" in names
+    assert ERP_LEGACY_EMAIL_FILENAME in names
+    assert "Входящее_письмо.msg" in names
+
+
+def test_collect_erp_upload_files_converts_to_msg():
+    from agent_pochta.services.erp_attachments import _collect_erp_upload_files
+
+    email = _email_without_attachments()
+    eml = ensure_full_email_bytes_for_erp(email, vault=None)
+    files = _collect_erp_upload_files(
+        email,
+        full_email_bytes=eml,
+        erp_document_number=DOC_NUMBER,
+    )
+    assert len(files) == 1
+    assert files[0].filename == f"{DOC_NUMBER}.msg"
+    assert is_msg_bytes(files[0].content)
 
 
 def test_attach_email_files_skips_when_odata_attach_disabled():

@@ -13,6 +13,7 @@ from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.schemas import Attachment, EmailMessage, ProcessingStatus, Priority, RoutingResult
 from agent_pochta.services.erp_attachments import (
     ERP_FULL_EMAIL_FILENAME,
+    erp_email_upload_marker_names,
     merge_erp_attachment_lists,
     uploaded_erp_attachment_filenames,
 )
@@ -193,7 +194,7 @@ def test_sync_existing_force_reattach_eml() -> None:
         "fields": {},
     }
     integration.attach_files_to_incoming_correspondence.return_value = [
-        {"ref_key": "eml-new", "filename": ERP_FULL_EMAIL_FILENAME, "size_bytes": 1000},
+        {"ref_key": "msg-new", "filename": "ВК-000050.msg", "size_bytes": 1000},
     ]
 
     result = sync_existing_erp_document(
@@ -205,14 +206,14 @@ def test_sync_existing_force_reattach_eml() -> None:
         integration=integration,
         vault=None,
         xml_document=ERROR_CASE_XML,
-        force_reattach_filenames={ERP_FULL_EMAIL_FILENAME},
+        force_reattach_filenames=erp_email_upload_marker_names(row.erp_document_number),
     )
 
     assert result["ok"] is True
     assert result["attached_count"] == 1
     integration.attach_files_to_incoming_correspondence.assert_called_once()
     files = integration.attach_files_to_incoming_correspondence.call_args.kwargs["files"]
-    assert any(item.filename == ERP_FULL_EMAIL_FILENAME for item in files)
+    assert any(item.filename == "ВК-000050.msg" for item in files)
     payload = json.loads(result["raw_payload_json"] or row.raw_payload_json or "{}")
     assert ERP_FULL_EMAIL_FILENAME not in {
         item.get("filename") for item in payload.get("erp_attachments", [])

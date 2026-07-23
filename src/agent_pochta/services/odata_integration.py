@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
+from agent_pochta.config import PROJECT_ROOT
 from agent_pochta.schemas import EmailMessage, RoutingResult
 from agent_pochta.services.integration_service import IntegrationService
 from agent_pochta.services.odata_client import ODataClient
@@ -19,8 +22,35 @@ from agent_pochta.services.odata_attached_file import (
     AttachedFileInput,
     attach_files_to_incoming_document,
     load_attached_file_field_map,
+    now_attached_file_processed_at,
 )
 from agent_pochta.services.routing_departments import load_routing_rules
+
+_EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
+
+
+def resolve_attached_file_author_key(
+    *,
+    explicit_key: str = "",
+    incoming_defaults_file: str | Path | None = None,
+) -> str:
+    """GUID пользователя 1С для Автор_Key / Редактировал_Key присоединённого файла."""
+    key = (explicit_key or "").strip()
+    if key and key != _EMPTY_GUID:
+        return key
+    defaults_path = Path(incoming_defaults_file) if incoming_defaults_file else (
+        PROJECT_ROOT / "data" / "odata_incoming_defaults.json"
+    )
+    if defaults_path.is_file():
+        try:
+            defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            defaults = {}
+        if isinstance(defaults, dict):
+            fallback = (defaults.get("Ответственный_Key") or "").strip()
+            if fallback and fallback != _EMPTY_GUID:
+                return fallback
+    return ""
 
 
 class ODataIntegrationService(IntegrationService):
@@ -45,6 +75,7 @@ class ODataIntegrationService(IntegrationService):
         attached_file_field_map_path: str = "",
         attach_files_enabled: bool = True,
         file_volume_key: str = "",
+        file_author_key: str = "",
     ) -> None:
         self._entity = entity.strip("/")
         self._field_map = load_field_map(field_map_json)
@@ -70,6 +101,10 @@ class ODataIntegrationService(IntegrationService):
             file_volume_key=file_volume_key,
         )
         self._attach_files_enabled = attach_files_enabled
+        self._file_author_key = resolve_attached_file_author_key(
+            explicit_key=file_author_key,
+            incoming_defaults_file=incoming_defaults_file,
+        )
         self._client = ODataClient(
             base_url,
             username=username,
@@ -170,10 +205,24 @@ class ODataIntegrationService(IntegrationService):
         if not files:
             return []
 
+        processed_at = now_attached_file_processed_at()
+        enriched: list[AttachedFileInput] = []
+        for item in files:
+            enriched.append(
+                AttachedFileInput(
+                    filename=item.filename,
+                    content=item.content,
+                    author_key=item.author_key or self._file_author_key or None,
+                    edited_by_key=item.edited_by_key or self._file_author_key or None,
+                    comment=item.comment,
+                    processed_at=item.processed_at or processed_at,
+                )
+            )
+
         results = attach_files_to_incoming_document(
             self._client,
             document_ref_key=document_ref_key,
-            files=files,
+            files=enriched,
             field_map=self._attached_file_field_map,
         )
         return [

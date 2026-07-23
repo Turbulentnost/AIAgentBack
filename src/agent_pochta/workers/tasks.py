@@ -457,11 +457,11 @@ def retry_erp_task(self, message_id: str, *, force_reattach_eml: bool = False) -
 
         retry_mode = _resolve_retry_erp_mode(row, email)
         if retry_mode == "sync_existing":
-            from agent_pochta.services.erp_attachments import ERP_FULL_EMAIL_FILENAME
-
             force_reattach: set[str] | None = None
             if force_reattach_eml:
-                force_reattach = {ERP_FULL_EMAIL_FILENAME}
+                from agent_pochta.services.erp_attachments import erp_email_upload_marker_names
+
+                force_reattach = erp_email_upload_marker_names(row.erp_document_number)
             session.commit()
             return _sync_existing_erp_document(
                 message_id=message_id,
@@ -498,6 +498,7 @@ def retry_erp_task(self, message_id: str, *, force_reattach_eml: bool = False) -
                     document_ref_key=str(doc_id),
                     email=email,
                     vault=container.vault,
+                    erp_document_number=res.get("erp_document_number"),
                 )
                 if attached:
                     attachment_meta["erp_attachments"] = attached

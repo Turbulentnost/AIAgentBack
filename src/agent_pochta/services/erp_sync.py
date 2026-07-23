@@ -128,6 +128,7 @@ def sync_existing_erp_document(
             email=email,
             vault=vault,
             skip_filenames=skip_filenames,
+            erp_document_number=row.erp_document_number,
         )
     except Exception as exc:
         logger.exception(

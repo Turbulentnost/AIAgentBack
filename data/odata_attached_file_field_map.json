@@ -12,7 +12,9 @@
     "storage_kind": "ТипХраненияФайла",
     "size": "Размер",
     "created_at": "ДатаСоздания",
-    "modified_at": "ДатаМодификацииУниверсальная"
+    "modified_at": "ДатаМодификацииУниверсальная",
+    "author_key": "Автор_Key",
+    "edited_by_key": "Редактировал_Key"
   },
   "defaults": {
     "storage_binary_type": "application/octet-stream",

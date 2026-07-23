@@ -121,6 +121,7 @@ class Settings(BaseSettings):
     )
     odata_attach_files_enabled: bool = Field(default=True, alias="ODATA_ATTACH_FILES_ENABLED")
     odata_file_volume_key: str = Field(default="", alias="ODATA_FILE_VOLUME_KEY")
+    odata_file_author_key: str = Field(default="", alias="ODATA_FILE_AUTHOR_KEY")
     odata_timeout_sec: float = Field(default=60.0, alias="ODATA_TIMEOUT_SEC")
     celery_broker_url: str = Field(
         default="amqp://guest:guest@localhost:5672//", alias="CELERY_BROKER_URL"
