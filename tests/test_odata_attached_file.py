@@ -301,7 +301,7 @@ def test_attach_file_stream_mode_uses_put():
     )
 
 
-def test_attach_file_uploads_eml_with_rfc822_content_type():
+def test_attach_file_uploads_eml_with_octet_stream_content_type():
     client = MagicMock()
     client.get_by_key.return_value = {"Ref_Key": DOC_KEY, "Размер": 51}
     client.get_entity_stream.return_value = (
@@ -319,7 +319,7 @@ def test_attach_file_uploads_eml_with_rfc822_content_type():
     )
 
     _entity, payload = client.create_entity.call_args[0]
-    assert payload["ФайлХранилище_Type"] == "message/rfc822"
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
     client.put_entity_stream.assert_not_called()
 
 
