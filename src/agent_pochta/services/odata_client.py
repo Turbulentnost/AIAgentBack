@@ -131,6 +131,39 @@ class ODataClient:
                     pass
             response.raise_for_status()
 
+    def get_entity_stream(
+        self,
+        entity: str,
+        ref_key: str,
+        stream_property: str,
+    ) -> bytes:
+        """Читает двоичные данные из Edm.Stream-свойства сущности OData (GET)."""
+        entity = entity.strip("/")
+        stream_property = stream_property.strip()
+        key = (ref_key or "").strip()
+        if not key:
+            raise ValueError("ref_key is required for OData stream GET")
+        url = f"{self._base_url}{entity}(guid'{key}')/{stream_property}"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.get(url)
+            if response.status_code == 404:
+                return b""
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData GET stream {entity}/{stream_property} failed "
+                                f"({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()
+            return response.content or b""
+
     def put_entity_stream(
         self,
         entity: str,

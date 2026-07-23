@@ -231,6 +231,87 @@ def build_attached_file_payload(
     return entity, payload
 
 
+def read_attached_file_storage_bytes(
+    client,
+    *,
+    entity: str,
+    ref_key: str,
+    field_map: dict[str, Any] | None = None,
+) -> bytes:
+    """Читает фактические байты файла из OData (stream GET, затем Base64 в JSON)."""
+    cfg = field_map or load_attached_file_field_map()
+    fields = cfg.get("fields") or {}
+    stream_property = str(fields.get("storage_stream") or "ФайлХранилище").strip()
+    get_stream = getattr(client, "get_entity_stream", None)
+    if callable(get_stream):
+        content = get_stream(entity, ref_key, stream_property) or b""
+        if content:
+            return content
+
+    record = client.get_by_key(entity, ref_key) or {}
+    binary_field = str(fields.get("storage_binary") or "ФайлХранилище_Base64Data")
+    b64 = record.get(binary_field) or ""
+    if not b64:
+        return b""
+    try:
+        return base64.b64decode(b64)
+    except Exception as exc:
+        raise AttachedFileError(f"Некорректный Base64 в {binary_field}: {exc}") from exc
+
+
+def verify_attached_file_storage(
+    client,
+    *,
+    entity: str,
+    ref_key: str,
+    expected_size: int,
+    field_map: dict[str, Any] | None = None,
+) -> int:
+    """Проверяет, что после POST в хранилище записаны ненулевые байты."""
+    cfg = field_map or load_attached_file_field_map()
+    fields = cfg.get("fields") or {}
+    record = client.get_by_key(entity, ref_key)
+    if not record:
+        raise AttachedFileError(
+            f"OData GET {entity} с Ref_Key={ref_key} не вернул запись после POST"
+        )
+
+    stored_bytes = read_attached_file_storage_bytes(
+        client,
+        entity=entity,
+        ref_key=ref_key,
+        field_map=cfg,
+    )
+    stored_size = len(stored_bytes)
+    if stored_size == 0:
+        kind_field = str(fields.get("storage_kind") or "ТипХраненияФайла")
+        size_field = str(fields.get("size") or "Размер")
+        storage_kind = record.get(kind_field) or ""
+        meta_size = record.get(size_field) or 0
+        raise AttachedFileError(
+            "Пустое хранилище файла после POST "
+            f"(Ref_Key={ref_key}, ТипХранения={storage_kind!r}, Размер={meta_size})"
+        )
+
+    if expected_size > 0 and stored_size != expected_size:
+        raise AttachedFileError(
+            f"Размер в хранилище ({stored_size}) не совпадает с отправленным ({expected_size})"
+        )
+
+    size_field = str(fields.get("size") or "Размер")
+    meta_size_raw = record.get(size_field)
+    try:
+        meta_size = int(meta_size_raw) if meta_size_raw is not None else 0
+    except (TypeError, ValueError):
+        meta_size = 0
+    if meta_size > 0 and meta_size != stored_size:
+        raise AttachedFileError(
+            f"Размер в метаданных ({meta_size}) не совпадает с хранилищем ({stored_size})"
+        )
+
+    return stored_size
+
+
 def upload_attached_file_binary(
     client,
     *,
@@ -316,6 +397,14 @@ def attach_file_to_incoming_document(
             field_map=cfg,
             filename=file_input.filename,
         )
+
+    verify_attached_file_storage(
+        client,
+        entity=entity,
+        ref_key=ref_key,
+        expected_size=len(file_input.content),
+        field_map=cfg,
+    )
 
     base_name, extension = split_filename(file_input.filename)
     return AttachedFileResult(

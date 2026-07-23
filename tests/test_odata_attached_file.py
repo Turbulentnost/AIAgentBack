@@ -15,8 +15,10 @@ from agent_pochta.services.odata_attached_file import (
     build_attached_file_payload,
     format_attached_file_created_at,
     format_attached_file_modified_universal,
+    read_attached_file_storage_bytes,
     resolve_stream_content_type,
     split_filename,
+    verify_attached_file_storage,
 )
 from agent_pochta.services.odata_integration import ODataIntegrationService
 
@@ -195,7 +197,8 @@ def test_attach_file_checks_owner_exists():
 
 def test_attach_file_posts_to_catalog():
     client = MagicMock()
-    client.get_by_key.return_value = {"Ref_Key": DOC_KEY}
+    client.get_by_key.return_value = {"Ref_Key": DOC_KEY, "Размер": 4}
+    client.get_entity_stream.return_value = b"data"
     client.create_entity.return_value = {"Ref_Key": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
 
     result = attach_file_to_incoming_document(
@@ -211,11 +214,13 @@ def test_attach_file_posts_to_catalog():
     _entity, payload = client.create_entity.call_args[0]
     assert payload["ФайлХранилище_Base64Data"]
     client.put_entity_stream.assert_not_called()
+    client.get_entity_stream.assert_called_once()
 
 
 def test_attach_file_stream_mode_uses_put():
     client = MagicMock()
-    client.get_by_key.return_value = {"Ref_Key": DOC_KEY}
+    client.get_by_key.return_value = {"Ref_Key": DOC_KEY, "Размер": 4}
+    client.get_entity_stream.return_value = b"data"
     client.create_entity.return_value = {"Ref_Key": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
 
     attach_file_to_incoming_document(
@@ -253,7 +258,10 @@ def test_attach_file_stream_mode_uses_put():
 
 def test_attach_file_uploads_eml_with_rfc822_content_type():
     client = MagicMock()
-    client.get_by_key.return_value = {"Ref_Key": DOC_KEY}
+    client.get_by_key.return_value = {"Ref_Key": DOC_KEY, "Размер": 51}
+    client.get_entity_stream.return_value = (
+        b"From: a@b.com\r\nTo: c@d.com\r\nSubject: test\r\n\r\nbody\r\n"
+    )
     client.create_entity.return_value = {"Ref_Key": "dddddddd-dddd-dddd-dddd-dddddddddddd"}
 
     attach_file_to_incoming_document(
@@ -275,7 +283,8 @@ def test_odata_integration_attach_files_delegates_to_client():
         "http://example/odata/standard.odata/",
         entity="Document_ТД_ВходящаяКорреспонденция",
     )
-    service._client.get_by_key = MagicMock(return_value={"Ref_Key": DOC_KEY})
+    service._client.get_by_key = MagicMock(return_value={"Ref_Key": DOC_KEY, "Размер": 3})
+    service._client.get_entity_stream = MagicMock(return_value=b"123")
     service._client.create_entity = MagicMock(
         return_value={"Ref_Key": "cccccccc-cccc-cccc-cccc-cccccccccccc"}
     )
@@ -290,3 +299,38 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert out[0]["ref_key"] == "cccccccc-cccc-cccc-cccc-cccccccccccc"
     assert out[0]["filename"] == "doc.pdf"
     service._client.put_entity_stream.assert_not_called()
+
+
+def test_verify_attached_file_storage_rejects_empty_stream():
+    client = MagicMock()
+    client.get_by_key.return_value = {
+        "Ref_Key": DOC_KEY,
+        "Размер": 100,
+        "ТипХраненияФайла": "ВТомахНаДиске",
+        "ФайлХранилище_Base64Data": "",
+    }
+    client.get_entity_stream.return_value = b""
+
+    with pytest.raises(AttachedFileError, match="Пустое хранилище"):
+        verify_attached_file_storage(
+            client,
+            entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            ref_key=DOC_KEY,
+            expected_size=100,
+        )
+
+
+def test_read_attached_file_storage_bytes_falls_back_to_base64():
+    client = MagicMock()
+    client.get_entity_stream.return_value = b""
+    client.get_by_key.return_value = {
+        "ФайлХранилище_Base64Data": "aGVsbG8=",
+    }
+
+    content = read_attached_file_storage_bytes(
+        client,
+        entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        ref_key=DOC_KEY,
+    )
+
+    assert content == b"hello"

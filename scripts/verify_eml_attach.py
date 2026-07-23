@@ -17,12 +17,13 @@ from agent_pochta.services.odata_attached_file import (
     AttachedFileInput,
     attach_file_to_incoming_document,
     load_attached_file_field_map,
+    read_attached_file_storage_bytes,
 )
 from agent_pochta.services.odata_client import ODataClient
 
-# Test doc: НП00-003870 (had broken eml after stream PUT)
-DOC_NUMBER = "НП00-003870"
-DOC_REF = "ccb7ab6d-8653-11f1-984a-6cb31113810e"
+# Test doc: НП00-003876 (broken eml: volume storage, 0 bytes)
+DOC_NUMBER = "НП00-003876"
+DOC_REF = "e9e1b18c-8669-11f1-984a-6cb31113810e"
 ENTITY = "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
 EML_NAME = "Входящее_письмо"
 
@@ -76,6 +77,14 @@ def main() -> None:
     )
     print("ATTACHED", result.ref_key, result.size_bytes)
 
+    stored = read_attached_file_storage_bytes(
+        client,
+        entity=ENTITY,
+        ref_key=result.ref_key,
+        field_map=field_map,
+    )
+    print("stored_bytes", len(stored))
+
     items = fetch_files(base, auth, DOC_REF)
     eml_items = [i for i in items if (i.get("Description") or "") == EML_NAME]
     latest = eml_items[0] if eml_items else {}
@@ -89,7 +98,8 @@ def main() -> None:
     print("ДатаСоздания", latest.get("ДатаСоздания"))
     print("ДатаМодификацииУниверсальная", latest.get("ДатаМодификацииУниверсальная"))
     ok = (
-        len(decoded) > 0
+        len(stored) == len(content)
+        and len(decoded) > 0
         and b"Subject:" in decoded
         and not str(latest.get("ДатаСоздания") or "").startswith("0001")
     )
