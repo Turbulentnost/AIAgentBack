@@ -104,6 +104,28 @@
         "gazprom.ru",
         "gazprom-neft.ru",
         "@gazprom."
+      ],
+      "exclude_content_patterns": [
+        "ремонт",
+        "дилер",
+        "дилерск",
+        "гранд",
+        "grand",
+        "ufg-h",
+        "ufg h",
+        "ufgh",
+        "ткп",
+        "коммерческ",
+        "запрос цен",
+        "кп ",
+        "счет ",
+        "счёт ",
+        "сервисн",
+        "гарантийный ремонт",
+        "сервисное обслуживание",
+        "неисправность",
+        "замена расходомера",
+        "замена прибора"
       ]
     },
     "ministry_od": {
@@ -4066,6 +4088,58 @@
           "запрос на тендер - застройка стенда на форуме «пмгф - 2026",
           "info",
           "требуется"
+        ]
+      },
+      {
+        "id": "df0de4dd-5b18-4b86-aca5-34fde571e6a5",
+        "created_at": "2026-07-23T07:10:09.228963+00:00",
+        "partner": "ООО ПЦ УГНТУ «Нефтегазинжиниринг»",
+        "organization": "НП",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "tashbulatova.em@ngiugntu.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "запрос ткп на датчик расхода (объект рсн141-25 )",
+        "keywords": [
+          "запрос ткп на датчик расхода (объект рсн141-25",
+          "info",
+          "для объекта"
+        ]
+      },
+      {
+        "id": "a1a40e55-b7d0-42a7-945f-2fac858c2a1e",
+        "created_at": "2026-07-23T07:11:29.173443+00:00",
+        "partner": "ИП Деревянко Юлия Сергеевна",
+        "organization": "НП",
+        "department_id": "00-000002",
+        "department_name": "Бухгалтерия",
+        "sender_email": "office@servis-cargo.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "srv счет на оплату - higer klq6928q х885на761",
+        "keywords": [
+          "srv счет на оплату - higer klq6928q х885на761",
+          "info"
+        ]
+      },
+      {
+        "id": "7d06e8ff-38c4-4545-98ce-1475b5356f04",
+        "created_at": "2026-07-23T07:14:44.851988+00:00",
+        "partner": "АО <ОДК-ГТ>",
+        "organization": "НП",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "gorbunova_km@odk-gt.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "fw: запрос",
+        "keywords": [
+          "запрос",
+          "info",
+          "стоимость",
+          "22-605 email",
+          "293-605 тел",
+          "email gorbunova_km",
+          "gfg2-f-c2tp-g-0025.01-p-0tki-exi-c-0010e 1",
+          "gorbunova_km odk-gt.ru"
         ]
       }
     ]

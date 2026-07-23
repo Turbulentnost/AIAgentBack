@@ -73,6 +73,41 @@ def test_info_gazprom_company_routes_to_chairman(engine):
     assert decision.confidence_level == ConfidenceLevel.HIGH
 
 
+def test_info_gazprom_dealer_sales_not_forced_to_chairman(engine):
+    decision = route_email(
+        _email(
+            subject="Запрос КП",
+            sender_email="delo.kruk@gtm.gazprom.ru",
+        ),
+        combined_text=(
+            "ПАО Газпром: запрос КП на дилерские продажи "
+            "промышленного оборудования UFG-H"
+        ),
+        recipient="info@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code == "00-000155"
+    assert decision.direction == "ПР"
+    assert decision.match_source == "det_sales_dealer"
+
+
+def test_info_gazprom_repair_not_forced_to_chairman(engine):
+    decision = route_email(
+        _email(
+            subject="ООО Газпром трансгаз Москва. О ремонте расходомера",
+            sender_email="delo.kruk@gtm.gazprom.ru",
+        ),
+        combined_text=(
+            "Просим оказать содействие в ремонте ультразвукового "
+            "расходомера Turbo Flow UFG-F на ГРС «Ручьевский»"
+        ),
+        recipient="info@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code != "00-000001"
+    assert decision.match_source != "info_strict"
+
+
 def test_info_vodokanal_routes_to_chairman(engine):
     decision = route_email(
         _email(subject="Запрос"),

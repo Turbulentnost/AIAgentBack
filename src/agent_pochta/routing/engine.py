@@ -342,17 +342,25 @@ class RouteEngine:
         sender_norm = (sender_email or "").lower().strip()
 
         rule1 = cfg.get("ilchenko_ud") or {}
-        hits: list[str] = []
+        name_hits: list[str] = []
         for pattern in rule1.get("name_patterns") or []:
             if keyword_in_text(str(pattern), text):
-                hits.append(str(pattern))
+                name_hits.append(str(pattern))
+        org_hits: list[str] = []
         for pattern in rule1.get("org_patterns") or []:
             if keyword_in_text(str(pattern), text):
-                hits.append(str(pattern))
-        for domain in rule1.get("sender_domain_patterns") or []:
-            marker = str(domain).lower().strip()
-            if marker and marker in sender_norm:
-                hits.append(marker)
+                org_hits.append(str(pattern))
+        domain_hits: list[str] = []
+        if name_hits or org_hits:
+            for domain in rule1.get("sender_domain_patterns") or []:
+                marker = str(domain).lower().strip()
+                if marker and marker in sender_norm:
+                    domain_hits.append(marker)
+        hits = name_hits + org_hits + domain_hits
+        if hits and rule1.get("code") and not name_hits:
+            exclude_patterns = rule1.get("exclude_content_patterns") or []
+            if any(keyword_in_text(str(pattern), text) for pattern in exclude_patterns):
+                hits = []
         if hits and rule1.get("code"):
             rule_code = rule1.get("rule_code", "INFO_STRICT_ILCHENKO")
             return self._info_strict_candidate(
