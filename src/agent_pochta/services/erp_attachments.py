@@ -431,7 +431,7 @@ def _collect_erp_upload_files(
     full_email_bytes: bytes,
     skip_filenames: set[str] | None = None,
 ) -> list[AttachedFileInput]:
-    """Только полное письмо .eml; MIME-вложения отдельно не отправляются."""
+    """Собирает MIME-вложения и полное письмо .eml для OData."""
     skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
     files: list[AttachedFileInput] = []
     for att in attachments_with_content(email):

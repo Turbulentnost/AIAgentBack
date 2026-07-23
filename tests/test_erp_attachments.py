@@ -63,9 +63,10 @@ def test_attach_email_files_to_document_uses_integration():
         email=email,
     )
 
-    assert len(result) == 1
-    assert result[0]["filename"] == ERP_FULL_EMAIL_FILENAME
-    assert result[0]["size_bytes"] > 0
+    assert len(result) == 2
+    filenames = {item["filename"] for item in result}
+    assert "scan.pdf" in filenames
+    assert ERP_FULL_EMAIL_FILENAME in filenames
 
 
 def test_attach_email_files_to_document_fetches_missing_content():
@@ -88,8 +89,8 @@ def test_attach_email_files_to_document_fetches_missing_content():
         )
 
     ensure_mock.assert_called_once_with(email, vault)
-    assert len(result) == 1
-    assert result[0]["filename"] == ERP_FULL_EMAIL_FILENAME
+    assert len(result) == 2
+    assert result[0]["size_bytes"] == len(b"restored")
 
 
 def test_attach_email_files_attaches_full_email_without_file_attachments():
