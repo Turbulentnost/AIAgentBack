@@ -486,6 +486,11 @@ def _registry_series_fields(entry: MeetingRegistryEntry) -> dict[str, object]:
 def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
     payload = entry.payload if isinstance(entry.payload, dict) else {}
     meeting_topic = payload.get("meeting_topic")
+    from app.services.meeting_protocol_status import (
+        registry_cancel_allowed,
+        registry_actions_locked,
+    )
+
     display_title = registry_display_title(
         subject=entry.subject,
         meeting_topic=meeting_topic if isinstance(meeting_topic, dict) else None,
@@ -514,6 +519,8 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
         protocol_status=payload.get("protocol_status")
         if isinstance(payload.get("protocol_status"), str)
         else None,
+        can_cancel=registry_cancel_allowed(entry.stage),
+        actions_locked=registry_actions_locked(entry.stage),
         outlook_item_id=entry.outlook_item_id,
         outlook_changekey=entry.outlook_changekey,
         outlook_meeting_url=entry.outlook_meeting_url,

@@ -25,7 +25,7 @@ import requests
 
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import entity_url
-from app.tools.onec.lookup_user_ref import is_empty_key, load_persons_for_keys, resolve_user_by_fio
+from app.tools.onec.lookup_user_ref import is_empty_key, resolve_user_by_fio
 from app.tools.onec.meeting_topic_participants import (
     extract_participant_keys,
     fetch_participant_rows,
@@ -36,17 +36,10 @@ PROTOCOL_TASKS_REGISTER = "InformationRegister_ТД_ЗадачиПротокол
 PROTOCOL_ATTENDEES_SECTION = "ПрисутствующиеНаСовещании"
 DEFAULT_MEETING_TYPE = "Отчетное"
 DEFAULT_STATUS = "Подготовлен"
-SKIP_HEADER_FIELDS = frozenset(
-    {
-        "Ref_Key",
-        "Number",
-        "Date",
-        "ДатаСоздания",
-        "Posted",
-        "DeletionMark",
-        "DataVersion",
-    }
-)
+TOPIC_TYPE = "StandardODATA.Catalog_ТД_ТемыСовещаний"
+DEPARTMENT_TYPE = "StandardODATA.Catalog_ПодразделенияОрганизаций"
+ROOM_TYPE = "StandardODATA.Catalog_CRM_Помещения"
+USER_TYPE = "StandardODATA.Catalog_Пользователи"
 
 
 def fetch_protocol_by_ref(
@@ -84,55 +77,40 @@ def fetch_protocol_by_number(
     return rows[0] if rows else None
 
 
-def fetch_template_protocol(
+def fetch_previous_protocol_by_topic(
     session: requests.Session,
     config: ODataConfig,
+    topic_key: str,
     *,
-    template_ref_key: str | None = None,
-    number_prefix: str | None = None,
-) -> dict[str, Any]:
-    if template_ref_key:
-        return fetch_protocol_by_ref(session, config, template_ref_key)
+    before: datetime | None = None,
+) -> dict[str, Any] | None:
+    normalized_topic_key = str(topic_key or "").strip()
+    if is_empty_key(normalized_topic_key):
+        return None
 
-    limit = 1 if not number_prefix else 200
+    filter_parts = [
+        "DeletionMark eq false",
+        f"ТемаСовещания_Key eq guid'{normalized_topic_key}'",
+    ]
+    if before is not None:
+        if before.tzinfo is not None:
+            before = before.astimezone(timezone.utc).replace(tzinfo=None)
+        before_text = before.strftime("%Y-%m-%dT%H:%M:%S")
+        filter_parts.append(f"Date lt datetime'{before_text}'")
+
     url = (
         f"{entity_url(config.url, PROTOCOL_DOCUMENT)}"
-        f"?$filter=DeletionMark eq false&$orderby=Date desc&$top={limit}&$format=json"
+        f"?$filter={quote(' and '.join(filter_parts), safe='')}"
+        f"&$orderby=Date desc&$top=1&$format=json"
     )
     response = session.get(url, timeout=config.timeout)
     if not response.ok:
         raise RuntimeError(
-            f"Не удалось загрузить протоколы-шаблоны: HTTP {response.status_code}: {response.text[:400]}"
+            "Ошибка поиска предыдущего протокола: "
+            f"HTTP {response.status_code}: {response.text[:400]}"
         )
     rows = response.json().get("value") or []
-    if not rows:
-        raise ValueError("В 1С не найден ни один протокол для шаблона")
-
-    if number_prefix:
-        for row in rows:
-            if str(row.get("Number") or "").startswith(number_prefix):
-                return row
-    return rows[0]
-
-
-def copy_header_fields(source: dict[str, Any], *, include_number: bool = False) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    skip = set(SKIP_HEADER_FIELDS)
-    if not include_number:
-        skip.add("Number")
-    for key, value in source.items():
-        if key in skip:
-            continue
-        if key.endswith("_Key") and is_empty_key(value):
-            continue
-        if isinstance(value, list):
-            continue
-        payload[key] = value
-        if key.endswith("_Key"):
-            type_key = key.replace("_Key", "_Type")
-            if source.get(type_key):
-                payload[type_key] = source[type_key]
-    return payload
+    return rows[0] if rows else None
 
 
 def resolve_protocol_attendee_person_keys(
@@ -201,11 +179,25 @@ def _apply_user_ref(
         return
     user_ref, _, _ = resolve_user_by_fio(session, fio, config=config)
     payload[field_key] = user_ref
-    payload[f"{field_key.replace('_Key', '')}_Type"] = "StandardODATA.Catalog_Пользователи"
+    payload[f"{field_key.replace('_Key', '')}_Type"] = USER_TYPE
+
+
+def _apply_ref_field(
+    payload: dict[str, Any],
+    *,
+    field_key: str,
+    ref_key: str | None,
+    ref_type: str | None,
+    type_field_key: str | None = None,
+) -> None:
+    normalized = str(ref_key or "").strip()
+    if is_empty_key(normalized) or not ref_type:
+        return
+    payload[field_key] = normalized
+    payload[type_field_key or f"{field_key.replace('_Key', '')}_Type"] = ref_type
 
 
 def build_protocol_payload(
-    template: dict[str, Any],
     *,
     number: str | None = None,
     comment: str = "",
@@ -215,37 +207,56 @@ def build_protocol_payload(
     topic_key: str | None = None,
     meeting_type: str | None = None,
     department_key: str | None = None,
+    room_key: str | None = None,
+    next_meeting_date: str | None = None,
+    basis_key: str | None = None,
+    basis_type: str | None = None,
     participant_ref_keys: list[str] | None = None,
     session: requests.Session | None = None,
     config: ODataConfig = CONFIG,
 ) -> dict[str, Any]:
-    payload = copy_header_fields(template)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    payload.update(
-        {
-            "Ref_Key": str(uuid.uuid4()),
-            "Date": now,
-            "ДатаСоздания": now,
-            "DeletionMark": False,
-            "Posted": False,
-            "Комментарий": comment,
-            "Статус": template.get("Статус") or DEFAULT_STATUS,
-            "ВидСовещания": meeting_type or template.get("ВидСовещания") or DEFAULT_MEETING_TYPE,
-        }
-    )
+    payload: dict[str, Any] = {
+        "Ref_Key": str(uuid.uuid4()),
+        "Date": now,
+        "ДатаСоздания": now,
+        "DeletionMark": False,
+        "Posted": False,
+        "Комментарий": comment,
+        "Статус": DEFAULT_STATUS,
+        "ВидСовещания": meeting_type or DEFAULT_MEETING_TYPE,
+    }
     normalized_number = (number or "").strip()
     if normalized_number:
         payload["Number"] = normalized_number
-    if topic_key:
-        payload["ТемаСовещания_Key"] = topic_key
-        payload["ТемаСовещания_Type"] = template.get("ТемаСовещания_Type") or (
-            "StandardODATA.Catalog_ТД_ТемыСовещаний"
-        )
-    if department_key and not is_empty_key(department_key):
-        payload["Подразделение_Key"] = department_key
-        payload["Подразделение_Type"] = template.get("Подразделение_Type") or (
-            "StandardODATA.Catalog_ПодразделенияОрганизаций"
-        )
+
+    _apply_ref_field(
+        payload,
+        field_key="ТемаСовещания_Key",
+        ref_key=topic_key,
+        ref_type=TOPIC_TYPE if topic_key else None,
+    )
+    _apply_ref_field(
+        payload,
+        field_key="Подразделение_Key",
+        ref_key=department_key,
+        ref_type=DEPARTMENT_TYPE if department_key else None,
+    )
+    _apply_ref_field(
+        payload,
+        field_key="Кабинет_Key",
+        ref_key=room_key,
+        ref_type=ROOM_TYPE if room_key else None,
+    )
+    _apply_ref_field(
+        payload,
+        field_key="ДокументОснование",
+        ref_key=basis_key,
+        ref_type=basis_type if basis_key else None,
+        type_field_key="ДокументОснование_Type",
+    )
+    if next_meeting_date:
+        payload["ДатаСледующегоСовещания"] = next_meeting_date
 
     if session is not None:
         _apply_user_ref(session, config, payload, field_key="Руководитель_Key", fio=manager_fio)
@@ -321,9 +332,7 @@ def post_protocol_task(
     if responsible_fio:
         user_ref, _, _ = resolve_user_by_fio(session, responsible_fio, config=config)
         payload["Ответственный_Key"] = user_ref
-        payload["Ответственный_Type"] = protocol_body.get("Ответственный_Type") or (
-            "StandardODATA.Catalog_Пользователи"
-        )
+        payload["Ответственный_Type"] = protocol_body.get("Ответственный_Type") or USER_TYPE
 
     response = session.post(
         f"{entity_url(config.url, PROTOCOL_TASKS_REGISTER)}?$format=json",
@@ -358,14 +367,16 @@ def create_meeting_protocol(
     *,
     number: str | None = None,
     comment: str = "",
-    template_ref_key: str | None = None,
-    template_number_prefix: str | None = None,
     manager_fio: str | None = None,
     responsible_fio: str | None = None,
     prepared_by_fio: str | None = None,
     topic_key: str | None = None,
     meeting_type: str | None = None,
     department_key: str | None = None,
+    room_key: str | None = None,
+    next_meeting_date: str | None = None,
+    basis_key: str | None = None,
+    basis_type: str | None = None,
     participant_ref_keys: list[str] | None = None,
     tasks: list[dict[str, Any]] | None = None,
     config: ODataConfig = CONFIG,
@@ -373,16 +384,7 @@ def create_meeting_protocol(
     normalized_number = (number or "").strip() or None
 
     session = create_session(config)
-    template = fetch_template_protocol(
-        session,
-        config,
-        template_ref_key=template_ref_key,
-        number_prefix=template_number_prefix or (
-            _number_prefix(normalized_number) if normalized_number else None
-        ),
-    )
     payload = build_protocol_payload(
-        template,
         number=normalized_number,
         comment=comment,
         manager_fio=manager_fio,
@@ -391,6 +393,10 @@ def create_meeting_protocol(
         topic_key=topic_key,
         meeting_type=meeting_type,
         department_key=department_key,
+        room_key=room_key,
+        next_meeting_date=next_meeting_date,
+        basis_key=basis_key,
+        basis_type=basis_type,
         participant_ref_keys=participant_ref_keys,
         session=session,
         config=config,
@@ -432,10 +438,6 @@ def create_meeting_protocol(
             "posted": body.get("Posted"),
             "comment": body.get("Комментарий"),
         },
-        "template": {
-            "ref_key": template.get("Ref_Key"),
-            "number": template.get("Number"),
-        },
         "tasks": created_tasks,
     }
 
@@ -475,12 +477,6 @@ def delete_meeting_protocol(
     }
 
 
-def _number_prefix(number: str) -> str | None:
-    if "_" in number:
-        return number.split("_", 1)[0]
-    return number[:3] if len(number) >= 3 else None
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Создание и удаление протокола 1С через OData.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -491,13 +487,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Номер протокола, например НСР_001_О_001; если не указан — нумерация 1С",
     )
     create_parser.add_argument("--comment", default="", help="Комментарий документа")
-    create_parser.add_argument("--template-ref-key", help="Ref_Key протокола-шаблона")
     create_parser.add_argument("--manager-fio", help="ФИО руководителя")
     create_parser.add_argument("--responsible-fio", help="ФИО ответственного")
     create_parser.add_argument("--prepared-by-fio", help="ФИО подготовившего")
     create_parser.add_argument("--topic-key", help="Ref_Key темы совещания")
     create_parser.add_argument("--meeting-type", help="Вид совещания, например Отчетное")
     create_parser.add_argument("--department-key", help="Ref_Key подразделения протокола")
+    create_parser.add_argument("--room-key", help="Ref_Key кабинета/переговорной")
+    create_parser.add_argument("--next-meeting-date", help="Дата следующего совещания (ISO)")
+    create_parser.add_argument("--basis-key", help="Ref_Key документа-основания")
+    create_parser.add_argument("--basis-type", help="Тип документа-основания (OData)")
     create_parser.add_argument("--task", action="append", default=[], help="Текст пункта протокола")
     create_parser.add_argument("-o", "--output", help="Путь к JSON-файлу результата")
 
@@ -519,13 +518,16 @@ def main(argv: list[str] | None = None) -> int:
             result = create_meeting_protocol(
                 number=args.number,
                 comment=args.comment,
-                template_ref_key=args.template_ref_key,
                 manager_fio=args.manager_fio,
                 responsible_fio=args.responsible_fio,
                 prepared_by_fio=args.prepared_by_fio,
                 topic_key=args.topic_key,
                 meeting_type=args.meeting_type,
                 department_key=args.department_key,
+                room_key=args.room_key,
+                next_meeting_date=args.next_meeting_date,
+                basis_key=args.basis_key,
+                basis_type=args.basis_type,
                 tasks=tasks or None,
             )
         else:

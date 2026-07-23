@@ -976,7 +976,16 @@ class MeetingRegistryService:
         previous_stage = entry.stage
         entry.stage = target_stage
         if target_stage == MeetingRegistryStage.MEETING_COMPLETED:
-            message = f"Протокол закрыт (статус «{status}») — совещание завершено"
+            from app.services.meeting_protocol_status import (
+                COMPLETED_PROTOCOL_STATUS_KEYS,
+                protocol_status_key,
+            )
+
+            status_key = protocol_status_key(status)
+            if status_key in COMPLETED_PROTOCOL_STATUS_KEYS:
+                message = f"Совещание завершено: протокол закрыт (статус «{status}»)"
+            else:
+                message = f"Совещание завершено: протокол на исполнении (статус «{status}»)"
         else:
             message = f"Протокол на исполнении (статус «{status}») — совещание проведено"
         await self.append_event(

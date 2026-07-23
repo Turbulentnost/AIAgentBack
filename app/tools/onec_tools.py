@@ -631,14 +631,6 @@ class CreateProtocolInput(BaseModel):
         description="Номер протокола, например НСР_001_О_001; если не указан — нумерация 1С",
     )
     comment: str = Field(default="", description="Комментарий документа")
-    template_ref_key: str | None = Field(
-        default=None,
-        description="Ref_Key протокола-шаблона для копирования реквизитов",
-    )
-    template_number_prefix: str | None = Field(
-        default=None,
-        description="Префикс номера для выбора шаблона, например НСР",
-    )
     manager_fio: str | None = Field(default=None, description="ФИО руководителя")
     responsible_fio: str | None = Field(default=None, description="ФИО ответственного")
     prepared_by_fio: str | None = Field(default=None, description="ФИО подготовившего")
@@ -649,8 +641,15 @@ class CreateProtocolInput(BaseModel):
     )
     department_key: str | None = Field(
         default=None,
-        description="Ref_Key подразделения протокола (для префикса номера в 1С)",
+        description="Ref_Key подразделения протокола",
     )
+    room_key: str | None = Field(default=None, description="Ref_Key кабинета/переговорной")
+    next_meeting_date: str | None = Field(
+        default=None,
+        description="Дата следующего совещания (ISO); для единоразовых не заполнять",
+    )
+    basis_key: str | None = Field(default=None, description="Ref_Key документа-основания")
+    basis_type: str | None = Field(default=None, description="Тип документа-основания (OData)")
     tasks: list[ProtocolTaskInput] = Field(
         default_factory=list,
         description="Пункты протокола для регистра задач",
@@ -666,11 +665,6 @@ class ProtocolInfo(BaseModel):
     comment: str | None = None
 
 
-class ProtocolTemplateInfo(BaseModel):
-    ref_key: str | None = None
-    number: str | None = None
-
-
 class ProtocolTaskInfo(BaseModel):
     item_number: str | int | None = None
     task_id: str | None = None
@@ -681,7 +675,6 @@ class ProtocolTaskInfo(BaseModel):
 
 class CreateProtocolOutput(BaseModel):
     protocol: ProtocolInfo
-    template: ProtocolTemplateInfo
     tasks: list[ProtocolTaskInfo] = Field(default_factory=list)
 
 
@@ -694,14 +687,16 @@ async def create_protocol_tool(
         create_meeting_protocol,
         number=payload.number,
         comment=payload.comment,
-        template_ref_key=payload.template_ref_key,
-        template_number_prefix=payload.template_number_prefix,
         manager_fio=payload.manager_fio,
         responsible_fio=payload.responsible_fio,
         prepared_by_fio=payload.prepared_by_fio,
         topic_key=payload.topic_key,
         meeting_type=payload.meeting_type,
         department_key=payload.department_key,
+        room_key=payload.room_key,
+        next_meeting_date=payload.next_meeting_date,
+        basis_key=payload.basis_key,
+        basis_type=payload.basis_type,
         tasks=[task.model_dump(exclude_none=True) for task in payload.tasks],
     )
     return CreateProtocolOutput.model_validate(raw)
@@ -713,8 +708,8 @@ class CreateProtocolTool(Tool):
     agent_description = (
         "Инструмент create_protocol создаёт Document_ТД_Протокол в 1С:ERP через OData. "
         "number — номер документа (если не указан, 1С назначит по правилам конфигурации); "
-        "template_ref_key или template_number_prefix — откуда взять реквизиты по умолчанию; "
-        "manager_fio, responsible_fio, prepared_by_fio — переопределение участников; "
+        "manager_fio, responsible_fio, prepared_by_fio — участники протокола; "
+        "room_key, department_key, next_meeting_date, basis_key/basis_type — реквизиты шапки; "
         "tasks — пункты для InformationRegister_ТД_ЗадачиПротоколов. "
         "Нужны ONEC_ODATA_* в .env."
     )

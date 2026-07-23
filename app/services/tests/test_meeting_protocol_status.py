@@ -6,6 +6,7 @@ from app.models.enums import MeetingRegistryStage
 from app.services.meeting_protocol_status import (
     normalize_protocol_status,
     protocol_status_is_terminal,
+    registry_cancel_allowed,
     should_fetch_protocol_status_from_onec,
     stage_for_protocol_status,
 )
@@ -27,8 +28,10 @@ def test_normalize_protocol_status(raw: object, expected: str | None) -> None:
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
-        ("На исполнении", MeetingRegistryStage.PROTOCOL_CONDUCTED),
+        ("На исполнении", MeetingRegistryStage.MEETING_COMPLETED),
+        ("НаИсполнении", MeetingRegistryStage.MEETING_COMPLETED),
         ("Закрыт", MeetingRegistryStage.MEETING_COMPLETED),
+        ("Закрыто", MeetingRegistryStage.MEETING_COMPLETED),
         ("Подготовлен", None),
         (None, None),
     ],
@@ -41,7 +44,9 @@ def test_stage_for_protocol_status(status: str | None, expected: MeetingRegistry
     ("status", "expected"),
     [
         ("На исполнении", True),
+        ("НаИсполнении", True),
         ("Закрыт", True),
+        ("Закрыто", True),
         ("Подготовлен", False),
         (None, False),
     ],
@@ -54,7 +59,7 @@ def test_protocol_status_is_terminal(status: str | None, expected: bool) -> None
     ("stage", "expected"),
     [
         (MeetingRegistryStage.PROTOCOL_CREATED, True),
-        (MeetingRegistryStage.PROTOCOL_CONDUCTED, False),
+        (MeetingRegistryStage.PROTOCOL_CONDUCTED, True),
         (MeetingRegistryStage.MEETING_COMPLETED, False),
         (MeetingRegistryStage.CANCELLED, False),
     ],
@@ -64,3 +69,17 @@ def test_should_fetch_protocol_status_from_onec(
     expected: bool,
 ) -> None:
     assert should_fetch_protocol_status_from_onec(stage) is expected
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected"),
+    [
+        (MeetingRegistryStage.INVITATIONS_SENT, True),
+        (MeetingRegistryStage.PROTOCOL_CREATED, True),
+        (MeetingRegistryStage.PROTOCOL_CONDUCTED, False),
+        (MeetingRegistryStage.MEETING_COMPLETED, False),
+        (MeetingRegistryStage.CANCELLED, False),
+    ],
+)
+def test_registry_cancel_allowed(stage: MeetingRegistryStage, expected: bool) -> None:
+    assert registry_cancel_allowed(stage) is expected

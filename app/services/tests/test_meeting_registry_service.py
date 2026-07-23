@@ -1171,34 +1171,38 @@ async def test_sync_protocol_stages_advances_on_execution_status(user) -> None:
         updated = await service.sync_protocol_stages()
 
     assert updated == 1
-    assert entry.stage == MeetingRegistryStage.PROTOCOL_CONDUCTED
+    assert entry.stage == MeetingRegistryStage.MEETING_COMPLETED
     assert entry.payload["protocol_status"] == "На исполнении"
     events = [item for item in added if isinstance(item, MeetingRegistryEvent)]
     assert len(events) == 1
     assert events[0].event_type == MeetingRegistryEventType.STAGE_CHANGED
-    assert "совещание проведено" in events[0].message
+    assert "совещание завершено" in events[0].message.lower()
 
 
 @pytest.mark.asyncio
-async def test_sync_protocol_stages_skips_conducted_entries(user) -> None:
+async def test_sync_protocol_stages_upgrades_conducted_to_completed(user) -> None:
     db = AsyncMock()
     db.flush = AsyncMock()
     service = MeetingRegistryService(db)
 
     entry = _entry(MeetingRegistryStage.PROTOCOL_CONDUCTED)
     entry.protocol_ref_key = "11111111-2222-3333-4444-555555555555"
+    entry.payload = {"protocol_status": "НаИсполнении"}
 
     result_mock = MagicMock()
-    result_mock.scalars.return_value.all.return_value = []
+    result_mock.scalars.return_value.all.return_value = [entry]
     db.execute = AsyncMock(return_value=result_mock)
+    added: list[object] = []
+    db.add = MagicMock(side_effect=lambda item: added.append(item))
 
     with patch(
         "app.services.meeting_protocol_status.fetch_protocol_status",
-        new=AsyncMock(return_value="Закрыт"),
+        new=AsyncMock(return_value="НаИсполнении"),
     ) as fetch_mock:
         updated = await service.sync_protocol_stages()
 
-    assert updated == 0
+    assert updated == 1
+    assert entry.stage == MeetingRegistryStage.MEETING_COMPLETED
     fetch_mock.assert_not_awaited()
 
 
@@ -1225,7 +1229,7 @@ async def test_sync_protocol_stages_uses_cached_terminal_status_without_onec(use
         updated = await service.sync_protocol_stages()
 
     assert updated == 1
-    assert entry.stage == MeetingRegistryStage.PROTOCOL_CONDUCTED
+    assert entry.stage == MeetingRegistryStage.MEETING_COMPLETED
     fetch_mock.assert_not_awaited()
     events = [item for item in added if isinstance(item, MeetingRegistryEvent)]
     assert len(events) == 1

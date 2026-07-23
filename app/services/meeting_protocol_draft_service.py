@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.enums import MeetingRegistryEventType, MeetingRegistryStage
 from app.models.meeting_registry import MeetingRegistryEntry
+from app.services.meeting_protocol_fields import build_protocol_creation_fields
 from app.services.meeting_registry_service import MeetingRegistryService, registry_display_title
 from app.tools.onec.create_protocol import create_meeting_protocol, delete_meeting_protocol
 
@@ -450,16 +451,19 @@ class MeetingProtocolDraftService:
             meeting_topic=topic,
             stored_title=entry.title,
         ) or (entry.subject or entry.title or "").strip()
-        department_key = await resolve_topic_department_key(str(topic_key), topic)
+        protocol_fields = await build_protocol_creation_fields(entry, topic, db=self.db)
 
         def _create() -> dict[str, Any]:
             return create_meeting_protocol(
                 comment=comment,
-                template_number_prefix=settings.MEETING_PROTOCOL_DRAFT_TEMPLATE_PREFIX,
                 manager_fio=entry.manager_name,
                 topic_key=str(topic_key),
                 meeting_type=str(meeting_type) if meeting_type else None,
-                department_key=department_key,
+                department_key=protocol_fields.get("department_key"),
+                room_key=protocol_fields.get("room_key"),
+                next_meeting_date=protocol_fields.get("next_meeting_date"),
+                basis_key=protocol_fields.get("basis_key"),
+                basis_type=protocol_fields.get("basis_type"),
                 participant_ref_keys=read_topic_participant_ref_keys(topic),
             )
 

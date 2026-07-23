@@ -1179,6 +1179,13 @@ class MeetingService:
         entry = await registry.get_entry(normalized_ref)
         if entry is None:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+        from app.services.meeting_protocol_status import registry_actions_locked
+
+        if registry_actions_locked(entry.stage):
+            raise MeetingServiceError(
+                "Нельзя изменить участников завершённого или отменённого совещания",
+                status_code=400,
+            )
         if entry.stage == MeetingRegistryStage.CANCELLED:
             raise MeetingServiceError(
                 "Нельзя изменить участников отменённого совещания",
@@ -2266,6 +2273,14 @@ class MeetingService:
         entry = await registry.get_entry(normalized_ref)
         if entry is None:
             raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+
+        from app.services.meeting_protocol_status import registry_cancel_allowed
+
+        if not registry_cancel_allowed(entry.stage):
+            raise MeetingServiceError(
+                "Нельзя отменить совещание после проведения или завершения протокола",
+                status_code=400,
+            )
 
         if entry.stage == MeetingRegistryStage.CANCELLED:
             events = await registry.list_events(normalized_ref)

@@ -657,6 +657,14 @@ class MeetingRegistryItemRead(BaseModel):
         default=None,
         description="Последний известный статус протокола в 1С",
     )
+    can_cancel: bool = Field(
+        default=True,
+        description="Можно ли отменить совещание на текущем этапе",
+    )
+    actions_locked: bool = Field(
+        default=False,
+        description="Заблокированы ли действия по карточке (завершено / отменено)",
+    )
     outlook_item_id: str | None = None
     outlook_changekey: str | None = None
     outlook_meeting_url: str | None = None

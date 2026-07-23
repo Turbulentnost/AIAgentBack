@@ -136,8 +136,17 @@ async def test_create_protocol_draft_success() -> None:
 
     with (
         patch(
-            "app.services.meeting_protocol_draft_service.resolve_topic_department_key",
-            AsyncMock(return_value="dept-1"),
+            "app.services.meeting_protocol_draft_service.build_protocol_creation_fields",
+            AsyncMock(
+                return_value={
+                    "department_key": "dept-1",
+                    "room_key": "room-1",
+                    "basis_key": "memo-1",
+                    "basis_type": "StandardODATA.Document_ТД_СлужебнаяЗаписка",
+                    "next_meeting_date": None,
+                    "is_series": False,
+                }
+            ),
         ),
         patch(
             "app.services.meeting_protocol_draft_service.MeetingProtocolDraftService.resolve_meeting_topic_for_protocol",
@@ -171,6 +180,9 @@ async def test_create_protocol_draft_success() -> None:
     create_mock.assert_called_once()
     assert "number" not in create_mock.call_args.kwargs
     assert create_mock.call_args.kwargs["department_key"] == "dept-1"
+    assert create_mock.call_args.kwargs["room_key"] == "room-1"
+    assert create_mock.call_args.kwargs["basis_key"] == "memo-1"
+    assert create_mock.call_args.kwargs["next_meeting_date"] is None
     assert create_mock.call_args.kwargs["participant_ref_keys"] == [
         "11111111-1111-1111-1111-111111111111"
     ]
