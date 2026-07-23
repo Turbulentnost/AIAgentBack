@@ -195,7 +195,7 @@ def test_resolve_stream_content_type_for_eml_and_msg():
     assert resolve_stream_content_type("scan.pdf") == "application/octet-stream"
 
 
-def test_build_attached_file_payload_msg_uses_outlook_content_type():
+def test_build_attached_file_payload_msg_uses_octet_stream_for_base64_post():
     _, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(
@@ -205,7 +205,7 @@ def test_build_attached_file_payload_msg_uses_outlook_content_type():
     )
     assert payload["Description"] == "НП00-003877"
     assert payload["Расширение"] == "msg"
-    assert payload["ФайлХранилище_Type"] == "application/vnd.ms-outlook"
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
 
 
 def test_attach_file_validates_empty_document_ref():

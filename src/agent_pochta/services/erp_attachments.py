@@ -324,25 +324,21 @@ def erp_full_email_filename(
     _email: EmailMessage | None = None,
     erp_document_number: str | None = None,
 ) -> str:
-    """Имя .msg для OData: номер документа 1С (НП00-003877.msg)."""
+    """Имя .eml для OData: номер документа 1С (НП00-003877.eml)."""
     number = (erp_document_number or "").strip()
     if number and number not in _SKIP_ERP_DOCUMENT_NUMBERS:
-        return f"{number}.msg"
-    return "Входящее_письмо.msg"
+        return f"{number}.eml"
+    return ERP_LEGACY_EMAIL_FILENAME
 
 
 def erp_email_upload_marker_names(erp_document_number: str | None) -> set[str]:
-    """Варианты имени одного письма (.msg по номеру 1С и legacy .eml/.msg)."""
-    names = {
-        ERP_LEGACY_EMAIL_FILENAME,
-        ERP_LEGACY_EML_BASENAME,
-        "Входящее_письмо.msg",
-    }
+    """Варианты имени одного письма (.eml по номеру 1С и legacy)."""
+    names = {ERP_LEGACY_EMAIL_FILENAME, ERP_LEGACY_EML_BASENAME}
     number = (erp_document_number or "").strip()
     if number and number not in _SKIP_ERP_DOCUMENT_NUMBERS:
         names.add(number)
-        names.add(f"{number}.msg")
         names.add(f"{number}.eml")
+        names.add(f"{number}.msg")
     return names
 
 
@@ -484,22 +480,19 @@ def _collect_erp_upload_files(
     skip_filenames: set[str] | None = None,
     processed_at: datetime | None = None,
 ) -> list[AttachedFileInput]:
-    """Только полное письмо .msg; MIME-вложения отдельно не отправляются."""
+    """Только полное письмо .eml; MIME-вложения отдельно не отправляются."""
     if erp_email_already_uploaded(erp_document_number, skip_filenames):
         return []
 
-    msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
+    eml_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
     if not full_email_bytes:
         return []
 
-    from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes
-
-    msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes)
     attach_time = processed_at or now_attached_file_processed_at()
     return [
         AttachedFileInput(
-            filename=msg_name,
-            content=msg_bytes,
+            filename=eml_name,
+            content=full_email_bytes,
             processed_at=attach_time,
         )
     ]

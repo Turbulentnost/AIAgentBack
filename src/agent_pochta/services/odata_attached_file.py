@@ -211,11 +211,10 @@ def build_attached_file_payload(
         if storage_field := fields.get("storage_binary"):
             payload[str(storage_field)] = base64.b64encode(content).decode("ascii")
         if storage_type_field := fields.get("storage_binary_type"):
-            binary_type = resolve_stream_content_type(
-                file_input.filename,
-                defaults=defaults,
+            # Base64 POST: 1С падает с 500 на application/vnd.ms-outlook / message/rfc822.
+            payload[str(storage_type_field)] = str(
+                defaults.get("storage_binary_type") or "application/octet-stream"
             )
-            payload[str(storage_type_field)] = binary_type
     if kind_field := fields.get("storage_kind"):
         payload[str(kind_field)] = storage_kind
     if size_field := fields.get("size"):
