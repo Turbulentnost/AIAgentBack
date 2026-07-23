@@ -4,5 +4,6 @@ from app.agents.nd_control_agent import service as _nd_control_service  # noqa: 
 from app.agents.procurement_agent import service as _procurement_service  # noqa: F401,E402
 from app.agents.procurement_role_agents import service as _procurement_role_service  # noqa: F401,E402
 from app.agents.tasks_agent import service as _tasks_service  # noqa: F401,E402
+from app.agents.document_analysis_agent import service as _document_analysis_service  # noqa: F401,E402
 
 __all__ = ["agent_registry"]

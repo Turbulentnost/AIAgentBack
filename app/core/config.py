@@ -139,6 +139,11 @@ class Settings(BaseSettings):
     VISION_LM_STUDIO_BASE_URL: str = ""
     VISION_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
     VISION_OCR_TIMEOUT_SECONDS: int = 600
+    # Агент закупок (Авион): qwen/qwen3.5-9b лучше подходит из доступных
+    # локальных моделей для структурного анализа Excel и JSON-вывода.
+    AVEON_LM_STUDIO_BASE_URL: str = "http://localhost:1234/v1"
+    AVEON_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
+    AVEON_LM_STUDIO_TIMEOUT_SECONDS: int = 600
     EMBEDDINGS_PROVIDER: str = "local"
     EMBEDDINGS_MODEL: str = "BAAI/bge-m3"
     EMBEDDINGS_VECTOR_SIZE: int = 1024

@@ -94,6 +94,7 @@ def configure_cors(app: FastAPI, app_settings: Settings) -> None:
         allow_credentials=app_settings.BACKEND_CORS_ALLOW_CREDENTIALS,
         allow_methods=app_settings.cors_allow_methods,
         allow_headers=app_settings.cors_allow_headers,
+        expose_headers=["Content-Disposition", "X-Aveon-Analysis-Source"],
     )
 
 

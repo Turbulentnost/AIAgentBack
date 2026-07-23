@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import base64
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.api.deps import CurrentUser, DbSession
+from app.agents.document_analysis_agent.excel_service import (
+    UploadedWorkbook,
+    analyze_aveon_excel_files,
+    classify_aveon_excel_files,
+)
 from app.integrations.minio import MinioObjectError
 from app.schemas.agent import (
     AgentAccessManagementRead,
@@ -71,6 +77,157 @@ async def list_agents(db: DbSession, limit: int = 50, offset: int = 0):
 async def create_agent(db: DbSession, data: AgentCreate):
     agent = await AgentService(db).create(data)
     return await _agent_read(db, agent)
+
+
+@router.post("/document-analysis/classify-excel")
+async def classify_document_excel_files(
+    current_user: CurrentUser,
+    files: Annotated[list[UploadFile], File(...)],
+):
+    """Быстрое определение ролей загруженных Excel до полного запуска агента."""
+    if not files:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Загрузите хотя бы один Excel-файл")
+
+    uploaded: list[UploadedWorkbook] = []
+    for file in files:
+        filename = file.filename or "workbook.xlsx"
+        if not filename.lower().endswith((".xlsx", ".xlsm")):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Файл {filename} должен быть в формате .xlsx или .xlsm",
+            )
+        uploaded.append(UploadedWorkbook(filename=filename, content=await file.read()))
+
+    try:
+        roles, source = await classify_aveon_excel_files(uploaded)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Не удалось определить роли файлов: {exc}",
+        ) from exc
+
+    return {
+        "source": source,
+        "roles": [
+            {"filename": filename, "role": role}
+            for filename, role in sorted(roles.items())
+        ],
+    }
+
+
+@router.post("/document-analysis/analyze-excel")
+async def analyze_document_excel_files(
+    current_user: CurrentUser,
+    files: Annotated[list[UploadFile], File(...)],
+):
+    if not files:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Загрузите хотя бы один Excel-файл")
+
+    uploaded: list[UploadedWorkbook] = []
+    for file in files:
+        filename = file.filename or "workbook.xlsx"
+        if not filename.lower().endswith((".xlsx", ".xlsm")):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Файл {filename} должен быть в формате .xlsx или .xlsm",
+            )
+        uploaded.append(UploadedWorkbook(filename=filename, content=await file.read()))
+
+    try:
+        result = await analyze_aveon_excel_files(uploaded)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Не удалось проанализировать Excel: {exc}",
+        ) from exc
+
+    file_base64 = (
+        base64.b64encode(result.result_xlsx_bytes).decode("ascii")
+        if result.result_xlsx_bytes
+        else None
+    )
+    return {
+        "source": result.source,
+        "roles": [
+            {"filename": filename, "role": role}
+            for filename, role in sorted(result.roles.items())
+        ],
+        "production_schedule_files": result.production_schedule_files,
+        "production_schedule_products": result.production_schedule_products,
+        "production_schedule_plans": [
+            {
+                "product": plan.product,
+                "monthly_qty": plan.monthly_qty,
+            }
+            for plan in result.production_schedule_plans
+        ],
+        "product_spec_links": [
+            {
+                "schedule_product": link.schedule_product,
+                "nomenclature": link.nomenclature,
+                "spec_sheet": link.spec_sheet,
+                "status": link.status,
+                "reason": link.reason,
+            }
+            for link in result.product_spec_links
+        ],
+        "material_usages_count": len(result.material_usages),
+        "merged_nomenclatures_count": len(result.merged_nomenclatures),
+        "price_matched_count": sum(
+            1
+            for row in result.merged_nomenclatures
+            if row.price_match not in ("", "unmatched")
+        ),
+        "stock_files": result.stock_files,
+        "stock_matched_count": sum(
+            1
+            for row in result.merged_nomenclatures
+            if row.stock_match not in ("", "unmatched")
+        ),
+        "shipment_files": result.shipment_files,
+        "receipts_nonzero_count": sum(
+            1
+            for row in result.merged_nomenclatures
+            if any(value > 0 for value in row.monthly_receipts.values())
+        ),
+        "forecast_deficit_count": sum(
+            1
+            for row in result.merged_nomenclatures
+            if any(value < 0 for value in row.monthly_forecast.values())
+        ),
+        "logistics_risks": {
+            "as_of": result.logistics_risks.as_of if result.logistics_risks else None,
+            "stages": [
+                {
+                    "key": stage.key,
+                    "label": stage.label,
+                    "items": [
+                        {
+                            "nomenclature": item.nomenclature,
+                            "supplier": item.supplier,
+                            "quantity": item.quantity,
+                            "moscow_date": item.moscow_date,
+                            "milestone_date": item.milestone_date,
+                            "sheet": item.sheet,
+                            "window_start": item.window_start,
+                            "window_end": item.window_end,
+                            "days_remaining": item.days_remaining,
+                            "risk_ratio": item.risk_ratio,
+                            "risk_level": item.risk_level,
+                        }
+                        for item in stage.items
+                    ],
+                }
+                for stage in (result.logistics_risks.stages if result.logistics_risks else [])
+            ],
+        },
+        "file_name": "result.xlsx",
+        "file_base64": file_base64,
+    }
 
 
 @router.get("/{agent_id}", response_model=AgentRead)

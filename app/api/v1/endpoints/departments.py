@@ -5,9 +5,17 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, DbSession
-from app.schemas.department import DepartmentCreate, DepartmentRead, DepartmentSyncResult, DepartmentSyncStatus, DepartmentUpdate
+from app.schemas.department import (
+    DepartmentCreate,
+    DepartmentRead,
+    DepartmentSyncResult,
+    DepartmentSyncStatus,
+    DepartmentTreeResponse,
+    DepartmentUpdate,
+)
 from app.services.audit_service import AuditService
 from app.services.department_sync_service import DepartmentSyncCooldownError, DepartmentSyncService
+from app.services.department_tree_service import DepartmentTreeService
 from app.services.user_service import DepartmentService
 
 router = APIRouter(prefix="/departments", tags=["departments"])
@@ -22,6 +30,19 @@ async def list_departments(
     active_only: bool = True,
 ):
     return await DepartmentService(db).list(limit, offset, active_only=active_only)
+
+
+@router.get("/tree", response_model=DepartmentTreeResponse)
+async def get_departments_tree(
+    db: DbSession,
+    current_user: CurrentUser,
+    active_departments_only: bool = True,
+    active_users_only: bool = True,
+):
+    return await DepartmentTreeService(db).get_tree(
+        active_departments_only=active_departments_only,
+        active_users_only=active_users_only,
+    )
 
 
 @router.get("/sync/status", response_model=DepartmentSyncStatus)
