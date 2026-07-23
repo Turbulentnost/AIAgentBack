@@ -14,11 +14,16 @@ _tmp_*
 !.env.example
 alembic/versions/*.py
 !alembic/versions/.gitkeep
+!alembic/versions/0043_nd_change_journal.py
+!alembic/versions/0045_meeting_registry_outlook_link.py
+!alembic/versions/0046_merge_platform_and_pochta_heads.py
+!alembic/versions/0050_procurement_case_lifecycle.py
 !alembic/versions/0051_procurement_role_waiting_status.py
 !alembic/versions/0052_procurement_source_synced_at.py
 !alembic/versions/0053_production_preparation_engineer_agent.py
 !alembic/versions/0054_omto_support_manager_agent.py
 !alembic/versions/0055_quality_agents.py
+!alembic/versions/20260722_protocol_draft.py
 
 # Build / coverage
 dist/

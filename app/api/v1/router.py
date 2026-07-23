@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     meetings,
     nd_change_requests,
     nd_control,
+    otk,
     porucheniya,
     positions,
     procurement,
@@ -37,6 +38,7 @@ api_router.include_router(knowledge_bases.router)
 api_router.include_router(meetings.router)
 api_router.include_router(porucheniya.router)
 api_router.include_router(procurement.router)
+api_router.include_router(otk.router)
 api_router.include_router(knowledge_base_indexing_ws.router)
 api_router.include_router(roles.router)
 api_router.include_router(browser_runs.router)

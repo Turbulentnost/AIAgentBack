@@ -86,11 +86,15 @@ def normalize_category(raw: str | None) -> str:
         "чертежные": "drawing_parts",
         "drawing_parts": "drawing_parts",
     }
-    for marker, category in aliases.items():
-        if marker in key:
-            return category
+    # Exact key first — avoids accidental substring hits (e.g. metal⊂…).
+    if key in aliases:
+        return aliases[key]
     if key in CATEGORY_DOCUMENTS:
         return key
+    # Longer markers first for free-text like «кабель силовой».
+    for marker, category in sorted(aliases.items(), key=lambda item: -len(item[0])):
+        if marker in key:
+            return category
     return "other"
 
 
