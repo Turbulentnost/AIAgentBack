@@ -408,7 +408,10 @@ def test_retry_erp_task_full_payload_author_and_payer(monkeypatch: pytest.Monkey
         service._client,
         "create_entity",
         return_value={"Ref_Key": "abc", "Number": "ВК-0001"},
-    ) as create_mock, _mock_retry_deps(row=row, integration=service, email=_info_sample_email()):
+    ) as create_mock, patch(
+        "agent_pochta.services.erp_attachments.attach_email_files_to_document",
+        return_value=[{"ref_key": "file-ref", "filename": "ВК-0001.msg", "size_bytes": 100}],
+    ), _mock_retry_deps(row=row, integration=service, email=_info_sample_email()):
         task = retry_erp_task
         task.push_request(retries=0, max_retries=5)
         try:

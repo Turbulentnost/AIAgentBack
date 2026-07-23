@@ -79,6 +79,27 @@ def test_create_erp_task_skips_non_info_mailbox(monkeypatch):
     container.integration.create_incoming_correspondence.assert_not_called()
 
 
+def test_create_erp_task_attach_failure_schedules_retry(monkeypatch):
+    container = MagicMock()
+    container.integration.create_incoming_correspondence.return_value = {
+        "erp_document_number": "ВК-000001",
+        "erp_document_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "erp_task_id": None,
+    }
+    container.integration.attach_files_to_incoming_correspondence.side_effect = RuntimeError(
+        "Пустое хранилище файла после POST"
+    )
+
+    monkeypatch.setattr("agent_pochta.nodes.n7_create_erp_task.get_settings", lambda: MagicMock(agent_mode="live"))
+
+    result = node_create_erp_task(_state(), container)
+
+    assert result["erp"].success is False
+    assert result["erp"].erp_document_number == "ВК-000001"
+    assert result["meta"]["erp_retry_scheduled"] is True
+    assert result["meta"]["erp_attachment_errors"]
+
+
 def test_create_erp_task_attaches_files_after_document_create(monkeypatch):
     container = MagicMock()
     container.integration.create_incoming_correspondence.return_value = {

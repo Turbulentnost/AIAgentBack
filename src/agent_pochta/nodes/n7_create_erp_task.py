@@ -68,6 +68,7 @@ def node_create_erp_task(state: AgentState, container: ServiceContainer) -> Agen
             email, routing, summary, xml_document=xml_document
         )
         doc_id = res.get("erp_document_id")
+        attach_error: str | None = None
         if doc_id:
             from agent_pochta.services.erp_attachments import attach_email_files_to_document
 
@@ -81,8 +82,38 @@ def node_create_erp_task(state: AgentState, container: ServiceContainer) -> Agen
                 )
                 if attached:
                     meta["erp_attachments"] = attached
+                else:
+                    attach_error = "Не удалось прикрепить письмо к документу 1С (нет файлов для загрузки)"
             except Exception as attach_exc:  # noqa: BLE001
-                meta["erp_attachment_errors"] = [str(attach_exc)]
+                attach_error = str(attach_exc)
+                meta["erp_attachment_errors"] = [attach_error]
+
+        if attach_error:
+            human_approved = "human_approved" in state.get("trace", [])
+            escalation = (
+                f"Документ 1С создан, но вложение не загружено: {attach_error}. "
+                "Запланирован повтор через Celery."
+            )
+            erp = ErpTaskResult(
+                success=False,
+                erp_document_number=res["erp_document_number"],
+                erp_task_id=res.get("erp_task_id") or res.get("erp_document_id"),
+                error=attach_error,
+            )
+            patch: AgentState = {
+                "erp": erp,
+                "escalation_reason": escalation,
+                "errors": state.get("errors", []) + [f"erp_attach: {attach_error}"],
+                "trace": trace,
+                "meta": {**meta, "erp_retry_scheduled": True},
+            }
+            if human_approved:
+                patch["human_review"] = False
+            else:
+                patch["status"] = ProcessingStatus.ERROR
+                patch["human_review"] = True
+            return patch
+
         erp = ErpTaskResult(
             success=True,
             erp_document_number=res["erp_document_number"],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 from datetime import datetime, timezone
@@ -99,6 +100,37 @@ def test_build_attached_file_payload_defaults_to_msk_now(monkeypatch):
 def test_resolve_attached_file_author_key_from_defaults():
     assert resolve_attached_file_author_key() == AUTHOR_KEY
     assert resolve_attached_file_author_key(explicit_key=AUTHOR_KEY) == AUTHOR_KEY
+
+
+def test_resolve_attached_file_author_key_prefers_user_key(monkeypatch, tmp_path):
+    defaults_path = tmp_path / "defaults.json"
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "Пользователь_Key": "11111111-1111-1111-1111-111111111111",
+                "Ответственный_Key": "22222222-2222-2222-2222-222222222222",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        resolve_attached_file_author_key(incoming_defaults_file=defaults_path)
+        == "11111111-1111-1111-1111-111111111111"
+    )
+
+
+def test_odata_integration_attach_files_requires_author():
+    service = ODataIntegrationService(
+        "http://example/odata/standard.odata/",
+        entity="Document_ТД_ВходящаяКорреспонденция",
+        file_author_key="",
+        incoming_defaults_file="__missing__.json",
+    )
+    with pytest.raises(AttachedFileError, match="Автор_Key"):
+        service.attach_files_to_incoming_correspondence(
+            document_ref_key=DOC_KEY,
+            files=[AttachedFileInput(filename="НП00-003877.msg", content=b"123")],
+        )
 
 
 def test_build_attached_file_payload_stream_mode_excludes_binary():
@@ -346,7 +378,7 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert out[0]["filename"] == "НП00-003877.eml"
     _entity, payload = service._client.create_entity.call_args[0]
     assert payload["Автор_Key"] == AUTHOR_KEY
-    assert "Редактировал_Key" not in payload
+    assert payload["Редактировал_Key"] == AUTHOR_KEY
     assert payload["Description"] == "НП00-003877"
     service._client.put_entity_stream.assert_not_called()
 

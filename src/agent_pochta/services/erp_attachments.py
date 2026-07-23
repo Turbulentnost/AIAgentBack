@@ -495,7 +495,11 @@ def _collect_erp_upload_files(
     from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes
 
     msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes)
+    if not msg_bytes:
+        return []
     attach_time = processed_at or now_attached_file_processed_at()
+    if not msg_name.lower().endswith(".msg"):
+        raise ValueError(f"ERP upload expects .msg filename, got {msg_name!r}")
     return [
         AttachedFileInput(
             filename=msg_name,

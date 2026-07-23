@@ -19,6 +19,7 @@ from agent_pochta.services.odata_incoming_mapper import (
     resolve_incoming_extra_fields,
 )
 from agent_pochta.services.odata_attached_file import (
+    AttachedFileError,
     AttachedFileInput,
     attach_files_to_incoming_document,
     load_attached_file_field_map,
@@ -49,9 +50,10 @@ def resolve_attached_file_author_key(
         except (json.JSONDecodeError, OSError):
             defaults = {}
         if isinstance(defaults, dict):
-            fallback = (defaults.get("Ответственный_Key") or "").strip()
-            if fallback and fallback != _EMPTY_GUID:
-                return fallback
+            for field_name in ("Пользователь_Key", "Ответственный_Key"):
+                fallback = (defaults.get(field_name) or "").strip()
+                if fallback and fallback != _EMPTY_GUID:
+                    return fallback
     return ""
 
 
@@ -208,9 +210,16 @@ class ODataIntegrationService(IntegrationService):
             return []
 
         processed_at = now_attached_file_processed_at()
+        author_key = self._file_author_key
+        if not author_key or author_key == _EMPTY_GUID:
+            raise AttachedFileError(
+                "Автор_Key не задан: укажите ODATA_FILE_AUTHOR_KEY "
+                "или Пользователь_Key / Ответственный_Key в odata_incoming_defaults.json"
+            )
+
         enriched: list[AttachedFileInput] = []
         for item in files:
-            author = item.author_key or self._file_author_key or None
+            author = item.author_key or author_key
             enriched.append(
                 AttachedFileInput(
                     filename=item.filename,

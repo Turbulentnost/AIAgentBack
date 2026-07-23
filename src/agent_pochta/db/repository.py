@@ -470,10 +470,13 @@ class EmailRepository:
             row.summary_ru = _sanitize_pg_text(summary)
 
         erp = state.get("erp")
-        if erp is not None and erp.success:
-            row.erp_document_number = erp.erp_document_number
-            row.erp_task_id = erp.erp_task_id
-            row.erp_retry_count = 0
+        if erp is not None:
+            if erp.erp_document_number:
+                row.erp_document_number = erp.erp_document_number
+            if erp.erp_task_id:
+                row.erp_task_id = erp.erp_task_id
+            if erp.success:
+                row.erp_retry_count = 0
 
         status = state.get("status", ProcessingStatus.PROCESSING)
         if status == ProcessingStatus.PROCESSING:

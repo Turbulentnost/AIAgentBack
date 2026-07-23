@@ -489,6 +489,7 @@ def retry_erp_task(self, message_id: str, *, force_reattach_eml: bool = False) -
         )
         doc_id = res.get("erp_document_id")
         attachment_meta: dict = {}
+        attach_error: str | None = None
         if doc_id and email is not None:
             from agent_pochta.services.erp_attachments import attach_email_files_to_document
 
@@ -502,8 +503,42 @@ def retry_erp_task(self, message_id: str, *, force_reattach_eml: bool = False) -
                 )
                 if attached:
                     attachment_meta["erp_attachments"] = attached
+                else:
+                    attach_error = "Не удалось прикрепить письмо к документу 1С (нет файлов для загрузки)"
             except Exception as attach_exc:
-                attachment_meta["erp_attachment_errors"] = [str(attach_exc)]
+                attach_error = str(attach_exc)
+                attachment_meta["erp_attachment_errors"] = [attach_error]
+
+        if attach_error:
+            retry_row = None
+            with factory() as session:
+                retry_row = EmailRepository(session).get_by_message_id(message_id)
+                if retry_row:
+                    retry_row.erp_document_number = res["erp_document_number"]
+                    retry_row.erp_task_id = res.get("erp_task_id") or res.get("erp_document_id")
+                    if attachment_meta and retry_row.raw_payload_json:
+                        merged = _merge_attachment_meta_into_payload(
+                            retry_row.raw_payload_json,
+                            attachment_meta,
+                        )
+                        if merged is not None:
+                            retry_row.raw_payload_json = merged
+                    session.commit()
+            if retry_row and retry_row.erp_retry_count < settings.erp_retry_max:
+                retry_erp_task.apply_async(
+                    args=[message_id],
+                    countdown=settings.erp_retry_delay_sec,
+                    queue="erp",
+                )
+            return {
+                "ok": False,
+                "attempt": attempt,
+                "reason": "attach_failed",
+                "error": attach_error,
+                "erp_document_number": res["erp_document_number"],
+                **attachment_meta,
+            }
+
         with factory() as session:
             row = EmailRepository(session).get_by_message_id(message_id)
             if row:
