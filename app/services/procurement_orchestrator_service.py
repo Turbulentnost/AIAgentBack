@@ -1506,12 +1506,17 @@ class ProcurementOrchestratorService:
             ):
                 metadata.pop(key, None)
             case.case_metadata = metadata
+            # Маршрут оркестратора: комплектовщик работает на этапе обеспечения.
+            if case.control_point in {None, "", "basis", "data"}:
+                case.control_point = "coverage"
         if agent_id == PURCHASE_MANAGER_AGENT_ID:
             metadata = dict(case.case_metadata or {})
             metadata.setdefault("purchase_manager_invoked_at", datetime.now(UTC).isoformat())
             metadata["purchase_manager_workspace_status"] = "processing"
             metadata.pop("purchase_manager_workspace_archived_at", None)
             case.case_metadata = metadata
+            if case.control_point in {None, "", "basis", "data", "coverage"}:
+                case.control_point = "purchase"
         await self._append_event(
             case,
             event_type="role_agent_task_enqueued",
@@ -2766,10 +2771,14 @@ class ProcurementOrchestratorService:
             else {}
         )
         coverage_status = str(supplier_coverage.get("coverage_status") or "")
-        if coverage_status == "full" or metadata.get("picker_procurement_status") == "in_progress":
+        if (
+            coverage_status == "full"
+            or metadata.get("picker_auto_archived_reason") == "all_positions_in_supplier_orders"
+            or metadata.get("picker_procurement_status") == "covered"
+        ):
             return (
                 "success",
-                "Закупка не требуется: ведётся закупка по заказам поставщику.",
+                "Работа комплектовщика завершена: все позиции переданы менеджеру по закупкам.",
             )
         if coverage_status == "partial" or metadata.get("picker_procurement_status") == "partial":
             covered = supplier_coverage.get("covered_positions")
@@ -2794,7 +2803,10 @@ class ProcurementOrchestratorService:
         archived_bucket = metadata.get("picker_archived_bucket")
         if archived_bucket in {"success", "attention", "critical"}:
             if metadata.get("picker_auto_archived_reason") == "all_positions_in_supplier_orders":
-                return "success", "Закупка не требуется: ведётся закупка по заказам поставщику."
+                return (
+                    "success",
+                    "Работа комплектовщика завершена: все позиции переданы менеджеру по закупкам.",
+                )
             return str(archived_bucket), "Состояние сохранено при передаче начальнику ОМТО."
         result = case.latest_result or {}
         output = result.get("output_data") or metadata.get("warehouse_picker_output")
@@ -2891,10 +2903,11 @@ class ProcurementOrchestratorService:
             picker_work_status = "archived"
         elif (
             supplier_coverage_for_picker.get("coverage_status") == "full"
-            or metadata.get("picker_workspace_status") == "completed"
-            or metadata.get("picker_procurement_status") == "in_progress"
+            or metadata.get("picker_auto_archived_reason")
+            == "all_positions_in_supplier_orders"
+            or metadata.get("picker_procurement_status") == "covered"
         ):
-            picker_work_status = "completed"
+            picker_work_status = "archived"
         elif (
             case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
             and role_status in {"waiting_human", "waiting_external", "failed"}
@@ -3080,10 +3093,39 @@ class ProcurementOrchestratorService:
             ProcurementCaseStatus.COVERAGE_CHECK.value: "coverage",
             ProcurementCaseStatus.HUMAN_REQUIRED.value: "coverage",
             ProcurementCaseStatus.BLOCKED.value: "coverage",
+            ProcurementCaseStatus.ORDERED.value: "purchase",
             ProcurementCaseStatus.CLOSED.value: "receipt",
             ProcurementCaseStatus.FAILED.value: "data",
         }
         current_stage = case.control_point or status_map.get(case.status, "basis")
+        metadata = case.case_metadata or {}
+        picker_active = (
+            case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+            or (
+                WAREHOUSE_PICKER_AGENT_ID in (case.assigned_agents or [])
+                and metadata.get("picker_invoked_at")
+                and not metadata.get("picker_workspace_archived_at")
+                and metadata.get("picker_workspace_status") != "archived"
+            )
+        )
+        purchase_manager_active = (
+            case.current_agent_id == PURCHASE_MANAGER_AGENT_ID
+            or (
+                PURCHASE_MANAGER_AGENT_ID in (case.assigned_agents or [])
+                and metadata.get("purchase_manager_invoked_at")
+                and not metadata.get("purchase_manager_workspace_archived_at")
+            )
+        )
+        # Ролевой агент важнее пустого/устаревшего control_point: иначе маршрут
+        # залипает на «Основание», хотя уже работает комплектовщик/менеджер.
+        if picker_active and current_stage in {"basis", "data", "KT1", None, ""}:
+            current_stage = "coverage"
+        elif (
+            purchase_manager_active
+            and not picker_active
+            and current_stage in {"basis", "data", "coverage", "KT1", None, ""}
+        ):
+            current_stage = "purchase"
         if current_stage == "KT1":
             current_stage = "basis"
         stages: list[dict[str, Any]] = []

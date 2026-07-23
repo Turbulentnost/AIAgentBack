@@ -113,7 +113,7 @@ async def test_partial_presence_coverage_keeps_both_workspaces() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_presence_coverage_keeps_picker_completed_and_is_idempotent() -> None:
+async def test_full_presence_coverage_closes_picker_and_is_idempotent() -> None:
     db = MagicMock()
     db.flush = AsyncMock()
     db.scalar = AsyncMock(return_value=None)
@@ -129,13 +129,13 @@ async def test_full_presence_coverage_keeps_picker_completed_and_is_idempotent()
     assert second is False
     assert case.status == ProcurementCaseStatus.ORDERED.value
     assert case.current_agent_id == PURCHASE_MANAGER_AGENT_ID
-    assert set(case.assigned_agents or []) == {
-        WAREHOUSE_PICKER_AGENT_ID,
-        PURCHASE_MANAGER_AGENT_ID,
-    }
-    assert (case.case_metadata or {})["picker_workspace_status"] == "completed"
-    assert (case.case_metadata or {}).get("picker_workspace_archived_at") is None
-    assert (case.case_metadata or {})["picker_procurement_status"] == "in_progress"
+    assert case.assigned_agents == [PURCHASE_MANAGER_AGENT_ID]
+    assert (case.case_metadata or {})["picker_workspace_status"] == "archived"
+    assert (case.case_metadata or {}).get("picker_workspace_archived_at")
+    assert (case.case_metadata or {})["picker_auto_archived_reason"] == (
+        "all_positions_in_supplier_orders"
+    )
+    assert (case.case_metadata or {})["picker_procurement_status"] == "covered"
     assert (case.case_metadata or {})["supplier_order_coverage"]["coverage_status"] == "full"
 
 

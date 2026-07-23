@@ -535,22 +535,21 @@ class SupplierOrderReconciliationService:
             metadata["warehouse_picker_output"] = updated_output
 
         if coverage_status == "full":
-            # Full supplier-order coverage: purchase is already running.
-            # Keep the case in the picker "current" queue with a green completed state
-            # instead of dumping it into archive as an irrelevant basis.
-            metadata["picker_workspace_status"] = "completed"
-            metadata.pop("picker_workspace_archived_at", None)
-            metadata.pop("picker_archived_bucket", None)
-            metadata.pop("picker_auto_archived_reason", None)
-            metadata["picker_procurement_status"] = "in_progress"
+            # All positions are in supplier orders: close picker, continue with purchase manager only.
+            metadata["picker_workspace_status"] = "archived"
+            metadata["picker_workspace_archived_at"] = now.isoformat()
+            metadata["picker_archived_bucket"] = "success"
+            metadata["picker_auto_archived_reason"] = "all_positions_in_supplier_orders"
+            metadata["picker_procurement_status"] = "covered"
             case.status = ProcurementCaseStatus.ORDERED.value
             case.control_point = "purchase"
             case.requested_operation = "monitor_supplier_orders"
             if case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID:
                 await self._cancel_current_task(case)
             case.current_agent_id = PURCHASE_MANAGER_AGENT_ID
-            if WAREHOUSE_PICKER_AGENT_ID not in assigned:
-                assigned.insert(0, WAREHOUSE_PICKER_AGENT_ID)
+            assigned = [
+                agent for agent in assigned if agent != WAREHOUSE_PICKER_AGENT_ID
+            ]
             if PURCHASE_MANAGER_AGENT_ID not in assigned:
                 assigned.append(PURCHASE_MANAGER_AGENT_ID)
         elif previous_status == "full" and coverage_status != "full":
@@ -562,9 +561,11 @@ class SupplierOrderReconciliationService:
                 assigned.insert(0, WAREHOUSE_PICKER_AGENT_ID)
             metadata["picker_workspace_status"] = "awaiting_action"
             metadata.pop("picker_workspace_archived_at", None)
+            metadata.pop("picker_archived_bucket", None)
             metadata.pop("picker_auto_archived_reason", None)
             metadata.pop("picker_procurement_status", None)
         elif coverage_status == "partial":
+            # Partial coverage: picker stays open for uncovered deficit, manager in parallel.
             metadata["picker_workspace_status"] = "awaiting_action"
             metadata.pop("picker_workspace_archived_at", None)
             metadata.pop("picker_archived_bucket", None)
@@ -572,6 +573,8 @@ class SupplierOrderReconciliationService:
             metadata["picker_procurement_status"] = "partial"
             if WAREHOUSE_PICKER_AGENT_ID not in assigned:
                 assigned.insert(0, WAREHOUSE_PICKER_AGENT_ID)
+            if PURCHASE_MANAGER_AGENT_ID not in assigned:
+                assigned.append(PURCHASE_MANAGER_AGENT_ID)
 
         case.assigned_agents = assigned
         case.case_metadata = metadata
@@ -609,8 +612,8 @@ class SupplierOrderReconciliationService:
         if coverage_status == "full" and previous_status != "full":
             await self._append_event(
                 case,
-                event_type="picker_purchase_covered",
-                idempotency_key=f"picker-purchase-covered:{case.id}:{fingerprint}"[:255],
+                event_type="picker_auto_archived",
+                idempotency_key=f"picker-auto-archived:{case.id}:{fingerprint}"[:255],
                 payload={"reason": "all_positions_in_supplier_orders"},
             )
         return True
