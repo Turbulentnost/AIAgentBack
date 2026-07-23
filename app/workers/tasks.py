@@ -939,8 +939,14 @@ def classify_template_document(self, document_link_id: str) -> dict[str, Any]:
     return _run_async_task(_run)
 
 
-@celery_app.task(name="poll_procurement_sources", bind=True, max_retries=0)
-def poll_procurement_sources(self) -> dict[str, Any]:
+def _poll_procurement_sources_impl(
+    *,
+    celery_task_id: str | None,
+    task_name: str,
+    lock_scope: str,
+    lock_ttl_seconds: int,
+    source_types: set | frozenset | None,
+) -> dict[str, Any]:
     from redis import Redis
 
     from app.core.config import settings
@@ -952,27 +958,27 @@ def poll_procurement_sources(self) -> dict[str, Any]:
 
     if not settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
         return {
-            "celery_task_id": self.request.id,
-            "task_name": "poll_procurement_sources",
+            "celery_task_id": celery_task_id,
+            "task_name": task_name,
             "status": "disabled",
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    lock_key = build_poll_lock_key()
+    lock_key = build_poll_lock_key(lock_scope)
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     acquired = bool(
         redis_client.set(
             lock_key,
-            self.request.id or "poll",
+            celery_task_id or "poll",
             nx=True,
-            ex=settings.PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS,
+            ex=lock_ttl_seconds,
         )
     )
     if not acquired:
         redis_client.close()
         return {
-            "celery_task_id": self.request.id,
-            "task_name": "poll_procurement_sources",
+            "celery_task_id": celery_task_id,
+            "task_name": task_name,
             "status": "skipped_locked",
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -981,13 +987,13 @@ def poll_procurement_sources(self) -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
             service = ProcurementOrchestratorService(db, enqueue_case=True)
             try:
-                summary = await service.poll_once()
+                summary = await service.poll_once(source_types=source_types)
                 await db.commit()
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
                 return {
-                    "celery_task_id": self.request.id,
-                    "task_name": "poll_procurement_sources",
+                    "celery_task_id": celery_task_id,
+                    "task_name": task_name,
                     "status": "failed",
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -1001,8 +1007,8 @@ def poll_procurement_sources(self) -> dict[str, Any]:
             )
             dispatched += 1
         summary["dispatched"] = dispatched
-        summary["celery_task_id"] = self.request.id
-        summary["task_name"] = "poll_procurement_sources"
+        summary["celery_task_id"] = celery_task_id
+        summary["task_name"] = task_name
         summary["status"] = "completed"
         return summary
 
@@ -1011,6 +1017,38 @@ def poll_procurement_sources(self) -> dict[str, Any]:
     finally:
         redis_client.delete(lock_key)
         redis_client.close()
+
+
+@celery_app.task(name="poll_procurement_sources", bind=True, max_retries=0)
+def poll_procurement_sources(self) -> dict[str, Any]:
+    from app.core.config import settings
+    from app.models.enums import ProcurementSourceType
+
+    return _poll_procurement_sources_impl(
+        celery_task_id=self.request.id,
+        task_name="poll_procurement_sources",
+        lock_scope="sources",
+        lock_ttl_seconds=settings.PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS,
+        source_types={
+            ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
+            ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+            ProcurementSourceType.TRANSFER_ORDER,
+        },
+    )
+
+
+@celery_app.task(name="poll_procurement_reorder_points", bind=True, max_retries=0)
+def poll_procurement_reorder_points(self) -> dict[str, Any]:
+    from app.core.config import settings
+    from app.models.enums import ProcurementSourceType
+
+    return _poll_procurement_sources_impl(
+        celery_task_id=self.request.id,
+        task_name="poll_procurement_reorder_points",
+        lock_scope="reorder",
+        lock_ttl_seconds=settings.PROCUREMENT_ORCHESTRATOR_REORDER_LOCK_TTL_SECONDS,
+        source_types={ProcurementSourceType.REORDER_POINT},
+    )
 
 
 @celery_app.task(name="run_procurement_case_task", bind=True, max_retries=2)

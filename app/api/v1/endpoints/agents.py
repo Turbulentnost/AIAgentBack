@@ -25,6 +25,7 @@ from app.services.meeting_permission import append_meeting_agent_for_office_mana
 from app.services.nd_control_permission import append_nd_control_agent_for_quality_deputy
 from app.services.permission_service import PermissionService
 from app.services.procurement_permission import (
+    append_production_dispatcher_agent,
     append_production_preparation_engineer_agent,
 )
 from app.services.profile_image_service import AvatarValidationError
@@ -42,6 +43,8 @@ async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessR
     data = (await _agent_read(db, agent)).model_dump()
     if agent.slug == "production_preparation_engineer_agent":
         data["name"] = "Агент закупок и логистики"
+    if agent.slug == "production_dispatcher_agent":
+        data["name"] = "Агент диспетчера производства"
     data.update(
         {
             "access_level": "full" if current_user.is_superuser else "granted",
@@ -60,6 +63,7 @@ async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
     agents = await append_meeting_agent_for_office_management(db, current_user, agents)
     agents = await append_production_preparation_engineer_agent(db, current_user, agents)
+    agents = await append_production_dispatcher_agent(db, current_user, agents)
     return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 

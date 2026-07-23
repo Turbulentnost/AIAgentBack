@@ -9,6 +9,7 @@ from app.agents.procurement_role_agents.schemas import (
     ProcurementRoleAgentRequest,
     ProcurementRoleAgentResult,
 )
+from app.agents.production_dispatcher_agent.service import ProductionDispatcherService
 from app.agents.production_preparation_engineer_agent.service import (
     ProductionPreparationEngineerService,
 )
@@ -57,7 +58,24 @@ class _WaitingProcurementRoleAgent(BaseAgent):
 class ProductionDispatcherAgent(_WaitingProcurementRoleAgent):
     agent_id = config.PRODUCTION_DISPATCHER_AGENT_ID
     name = config.AGENT_LABELS[agent_id]
-    purpose = "Обработка закупочного кейса по сигналу точки заказа."
+    purpose = (
+        "Проверяет остатки по точкам заказа и кейсам после инженера, "
+        "рассчитывает срочность и рекомендует способ обеспечения."
+    )
+    allowed_tools = [
+        "onec_get_production_supply_evidence",
+        "read_production_get_open_supply_documents",
+        "onec_get_free_stock",
+        "onec_get_open_supplier_orders",
+        "onec_get_goods_in_transit",
+        "onec_get_internal_transfers",
+    ]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await ProductionDispatcherService().run(
+            payload,
+            agent_id=self.agent_id,
+        )
 
 
 @agent_registry.register

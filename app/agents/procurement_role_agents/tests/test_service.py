@@ -5,6 +5,7 @@ import pytest
 from app.agents import agent_registry
 from app.agents.procurement_role_agents.config import (
     AGENT_LABELS,
+    PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     SOURCE_AGENT_MAP,
 )
@@ -16,7 +17,11 @@ from app.agents.procurement_role_agents.config import (
     [
         value
         for value in AGENT_LABELS
-        if value != PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+        if value
+        not in {
+            PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+            PRODUCTION_DISPATCHER_AGENT_ID,
+        }
     ],
 )
 async def test_role_agent_is_registered_and_waits_for_rules(agent_id: str):
@@ -122,6 +127,53 @@ async def test_engineer_agent_calculates_embedded_confirmed_evidence(
     assert result.output_data["positions"][0]["net_requirement"] == expected_net
     if expected_status == "waiting_human":
         assert result.output_data["decision_kind"] == "purchase_confirmation"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_agent_calculates_embedded_supply():
+    agent_cls = agent_registry.get(PRODUCTION_DISPATCHER_AGENT_ID)
+    assert agent_cls is not None
+    result = await agent_cls().run(
+        {
+            "task_id": "task-1",
+            "case_id": "case-1",
+            "correlation_id": "proc:test:case-1",
+            "source_type": "reorder_point",
+            "source_1c_ref": "source-ref",
+            "source_number": "ТЗ-1",
+            "idempotency_key": "role:case-1:v1",
+            "source_data": {
+                "case_number": "ТЗ-1",
+                "skip_external": True,
+                "stock_growth_coefficient": "1",
+                "positions": [
+                    {
+                        "line_id": "1",
+                        "nomenclature_id": "mat-1",
+                        "nomenclature_name": "Материал",
+                        "unit": "шт",
+                        "quantity": "30",
+                        "minimum_stock": "10",
+                        "maximum_stock": "30",
+                    }
+                ],
+                "supplies": [
+                    {
+                        "supply_id": "stock",
+                        "source_type": "warehouse",
+                        "nomenclature_id": "mat-1",
+                        "unit": "шт",
+                        "quantity": "5",
+                        "warehouse_id": "wh-main",
+                    }
+                ],
+            },
+            "role_context": {"warehouse_1c_ref": "wh-main"},
+        }
+    )
+    assert result.role_status == "waiting_human"
+    assert result.output_data["decision_kind"] == "supply_confirmation"
+    assert result.output_data["positions"][0]["below_minimum"] is True
 
 
 @pytest.mark.asyncio

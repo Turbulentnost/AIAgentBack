@@ -8,7 +8,7 @@ DEPARTMENT_INITIATOR_AGENT_ID = "department_initiator_agent"
 WAREHOUSE_MANAGER_AGENT_ID = "warehouse_manager_agent"
 
 AGENT_LABELS = {
-    PRODUCTION_DISPATCHER_AGENT_ID: "Агент главного диспетчера",
+    PRODUCTION_DISPATCHER_AGENT_ID: "Агент диспетчера производства",
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID: "Агент закупок и логистики",
     DEPARTMENT_INITIATOR_AGENT_ID: "Агент руководителя подразделения / инициатора",
     WAREHOUSE_MANAGER_AGENT_ID: "Агент начальника склада",

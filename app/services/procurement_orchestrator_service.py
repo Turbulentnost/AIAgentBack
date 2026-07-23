@@ -153,7 +153,11 @@ class ProcurementOrchestratorService:
         self.enqueue_case = enqueue_case
         self.pending_dispatches: list[tuple[str, str]] = []
 
-    async def poll_once(self) -> dict[str, Any]:
+    async def poll_once(
+        self,
+        *,
+        source_types: set[ProcurementSourceType] | frozenset[ProcurementSourceType] | None = None,
+    ) -> dict[str, Any]:
         started = datetime.now(UTC)
         summary: dict[str, Any] = {
             "started_at": started.isoformat(),
@@ -164,6 +168,9 @@ class ProcurementOrchestratorService:
             "enqueued": 0,
             "errors": [],
             "sources": [],
+            "source_types_filter": (
+                sorted(item.value for item in source_types) if source_types else None
+            ),
         }
         try:
             health = await self.mcp.call_capability("read_system_health_check", {})
@@ -176,6 +183,8 @@ class ProcurementOrchestratorService:
         summary["databases"] = databases
         for database in databases:
             for capability in list_source_capabilities():
+                if source_types is not None and capability.source_type not in source_types:
+                    continue
                 source_summary = await self._poll_source(
                     database=database,
                     source_type=capability.source_type,
@@ -1140,6 +1149,21 @@ class ProcurementOrchestratorService:
         await self.db.refresh(case, attribute_names=["positions"])
 
     @staticmethod
+    def _resolve_role_agent_id(case: ProcurementCase) -> str:
+        metadata = case.case_metadata or {}
+        if (
+            metadata.get("engineer_handoff_agent_id") == PRODUCTION_DISPATCHER_AGENT_ID
+            and case.control_point == "chief_dispatcher"
+        ):
+            return PRODUCTION_DISPATCHER_AGENT_ID
+        if (
+            case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
+            and case.control_point == "chief_dispatcher"
+        ):
+            return PRODUCTION_DISPATCHER_AGENT_ID
+        return agent_id_for_source(case.source_type)
+
+    @staticmethod
     def _role_completion_key(case: ProcurementCase, agent_id: str) -> str:
         source_revision = (
             case.source_content_hash
@@ -1151,6 +1175,15 @@ class ProcurementOrchestratorService:
             and case.source_synced_at is not None
         ):
             source_revision = f"{source_revision}:{case.source_synced_at.isoformat()}"
+        if agent_id == PRODUCTION_DISPATCHER_AGENT_ID:
+            metadata = case.case_metadata or {}
+            engineer_fp = metadata.get("engineer_evidence_fingerprint")
+            synced = (
+                case.source_synced_at.isoformat() if case.source_synced_at else None
+            )
+            suffix = engineer_fp or synced
+            if suffix:
+                source_revision = f"{source_revision}:{suffix}"
         return f"{agent_id}:{source_revision}"
 
     @staticmethod
@@ -1194,6 +1227,14 @@ class ProcurementOrchestratorService:
                     "raw_payload": position.raw_payload or {},
                     "project_id": (position.raw_payload or {}).get("Назначение_Key"),
                     "production_stage_id": (position.raw_payload or {}).get("Этап_Key"),
+                    "minimum_stock": (position.raw_payload or {}).get(
+                        "МинимальноеКоличествоЗапаса_После"
+                    )
+                    or (position.raw_payload or {}).get("МинимальноеКоличествоЗапаса_До"),
+                    "maximum_stock": (position.raw_payload or {}).get(
+                        "МаксимальноеКоличествоЗапаса_После"
+                    )
+                    or (position.raw_payload or {}).get("МаксимальноеКоличествоЗапаса_До"),
                 }
                 for position in case.positions or []
                 if not position.cancelled
@@ -1213,23 +1254,17 @@ class ProcurementOrchestratorService:
             "source_basis_status": metadata.get("source_basis_status"),
             "production_order_1c_ref": metadata.get("production_order_1c_ref"),
             "production_order_type": metadata.get("production_order_type"),
+            "production_preparation_engineer_output": metadata.get(
+                "production_preparation_engineer_output"
+            ),
+            "stock_growth_coefficient": metadata.get("stock_growth_coefficient"),
         }
 
     async def _enqueue_role_agent(self, case: ProcurementCase) -> bool:
         if not self.enqueue_case or case.status in TERMINAL_CASE_STATUSES:
             return False
-        if case.source_type == ProcurementSourceType.REORDER_POINT.value:
-            return False
 
-        agent_id = agent_id_for_source(case.source_type)
-        metadata = case.case_metadata or {}
-        if (
-            agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
-            and metadata.get("engineer_handoff_agent_id")
-            == PRODUCTION_DISPATCHER_AGENT_ID
-            and case.control_point == "chief_dispatcher"
-        ):
-            return False
+        agent_id = self._resolve_role_agent_id(case)
         completion_key = self._role_completion_key(case, agent_id)
         if (case.case_metadata or {}).get("role_agent_completion_key") == completion_key:
             return False
@@ -1337,6 +1372,22 @@ class ProcurementOrchestratorService:
                 "engineer_action_by",
                 "engineer_critical_acknowledged_at",
                 "engineer_critical_acknowledged_by",
+            ):
+                metadata.pop(key, None)
+            case.case_metadata = metadata
+        if agent_id == PRODUCTION_DISPATCHER_AGENT_ID:
+            metadata = dict(case.case_metadata or {})
+            metadata.setdefault("dispatcher_invoked_at", datetime.now(UTC).isoformat())
+            metadata["dispatcher_workspace_status"] = "processing"
+            for key in (
+                "dispatcher_workspace_archived_at",
+                "dispatcher_archived_bucket",
+                "dispatcher_decision_kind",
+                "dispatcher_action_at",
+                "dispatcher_action_by",
+                "dispatcher_critical_acknowledged_at",
+                "dispatcher_critical_acknowledged_by",
+                "dispatcher_confirmed_method",
             ):
                 metadata.pop(key, None)
             case.case_metadata = metadata
@@ -1464,6 +1515,18 @@ class ProcurementOrchestratorService:
             metadata["engineer_calculated_at"] = output_data.get("calculated_at")
             metadata["engineer_decision_kind"] = output_data.get("decision_kind")
             case.case_metadata = metadata
+        if (
+            result_payload.get("agent_id") == PRODUCTION_DISPATCHER_AGENT_ID
+            and isinstance(output_data, dict)
+        ):
+            metadata = dict(case.case_metadata or {})
+            metadata["production_dispatcher_output"] = output_data
+            metadata["dispatcher_evidence_fingerprint"] = output_data.get(
+                "evidence_fingerprint"
+            )
+            metadata["dispatcher_calculated_at"] = output_data.get("calculated_at")
+            metadata["dispatcher_decision_kind"] = output_data.get("decision_kind")
+            case.case_metadata = metadata
         task.final_result = result_payload
         task.requires_human_review = role_status == "waiting_human"
         wait_reason = str(
@@ -1481,6 +1544,10 @@ class ProcurementOrchestratorService:
             if result_payload.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
                 metadata = dict(case.case_metadata or {})
                 metadata["engineer_workspace_status"] = "awaiting_action"
+                case.case_metadata = metadata
+            if result_payload.get("agent_id") == PRODUCTION_DISPATCHER_AGENT_ID:
+                metadata = dict(case.case_metadata or {})
+                metadata["dispatcher_workspace_status"] = "awaiting_action"
                 case.case_metadata = metadata
         elif role_status == "waiting_external":
             task.status = TaskStatus.WAITING_EXTERNAL
@@ -1509,6 +1576,23 @@ class ProcurementOrchestratorService:
                 case.requested_operation = (
                     "route_confirmed_deficit" if has_deficit else "coverage_confirmed"
                 )
+            if result_payload.get("agent_id") == PRODUCTION_DISPATCHER_AGENT_ID:
+                case.control_point = "coverage"
+                case.requested_operation = "dispatcher_confirmed"
+                metadata = dict(case.case_metadata or {})
+                archived_at = datetime.now(UTC)
+                decision = str(output_data.get("decision_kind") or "none")
+                archived_bucket = (
+                    "critical"
+                    if decision == "critical_acknowledgement"
+                    else "attention"
+                    if decision == "supply_confirmation"
+                    else "success"
+                )
+                metadata["dispatcher_workspace_status"] = "archived"
+                metadata["dispatcher_workspace_archived_at"] = archived_at.isoformat()
+                metadata["dispatcher_archived_bucket"] = archived_bucket
+                case.case_metadata = metadata
             case.current_task_id = None
             case.current_agent_id = None
             if result_payload.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
@@ -1537,6 +1621,12 @@ class ProcurementOrchestratorService:
                     },
                     agent_id=PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
                 )
+                previous_enqueue = self.enqueue_case
+                self.enqueue_case = True
+                try:
+                    await self._enqueue_role_agent(case)
+                finally:
+                    self.enqueue_case = previous_enqueue
         else:
             task.status = TaskStatus.FAILED
             task.finished_at = datetime.now(UTC)
@@ -1635,7 +1725,11 @@ class ProcurementOrchestratorService:
         *,
         user_id: str,
     ) -> dict[str, Any] | None:
-        case = await self.db.get(ProcurementCase, case_id)
+        case = await self.db.scalar(
+            select(ProcurementCase)
+            .options(selectinload(ProcurementCase.positions))
+            .where(ProcurementCase.id == case_id)
+        )
         if case is None:
             return None
         metadata = dict(case.case_metadata or {})
@@ -1732,15 +1826,130 @@ class ProcurementOrchestratorService:
             "case_id": str(case.id),
         }
 
+    async def confirm_dispatcher_supply(
+        self,
+        case_id: uuid.UUID,
+        *,
+        user_id: str,
+        method: str | None = None,
+    ) -> dict[str, Any] | None:
+        case = await self.db.scalar(
+            select(ProcurementCase)
+            .options(selectinload(ProcurementCase.positions))
+            .where(ProcurementCase.id == case_id)
+        )
+        if case is None:
+            return None
+        metadata = dict(case.case_metadata or {})
+        if (
+            metadata.get("dispatcher_workspace_status") == "archived"
+            and metadata.get("dispatcher_archived_bucket") in {"attention", "success"}
+        ):
+            return {
+                "status": "completed",
+                "action": "supply_confirmed",
+                "case_id": str(case.id),
+            }
+        if (
+            metadata.get("dispatcher_decision_kind") != "supply_confirmation"
+            or case.current_task_id is None
+        ):
+            return None
+        task = await self.db.get(Task, case.current_task_id)
+        if task is None or task.status != TaskStatus.WAITING_HUMAN:
+            return None
+        action_at = datetime.now(UTC)
+        confirmed_method = method or "procurement"
+        metadata["dispatcher_action_at"] = action_at.isoformat()
+        metadata["dispatcher_action_by"] = user_id
+        metadata["dispatcher_confirmed_method"] = confirmed_method
+        case.case_metadata = metadata
+        await self._append_event(
+            case,
+            event_type="dispatcher_supply_confirmed",
+            idempotency_key=f"dispatcher-supply-confirmed:{task.id}"[:255],
+            previous_status=case.status,
+            new_status=case.status,
+            payload={
+                "user_id": user_id,
+                "confirmed_at": action_at.isoformat(),
+                "method": confirmed_method,
+            },
+            agent_id=PRODUCTION_DISPATCHER_AGENT_ID,
+        )
+        payload = dict(task.final_result or {})
+        payload.update(
+            {
+                "role_status": "completed",
+                "status": "completed",
+                "summary": "Способ обеспечения подтверждён диспетчером производства.",
+                "requires_human_review": False,
+            }
+        )
+        payload.setdefault(
+            "output_data",
+            metadata.get("production_dispatcher_output") or {},
+        )
+        await self._apply_role_agent_result(
+            case,
+            task,
+            payload,
+            event_type="role_agent_resumed",
+        )
+        return {
+            "status": "completed",
+            "action": "supply_confirmed",
+            "case_id": str(case.id),
+        }
+
+    async def acknowledge_dispatcher_critical(
+        self,
+        case_id: uuid.UUID,
+        *,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        case = await self.db.get(ProcurementCase, case_id)
+        if case is None:
+            return None
+        metadata = dict(case.case_metadata or {})
+        if metadata.get("dispatcher_decision_kind") != "critical_acknowledgement":
+            return None
+        if metadata.get("dispatcher_critical_acknowledged_at"):
+            return {
+                "status": "waiting_for_source_update",
+                "action": "critical_acknowledged",
+                "case_id": str(case.id),
+            }
+        acknowledged_at = datetime.now(UTC)
+        metadata["dispatcher_critical_acknowledged_at"] = acknowledged_at.isoformat()
+        metadata["dispatcher_critical_acknowledged_by"] = user_id
+        case.case_metadata = metadata
+        await self._append_event(
+            case,
+            event_type="dispatcher_critical_acknowledged",
+            idempotency_key=f"dispatcher-critical-ack:{case.current_task_id or case.id}"[:255],
+            previous_status=case.status,
+            new_status=case.status,
+            payload={"user_id": user_id, "acknowledged_at": acknowledged_at.isoformat()},
+            agent_id=PRODUCTION_DISPATCHER_AGENT_ID,
+        )
+        await self.db.flush()
+        return {
+            "status": "waiting_for_source_update",
+            "action": "critical_acknowledged",
+            "case_id": str(case.id),
+        }
+
     async def list_dashboard(
         self,
         *,
         view: str = "active",
         source_type: str | None = None,
         engineer_workspace: bool = False,
+        dispatcher_workspace: bool = False,
     ) -> dict[str, Any]:
         normalized_view = view if view in {"active", "processing", "archive"} else "active"
-        if engineer_workspace:
+        if engineer_workspace or dispatcher_workspace:
             status_filter = None
         elif normalized_view == "archive":
             status_filter = list(TERMINAL_CASE_STATUSES)
@@ -1789,6 +1998,43 @@ class ProcurementOrchestratorService:
                 if normalized_view == "archive"
                 else active_engineer_cases
             )
+        elif dispatcher_workspace:
+            dispatcher_cases = [
+                case
+                for case in loaded_cases
+                if (case.case_metadata or {}).get("dispatcher_invoked_at")
+                or (case.case_metadata or {}).get("production_dispatcher_output")
+                or (
+                    case.source_type == ProcurementSourceType.REORDER_POINT.value
+                    and (
+                        case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
+                        or (case.case_metadata or {}).get("engineer_handoff_agent_id")
+                        == PRODUCTION_DISPATCHER_AGENT_ID
+                    )
+                )
+                or (
+                    (case.case_metadata or {}).get("engineer_handoff_agent_id")
+                    == PRODUCTION_DISPATCHER_AGENT_ID
+                )
+            ]
+
+            def is_dispatcher_archived(case: ProcurementCase) -> bool:
+                metadata = case.case_metadata or {}
+                return bool(metadata.get("dispatcher_workspace_archived_at")) or (
+                    case.status in TERMINAL_CASE_STATUSES
+                )
+
+            active_dispatcher_cases = [
+                case for case in dispatcher_cases if not is_dispatcher_archived(case)
+            ]
+            archived_dispatcher_cases = [
+                case for case in dispatcher_cases if is_dispatcher_archived(case)
+            ]
+            cases = (
+                archived_dispatcher_cases
+                if normalized_view == "archive"
+                else active_dispatcher_cases
+            )
         else:
             cases = loaded_cases
         if normalized_view == "processing":
@@ -1798,6 +2044,9 @@ class ProcurementOrchestratorService:
         if engineer_workspace:
             archive_count = len(archived_engineer_cases)
             processing_count = len(active_engineer_cases)
+        elif dispatcher_workspace:
+            archive_count = len(archived_dispatcher_cases)
+            processing_count = len(active_dispatcher_cases)
         else:
             archive_filters = [ProcurementCase.status.in_(list(TERMINAL_CASE_STATUSES))]
             processing_filters = [ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES))]
@@ -2046,8 +2295,45 @@ class ProcurementOrchestratorService:
             )
         return "attention", "ИИ-агент выполняет расчёт или кейс ожидает своей очереди."
 
+    @staticmethod
+    def _dispatcher_bucket(case: ProcurementCase) -> tuple[str | None, str | None]:
+        metadata = case.case_metadata or {}
+        is_dispatcher_case = (
+            case.source_type == ProcurementSourceType.REORDER_POINT.value
+            or metadata.get("engineer_handoff_agent_id") == PRODUCTION_DISPATCHER_AGENT_ID
+            or metadata.get("dispatcher_invoked_at")
+            or metadata.get("production_dispatcher_output")
+        )
+        if not is_dispatcher_case:
+            return None, None
+        archived_bucket = metadata.get("dispatcher_archived_bucket")
+        if archived_bucket in {"success", "attention", "critical"}:
+            return str(archived_bucket), "Состояние сохранено после подтверждения диспетчера."
+        result = case.latest_result or {}
+        output = result.get("output_data") or metadata.get("production_dispatcher_output")
+        output = output if isinstance(output, dict) else {}
+        role_status = str(result.get("role_status") or "")
+        decision_kind = str(
+            metadata.get("dispatcher_decision_kind") or output.get("decision_kind") or ""
+        )
+        if decision_kind == "supply_confirmation":
+            return "attention", "Требуется подтвердить способ обеспечения."
+        if decision_kind == "critical_acknowledgement" or role_status == "failed":
+            missing = output.get("missing_data") or []
+            return "critical", str(
+                (missing[0] if missing else None)
+                or case.deviation_summary
+                or "Недостаточно данных для расчёта диспетчера."
+            )
+        if decision_kind == "none" and role_status == "completed":
+            return "success", "Запас покрывает потребность, закупка не требуется."
+        if case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID or case.current_task_id:
+            return "attention", "Диспетчер выполняет расчёт или кейс ожидает решения."
+        return "attention", "Кейс ожидает обработки диспетчером производства."
+
     def _serialize_case_summary(self, case: ProcurementCase) -> dict[str, Any]:
         engineer_bucket, engineer_bucket_reason = self._engineer_bucket(case)
+        dispatcher_bucket, dispatcher_bucket_reason = self._dispatcher_bucket(case)
         role_status = str((case.latest_result or {}).get("role_status") or "")
         metadata = case.case_metadata or {}
         if engineer_bucket is None:
@@ -2064,6 +2350,27 @@ class ProcurementOrchestratorService:
             engineer_work_status = "completed"
         else:
             engineer_work_status = "awaiting_action"
+        if dispatcher_bucket is None:
+            dispatcher_work_status = None
+        elif metadata.get("dispatcher_workspace_archived_at") or (
+            case.status in TERMINAL_CASE_STATUSES
+        ):
+            dispatcher_work_status = "archived"
+        elif (
+            case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
+            and role_status in {"waiting_human", "waiting_external", "failed"}
+        ):
+            dispatcher_work_status = "awaiting_action"
+        elif (
+            case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
+            and case.current_task_id
+            and role_status != "completed"
+        ):
+            dispatcher_work_status = "processing"
+        elif dispatcher_bucket == "success":
+            dispatcher_work_status = "completed"
+        else:
+            dispatcher_work_status = "awaiting_action"
         return {
             "id": str(case.id),
             "correlation_id": case.correlation_id,
@@ -2113,6 +2420,27 @@ class ProcurementOrchestratorService:
             "engineer_action_at": metadata.get("engineer_action_at"),
             "engineer_critical_acknowledged_at": metadata.get(
                 "engineer_critical_acknowledged_at"
+            ),
+            "dispatcher_bucket": dispatcher_bucket,
+            "dispatcher_bucket_reason": dispatcher_bucket_reason,
+            "dispatcher_work_status": dispatcher_work_status,
+            "dispatcher_decision_kind": metadata.get("dispatcher_decision_kind"),
+            "dispatcher_invoked_at": metadata.get("dispatcher_invoked_at"),
+            "dispatcher_workspace_archived_at": metadata.get(
+                "dispatcher_workspace_archived_at"
+            ),
+            "dispatcher_action_at": metadata.get("dispatcher_action_at"),
+            "dispatcher_critical_acknowledged_at": metadata.get(
+                "dispatcher_critical_acknowledged_at"
+            ),
+            "dispatcher_stream": (
+                "reorder_point"
+                if case.source_type == ProcurementSourceType.REORDER_POINT.value
+                else "after_engineer"
+                if metadata.get("engineer_handoff_agent_id")
+                == PRODUCTION_DISPATCHER_AGENT_ID
+                or metadata.get("production_preparation_engineer_output")
+                else None
             ),
         }
 
@@ -2307,9 +2635,11 @@ class ProcurementOrchestratorService:
         }
 
 
-def build_poll_lock_key() -> str:
-    digest = hashlib.sha1(b"procurement-orchestrator-poll").hexdigest()[:12]
-    return f"procurement:orchestrator:poll:{digest}"
+def build_poll_lock_key(scope: str = "all") -> str:
+    digest = hashlib.sha1(f"procurement-orchestrator-poll:{scope}".encode()).hexdigest()[
+        :12
+    ]
+    return f"procurement:orchestrator:poll:{scope}:{digest}"
 
 
 __all__ = ["ProcurementOrchestratorService", "build_poll_lock_key"]

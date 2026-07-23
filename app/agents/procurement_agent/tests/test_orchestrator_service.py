@@ -210,9 +210,6 @@ async def test_role_agent_is_routed_by_source_type(
         _document(ref, "v1", source_type=source_type)
     )
 
-    if source_type is ProcurementSourceType.REORDER_POINT:
-        assert result == "created"
-        return
     assert result == "enqueued"
     case = (await db_session.execute(select(ProcurementCase))).scalar_one()
     task = (await db_session.execute(select(Task))).scalar_one()
@@ -326,13 +323,19 @@ async def test_engineer_purchase_confirmation_hands_off_and_archives_workspace(
 
     assert result is not None
     assert task.status is TaskStatus.COMPLETED
-    assert case.current_task_id is None
     assert case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
     assert case.control_point == "chief_dispatcher"
     assert case.case_metadata["engineer_archived_bucket"] == "attention"
-    case.source_synced_at = datetime.now(UTC)
-    assert await service._enqueue_role_agent(case) is False
     assert case.case_metadata["engineer_workspace_status"] == "archived"
+    dispatcher_task = (
+        await db_session.execute(
+            select(Task).where(Task.id == case.current_task_id)
+        )
+    ).scalar_one()
+    assert (dispatcher_task.task_metadata or {}).get("agent_slug") == (
+        PRODUCTION_DISPATCHER_AGENT_ID
+    )
+    assert await service._enqueue_role_agent(case) is False
     archive = await service.list_dashboard(
         view="archive",
         source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value,

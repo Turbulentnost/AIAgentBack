@@ -116,7 +116,10 @@ SOURCE_CAPABILITIES: dict[ProcurementSourceType, SourceCapability] = {
         source_type=ProcurementSourceType.REORDER_POINT,
         entity_set="Document_ТД_УстановкаТочекЗаказа",
         lines_entity_set="Document_ТД_УстановкаТочекЗаказа_Товары",
-        label_ru="Сигнал точки заказа / заказ условному поставщику",
+        label_ru=(
+            "Формирование плана производства полуфабрикатов "
+            "и плана закупок по точкам заказа"
+        ),
     ),
 }
 

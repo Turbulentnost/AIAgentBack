@@ -18,3 +18,5 @@ alembic/versions/*.py
 !alembic/versions/0052_procurement_source_synced_at.py
 !alembic/versions/0053_production_preparation_engineer_agent.py
 !alembic/versions/0054_activate_procurement_agents.py
+!alembic/versions/0055_production_dispatcher_agent.py
+!alembic/versions/0060_legal_specialist_agent.py

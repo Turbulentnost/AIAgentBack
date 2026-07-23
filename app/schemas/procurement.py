@@ -119,6 +119,19 @@ class ProcurementCaseSummary(BaseModel):
     engineer_workspace_archived_at: datetime | None = None
     engineer_action_at: datetime | None = None
     engineer_critical_acknowledged_at: datetime | None = None
+    dispatcher_bucket: Literal["success", "attention", "critical"] | None = None
+    dispatcher_bucket_reason: str | None = None
+    dispatcher_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    dispatcher_decision_kind: Literal[
+        "none", "supply_confirmation", "critical_acknowledgement"
+    ] | None = None
+    dispatcher_invoked_at: datetime | None = None
+    dispatcher_workspace_archived_at: datetime | None = None
+    dispatcher_action_at: datetime | None = None
+    dispatcher_critical_acknowledged_at: datetime | None = None
+    dispatcher_stream: Literal["reorder_point", "after_engineer"] | None = None
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):
@@ -215,7 +228,11 @@ class ProcurementRoleAgentResultRead(ProcurementRoleAgentResumeRequest):
 
 class ProcurementEngineerActionRead(BaseModel):
     status: str
-    action: Literal["purchase_confirmed", "critical_acknowledged"]
+    action: Literal[
+        "purchase_confirmed",
+        "critical_acknowledged",
+        "supply_confirmed",
+    ]
     case_id: str
 
 
