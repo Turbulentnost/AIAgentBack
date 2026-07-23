@@ -73,6 +73,8 @@ def _enrich_card(card: dict[str, Any]) -> OtkPresentationCardRead:
 
 
 def _to_summary(card: dict[str, Any]) -> OtkPresentationSummary:
+    project_code = card.get("project_code")
+    project_name = card.get("project_name")
     return OtkPresentationSummary(
         id=str(card["id"]),
         organization=str(card.get("organization") or ""),
@@ -83,6 +85,8 @@ def _to_summary(card: dict[str, Any]) -> OtkPresentationSummary:
         status=card.get("status") or "queued",  # type: ignore[arg-type]
         lines_count=len(card.get("lines") or []),
         executor_id=str(card.get("executor_id") or ""),
+        project_code=str(project_code) if project_code else None,
+        project_name=str(project_name) if project_name else None,
     )
 
 

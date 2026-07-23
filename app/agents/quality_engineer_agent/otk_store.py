@@ -16,114 +16,21 @@ from typing import Any
 _LOCK = threading.RLock()
 _DEFAULT_PATH = Path(__file__).resolve().parent / "data" / "otk_presentations.json"
 
-SEED_WORKERS: list[dict[str, Any]] = [
-    {"id": "otk-w-1", "name": "Иванова А.С.", "position": "Инженер по качеству"},
-    {"id": "otk-w-2", "name": "Петров Д.И.", "position": "Инженер по качеству"},
-    {"id": "otk-w-3", "name": "Сидорова М.В.", "position": "Инженер ОТК"},
-]
 
-SEED_PRESENTATIONS: list[dict[str, Any]] = [
-    {
-        "id": "pres-001",
-        "organization": "ООО НПО «Турбулентность-Дон»",
-        "purchase_order": "ЗП-0001247",
-        "supplier": "ООО «МеталлСервис»",
-        "counterparty": "ООО «МеталлСервис»",
-        "warehouse": "Склад сырья №1",
-        "invoice_date": "2026-07-21",
-        "invoice_number": "УПД-45821",
-        "storage_zone": "Зона приёмки А",
-        "presentation_place": "Участок входного контроля",
-        "otk_incoming_warehouse": "Склад входного контроля ОТК",
-        "executor_id": "otk-w-1",
-        "due_at": "2026-07-23T17:00:00+03:00",
-        "status": "queued",
-        "lines": [
-            {
-                "id": "l1",
-                "code": "10.01.00125",
-                "nomenclature": "Лист стальной 3 мм Ст3",
-                "storage_unit": "шт",
-                "qty_upd": 120,
-                "qty_fact": 120,
-                "category": "metal",
-            },
-            {
-                "id": "l2",
-                "code": "10.01.00402",
-                "nomenclature": "Труба бесшовная Ø57×3,5",
-                "storage_unit": "м",
-                "qty_upd": 48,
-                "qty_fact": 48,
-                "category": "pipes",
-            },
-        ],
-    },
-    {
-        "id": "pres-002",
-        "organization": "ООО НПО «Турбулентность-Дон»",
-        "purchase_order": "ЗП-0001302",
-        "supplier": "АО «КабельПром»",
-        "counterparty": "АО «КабельПром»",
-        "warehouse": "Склад комплектующих",
-        "invoice_date": "2026-07-20",
-        "invoice_number": "УПД-11209",
-        "storage_zone": "Зона приёмки Б",
-        "presentation_place": "Стол предъявления №2",
-        "otk_incoming_warehouse": "Склад входного контроля ОТК",
-        "executor_id": "otk-w-2",
-        "due_at": "2026-07-22T16:00:00+03:00",
-        "status": "in_progress",
-        "lines": [
-            {
-                "id": "l3",
-                "code": "20.05.00088",
-                "nomenclature": "Кабель ВВГнг 3×2,5",
-                "storage_unit": "м",
-                "qty_upd": 500,
-                "qty_fact": 498,
-                "category": "cable",
-                "supplier_quality_rating": 40,
-            },
-            {
-                "id": "l4",
-                "code": "30.02.00015",
-                "nomenclature": "Болт М8×40 DIN 933",
-                "storage_unit": "шт",
-                "qty_upd": 2000,
-                "qty_fact": 2000,
-                "category": "fasteners",
-            },
-        ],
-    },
-    {
-        "id": "pres-003",
-        "organization": "ООО НПО «Турбулентность-Дон»",
-        "purchase_order": "ЗП-0001310",
-        "supplier": "ООО «ЭлектроКомпонент»",
-        "counterparty": "ООО «ЭлектроКомпонент»",
-        "warehouse": "Склад электроники",
-        "invoice_date": "2026-07-22",
-        "invoice_number": "УПД-9901",
-        "storage_zone": "Зона приёмки В",
-        "presentation_place": "Участок входного контроля",
-        "otk_incoming_warehouse": "Склад входного контроля ОТК",
-        "executor_id": "otk-w-3",
-        "due_at": "2026-07-25T17:00:00+03:00",
-        "status": "queued",
-        "lines": [
-            {
-                "id": "l5",
-                "code": "40.11.00003",
-                "nomenclature": "Микросхема STM32F103",
-                "storage_unit": "шт",
-                "qty_upd": 80,
-                "qty_fact": 80,
-                "category": "electronics",
-            },
-        ],
-    },
-]
+def _load_packaged_seed() -> dict[str, Any]:
+    """Load workers/presentations from packaged JSON (single source of truth)."""
+    raw = json.loads(_DEFAULT_PATH.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return {"workers": [], "presentations": []}
+    return {
+        "workers": list(raw.get("workers") or []),
+        "presentations": list(raw.get("presentations") or []),
+    }
+
+
+_PACKAGED = _load_packaged_seed()
+SEED_WORKERS: list[dict[str, Any]] = list(_PACKAGED["workers"])
+SEED_PRESENTATIONS: list[dict[str, Any]] = list(_PACKAGED["presentations"])
 
 
 class OtkPresentationStore:

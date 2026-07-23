@@ -27,6 +27,7 @@ from app.services.permission_service import PermissionService
 from app.services.procurement_permission import (
     append_omto_support_manager_agent,
     append_otk_head_agent,
+    append_procurement_manager_agent,
     append_production_preparation_engineer_agent,
     append_quality_deputy_director_agent,
     append_quality_engineer_agent,
@@ -68,6 +69,7 @@ async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await append_quality_engineer_agent(db, current_user, agents)
     agents = await append_quality_deputy_director_agent(db, current_user, agents)
     agents = await append_quality_kpi_agent(db, current_user, agents)
+    agents = await append_procurement_manager_agent(db, current_user, agents)
     return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 

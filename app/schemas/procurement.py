@@ -104,6 +104,20 @@ class ProcurementCaseSummary(BaseModel):
     source_active: bool = False
     engineer_bucket: Literal["success", "attention", "critical"] | None = None
     engineer_bucket_reason: str | None = None
+    procurement_manager: dict[str, Any] = Field(default_factory=dict)
+    suppliers: list[dict[str, Any]] = Field(default_factory=list)
+    quotes: list[dict[str, Any]] = Field(default_factory=list)
+    comparison: dict[str, Any] | None = None
+    rfq_drafts: list[dict[str, Any]] = Field(default_factory=list)
+    approvals: list[dict[str, Any]] = Field(default_factory=list)
+    shipment_events: list[dict[str, Any]] = Field(default_factory=list)
+    payment_document_draft: dict[str, Any] | None = None
+    recommendation: dict[str, Any] | None = None
+    recommendation_audit: list[dict[str, Any]] = Field(default_factory=list)
+    # Bank allocation coverage for manager cards (warehouse/suppliers by deadline).
+    # Must be declared so response_model validation does not strip these fields.
+    order_coverage: dict[str, Any] | None = None
+    coverage: dict[str, Any] | None = None
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):
@@ -122,6 +136,9 @@ class ProcurementCaseDetail(ProcurementCaseSummary):
     priority_1c_ref: str | None = None
     assigned_agents: list[str] = Field(default_factory=list)
     deviation_summary: str | None = None
+    need_title: str | None = None
+    project_code: str | None = None
+    project_name: str | None = None
     latest_result: dict[str, Any] | None = None
     case_metadata: dict[str, Any] | None = None
     positions: list[ProcurementCasePositionRead] = Field(default_factory=list)
@@ -173,6 +190,7 @@ class ProcurementDashboardRead(BaseModel):
     groups: list[ProcurementSourceGroupRead] = Field(default_factory=list)
     total_cases: int = 0
     counts: ProcurementDashboardCounts = Field(default_factory=ProcurementDashboardCounts)
+    material_allocation_summary: dict[str, Any] | None = None
 
 
 class ProcurementRefreshResult(BaseModel):

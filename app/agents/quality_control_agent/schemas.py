@@ -101,7 +101,7 @@ class QualityControlPayload(BaseModel):
     nomenclature_ref: str | None = None
     item_group: TmcCategory | str | None = None
     supplier_ref: str | None = None
-    supplier_quality_rating: str | None = None
+    supplier_quality_rating: str | float | int | None = None
     control_rule_ids: list[str] = Field(default_factory=list)
     mandatory_documents: list[QualityDocumentRequirement] = Field(default_factory=list)
     sample_rule: QualitySampleRule | None = None

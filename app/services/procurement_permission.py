@@ -3,9 +3,15 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.agent import Agent
 from app.models.user import User
 from app.services.permission_service import PermissionService
+
+
+def _auth_disabled_dev() -> bool:
+    """Local skip-auth: AUTH_DISABLED + ENVIRONMENT=dev|test grants role workspaces."""
+    return bool(settings.AUTH_DISABLED and settings.ENVIRONMENT in ("dev", "test"))
 
 PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG = "production_preparation_engineer_agent"
 OMTO_SUPPORT_MANAGER_AGENT_SLUG = "omto_support_manager_agent"
@@ -13,6 +19,7 @@ OTK_HEAD_AGENT_SLUG = "otk_head_agent"
 QUALITY_ENGINEER_AGENT_SLUG = "quality_engineer_agent"
 QUALITY_DEPUTY_DIRECTOR_AGENT_SLUG = "quality_deputy_director_agent"
 QUALITY_KPI_AGENT_SLUG = "quality_kpi_agent"
+PROCUREMENT_LOGISTICS_AGENT_SLUG = "procurement_logistics_agent"
 
 _ENGINEER_POSITION_MARKERS = (
     "инженер по подготовке производства",
@@ -37,6 +44,12 @@ _QUALITY_DEPUTY_MARKERS = (
     "заместитель технического директора по качеству",
     "зтд по качеству",
     "здк",
+)
+_PROCUREMENT_MANAGER_MARKERS = (
+    "менеджер по закупкам",
+    "специалист по закупкам",
+    "руководитель омто",
+    "начальник омто",
 )
 
 
@@ -87,6 +100,13 @@ def is_quality_deputy_director_position(position: str | None) -> bool:
     return any(marker in normalized for marker in _QUALITY_DEPUTY_MARKERS)
 
 
+def is_procurement_manager_position(position: str | None) -> bool:
+    normalized = _normalize_position(position)
+    if not normalized:
+        return False
+    return any(marker in normalized for marker in _PROCUREMENT_MANAGER_MARKERS)
+
+
 async def can_access_procurement_orchestrator(db: AsyncSession, user: User) -> bool:
     """Orchestrator UI/API is visible only to the system superuser."""
     _ = db
@@ -103,7 +123,8 @@ async def _can_access_by_slug_or_position(
     slug: str,
     position_ok: bool,
 ) -> bool:
-    if user.is_superuser or position_ok:
+    # AUTH_DISABLED mirrors VITE_SKIP_AUTH mock superuser: full role-agent access in local dev.
+    if user.is_superuser or position_ok or _auth_disabled_dev():
         return True
     agent = await db.scalar(select(Agent).where(Agent.slug == slug))
     if agent is None:
@@ -173,9 +194,21 @@ async def can_access_quality_kpi(db: AsyncSession, user: User) -> bool:
     )
 
 
+async def can_access_procurement_manager(db: AsyncSession, user: User) -> bool:
+    return await _can_access_by_slug_or_position(
+        db,
+        user,
+        PROCUREMENT_LOGISTICS_AGENT_SLUG,
+        is_procurement_manager_position(user.position),
+    )
+
+
 async def _append_agent_by_slug(db: AsyncSession, agents: list, slug: str) -> list:
     agent = await db.scalar(select(Agent).where(Agent.slug == slug))
-    if agent is None or any(item.id == agent.id for item in agents):
+    if agent is None:
+        # Missing catalog row: access still works via can_access_*; append is best-effort.
+        return agents
+    if any(item.id == agent.id for item in agents):
         return agents
     return sorted([*agents, agent], key=lambda item: item.name)
 
@@ -228,16 +261,28 @@ async def append_quality_kpi_agent(db: AsyncSession, user: User, agents: list) -
     return await _append_agent_by_slug(db, agents, QUALITY_KPI_AGENT_SLUG)
 
 
+async def append_procurement_manager_agent(
+    db: AsyncSession,
+    user: User,
+    agents: list,
+) -> list:
+    if not await can_access_procurement_manager(db, user):
+        return agents
+    return await _append_agent_by_slug(db, agents, PROCUREMENT_LOGISTICS_AGENT_SLUG)
+
+
 __all__ = [
     "OMTO_SUPPORT_MANAGER_AGENT_SLUG",
     "OTK_HEAD_AGENT_SLUG",
     "PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG",
+    "PROCUREMENT_LOGISTICS_AGENT_SLUG",
     "QUALITY_DEPUTY_DIRECTOR_AGENT_SLUG",
     "QUALITY_ENGINEER_AGENT_SLUG",
     "QUALITY_KPI_AGENT_SLUG",
     "append_omto_support_manager_agent",
     "append_otk_head_agent",
     "append_production_preparation_engineer_agent",
+    "append_procurement_manager_agent",
     "append_quality_deputy_director_agent",
     "append_quality_engineer_agent",
     "append_quality_kpi_agent",
@@ -245,6 +290,7 @@ __all__ = [
     "can_access_otk_head",
     "can_access_production_preparation_engineer",
     "can_access_procurement_orchestrator",
+    "can_access_procurement_manager",
     "can_access_quality_deputy_director",
     "can_access_quality_engineer",
     "can_access_quality_kpi",
@@ -252,6 +298,7 @@ __all__ = [
     "is_omto_support_manager_position",
     "is_otk_head_position",
     "is_production_preparation_engineer_position",
+    "is_procurement_manager_position",
     "is_quality_deputy_director_position",
     "is_quality_engineer_position",
 ]

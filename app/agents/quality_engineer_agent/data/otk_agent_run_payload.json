@@ -1,0 +1,346 @@
+{
+  "task_id": "task-otk-mock-001",
+  "case_id": "case-otk-ЗП-0001247",
+  "correlation_id": "corr-otk-pres-001",
+  "source_type": "production_material_order",
+  "source_1c_ref": "Catalog_ЗаказыПоставщику/ЗП-0001247",
+  "source_number": "ЗП-0001247",
+  "idempotency_key": "otk-mock-pres-001-assigned",
+  "caller_agent_id": "procurement_orchestrator",
+  "source_data": {
+    "source_database": "УТ",
+    "source_number": "ЗП-0001247",
+    "organization": "ООО НПО «Турбулентность-Дон»",
+    "supplier": "ООО «МеталлСервис»",
+    "warehouse": "Склад сырья №1",
+    "presentation_ref": "УПД-45821",
+    "purchase_order": "ЗП-0001247",
+    "quality": {
+      "quality_stage": "assigned",
+      "item_group": "metal",
+      "category": "metal",
+      "presentation_ref": "УПД-45821",
+      "nomenclature_ref": "10.01.00125",
+      "supplier_ref": "ООО «МеталлСервис»",
+      "supplier_quality_rating": 72,
+      "lot_qty": 120,
+      "quantity": 120,
+      "inspector_id": "otk-w-1",
+      "inspector_name": "Иванова А.С.",
+      "present_docs": ["certificate_or_passport"],
+      "documents": ["certificate_or_passport"],
+      "analog_in_nomenclature": true,
+      "scrap_pct": 0,
+      "inspection_complete": false,
+      "fitness_status": "pending",
+      "measured_results": [],
+      "instrument_refs": [],
+      "evidence_refs": []
+    },
+    "presentation": {
+      "id": "pres-001",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001247",
+      "project_code": "PRJ-ТД-2026-01",
+      "project_name": "Модернизация стенда турбоагрегатов",
+      "supplier": "ООО «МеталлСервис»",
+      "counterparty": "ООО «МеталлСервис»",
+      "warehouse": "Склад сырья №1",
+      "invoice_date": "2026-07-21",
+      "invoice_number": "УПД-45821",
+      "storage_zone": "Зона приёмки А",
+      "presentation_place": "Участок входного контроля",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-23T17:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l1",
+          "code": "10.01.00125",
+          "nomenclature": "Лист стальной 3 мм Ст3",
+          "storage_unit": "шт",
+          "qty_upd": 120,
+          "qty_fact": 120,
+          "category": "metal",
+          "supplier_quality_rating": 72,
+          "unit_price": 1850.0,
+          "amount": 222000.0
+        },
+        {
+          "id": "l2",
+          "code": "10.01.00402",
+          "nomenclature": "Труба бесшовная Ø57×3,5",
+          "storage_unit": "м",
+          "qty_upd": 48,
+          "qty_fact": 48,
+          "category": "pipes",
+          "supplier_quality_rating": 72,
+          "unit_price": 920.0,
+          "amount": 44160.0
+        },
+        {
+          "id": "l6",
+          "code": "10.04.00018",
+          "nomenclature": "Фланец плоский Ду50 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 24,
+          "qty_fact": 24,
+          "category": "flanges",
+          "supplier_quality_rating": 72,
+          "unit_price": 450.0,
+          "amount": 10800.0
+        },
+        {
+          "id": "l7",
+          "code": "10.05.00009",
+          "nomenclature": "Прокладка Паронит ПОН-Б 50",
+          "storage_unit": "шт",
+          "qty_upd": 48,
+          "qty_fact": 46,
+          "category": "gaskets",
+          "supplier_quality_rating": 72,
+          "unit_price": 35.0,
+          "amount": 1610.0
+        },
+        {
+          "id": "l8",
+          "code": "10.02.00010",
+          "nomenclature": "Уголок 50×50×5",
+          "storage_unit": "м",
+          "qty_upd": 36,
+          "qty_fact": 36,
+          "category": "metal",
+          "supplier_quality_rating": 72,
+          "unit_price": 280.0,
+          "amount": 10080.0
+        }
+      ]
+    },
+    "lines": [
+      {
+        "line_id": "l1",
+        "nomenclature_id": "10.01.00125",
+        "nomenclature_name": "Лист стальной 3 мм Ст3",
+        "category": "metal",
+        "unit": "шт",
+        "qty_ordered": 120,
+        "qty_received": 120,
+        "qty_uncovered": 0,
+        "unit_price": 1850.0,
+        "amount": 222000.0,
+        "coverage_ratio": 1.0
+      },
+      {
+        "line_id": "l2",
+        "nomenclature_id": "10.01.00402",
+        "nomenclature_name": "Труба бесшовная Ø57×3,5",
+        "category": "pipes",
+        "unit": "м",
+        "qty_ordered": 48,
+        "qty_received": 48,
+        "qty_uncovered": 0,
+        "unit_price": 920.0,
+        "amount": 44160.0,
+        "coverage_ratio": 1.0
+      },
+      {
+        "line_id": "l6",
+        "nomenclature_id": "10.04.00018",
+        "nomenclature_name": "Фланец плоский Ду50 Ру16",
+        "category": "flanges",
+        "unit": "шт",
+        "qty_ordered": 24,
+        "qty_received": 24,
+        "qty_uncovered": 0,
+        "unit_price": 450.0,
+        "amount": 10800.0,
+        "coverage_ratio": 1.0
+      },
+      {
+        "line_id": "l7",
+        "nomenclature_id": "10.05.00009",
+        "nomenclature_name": "Прокладка Паронит ПОН-Б 50",
+        "category": "gaskets",
+        "unit": "шт",
+        "qty_ordered": 48,
+        "qty_received": 46,
+        "qty_uncovered": 2,
+        "unit_price": 35.0,
+        "amount": 1610.0,
+        "coverage_ratio": 0.9583
+      },
+      {
+        "line_id": "l8",
+        "nomenclature_id": "10.02.00010",
+        "nomenclature_name": "Уголок 50×50×5",
+        "category": "metal",
+        "unit": "м",
+        "qty_ordered": 36,
+        "qty_received": 36,
+        "qty_uncovered": 0,
+        "unit_price": 280.0,
+        "amount": 10080.0,
+        "coverage_ratio": 1.0
+      }
+    ],
+    "products": [
+      {
+        "nomenclature_id": "10.01.00125",
+        "nomenclature_name": "Лист стальной 3 мм Ст3",
+        "unit": "шт",
+        "category": "metal"
+      },
+      {
+        "nomenclature_id": "10.01.00402",
+        "nomenclature_name": "Труба бесшовная Ø57×3,5",
+        "unit": "м",
+        "category": "pipes"
+      },
+      {
+        "nomenclature_id": "10.04.00018",
+        "nomenclature_name": "Фланец плоский Ду50 Ру16",
+        "unit": "шт",
+        "category": "flanges"
+      },
+      {
+        "nomenclature_id": "10.05.00009",
+        "nomenclature_name": "Прокладка Паронит ПОН-Б 50",
+        "unit": "шт",
+        "category": "gaskets"
+      },
+      {
+        "nomenclature_id": "10.02.00010",
+        "nomenclature_name": "Уголок 50×50×5",
+        "unit": "м",
+        "category": "metal"
+      },
+      {
+        "nomenclature_id": "20.05.00088",
+        "nomenclature_name": "Кабель ВВГнг 3×2,5",
+        "unit": "м",
+        "category": "cable"
+      },
+      {
+        "nomenclature_id": "30.02.00015",
+        "nomenclature_name": "Болт М8×40 DIN 933",
+        "unit": "шт",
+        "category": "fasteners"
+      },
+      {
+        "nomenclature_id": "40.11.00003",
+        "nomenclature_name": "Микросхема STM32F103",
+        "unit": "шт",
+        "category": "electronics"
+      },
+      {
+        "nomenclature_id": "90.01.00003",
+        "nomenclature_name": "Кронштейн КР-12 по чертежу АБВГ.301.012",
+        "unit": "шт",
+        "category": "drawing_parts"
+      }
+    ],
+    "coverage": {
+      "orders_total": 30,
+      "projects_total": 7,
+      "projects": [
+        {
+          "project_code": "PRJ-ТД-2026-01",
+          "project_name": "Модернизация стенда турбоагрегатов"
+        },
+        {
+          "project_code": "PRJ-ТД-2026-02",
+          "project_name": "Линия сборки насосных агрегатов"
+        },
+        {
+          "project_code": "PRJ-ТД-2026-03",
+          "project_name": "Реконструкция цеха механообработки"
+        },
+        {
+          "project_code": "PRJ-ТД-2026-04",
+          "project_name": "Система АСУ ТП компрессорной"
+        },
+        {
+          "project_code": "PRJ-ТД-2026-05",
+          "project_name": "Производство корпусов редукторов"
+        },
+        {
+          "project_code": "PRJ-ТД-2026-06",
+          "project_name": "Капитальный ремонт испытательного полигона"
+        },
+        {
+          "project_code": "PRJ-ТД-2026-07",
+          "project_name": "Электроснабжение производственного корпуса"
+        }
+      ],
+      "uncovered_orders_count": 2,
+      "active_suppliers_count": 10,
+      "products_total": 70,
+      "positions_total": 117,
+      "positions_fully_covered": 4,
+      "positions_partial": 1,
+      "coverage_ratio_avg": 0.9917,
+      "amount_total": 288650.0,
+      "uncovered_orders": [
+        {
+          "order_id": "ЗП-0001247",
+          "line_id": "l7",
+          "nomenclature_id": "10.05.00009",
+          "nomenclature_name": "Прокладка Паронит ПОН-Б 50",
+          "qty_need": 48,
+          "qty_covered": 46,
+          "qty_shortfall": 2,
+          "unit": "шт"
+        },
+        {
+          "order_id": "ЗП-0001325",
+          "line_id": "l17",
+          "nomenclature_id": "10.01.00488",
+          "nomenclature_name": "Труба электросварная Ø76×3",
+          "qty_need": 60,
+          "qty_covered": 58,
+          "qty_shortfall": 2,
+          "unit": "м"
+        }
+      ]
+    },
+    "suppliers": [
+      {
+        "supplier_id": "sup-metallservice",
+        "name": "ООО «МеталлСервис»",
+        "quality_rating": 72,
+        "active": true
+      },
+      {
+        "supplier_id": "sup-cableprom",
+        "name": "АО «КабельПром»",
+        "quality_rating": 40,
+        "active": true
+      },
+      {
+        "supplier_id": "sup-electro",
+        "name": "ООО «ЭлектроКомпонент»",
+        "quality_rating": 88,
+        "active": true
+      },
+      {
+        "supplier_id": "sup-promkomplekt",
+        "name": "ООО «ПромКомплект»",
+        "quality_rating": 61,
+        "active": true
+      }
+    ]
+  },
+  "role_context": {
+    "quality_stage": "assigned",
+    "item_group": "metal",
+    "present_docs": ["certificate_or_passport"],
+    "lot_qty": 120,
+    "presentation_ref": "УПД-45821",
+    "nomenclature_ref": "10.01.00125",
+    "supplier_ref": "ООО «МеталлСервис»",
+    "supplier_quality_rating": 72,
+    "inspector_id": "otk-w-1",
+    "inspector_name": "Иванова А.С."
+  }
+}

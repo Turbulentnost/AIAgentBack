@@ -57,17 +57,41 @@ def test_sample_rule_depends_on_category(otk_service: OtkPresentationService) ->
 
 def test_list_and_get_seeded(otk_service: OtkPresentationService) -> None:
     listing = otk_service.list_presentations()
-    assert len(listing.items) == 3
-    assert listing.pending_count == 3
+    assert len(listing.items) == 30
+    assert listing.pending_count == 25  # 5 done in seed
     assert listing.earliest_due_at is not None
     assert len(listing.workers) == 3
+    assert all(item.project_code and item.project_name for item in listing.items)
+    assert len({item.project_code for item in listing.items}) == 7
+    assert len({item.purchase_order for item in listing.items}) == 30
 
     card = otk_service.get_presentation("pres-001")
     assert card is not None
-    assert len(card.lines) == 2
+    assert card.project_code == "PRJ-ТД-2026-01"
+    assert card.project_name
+    assert len(card.lines) == 5
+    assert all(line.nomenclature for line in card.lines)
+    assert {line.category for line in card.lines} >= {"metal", "pipes", "flanges", "gaskets"}
     assert card.lines[0].sample_rule is not None
     assert card.lines[0].sample_rule.category == "metal"
     assert card.lines[0].sample_rule.sample_pct == 10.0
+
+    all_cards = [otk_service.get_presentation(item.id) for item in listing.items]
+    assert all(c is not None for c in all_cards)
+    total_lines = sum(len(c.lines) for c in all_cards if c is not None)
+    assert total_lines >= 100
+    categories = {line.category for c in all_cards if c for line in c.lines}
+    assert categories >= {
+        "metal",
+        "pipes",
+        "flanges",
+        "gaskets",
+        "cable",
+        "fasteners",
+        "electronics",
+        "drawing_parts",
+        "other",
+    }
 
 
 def test_update_line_category_recomputes_sample(
@@ -93,6 +117,10 @@ def test_update_line_category_recomputes_sample(
 
 
 def test_add_and_delete_line(otk_service: OtkPresentationService) -> None:
+    before = otk_service.get_presentation("pres-003")
+    assert before is not None
+    base_count = len(before.lines)
+
     added = otk_service.add_line(
         "pres-003",
         OtkShipmentLineCreate(
@@ -105,14 +133,14 @@ def test_add_and_delete_line(otk_service: OtkPresentationService) -> None:
         ),
     )
     assert added is not None
-    assert len(added.lines) == 2
+    assert len(added.lines) == base_count + 1
     new_id = added.lines[-1].id
     assert added.lines[-1].sample_rule is not None
     assert added.lines[-1].sample_rule.sample_size == 5
 
     deleted = otk_service.delete_line("pres-003", new_id)
     assert deleted is not None
-    assert len(deleted.lines) == 1
+    assert len(deleted.lines) == base_count
 
 
 def test_patch_presentation_header(otk_service: OtkPresentationService) -> None:

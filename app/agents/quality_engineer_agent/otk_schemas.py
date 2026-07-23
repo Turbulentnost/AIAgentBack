@@ -56,6 +56,8 @@ class OtkPresentationSummary(BaseModel):
     status: OtkPresentationStatus
     lines_count: int = 0
     executor_id: str = ""
+    project_code: str | None = None
+    project_name: str | None = None
 
 
 class OtkPresentationCardRead(BaseModel):
@@ -74,6 +76,8 @@ class OtkPresentationCardRead(BaseModel):
     due_at: str
     status: OtkPresentationStatus
     lines: list[OtkShipmentLineRead] = Field(default_factory=list)
+    project_code: str | None = None
+    project_name: str | None = None
 
 
 class OtkPresentationUpdate(BaseModel):
@@ -90,6 +94,8 @@ class OtkPresentationUpdate(BaseModel):
     executor_id: str | None = None
     due_at: str | None = None
     status: OtkPresentationStatus | None = None
+    project_code: str | None = None
+    project_name: str | None = None
 
 
 class OtkPresentationListResponse(BaseModel):

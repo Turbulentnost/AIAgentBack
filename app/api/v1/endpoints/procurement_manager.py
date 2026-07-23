@@ -1,0 +1,732 @@
+from __future__ import annotations
+
+import uuid
+from decimal import Decimal
+from io import BytesIO
+from typing import Annotated, Any, Literal
+from urllib.parse import quote
+
+from fastapi import APIRouter, Body, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+
+from app.agents.procurement_manager_agent.schemas import (
+    AgentResumeRequest,
+    AgentRunRequest,
+    AgentStatus,
+    AllocationResult,
+    AllPositionsResponse,
+    ApprovalRecord,
+    ApprovalRequest,
+    ComparisonWeights,
+    LineAmountsUpdateRequest,
+    MaterialBankResponse,
+    NonconformityRequest,
+    OperationStatus,
+    PurchaseOrderDraft,
+    PurchaseOrderDraftRequest,
+    QuoteComparison,
+    QuoteSubmission,
+    RecommendationRecord,
+    RecommendationRequest,
+    RFQDraft,
+    RFQDraftRequest,
+    ShipmentEventRequest,
+    Supplier,
+    SupplierOffersResponse,
+    SupplierQuote,
+    SupplierSearchRequest,
+    SupplierSearchResult,
+    WorkspaceSummary,
+)
+from app.agents.procurement_manager_agent.service import (
+    AGENT_ID,
+    ProcurementManagerService,
+    case_in_manager_queue,
+)
+from app.api.deps import CurrentUser, DbSession
+from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
+from app.services.procurement_permission import (
+    can_access_procurement_manager,
+    can_refresh_procurement_orchestrator,
+)
+router = APIRouter(
+    prefix=f"/procurement/role-agents/{AGENT_ID}",
+    tags=["procurement-manager"],
+)
+operations_router = APIRouter(prefix="/procurement/operations", tags=["procurement-manager"])
+
+
+async def _require_access(db: DbSession, user: CurrentUser) -> None:
+    if not await can_access_procurement_manager(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Рабочее место доступно только менеджеру по закупкам / ОМТО",
+        )
+
+
+async def _commit(db: DbSession) -> None:
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@router.get("/dashboard")
+async def dashboard(
+    db: DbSession,
+    current_user: CurrentUser,
+    view: Literal["active", "processing", "archive"] = Query(default="processing"),
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    payload = await ProcurementOrchestratorService(db, enqueue_case=False).list_dashboard(view=view)
+    for group in payload.get("groups", []):
+        cases = [
+            item
+            for item in group.get("cases", [])
+            if case_in_manager_queue(
+                current_agent_id=item.get("current_agent_id"),
+                status=item.get("status"),
+            )
+        ]
+        group["cases"] = cases
+        group["cases_count"] = len(cases)
+    payload["total_cases"] = sum(
+        len(group.get("cases", [])) for group in payload.get("groups", [])
+    )
+    return await ProcurementManagerService(db).enrich_dashboard_cases(payload)
+
+
+@router.get("/workspace-summary", response_model=WorkspaceSummary)
+async def workspace_summary(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> WorkspaceSummary:
+    await _require_access(db, current_user)
+    return await ProcurementManagerService(db).workspace_summary()
+
+
+@router.get("/material-bank", response_model=MaterialBankResponse)
+async def material_bank(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MaterialBankResponse:
+    await _require_access(db, current_user)
+    return await ProcurementManagerService(db).material_bank()
+
+
+async def _allocation_result(db: DbSession) -> AllocationResult:
+    result = await ProcurementManagerService(db).allocate_coverage()
+    return AllocationResult.model_validate(
+        {
+            "cases": result.get("cases") or [],
+            "lines": result.get("lines") or [],
+            "by_nomenclature": result.get("by_nomenclature") or [],
+            "summary": result.get("summary") or {},
+            "price_formula": result.get("price_formula"),
+        }
+    )
+
+
+@router.get("/coverage", response_model=AllocationResult)
+async def coverage(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> AllocationResult:
+    await _require_access(db, current_user)
+    return await _allocation_result(db)
+
+
+@router.post("/allocate", response_model=AllocationResult)
+async def allocate(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> AllocationResult:
+    await _require_access(db, current_user)
+    return await _allocation_result(db)
+
+
+@router.get("/all-positions", response_model=AllPositionsResponse)
+async def all_positions(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> AllPositionsResponse:
+    """Aggregated nomenclature for «Все позиции»: price_min/max + estimated_amount."""
+    await _require_access(db, current_user)
+    return await ProcurementManagerService(db).all_positions()
+
+
+@router.get(
+    "/cases/{case_id}/supplier-offers",
+    response_model=SupplierOffersResponse,
+)
+async def supplier_offers(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    nomenclature: str = Query(..., min_length=1, max_length=128),
+    need_qty: Decimal | None = Query(default=None, ge=0),
+    top_n: int = Query(default=3, ge=1, le=10),
+) -> SupplierOffersResponse:
+    """Top-N supplier offers ranked by price + coverage utility for a nomenclature."""
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).supplier_offers_for_case(
+            case_id,
+            nomenclature_id=nomenclature,
+            need_qty=need_qty,
+            top_n=top_n,
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+@router.put("/cases/{case_id}/line-amounts")
+async def update_line_amounts(
+    case_id: uuid.UUID,
+    data: LineAmountsUpdateRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).save_line_amounts(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/cases/{case_id}/estimate-report")
+async def estimate_report(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> StreamingResponse:
+    await _require_access(db, current_user)
+    service = ProcurementManagerService(db)
+    try:
+        case = await service.require_case(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    content = service.build_estimate_xlsx(case)
+    filename = f"estimate_{case.source_number or case_id}.xlsx"
+    encoded = quote(filename)
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded}"
+            )
+        },
+    )
+
+
+@router.post("/sync-from-1c")
+async def sync_from_1c(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    """Trigger procurement 1C poll when allowed; otherwise return a soft refresh hint."""
+    await _require_access(db, current_user)
+    if await can_refresh_procurement_orchestrator(db, current_user):
+        from app.workers.tasks import poll_procurement_sources
+
+        async_result = poll_procurement_sources.apply_async(queue="procurement_poll")
+        return {
+            "status": "accepted",
+            "mode": "poll",
+            "summary": {"celery_task_id": async_result.id},
+        }
+    return {
+        "status": "local_refresh",
+        "mode": "cache",
+        "summary": {
+            "message": (
+                "Полный опрос 1С доступен администратору. "
+                "Обновлены локальные данные рабочего места."
+            )
+        },
+    }
+
+
+@router.get("/cases/{case_id}")
+async def case_detail(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    payload = await ProcurementOrchestratorService(db, enqueue_case=False).get_case(case_id)
+    if payload is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Кейс не найден")
+    workspace = await ProcurementManagerService(db).workspace_payload(case_id)
+    payload["procurement_manager"] = workspace
+    payload.update(workspace)
+    return payload
+
+
+@router.post("/cases/{case_id}/supplier-search", response_model=SupplierSearchResult)
+async def supplier_search(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    data: Annotated[SupplierSearchRequest | None, Body()] = None,
+) -> SupplierSearchResult:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).search_suppliers(
+            case_id,
+            data or SupplierSearchRequest(),
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.post("/cases/{case_id}/agent/run", response_model=AgentStatus)
+async def agent_run(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    data: Annotated[AgentRunRequest | None, Body()] = None,
+) -> AgentStatus:
+    """Start (or idempotently replay) the full procurement manager agent graph."""
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).agent_run(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except Exception as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось запустить агента: {detail}",
+        ) from exc
+    await _commit(db)
+    return result
+
+
+@router.post("/cases/{case_id}/agent/resume", response_model=AgentStatus)
+async def agent_resume(
+    case_id: uuid.UUID,
+    data: AgentResumeRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> AgentStatus:
+    """HITL resume: approve_shortlist / approve_rfq_draft / approve_order_draft / reject."""
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).agent_resume(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except Exception as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось продолжить агента: {detail}",
+        ) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/cases/{case_id}/agent/status", response_model=AgentStatus)
+async def agent_status(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> AgentStatus:
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).agent_status(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post("/cases/{case_id}/supplier-graph/resume", response_model=AgentStatus)
+async def resume_supplier_graph(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    data: Annotated[dict[str, Any] | None, Body()] = None,
+) -> AgentStatus:
+    """Legacy alias for agent/resume (approve_shortlist / approve_rfq_draft / reject / approve_order_draft)."""
+    await _require_access(db, current_user)
+    decision = dict(data or {})
+    try:
+        resume = AgentResumeRequest.model_validate(decision)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "action must be approve_shortlist, approve_rfq_draft, approve_order_draft, or reject",
+        ) from exc
+    try:
+        result = await ProcurementManagerService(db).agent_resume(case_id, resume)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.get(
+    "/cases/{case_id}/purchase-order-drafts",
+    response_model=list[PurchaseOrderDraft],
+)
+async def list_purchase_order_drafts(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[PurchaseOrderDraft]:
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).list_purchase_order_drafts(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.get(
+    "/cases/{case_id}/purchase-order-drafts/{po_id}",
+    response_model=PurchaseOrderDraft,
+)
+async def get_purchase_order_draft(
+    case_id: uuid.UUID,
+    po_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> PurchaseOrderDraft:
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).get_purchase_order_draft(case_id, po_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post(
+    "/cases/{case_id}/purchase-order-drafts",
+    response_model=PurchaseOrderDraft,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_purchase_order_draft(
+    case_id: uuid.UUID,
+    data: PurchaseOrderDraftRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+    approval_id: Annotated[str | None, Query()] = None,
+) -> PurchaseOrderDraft:
+    """Create draft-only purchase order (executed=false, payment forbidden)."""
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).create_purchase_order_draft(
+            case_id,
+            data,
+            approval_id=approval_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/cases/{case_id}/suppliers", response_model=list[Supplier])
+async def suppliers(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[Supplier]:
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).list_suppliers(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.get("/cases/{case_id}/rfq-drafts", response_model=list[RFQDraft])
+async def rfq_drafts(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[RFQDraft]:
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).list_rfq_drafts(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post(
+    "/cases/{case_id}/rfq-drafts",
+    response_model=RFQDraft,
+    status_code=status.HTTP_201_CREATED,
+)
+@router.post(
+    "/cases/{case_id}/rfqs/draft",
+    response_model=RFQDraft,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_rfq_draft(
+    case_id: uuid.UUID,
+    data: RFQDraftRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> RFQDraft:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).create_rfq_draft(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/cases/{case_id}/quotes", response_model=list[SupplierQuote])
+async def quotes(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[SupplierQuote]:
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).list_quotes(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post(
+    "/cases/{case_id}/quotes",
+    response_model=SupplierQuote,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_quote(
+    case_id: uuid.UUID,
+    data: QuoteSubmission,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> SupplierQuote:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).submit_quote(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/cases/{case_id}/comparison", response_model=QuoteComparison)
+async def comparison(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    price_weight: Annotated[Decimal, Query(ge=0)] = Decimal("0.45"),
+    delivery_weight: Annotated[Decimal, Query(ge=0)] = Decimal("0.25"),
+    quality_weight: Annotated[Decimal, Query(ge=0)] = Decimal("0.20"),
+    risk_weight: Annotated[Decimal, Query(ge=0)] = Decimal("0.10"),
+) -> QuoteComparison:
+    await _require_access(db, current_user)
+    weights = ComparisonWeights(
+        price=price_weight,
+        delivery=delivery_weight,
+        quality=quality_weight,
+        risk=risk_weight,
+    )
+    try:
+        result = await ProcurementManagerService(db).comparison(case_id, weights)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.post(
+    "/cases/{case_id}/recommendation",
+    response_model=RecommendationRecord,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_recommendation(
+    case_id: uuid.UUID,
+    data: RecommendationRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> RecommendationRecord:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).recommendation(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/cases/{case_id}/recommendation")
+async def get_recommendation(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    try:
+        workspace = await ProcurementManagerService(db).workspace_payload(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return workspace.get("recommendation") or {
+        "status": "not_created",
+        "requires_human_approval": True,
+        "payment_execution_allowed": False,
+    }
+
+
+@router.post("/cases/{case_id}/approvals", response_model=ApprovalRecord)
+async def record_approval(
+    case_id: uuid.UUID,
+    data: ApprovalRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ApprovalRecord:
+    await _require_access(db, current_user)
+    if data.status in {"approved", "rejected"} and not current_user.is_superuser:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Решение по согласованию может зафиксировать только уполномоченный пользователь",
+        )
+    try:
+        result = await ProcurementManagerService(db).record_approval(
+            case_id,
+            data,
+            actor_user_id=str(current_user.id),
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/cases/{case_id}/approvals", response_model=list[ApprovalRecord])
+async def approvals(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[ApprovalRecord]:
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).list_approvals(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post("/cases/{case_id}/shipment-events")
+async def record_shipment_event(
+    case_id: uuid.UUID,
+    data: ShipmentEventRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).record_shipment(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/cases/{case_id}/shipment-events")
+async def shipment_events(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[dict[str, Any]]:
+    await _require_access(db, current_user)
+    try:
+        return await ProcurementManagerService(db).list_shipment_events(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.post("/cases/{case_id}/nonconformity")
+async def nonconformity(
+    case_id: uuid.UUID,
+    data: NonconformityRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).handoff_nonconformity(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    orchestrator = ProcurementOrchestratorService(db, enqueue_case=True)
+    await orchestrator.dispatch_case(case_id)
+    await _commit(db)
+    if orchestrator.pending_dispatches:
+        from app.workers.tasks import run_procurement_case_task
+
+        for queued_case_id, task_id in orchestrator.pending_dispatches:
+            run_procurement_case_task.apply_async(
+                args=[queued_case_id, task_id],
+                queue="agents",
+            )
+    return result
+
+
+@router.get(
+    "/cases/{case_id}/operations/{operation_id}",
+    response_model=OperationStatus,
+)
+async def operation_status(
+    case_id: uuid.UUID,
+    operation_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> OperationStatus:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).operation_status(case_id, operation_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Операция не найдена")
+    return result
+
+
+async def _global_operation_status(
+    operation_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> OperationStatus:
+    await _require_access(db, current_user)
+    result = await ProcurementManagerService(db).global_operation_status(operation_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Операция не найдена")
+    return result
+
+
+@router.get("/operations/{operation_id}", response_model=OperationStatus)
+async def agent_operation_status(
+    operation_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> OperationStatus:
+    return await _global_operation_status(operation_id, db, current_user)
+
+
+@operations_router.get("/{operation_id}", response_model=OperationStatus)
+async def global_operation_status(
+    operation_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> OperationStatus:
+    return await _global_operation_status(operation_id, db, current_user)
+

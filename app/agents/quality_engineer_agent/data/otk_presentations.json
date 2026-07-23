@@ -21,6 +21,8 @@
       "id": "pres-001",
       "organization": "ООО НПО «Турбулентность-Дон»",
       "purchase_order": "ЗП-0001247",
+      "project_code": "PRJ-ТД-2026-01",
+      "project_name": "Модернизация стенда турбоагрегатов",
       "supplier": "ООО «МеталлСервис»",
       "counterparty": "ООО «МеталлСервис»",
       "warehouse": "Склад сырья №1",
@@ -37,30 +39,46 @@
           "id": "l1",
           "code": "10.01.00125",
           "nomenclature": "Лист стальной 3 мм Ст3",
-          "storage_unit": "м",
+          "storage_unit": "шт",
           "qty_upd": 120.0,
           "qty_fact": 120.0,
-          "category": "pipes",
-          "supplier_quality_rating": null
+          "category": "metal"
         },
         {
           "id": "l2",
           "code": "10.01.00402",
           "nomenclature": "Труба бесшовная Ø57×3,5",
           "storage_unit": "м",
-          "qty_upd": 48,
-          "qty_fact": 48,
+          "qty_upd": 48.0,
+          "qty_fact": 48.0,
           "category": "pipes"
         },
         {
-          "code": "",
-          "nomenclature": "",
+          "id": "l6",
+          "code": "10.04.00018",
+          "nomenclature": "Фланец плоский Ду50 Ру16",
           "storage_unit": "шт",
-          "qty_upd": 0.0,
-          "qty_fact": 1.0,
-          "category": "flanges",
-          "supplier_quality_rating": null,
-          "id": "l-1fa1e56e-7742-4a76-ab18-4e17448885b6"
+          "qty_upd": 24.0,
+          "qty_fact": 24.0,
+          "category": "flanges"
+        },
+        {
+          "id": "l7",
+          "code": "10.05.00009",
+          "nomenclature": "Прокладка Паронит ПОН-Б 50",
+          "storage_unit": "шт",
+          "qty_upd": 48.0,
+          "qty_fact": 46.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l8",
+          "code": "10.02.00010",
+          "nomenclature": "Уголок 50×50×5",
+          "storage_unit": "м",
+          "qty_upd": 36.0,
+          "qty_fact": 36.0,
+          "category": "metal"
         }
       ]
     },
@@ -68,9 +86,11 @@
       "id": "pres-002",
       "organization": "ООО НПО «Турбулентность-Дон»",
       "purchase_order": "ЗП-0001302",
+      "project_code": "PRJ-ТД-2026-07",
+      "project_name": "Электроснабжение производственного корпуса",
       "supplier": "АО «КабельПром»",
       "counterparty": "АО «КабельПром»",
-      "warehouse": "Склад комплектующих",
+      "warehouse": "Склад кабельной продукции",
       "invoice_date": "2026-07-20",
       "invoice_number": "УПД-11209",
       "storage_zone": "Зона приёмки Б",
@@ -85,8 +105,8 @@
           "code": "20.05.00088",
           "nomenclature": "Кабель ВВГнг 3×2,5",
           "storage_unit": "м",
-          "qty_upd": 500,
-          "qty_fact": 498,
+          "qty_upd": 500.0,
+          "qty_fact": 498.0,
           "category": "cable",
           "supplier_quality_rating": 40
         },
@@ -95,9 +115,37 @@
           "code": "30.02.00015",
           "nomenclature": "Болт М8×40 DIN 933",
           "storage_unit": "шт",
-          "qty_upd": 2000,
-          "qty_fact": 2000,
+          "qty_upd": 2000.0,
+          "qty_fact": 2000.0,
           "category": "fasteners"
+        },
+        {
+          "id": "l9",
+          "code": "30.01.00007",
+          "nomenclature": "Гайка М8 DIN 934",
+          "storage_unit": "шт",
+          "qty_upd": 2000.0,
+          "qty_fact": 1995.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l10",
+          "code": "30.03.00021",
+          "nomenclature": "Шайба 8 DIN 125",
+          "storage_unit": "шт",
+          "qty_upd": 4000.0,
+          "qty_fact": 4000.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l11",
+          "code": "20.06.00041",
+          "nomenclature": "Кабель КГ 3×4+1×2,5",
+          "storage_unit": "м",
+          "qty_upd": 120.0,
+          "qty_fact": 120.0,
+          "category": "cable",
+          "supplier_quality_rating": 40
         }
       ]
     },
@@ -105,6 +153,8 @@
       "id": "pres-003",
       "organization": "ООО НПО «Турбулентность-Дон»",
       "purchase_order": "ЗП-0001310",
+      "project_code": "PRJ-ТД-2026-04",
+      "project_name": "Система АСУ ТП компрессорной",
       "supplier": "ООО «ЭлектроКомпонент»",
       "counterparty": "ООО «ЭлектроКомпонент»",
       "warehouse": "Склад электроники",
@@ -122,9 +172,1538 @@
           "code": "40.11.00003",
           "nomenclature": "Микросхема STM32F103",
           "storage_unit": "шт",
-          "qty_upd": 80,
-          "qty_fact": 80,
-          "category": "electronics"
+          "qty_upd": 80.0,
+          "qty_fact": 80.0,
+          "category": "electronics",
+          "supplier_quality_rating": 88
+        },
+        {
+          "id": "l12",
+          "code": "40.01.00055",
+          "nomenclature": "Контактор КМИ-22510",
+          "storage_unit": "шт",
+          "qty_upd": 12.0,
+          "qty_fact": 12.0,
+          "category": "electronics",
+          "supplier_quality_rating": 88
+        },
+        {
+          "id": "l13",
+          "code": "40.02.00018",
+          "nomenclature": "Автомат ВА47-29 16А",
+          "storage_unit": "шт",
+          "qty_upd": 30.0,
+          "qty_fact": 30.0,
+          "category": "electronics",
+          "supplier_quality_rating": 88
+        },
+        {
+          "id": "l14",
+          "code": "90.01.00003",
+          "nomenclature": "Кронштейн КР-12 по чертежу АБВГ.301.012",
+          "storage_unit": "шт",
+          "qty_upd": 6.0,
+          "qty_fact": 6.0,
+          "category": "drawing_parts",
+          "supplier_quality_rating": 88
+        }
+      ]
+    },
+    {
+      "id": "pres-004",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001325",
+      "project_code": "PRJ-ТД-2026-03",
+      "project_name": "Реконструкция цеха механообработки",
+      "supplier": "ООО «ПромКомплект»",
+      "counterparty": "ООО «ПромКомплект»",
+      "warehouse": "Склад комплектующих",
+      "invoice_date": "2026-07-23",
+      "invoice_number": "УПД-12055",
+      "storage_zone": "Зона приёмки Г",
+      "presentation_place": "Стол предъявления №1",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-24T15:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l15",
+          "code": "10.03.00044",
+          "nomenclature": "Швеллер 12П",
+          "storage_unit": "м",
+          "qty_upd": 20.0,
+          "qty_fact": 20.0,
+          "category": "metal"
+        },
+        {
+          "id": "l16",
+          "code": "10.04.00022",
+          "nomenclature": "Фланец воротниковый Ду80 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 8.0,
+          "qty_fact": 8.0,
+          "category": "flanges"
+        },
+        {
+          "id": "l17",
+          "code": "10.01.00488",
+          "nomenclature": "Труба электросварная Ø76×3",
+          "storage_unit": "м",
+          "qty_upd": 60.0,
+          "qty_fact": 58.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l18",
+          "code": "50.99.00001",
+          "nomenclature": "Комплект ЗИП прочий",
+          "storage_unit": "компл",
+          "qty_upd": 2.0,
+          "qty_fact": 2.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-005",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001326",
+      "project_code": "PRJ-ТД-2026-01",
+      "project_name": "Модернизация стенда турбоагрегатов",
+      "supplier": "ООО «МеталлСервис»",
+      "counterparty": "ООО «МеталлСервис»",
+      "warehouse": "Склад сырья №1",
+      "invoice_date": "2026-07-15",
+      "invoice_number": "УПД-13000",
+      "storage_zone": "Зона приёмки А",
+      "presentation_place": "Участок входного контроля",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-17T14:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l101",
+          "code": "10.01.00140",
+          "nomenclature": "Лист стальной 5 мм 09Г2С",
+          "storage_unit": "шт",
+          "qty_upd": 40.0,
+          "qty_fact": 40.0,
+          "category": "metal",
+          "supplier_quality_rating": 72
+        },
+        {
+          "id": "l102",
+          "code": "10.02.00022",
+          "nomenclature": "Уголок 63×63×6",
+          "storage_unit": "м",
+          "qty_upd": 80.0,
+          "qty_fact": 80.0,
+          "category": "metal",
+          "supplier_quality_rating": 72
+        },
+        {
+          "id": "l103",
+          "code": "10.01.00418",
+          "nomenclature": "Труба бесшовная Ø89×4,5",
+          "storage_unit": "м",
+          "qty_upd": 120.0,
+          "qty_fact": 117.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l104",
+          "code": "10.04.00030",
+          "nomenclature": "Фланец плоский Ду100 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 16.0,
+          "qty_fact": 16.0,
+          "category": "flanges"
+        }
+      ]
+    },
+    {
+      "id": "pres-006",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001327",
+      "project_code": "PRJ-ТД-2026-01",
+      "project_name": "Модернизация стенда турбоагрегатов",
+      "supplier": "ООО «ДонТрубПром»",
+      "counterparty": "ООО «ДонТрубПром»",
+      "warehouse": "Склад комплектующих",
+      "invoice_date": "2026-07-16",
+      "invoice_number": "УПД-13001",
+      "storage_zone": "Зона приёмки Б",
+      "presentation_place": "Стол предъявления №1",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-19T15:00:00+03:00",
+      "status": "in_progress",
+      "lines": [
+        {
+          "id": "l105",
+          "code": "10.01.00188",
+          "nomenclature": "Лист нержавеющий 2 мм 12Х18Н10Т",
+          "storage_unit": "шт",
+          "qty_upd": 25.0,
+          "qty_fact": 25.0,
+          "category": "metal",
+          "supplier_quality_rating": 55
+        },
+        {
+          "id": "l106",
+          "code": "10.01.00502",
+          "nomenclature": "Труба электросварная Ø159×4,5",
+          "storage_unit": "м",
+          "qty_upd": 90.0,
+          "qty_fact": 90.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l107",
+          "code": "10.04.00041",
+          "nomenclature": "Фланец воротниковый Ду150 Ру25",
+          "storage_unit": "шт",
+          "qty_upd": 12.0,
+          "qty_fact": 12.0,
+          "category": "flanges"
+        },
+        {
+          "id": "l108",
+          "code": "10.05.00015",
+          "nomenclature": "Прокладка Паронит ПОН-Б 80",
+          "storage_unit": "шт",
+          "qty_upd": 60.0,
+          "qty_fact": 58.0,
+          "category": "gaskets"
+        }
+      ]
+    },
+    {
+      "id": "pres-007",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001328",
+      "project_code": "PRJ-ТД-2026-01",
+      "project_name": "Модернизация стенда турбоагрегатов",
+      "supplier": "ООО «ФланецДон»",
+      "counterparty": "ООО «ФланецДон»",
+      "warehouse": "Склад электроники",
+      "invoice_date": "2026-07-17",
+      "invoice_number": "УПД-13002",
+      "storage_zone": "Зона приёмки В",
+      "presentation_place": "Стол предъявления №2",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-21T16:00:00+03:00",
+      "status": "done",
+      "lines": [
+        {
+          "id": "l109",
+          "code": "10.02.00035",
+          "nomenclature": "Швеллер 10П",
+          "storage_unit": "м",
+          "qty_upd": 55.0,
+          "qty_fact": 55.0,
+          "category": "metal",
+          "supplier_quality_rating": 66
+        },
+        {
+          "id": "l110",
+          "code": "10.01.00433",
+          "nomenclature": "Труба бесшовная Ø108×5",
+          "storage_unit": "м",
+          "qty_upd": 70.0,
+          "qty_fact": 70.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l111",
+          "code": "10.04.00055",
+          "nomenclature": "Фланец свободный Ду32 Ру10",
+          "storage_unit": "шт",
+          "qty_upd": 10.0,
+          "qty_fact": 10.0,
+          "category": "flanges"
+        }
+      ]
+    },
+    {
+      "id": "pres-008",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001329",
+      "project_code": "PRJ-ТД-2026-02",
+      "project_name": "Линия сборки насосных агрегатов",
+      "supplier": "ООО «ПромКомплект»",
+      "counterparty": "ООО «ПромКомплект»",
+      "warehouse": "Склад металла №2",
+      "invoice_date": "2026-07-18",
+      "invoice_number": "УПД-13003",
+      "storage_zone": "Зона приёмки Г",
+      "presentation_place": "Стол предъявления №3",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-3",
+      "due_at": "2026-07-20T17:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l112",
+          "code": "10.03.00051",
+          "nomenclature": "Двутавр 20Б1",
+          "storage_unit": "м",
+          "qty_upd": 30.0,
+          "qty_fact": 30.0,
+          "category": "metal",
+          "supplier_quality_rating": 61
+        },
+        {
+          "id": "l113",
+          "code": "10.01.00520",
+          "nomenclature": "Труба ПНД SDR11 Ø63",
+          "storage_unit": "м",
+          "qty_upd": 45.0,
+          "qty_fact": 44.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l114",
+          "code": "10.05.00022",
+          "nomenclature": "Прокладка Спирально-навитая Ду100",
+          "storage_unit": "шт",
+          "qty_upd": 100.0,
+          "qty_fact": 100.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l115",
+          "code": "30.02.00028",
+          "nomenclature": "Болт М12×60 DIN 933",
+          "storage_unit": "шт",
+          "qty_upd": 1500.0,
+          "qty_fact": 1500.0,
+          "category": "fasteners"
+        }
+      ]
+    },
+    {
+      "id": "pres-009",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001330",
+      "project_code": "PRJ-ТД-2026-02",
+      "project_name": "Линия сборки насосных агрегатов",
+      "supplier": "АО «КрепёжЮг»",
+      "counterparty": "АО «КрепёжЮг»",
+      "warehouse": "Склад кабельной продукции",
+      "invoice_date": "2026-07-19",
+      "invoice_number": "УПД-13004",
+      "storage_zone": "Зона приёмки Д",
+      "presentation_place": "Лаборатория ОТК",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-22T14:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l116",
+          "code": "10.03.00060",
+          "nomenclature": "Круг Ø40 Ст45",
+          "storage_unit": "м",
+          "qty_upd": 18.0,
+          "qty_fact": 18.0,
+          "category": "metal",
+          "supplier_quality_rating": 70
+        },
+        {
+          "id": "l117",
+          "code": "10.01.00535",
+          "nomenclature": "Отвод 90° Ду50 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 36.0,
+          "qty_fact": 36.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l118",
+          "code": "10.05.00030",
+          "nomenclature": "Кольцо уплотнит. NBR 50×3",
+          "storage_unit": "шт",
+          "qty_upd": 80.0,
+          "qty_fact": 80.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l119",
+          "code": "30.01.00018",
+          "nomenclature": "Гайка М12 DIN 934",
+          "storage_unit": "шт",
+          "qty_upd": 800.0,
+          "qty_fact": 790.0,
+          "category": "fasteners"
+        }
+      ]
+    },
+    {
+      "id": "pres-010",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001331",
+      "project_code": "PRJ-ТД-2026-02",
+      "project_name": "Линия сборки насосных агрегатов",
+      "supplier": "ООО «МеталлСервис»",
+      "counterparty": "ООО «МеталлСервис»",
+      "warehouse": "Склад ЗИП",
+      "invoice_date": "2026-07-20",
+      "invoice_number": "УПД-13005",
+      "storage_zone": "Зона приёмки А",
+      "presentation_place": "Участок входного контроля",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-24T15:00:00+03:00",
+      "status": "in_progress",
+      "lines": [
+        {
+          "id": "l120",
+          "code": "10.03.00071",
+          "nomenclature": "Полоса 40×4 Ст3",
+          "storage_unit": "м",
+          "qty_upd": 22.0,
+          "qty_fact": 22.0,
+          "category": "metal",
+          "supplier_quality_rating": 72
+        },
+        {
+          "id": "l121",
+          "code": "10.01.00548",
+          "nomenclature": "Тройник равнопроходной Ду80",
+          "storage_unit": "шт",
+          "qty_upd": 14.0,
+          "qty_fact": 14.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l122",
+          "code": "10.05.00038",
+          "nomenclature": "Прокладка PTFE Ду65",
+          "storage_unit": "шт",
+          "qty_upd": 200.0,
+          "qty_fact": 195.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l123",
+          "code": "30.03.00033",
+          "nomenclature": "Шайба пружинная 12 DIN 127",
+          "storage_unit": "шт",
+          "qty_upd": 600.0,
+          "qty_fact": 600.0,
+          "category": "fasteners"
+        }
+      ]
+    },
+    {
+      "id": "pres-011",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001332",
+      "project_code": "PRJ-ТД-2026-02",
+      "project_name": "Линия сборки насосных агрегатов",
+      "supplier": "ООО «ДонТрубПром»",
+      "counterparty": "ООО «ДонТрубПром»",
+      "warehouse": "Склад сырья №1",
+      "invoice_date": "2026-07-21",
+      "invoice_number": "УПД-13006",
+      "storage_zone": "Зона приёмки Б",
+      "presentation_place": "Стол предъявления №1",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-3",
+      "due_at": "2026-07-23T16:00:00+03:00",
+      "status": "done",
+      "lines": [
+        {
+          "id": "l124",
+          "code": "10.04.00062",
+          "nomenclature": "Фланец плоский Ду200 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 15.0,
+          "qty_fact": 15.0,
+          "category": "flanges"
+        },
+        {
+          "id": "l125",
+          "code": "10.05.00045",
+          "nomenclature": "Сальниковая набивка АП-31",
+          "storage_unit": "кг",
+          "qty_upd": 20.0,
+          "qty_fact": 20.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l126",
+          "code": "20.05.00095",
+          "nomenclature": "Кабель ВВГнг 5×6",
+          "storage_unit": "м",
+          "qty_upd": 12.0,
+          "qty_fact": 12.0,
+          "category": "cable",
+          "supplier_quality_rating": 55
+        }
+      ]
+    },
+    {
+      "id": "pres-012",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001333",
+      "project_code": "PRJ-ТД-2026-04",
+      "project_name": "Система АСУ ТП компрессорной",
+      "supplier": "ООО «ЭлектроКомпонент»",
+      "counterparty": "ООО «ЭлектроКомпонент»",
+      "warehouse": "Склад комплектующих",
+      "invoice_date": "2026-07-22",
+      "invoice_number": "УПД-13007",
+      "storage_zone": "Зона приёмки В",
+      "presentation_place": "Стол предъявления №2",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-3",
+      "due_at": "2026-07-25T17:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l127",
+          "code": "40.11.00018",
+          "nomenclature": "Микросхема ATmega328P",
+          "storage_unit": "шт",
+          "qty_upd": 40.0,
+          "qty_fact": 40.0,
+          "category": "electronics",
+          "supplier_quality_rating": 88
+        },
+        {
+          "id": "l128",
+          "code": "40.01.00070",
+          "nomenclature": "Контактор КМИ-34012",
+          "storage_unit": "шт",
+          "qty_upd": 8.0,
+          "qty_fact": 8.0,
+          "category": "electronics",
+          "supplier_quality_rating": 88
+        },
+        {
+          "id": "l129",
+          "code": "40.02.00032",
+          "nomenclature": "Автомат ВА47-29 32А",
+          "storage_unit": "шт",
+          "qty_upd": 24.0,
+          "qty_fact": 24.0,
+          "category": "electronics",
+          "supplier_quality_rating": 88
+        },
+        {
+          "id": "l130",
+          "code": "40.04.00008",
+          "nomenclature": "Преобразователь частоты ACS550 7,5кВт",
+          "storage_unit": "шт",
+          "qty_upd": 4.0,
+          "qty_fact": 4.0,
+          "category": "electronics",
+          "supplier_quality_rating": 88
+        }
+      ]
+    },
+    {
+      "id": "pres-013",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001334",
+      "project_code": "PRJ-ТД-2026-04",
+      "project_name": "Система АСУ ТП компрессорной",
+      "supplier": "ООО «ПромЭлектроника»",
+      "counterparty": "ООО «ПромЭлектроника»",
+      "warehouse": "Склад электроники",
+      "invoice_date": "2026-07-23",
+      "invoice_number": "УПД-13008",
+      "storage_zone": "Зона приёмки Г",
+      "presentation_place": "Стол предъявления №3",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-27T14:00:00+03:00",
+      "status": "in_progress",
+      "lines": [
+        {
+          "id": "l131",
+          "code": "40.03.00014",
+          "nomenclature": "УЗО ВД1-63 40А 30мА",
+          "storage_unit": "шт",
+          "qty_upd": 6.0,
+          "qty_fact": 6.0,
+          "category": "electronics",
+          "supplier_quality_rating": 81
+        },
+        {
+          "id": "l132",
+          "code": "40.05.00021",
+          "nomenclature": "Датчик давления МИДА-ДИ-13П",
+          "storage_unit": "шт",
+          "qty_upd": 10.0,
+          "qty_fact": 10.0,
+          "category": "electronics",
+          "supplier_quality_rating": 81
+        },
+        {
+          "id": "l133",
+          "code": "40.05.00035",
+          "nomenclature": "Термопара ТХА-2088",
+          "storage_unit": "шт",
+          "qty_upd": 16.0,
+          "qty_fact": 15.0,
+          "category": "electronics",
+          "supplier_quality_rating": 81
+        },
+        {
+          "id": "l134",
+          "code": "20.06.00055",
+          "nomenclature": "Кабель КГтп 3×16",
+          "storage_unit": "м",
+          "qty_upd": 250.0,
+          "qty_fact": 250.0,
+          "category": "cable",
+          "supplier_quality_rating": 81
+        }
+      ]
+    },
+    {
+      "id": "pres-014",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001335",
+      "project_code": "PRJ-ТД-2026-04",
+      "project_name": "Система АСУ ТП компрессорной",
+      "supplier": "АО «КабельПром»",
+      "counterparty": "АО «КабельПром»",
+      "warehouse": "Склад металла №2",
+      "invoice_date": "2026-07-24",
+      "invoice_number": "УПД-13009",
+      "storage_zone": "Зона приёмки Д",
+      "presentation_place": "Лаборатория ОТК",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-26T15:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l135",
+          "code": "20.07.00012",
+          "nomenclature": "Кабель контрольный КВВГнг 14×1,5",
+          "storage_unit": "м",
+          "qty_upd": 300.0,
+          "qty_fact": 300.0,
+          "category": "cable",
+          "supplier_quality_rating": 40
+        },
+        {
+          "id": "l136",
+          "code": "20.07.00028",
+          "nomenclature": "Кабель оптический ОКА-8",
+          "storage_unit": "м",
+          "qty_upd": 180.0,
+          "qty_fact": 175.0,
+          "category": "cable",
+          "supplier_quality_rating": 40
+        },
+        {
+          "id": "l137",
+          "code": "20.08.00010",
+          "nomenclature": "Провод ПВС 3×1,5",
+          "storage_unit": "м",
+          "qty_upd": 90.0,
+          "qty_fact": 90.0,
+          "category": "cable",
+          "supplier_quality_rating": 40
+        },
+        {
+          "id": "l138",
+          "code": "20.08.00019",
+          "nomenclature": "Кабель АВВГ 4×25",
+          "storage_unit": "м",
+          "qty_upd": 400.0,
+          "qty_fact": 400.0,
+          "category": "cable",
+          "supplier_quality_rating": 40
+        }
+      ]
+    },
+    {
+      "id": "pres-015",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001336",
+      "project_code": "PRJ-ТД-2026-07",
+      "project_name": "Электроснабжение производственного корпуса",
+      "supplier": "АО «КабельПром»",
+      "counterparty": "АО «КабельПром»",
+      "warehouse": "Склад кабельной продукции",
+      "invoice_date": "2026-07-15",
+      "invoice_number": "УПД-13010",
+      "storage_zone": "Зона приёмки А",
+      "presentation_place": "Участок входного контроля",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-18T16:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l139",
+          "code": "30.02.00040",
+          "nomenclature": "Болт М16×80 DIN 931",
+          "storage_unit": "шт",
+          "qty_upd": 200.0,
+          "qty_fact": 200.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l140",
+          "code": "30.01.00025",
+          "nomenclature": "Гайка М16 DIN 934",
+          "storage_unit": "шт",
+          "qty_upd": 150.0,
+          "qty_fact": 150.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l141",
+          "code": "30.04.00011",
+          "nomenclature": "Шпилька М20×200 DIN 975",
+          "storage_unit": "шт",
+          "qty_upd": 18.0,
+          "qty_fact": 18.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l142",
+          "code": "30.04.00020",
+          "nomenclature": "Винт М6×20 DIN 912",
+          "storage_unit": "шт",
+          "qty_upd": 1200.0,
+          "qty_fact": 1200.0,
+          "category": "fasteners"
+        }
+      ]
+    },
+    {
+      "id": "pres-016",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001337",
+      "project_code": "PRJ-ТД-2026-07",
+      "project_name": "Электроснабжение производственного корпуса",
+      "supplier": "ООО «ЭлектроКомпонент»",
+      "counterparty": "ООО «ЭлектроКомпонент»",
+      "warehouse": "Склад ЗИП",
+      "invoice_date": "2026-07-16",
+      "invoice_number": "УПД-13011",
+      "storage_zone": "Зона приёмки Б",
+      "presentation_place": "Стол предъявления №1",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-3",
+      "due_at": "2026-07-20T17:00:00+03:00",
+      "status": "done",
+      "lines": [
+        {
+          "id": "l143",
+          "code": "90.01.00014",
+          "nomenclature": "Корпус насоса НЦ-80 по чертежу АБВГ.302.080",
+          "storage_unit": "шт",
+          "qty_upd": 40.0,
+          "qty_fact": 40.0,
+          "category": "drawing_parts"
+        },
+        {
+          "id": "l144",
+          "code": "90.01.00022",
+          "nomenclature": "Фланец специальный ФС-40 по чертежу АБВГ.303.040",
+          "storage_unit": "шт",
+          "qty_upd": 12.0,
+          "qty_fact": 12.0,
+          "category": "drawing_parts"
+        },
+        {
+          "id": "l145",
+          "code": "90.01.00031",
+          "nomenclature": "Вал ротора ВР-110 по чертежу АБВГ.304.110",
+          "storage_unit": "шт",
+          "qty_upd": 100.0,
+          "qty_fact": 100.0,
+          "category": "drawing_parts"
+        }
+      ]
+    },
+    {
+      "id": "pres-017",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001338",
+      "project_code": "PRJ-ТД-2026-03",
+      "project_name": "Реконструкция цеха механообработки",
+      "supplier": "ООО «ЧертёжДеталь»",
+      "counterparty": "ООО «ЧертёжДеталь»",
+      "warehouse": "Склад сырья №1",
+      "invoice_date": "2026-07-17",
+      "invoice_number": "УПД-13012",
+      "storage_zone": "Зона приёмки В",
+      "presentation_place": "Стол предъявления №2",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-19T14:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l146",
+          "code": "90.01.00040",
+          "nomenclature": "Крышка редуктора КР-55 по чертежу АБВГ.305.055",
+          "storage_unit": "шт",
+          "qty_upd": 4.0,
+          "qty_fact": 4.0,
+          "category": "drawing_parts"
+        },
+        {
+          "id": "l147",
+          "code": "90.01.00048",
+          "nomenclature": "Плита опорная ПО-200 по чертежу АБВГ.306.200",
+          "storage_unit": "шт",
+          "qty_upd": 2.0,
+          "qty_fact": 2.0,
+          "category": "drawing_parts"
+        },
+        {
+          "id": "l148",
+          "code": "50.99.00012",
+          "nomenclature": "Смазка Литол-24",
+          "storage_unit": "кг",
+          "qty_upd": 3.0,
+          "qty_fact": 3.0,
+          "category": "other"
+        },
+        {
+          "id": "l149",
+          "code": "50.99.00020",
+          "nomenclature": "Краска грунт ГФ-021 серая",
+          "storage_unit": "кг",
+          "qty_upd": 400.0,
+          "qty_fact": 400.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-018",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001339",
+      "project_code": "PRJ-ТД-2026-03",
+      "project_name": "Реконструкция цеха механообработки",
+      "supplier": "АО «КрепёжЮг»",
+      "counterparty": "АО «КрепёжЮг»",
+      "warehouse": "Склад комплектующих",
+      "invoice_date": "2026-07-18",
+      "invoice_number": "УПД-13013",
+      "storage_zone": "Зона приёмки Г",
+      "presentation_place": "Стол предъявления №3",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-21T15:00:00+03:00",
+      "status": "in_progress",
+      "lines": [
+        {
+          "id": "l150",
+          "code": "50.99.00028",
+          "nomenclature": "Электроды МР-3 Ø3",
+          "storage_unit": "кг",
+          "qty_upd": 2500.0,
+          "qty_fact": 2500.0,
+          "category": "other"
+        },
+        {
+          "id": "l151",
+          "code": "50.99.00035",
+          "nomenclature": "Лента изоляционная ПВХ",
+          "storage_unit": "рул",
+          "qty_upd": 2500.0,
+          "qty_fact": 2480.0,
+          "category": "other"
+        },
+        {
+          "id": "l152",
+          "code": "50.99.00042",
+          "nomenclature": "Герметик анаэробный Локтайт 518",
+          "storage_unit": "шт",
+          "qty_upd": 300.0,
+          "qty_fact": 300.0,
+          "category": "other"
+        },
+        {
+          "id": "l153",
+          "code": "50.99.00012",
+          "nomenclature": "Смазка Литол-24",
+          "storage_unit": "кг",
+          "qty_upd": 50.0,
+          "qty_fact": 50.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-019",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001340",
+      "project_code": "PRJ-ТД-2026-03",
+      "project_name": "Реконструкция цеха механообработки",
+      "supplier": "ООО «МеталлСервис»",
+      "counterparty": "ООО «МеталлСервис»",
+      "warehouse": "Склад электроники",
+      "invoice_date": "2026-07-19",
+      "invoice_number": "УПД-13014",
+      "storage_zone": "Зона приёмки Д",
+      "presentation_place": "Лаборатория ОТК",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-3",
+      "due_at": "2026-07-23T16:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l154",
+          "code": "10.01.00188",
+          "nomenclature": "Лист нержавеющий 2 мм 12Х18Н10Т",
+          "storage_unit": "шт",
+          "qty_upd": 12.0,
+          "qty_fact": 12.0,
+          "category": "metal",
+          "supplier_quality_rating": 72
+        },
+        {
+          "id": "l155",
+          "code": "10.03.00060",
+          "nomenclature": "Круг Ø40 Ст45",
+          "storage_unit": "м",
+          "qty_upd": 28.0,
+          "qty_fact": 28.0,
+          "category": "metal",
+          "supplier_quality_rating": 72
+        },
+        {
+          "id": "l156",
+          "code": "10.04.00022",
+          "nomenclature": "Фланец воротниковый Ду80 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 6.0,
+          "qty_fact": 6.0,
+          "category": "flanges"
+        },
+        {
+          "id": "l157",
+          "code": "10.04.00062",
+          "nomenclature": "Фланец плоский Ду200 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 90.0,
+          "qty_fact": 87.0,
+          "category": "flanges"
+        }
+      ]
+    },
+    {
+      "id": "pres-020",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001341",
+      "project_code": "PRJ-ТД-2026-05",
+      "project_name": "Производство корпусов редукторов",
+      "supplier": "ООО «ЧертёжДеталь»",
+      "counterparty": "ООО «ЧертёжДеталь»",
+      "warehouse": "Склад металла №2",
+      "invoice_date": "2026-07-20",
+      "invoice_number": "УПД-13015",
+      "storage_zone": "Зона приёмки А",
+      "presentation_place": "Участок входного контроля",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-22T17:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l158",
+          "code": "90.01.00040",
+          "nomenclature": "Крышка редуктора КР-55 по чертежу АБВГ.305.055",
+          "storage_unit": "шт",
+          "qty_upd": 5.0,
+          "qty_fact": 5.0,
+          "category": "drawing_parts"
+        },
+        {
+          "id": "l159",
+          "code": "90.01.00048",
+          "nomenclature": "Плита опорная ПО-200 по чертежу АБВГ.306.200",
+          "storage_unit": "шт",
+          "qty_upd": 2.0,
+          "qty_fact": 2.0,
+          "category": "drawing_parts"
+        },
+        {
+          "id": "l160",
+          "code": "30.02.00028",
+          "nomenclature": "Болт М12×60 DIN 933",
+          "storage_unit": "шт",
+          "qty_upd": 900.0,
+          "qty_fact": 900.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l161",
+          "code": "50.99.00020",
+          "nomenclature": "Краска грунт ГФ-021 серая",
+          "storage_unit": "кг",
+          "qty_upd": 30.0,
+          "qty_fact": 30.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-021",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001342",
+      "project_code": "PRJ-ТД-2026-05",
+      "project_name": "Производство корпусов редукторов",
+      "supplier": "ООО «ФланецДон»",
+      "counterparty": "ООО «ФланецДон»",
+      "warehouse": "Склад кабельной продукции",
+      "invoice_date": "2026-07-21",
+      "invoice_number": "УПД-13016",
+      "storage_zone": "Зона приёмки Б",
+      "presentation_place": "Стол предъявления №1",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-24T14:00:00+03:00",
+      "status": "in_progress",
+      "lines": [
+        {
+          "id": "l162",
+          "code": "10.04.00030",
+          "nomenclature": "Фланец плоский Ду100 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 18.0,
+          "qty_fact": 18.0,
+          "category": "flanges"
+        },
+        {
+          "id": "l163",
+          "code": "10.04.00041",
+          "nomenclature": "Фланец воротниковый Ду150 Ру25",
+          "storage_unit": "шт",
+          "qty_upd": 10.0,
+          "qty_fact": 10.0,
+          "category": "flanges"
+        },
+        {
+          "id": "l164",
+          "code": "10.05.00015",
+          "nomenclature": "Прокладка Паронит ПОН-Б 80",
+          "storage_unit": "шт",
+          "qty_upd": 36.0,
+          "qty_fact": 36.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l165",
+          "code": "10.05.00022",
+          "nomenclature": "Прокладка Спирально-навитая Ду100",
+          "storage_unit": "шт",
+          "qty_upd": 24.0,
+          "qty_fact": 24.0,
+          "category": "gaskets"
+        }
+      ]
+    },
+    {
+      "id": "pres-022",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001343",
+      "project_code": "PRJ-ТД-2026-05",
+      "project_name": "Производство корпусов редукторов",
+      "supplier": "ООО «ПромКомплект»",
+      "counterparty": "ООО «ПромКомплект»",
+      "warehouse": "Склад ЗИП",
+      "invoice_date": "2026-07-22",
+      "invoice_number": "УПД-13017",
+      "storage_zone": "Зона приёмки В",
+      "presentation_place": "Стол предъявления №2",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-26T15:00:00+03:00",
+      "status": "done",
+      "lines": [
+        {
+          "id": "l166",
+          "code": "10.03.00044",
+          "nomenclature": "Швеллер 12П",
+          "storage_unit": "м",
+          "qty_upd": 40.0,
+          "qty_fact": 40.0,
+          "category": "metal",
+          "supplier_quality_rating": 61
+        },
+        {
+          "id": "l167",
+          "code": "10.01.00488",
+          "nomenclature": "Труба электросварная Ø76×3",
+          "storage_unit": "м",
+          "qty_upd": 55.0,
+          "qty_fact": 53.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l168",
+          "code": "50.99.00001",
+          "nomenclature": "Комплект ЗИП прочий",
+          "storage_unit": "компл",
+          "qty_upd": 3.0,
+          "qty_fact": 3.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-023",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001344",
+      "project_code": "PRJ-ТД-2026-05",
+      "project_name": "Производство корпусов редукторов",
+      "supplier": "АО «КрепёжЮг»",
+      "counterparty": "АО «КрепёжЮг»",
+      "warehouse": "Склад сырья №1",
+      "invoice_date": "2026-07-23",
+      "invoice_number": "УПД-13018",
+      "storage_zone": "Зона приёмки Г",
+      "presentation_place": "Стол предъявления №3",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-3",
+      "due_at": "2026-07-25T16:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l169",
+          "code": "30.02.00040",
+          "nomenclature": "Болт М16×80 DIN 931",
+          "storage_unit": "шт",
+          "qty_upd": 600.0,
+          "qty_fact": 600.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l170",
+          "code": "30.01.00007",
+          "nomenclature": "Гайка М8 DIN 934",
+          "storage_unit": "шт",
+          "qty_upd": 600.0,
+          "qty_fact": 600.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l171",
+          "code": "30.03.00033",
+          "nomenclature": "Шайба пружинная 12 DIN 127",
+          "storage_unit": "шт",
+          "qty_upd": 1200.0,
+          "qty_fact": 1200.0,
+          "category": "fasteners"
+        },
+        {
+          "id": "l172",
+          "code": "50.99.00028",
+          "nomenclature": "Электроды МР-3 Ø3",
+          "storage_unit": "кг",
+          "qty_upd": 8.0,
+          "qty_fact": 8.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-024",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001345",
+      "project_code": "PRJ-ТД-2026-06",
+      "project_name": "Капитальный ремонт испытательного полигона",
+      "supplier": "ООО «ДонТрубПром»",
+      "counterparty": "ООО «ДонТрубПром»",
+      "warehouse": "Склад комплектующих",
+      "invoice_date": "2026-07-24",
+      "invoice_number": "УПД-13019",
+      "storage_zone": "Зона приёмки Д",
+      "presentation_place": "Лаборатория ОТК",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-27T17:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l173",
+          "code": "10.01.00418",
+          "nomenclature": "Труба бесшовная Ø89×4,5",
+          "storage_unit": "м",
+          "qty_upd": 80.0,
+          "qty_fact": 80.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l174",
+          "code": "10.01.00502",
+          "nomenclature": "Труба электросварная Ø159×4,5",
+          "storage_unit": "м",
+          "qty_upd": 60.0,
+          "qty_fact": 60.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l175",
+          "code": "10.04.00055",
+          "nomenclature": "Фланец свободный Ду32 Ру10",
+          "storage_unit": "шт",
+          "qty_upd": 8.0,
+          "qty_fact": 8.0,
+          "category": "flanges"
+        },
+        {
+          "id": "l176",
+          "code": "50.99.00035",
+          "nomenclature": "Лента изоляционная ПВХ",
+          "storage_unit": "рул",
+          "qty_upd": 25.0,
+          "qty_fact": 25.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-025",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001346",
+      "project_code": "PRJ-ТД-2026-06",
+      "project_name": "Капитальный ремонт испытательного полигона",
+      "supplier": "ООО «СевКавРезина»",
+      "counterparty": "ООО «СевКавРезина»",
+      "warehouse": "Склад электроники",
+      "invoice_date": "2026-07-15",
+      "invoice_number": "УПД-13020",
+      "storage_zone": "Зона приёмки А",
+      "presentation_place": "Участок входного контроля",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-19T14:00:00+03:00",
+      "status": "in_progress",
+      "lines": [
+        {
+          "id": "l177",
+          "code": "10.05.00030",
+          "nomenclature": "Кольцо уплотнит. NBR 50×3",
+          "storage_unit": "шт",
+          "qty_upd": 120.0,
+          "qty_fact": 118.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l178",
+          "code": "10.05.00038",
+          "nomenclature": "Прокладка PTFE Ду65",
+          "storage_unit": "шт",
+          "qty_upd": 80.0,
+          "qty_fact": 80.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l179",
+          "code": "10.05.00045",
+          "nomenclature": "Сальниковая набивка АП-31",
+          "storage_unit": "кг",
+          "qty_upd": 15.0,
+          "qty_fact": 15.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l180",
+          "code": "50.99.00042",
+          "nomenclature": "Герметик анаэробный Локтайт 518",
+          "storage_unit": "шт",
+          "qty_upd": 20.0,
+          "qty_fact": 20.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-026",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001347",
+      "project_code": "PRJ-ТД-2026-06",
+      "project_name": "Капитальный ремонт испытательного полигона",
+      "supplier": "ООО «МеталлСервис»",
+      "counterparty": "ООО «МеталлСервис»",
+      "warehouse": "Склад металла №2",
+      "invoice_date": "2026-07-16",
+      "invoice_number": "УПД-13021",
+      "storage_zone": "Зона приёмки Б",
+      "presentation_place": "Стол предъявления №1",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-3",
+      "due_at": "2026-07-18T15:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l181",
+          "code": "10.02.00022",
+          "nomenclature": "Уголок 63×63×6",
+          "storage_unit": "м",
+          "qty_upd": 100.0,
+          "qty_fact": 100.0,
+          "category": "metal",
+          "supplier_quality_rating": 72
+        },
+        {
+          "id": "l182",
+          "code": "10.02.00035",
+          "nomenclature": "Швеллер 10П",
+          "storage_unit": "м",
+          "qty_upd": 70.0,
+          "qty_fact": 70.0,
+          "category": "metal",
+          "supplier_quality_rating": 72
+        },
+        {
+          "id": "l183",
+          "code": "10.01.00535",
+          "nomenclature": "Отвод 90° Ду50 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 24.0,
+          "qty_fact": 24.0,
+          "category": "pipes"
+        },
+        {
+          "id": "l184",
+          "code": "10.04.00018",
+          "nomenclature": "Фланец плоский Ду50 Ру16",
+          "storage_unit": "шт",
+          "qty_upd": 32.0,
+          "qty_fact": 32.0,
+          "category": "flanges"
+        }
+      ]
+    },
+    {
+      "id": "pres-027",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001348",
+      "project_code": "PRJ-ТД-2026-06",
+      "project_name": "Капитальный ремонт испытательного полигона",
+      "supplier": "ООО «ПромКомплект»",
+      "counterparty": "ООО «ПромКомплект»",
+      "warehouse": "Склад кабельной продукции",
+      "invoice_date": "2026-07-17",
+      "invoice_number": "УПД-13022",
+      "storage_zone": "Зона приёмки В",
+      "presentation_place": "Стол предъявления №2",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-20T16:00:00+03:00",
+      "status": "done",
+      "lines": [
+        {
+          "id": "l185",
+          "code": "50.99.00012",
+          "nomenclature": "Смазка Литол-24",
+          "storage_unit": "кг",
+          "qty_upd": 10.0,
+          "qty_fact": 10.0,
+          "category": "other"
+        },
+        {
+          "id": "l186",
+          "code": "50.99.00020",
+          "nomenclature": "Краска грунт ГФ-021 серая",
+          "storage_unit": "кг",
+          "qty_upd": 20.0,
+          "qty_fact": 20.0,
+          "category": "other"
+        },
+        {
+          "id": "l187",
+          "code": "50.99.00028",
+          "nomenclature": "Электроды МР-3 Ø3",
+          "storage_unit": "кг",
+          "qty_upd": 6.0,
+          "qty_fact": 6.0,
+          "category": "other"
+        }
+      ]
+    },
+    {
+      "id": "pres-028",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001349",
+      "project_code": "PRJ-ТД-2026-02",
+      "project_name": "Линия сборки насосных агрегатов",
+      "supplier": "ООО «ПромЭлектроника»",
+      "counterparty": "ООО «ПромЭлектроника»",
+      "warehouse": "Склад ЗИП",
+      "invoice_date": "2026-07-18",
+      "invoice_number": "УПД-13023",
+      "storage_zone": "Зона приёмки Г",
+      "presentation_place": "Стол предъявления №3",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-1",
+      "due_at": "2026-07-22T17:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l188",
+          "code": "40.04.00008",
+          "nomenclature": "Преобразователь частоты ACS550 7,5кВт",
+          "storage_unit": "шт",
+          "qty_upd": 3.0,
+          "qty_fact": 3.0,
+          "category": "electronics",
+          "supplier_quality_rating": 81
+        },
+        {
+          "id": "l189",
+          "code": "40.05.00021",
+          "nomenclature": "Датчик давления МИДА-ДИ-13П",
+          "storage_unit": "шт",
+          "qty_upd": 8.0,
+          "qty_fact": 8.0,
+          "category": "electronics",
+          "supplier_quality_rating": 81
+        },
+        {
+          "id": "l190",
+          "code": "40.01.00055",
+          "nomenclature": "Контактор КМИ-22510",
+          "storage_unit": "шт",
+          "qty_upd": 10.0,
+          "qty_fact": 10.0,
+          "category": "electronics",
+          "supplier_quality_rating": 81
+        },
+        {
+          "id": "l191",
+          "code": "20.06.00055",
+          "nomenclature": "Кабель КГтп 3×16",
+          "storage_unit": "м",
+          "qty_upd": 160.0,
+          "qty_fact": 156.0,
+          "category": "cable",
+          "supplier_quality_rating": 81
+        }
+      ]
+    },
+    {
+      "id": "pres-029",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001350",
+      "project_code": "PRJ-ТД-2026-01",
+      "project_name": "Модернизация стенда турбоагрегатов",
+      "supplier": "ООО «ЧертёжДеталь»",
+      "counterparty": "ООО «ЧертёжДеталь»",
+      "warehouse": "Склад сырья №1",
+      "invoice_date": "2026-07-19",
+      "invoice_number": "УПД-13024",
+      "storage_zone": "Зона приёмки Д",
+      "presentation_place": "Лаборатория ОТК",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-3",
+      "due_at": "2026-07-21T14:00:00+03:00",
+      "status": "in_progress",
+      "lines": [
+        {
+          "id": "l192",
+          "code": "90.01.00003",
+          "nomenclature": "Кронштейн КР-12 по чертежу АБВГ.301.012",
+          "storage_unit": "шт",
+          "qty_upd": 8.0,
+          "qty_fact": 8.0,
+          "category": "drawing_parts"
+        },
+        {
+          "id": "l193",
+          "code": "90.01.00014",
+          "nomenclature": "Корпус насоса НЦ-80 по чертежу АБВГ.302.080",
+          "storage_unit": "шт",
+          "qty_upd": 4.0,
+          "qty_fact": 4.0,
+          "category": "drawing_parts"
+        },
+        {
+          "id": "l194",
+          "code": "10.03.00051",
+          "nomenclature": "Двутавр 20Б1",
+          "storage_unit": "м",
+          "qty_upd": 16.0,
+          "qty_fact": 16.0,
+          "category": "metal",
+          "supplier_quality_rating": 75
+        },
+        {
+          "id": "l195",
+          "code": "30.04.00011",
+          "nomenclature": "Шпилька М20×200 DIN 975",
+          "storage_unit": "шт",
+          "qty_upd": 500.0,
+          "qty_fact": 500.0,
+          "category": "fasteners"
+        }
+      ]
+    },
+    {
+      "id": "pres-030",
+      "organization": "ООО НПО «Турбулентность-Дон»",
+      "purchase_order": "ЗП-0001351",
+      "project_code": "PRJ-ТД-2026-07",
+      "project_name": "Электроснабжение производственного корпуса",
+      "supplier": "ООО «СевКавРезина»",
+      "counterparty": "ООО «СевКавРезина»",
+      "warehouse": "Склад комплектующих",
+      "invoice_date": "2026-07-20",
+      "invoice_number": "УПД-13025",
+      "storage_zone": "Зона приёмки А",
+      "presentation_place": "Участок входного контроля",
+      "otk_incoming_warehouse": "Склад входного контроля ОТК",
+      "executor_id": "otk-w-2",
+      "due_at": "2026-07-23T15:00:00+03:00",
+      "status": "queued",
+      "lines": [
+        {
+          "id": "l196",
+          "code": "10.05.00009",
+          "nomenclature": "Прокладка Паронит ПОН-Б 50",
+          "storage_unit": "шт",
+          "qty_upd": 200.0,
+          "qty_fact": 200.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l197",
+          "code": "10.05.00015",
+          "nomenclature": "Прокладка Паронит ПОН-Б 80",
+          "storage_unit": "шт",
+          "qty_upd": 150.0,
+          "qty_fact": 145.0,
+          "category": "gaskets"
+        },
+        {
+          "id": "l198",
+          "code": "20.07.00028",
+          "nomenclature": "Кабель оптический ОКА-8",
+          "storage_unit": "м",
+          "qty_upd": 70.0,
+          "qty_fact": 70.0,
+          "category": "cable",
+          "supplier_quality_rating": 58
+        },
+        {
+          "id": "l199",
+          "code": "50.99.00035",
+          "nomenclature": "Лента изоляционная ПВХ",
+          "storage_unit": "рул",
+          "qty_upd": 40.0,
+          "qty_fact": 40.0,
+          "category": "other"
         }
       ]
     }

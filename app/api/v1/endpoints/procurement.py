@@ -23,12 +23,14 @@ from app.services.procurement_orchestrator_service import ProcurementOrchestrato
 from app.services.procurement_permission import (
     OMTO_SUPPORT_MANAGER_AGENT_SLUG,
     OTK_HEAD_AGENT_SLUG,
+    PROCUREMENT_LOGISTICS_AGENT_SLUG,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG,
     QUALITY_DEPUTY_DIRECTOR_AGENT_SLUG,
     QUALITY_ENGINEER_AGENT_SLUG,
     QUALITY_KPI_AGENT_SLUG,
     can_access_omto_support_manager,
     can_access_otk_head,
+    can_access_procurement_manager,
     can_access_procurement_orchestrator,
     can_access_production_preparation_engineer,
     can_access_quality_deputy_director,
@@ -52,6 +54,9 @@ _ROLE_WORKSPACE_FORBIDDEN = {
         "Рабочее место доступно только заместителю директора по качеству"
     ),
     QUALITY_KPI_AGENT_SLUG: "Рабочее место KPI доступно администратору / ЗДК",
+    PROCUREMENT_LOGISTICS_AGENT_SLUG: (
+        "Рабочее место доступно только менеджеру по закупкам / ОМТО"
+    ),
 }
 
 _QUALITY_CASE_STATUSES = {
@@ -85,6 +90,7 @@ async def _role_access(db: DbSession, user: User, agent_id: str) -> bool:
         QUALITY_ENGINEER_AGENT_SLUG: can_access_quality_engineer,
         QUALITY_DEPUTY_DIRECTOR_AGENT_SLUG: can_access_quality_deputy_director,
         QUALITY_KPI_AGENT_SLUG: can_access_quality_kpi,
+        PROCUREMENT_LOGISTICS_AGENT_SLUG: can_access_procurement_manager,
     }
     checker = checkers.get(agent_id)
     if checker is None:
@@ -179,6 +185,7 @@ async def get_procurement_permissions(
         (QUALITY_ENGINEER_AGENT_SLUG, can_access_quality_engineer),
         (QUALITY_DEPUTY_DIRECTOR_AGENT_SLUG, can_access_quality_deputy_director),
         (QUALITY_KPI_AGENT_SLUG, can_access_quality_kpi),
+        (PROCUREMENT_LOGISTICS_AGENT_SLUG, can_access_procurement_manager),
     ]
     for slug, checker in checks:
         if await checker(db, current_user):
@@ -224,6 +231,30 @@ async def get_procurement_role_dashboard(
         QUALITY_DEPUTY_DIRECTOR_AGENT_SLUG,
     }:
         payload = _filter_dashboard_for_quality(payload, agent_id)
+    elif agent_id == PROCUREMENT_LOGISTICS_AGENT_SLUG:
+        for group in payload.get("groups") or []:
+            cases = [
+                item
+                for item in group.get("cases") or []
+                if item.get("current_agent_id") == PROCUREMENT_LOGISTICS_AGENT_SLUG
+                or item.get("status")
+                in {
+                    "purchase_draft",
+                    "approval_required",
+                    "ordered",
+                    "payment_pending",
+                    "in_transit",
+                    "receiving",
+                    "posting_required",
+                    "posted",
+                    "nonconformity",
+                }
+            ]
+            group["cases"] = cases
+            group["cases_count"] = len(cases)
+        payload["total_cases"] = sum(
+            len(group.get("cases") or []) for group in payload.get("groups") or []
+        )
     return ProcurementDashboardRead.model_validate(payload)
 
 
@@ -308,6 +339,45 @@ async def get_procurement_role_case(
                 "source_document_changed",
                 "case_archived_from_source",
             }
+        ]
+    elif agent_id == PROCUREMENT_LOGISTICS_AGENT_SLUG:
+        metadata = payload.get("case_metadata") or {}
+        payload["case_metadata"] = {
+            "procurement_manager": metadata.get("procurement_manager"),
+            "procurement_manager_output": metadata.get("procurement_manager_output"),
+            "procurement_manager_calculated_at": metadata.get(
+                "procurement_manager_calculated_at"
+            ),
+            "demo_tag": metadata.get("demo_tag"),
+            "need_title": metadata.get("need_title"),
+            "project_code": metadata.get("project_code"),
+            "project_name": metadata.get("project_name"),
+        }
+        if metadata.get("need_title"):
+            payload["need_title"] = metadata.get("need_title")
+        if metadata.get("project_code"):
+            payload["project_code"] = metadata.get("project_code")
+        if metadata.get("project_name"):
+            payload["project_name"] = metadata.get("project_name")
+        # Prefer the dedicated manager workspace payload when available.
+        from app.agents.procurement_manager_agent.service import (
+            ProcurementManagerService,
+        )
+
+        try:
+            workspace = await ProcurementManagerService(db).workspace_payload(case_id)
+        except LookupError:
+            workspace = None
+        if workspace:
+            payload["procurement_manager"] = workspace
+            payload.update(workspace)
+        payload["assigned_agents"] = [PROCUREMENT_LOGISTICS_AGENT_SLUG]
+        payload["events"] = [
+            event
+            for event in payload.get("events") or []
+            if event.get("agent_id") == PROCUREMENT_LOGISTICS_AGENT_SLUG
+            or event.get("event_type")
+            in {"case_created_from_source", "source_document_changed"}
         ]
     else:
         payload = _slim_quality_case(payload, agent_id)

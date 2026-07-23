@@ -21,6 +21,7 @@ from app.agents.procurement_agent.source_discovery import (
 )
 from app.agents.procurement_role_agents.config import (
     OMTO_SUPPORT_MANAGER_AGENT_ID,
+    PROCUREMENT_LOGISTICS_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     QUALITY_ROLE_AGENT_IDS,
     agent_id_for_quality_status,
@@ -48,6 +49,14 @@ ACTIVE_CASE_STATUSES = frozenset(
         ProcurementCaseStatus.COVERAGE_CHECK.value,
         ProcurementCaseStatus.HUMAN_REQUIRED.value,
         ProcurementCaseStatus.BLOCKED.value,
+        ProcurementCaseStatus.PURCHASE_DRAFT.value,
+        ProcurementCaseStatus.APPROVAL_REQUIRED.value,
+        ProcurementCaseStatus.ORDERED.value,
+        ProcurementCaseStatus.PAYMENT_PENDING.value,
+        ProcurementCaseStatus.IN_TRANSIT.value,
+        ProcurementCaseStatus.RECEIVING.value,
+        ProcurementCaseStatus.POSTING_REQUIRED.value,
+        ProcurementCaseStatus.POSTED.value,
         ProcurementCaseStatus.QUALITY_QUEUED.value,
         ProcurementCaseStatus.QUALITY_ASSIGNED.value,
         ProcurementCaseStatus.QUALITY_DOC_CHECK.value,
@@ -995,7 +1004,9 @@ class ProcurementOrchestratorService:
         case.required_date = document.required_date
         case.deadline_at = document.required_date
         metadata = dict(case.case_metadata or {})
-        metadata["deadline"] = document.required_date.isoformat() if document.required_date else None
+        metadata["deadline"] = (
+            document.required_date.isoformat() if document.required_date else None
+        )
         metadata["production_order_1c_ref"] = document.production_order_1c_ref
         metadata["production_order_type"] = document.production_order_type
         case.case_metadata = metadata
@@ -1143,6 +1154,8 @@ class ProcurementOrchestratorService:
         )
         if quality_agent:
             agent_id = str(quality_agent)
+        elif case.requested_operation == "route_confirmed_deficit":
+            agent_id = PROCUREMENT_LOGISTICS_AGENT_ID
         else:
             agent_id = agent_id_for_source(case.source_type)
         completion_key = self._role_completion_key(case, agent_id)
@@ -1318,6 +1331,17 @@ class ProcurementOrchestratorService:
                 enqueued += 1
         return enqueued
 
+    async def dispatch_case(self, case_id: uuid.UUID) -> bool:
+        """Queue the currently selected role agent for one persisted case."""
+        case = await self.db.scalar(
+            select(ProcurementCase)
+            .options(selectinload(ProcurementCase.positions))
+            .where(ProcurementCase.id == case_id)
+        )
+        if case is None:
+            return False
+        return await self._enqueue_role_agent(case)
+
     async def _apply_role_agent_result(
         self,
         case: ProcurementCase,
@@ -1380,6 +1404,18 @@ class ProcurementOrchestratorService:
             metadata["omto_support_manager_output"] = output_data
             metadata["omto_calculated_at"] = output_data.get("calculated_at")
             case.case_metadata = metadata
+        if (
+            result_agent_id == PROCUREMENT_LOGISTICS_AGENT_ID
+            and isinstance(output_data, dict)
+        ):
+            metadata = dict(case.case_metadata or {})
+            metadata["procurement_manager_output"] = output_data
+            metadata["procurement_manager_calculated_at"] = datetime.now(UTC).isoformat()
+            manager_ws = dict(metadata.get("procurement_manager") or {})
+            if not manager_ws.get("lifecycle_state"):
+                manager_ws["lifecycle_state"] = "agent_running"
+            metadata["procurement_manager"] = manager_ws
+            case.case_metadata = metadata
         task.final_result = result_payload
         task.requires_human_review = role_status == "waiting_human"
         wait_reason = str(
@@ -1406,9 +1442,20 @@ class ProcurementOrchestratorService:
                 }
             ):
                 case.status = str(next_quality_status)
+            elif (
+                result_agent_id == PROCUREMENT_LOGISTICS_AGENT_ID
+                and next_quality_status
+                and str(next_quality_status) in {s.value for s in ProcurementCaseStatus}
+            ):
+                case.status = str(next_quality_status)
             else:
                 case.status = ProcurementCaseStatus.AGENT_WAITING.value
             case.deviation_summary = wait_reason
+            if (
+                result_agent_id == PROCUREMENT_LOGISTICS_AGENT_ID
+                and case.status == ProcurementCaseStatus.PURCHASE_DRAFT.value
+            ):
+                await self._ensure_procurement_manager_agent_running(case)
         elif role_status == "waiting_external":
             task.status = TaskStatus.WAITING_EXTERNAL
             task.finished_at = None
@@ -1477,7 +1524,45 @@ class ProcurementOrchestratorService:
             },
         )
         await self.db.flush()
+        if (
+            role_status == "completed"
+            and result_agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+            and case.requested_operation == "route_confirmed_deficit"
+        ):
+            await self._enqueue_role_agent(case)
         return result_payload
+
+    async def _ensure_procurement_manager_agent_running(
+        self,
+        case: ProcurementCase,
+    ) -> None:
+        """After handoff to purchase_draft, keep lifecycle_state and start agent_run."""
+        metadata = dict(case.case_metadata or {})
+        manager_ws = dict(metadata.get("procurement_manager") or {})
+        manager_ws["lifecycle_state"] = manager_ws.get("lifecycle_state") or "agent_running"
+        metadata["procurement_manager"] = manager_ws
+        case.case_metadata = metadata
+
+        if manager_ws.get("agent_stage") or manager_ws.get("agent_run_idempotency_key"):
+            return
+
+        from app.agents.procurement_manager_agent.schemas import AgentRunRequest
+        from app.agents.procurement_manager_agent.service import ProcurementManagerService
+
+        try:
+            await ProcurementManagerService(self.db).agent_run(
+                case.id,
+                AgentRunRequest(
+                    idempotency_key=f"orchestrator-agent-run:{case.id}"[:255],
+                    allow_web_fallback=True,
+                ),
+            )
+        except Exception:  # noqa: BLE001 — handoff must remain successful
+            manager_ws = dict((case.case_metadata or {}).get("procurement_manager") or {})
+            manager_ws["lifecycle_state"] = "agent_running"
+            metadata = dict(case.case_metadata or {})
+            metadata["procurement_manager"] = manager_ws
+            case.case_metadata = metadata
 
     async def execute_case_task(self, case_id: uuid.UUID, task_id: uuid.UUID) -> dict[str, Any]:
         case = await self.db.scalar(
@@ -1811,6 +1896,9 @@ class ProcurementOrchestratorService:
 
     def _serialize_case_summary(self, case: ProcurementCase) -> dict[str, Any]:
         engineer_bucket, engineer_bucket_reason = self._engineer_bucket(case)
+        procurement_manager = dict(
+            (case.case_metadata or {}).get("procurement_manager") or {}
+        )
         return {
             "id": str(case.id),
             "correlation_id": case.correlation_id,
@@ -1846,6 +1934,21 @@ class ProcurementOrchestratorService:
             "source_active": case.status in ACTIVE_CASE_STATUSES,
             "engineer_bucket": engineer_bucket,
             "engineer_bucket_reason": engineer_bucket_reason,
+            "procurement_manager": procurement_manager,
+            "suppliers": procurement_manager.get("suppliers") or [],
+            "quotes": procurement_manager.get("quotes") or [],
+            "comparison": procurement_manager.get("comparison"),
+            "rfq_drafts": procurement_manager.get("rfq_drafts") or [],
+            "approvals": procurement_manager.get("approvals") or [],
+            "shipment_events": procurement_manager.get("shipment_events") or [],
+            "payment_document_draft": procurement_manager.get(
+                "payment_document_draft"
+            ),
+            "recommendation": procurement_manager.get("recommendation"),
+            "recommendation_audit": procurement_manager.get(
+                "recommendation_audit"
+            )
+            or [],
         }
 
     def _serialize_case_detail(self, case: ProcurementCase) -> dict[str, Any]:
@@ -2022,7 +2125,9 @@ class ProcurementOrchestratorService:
                 else capability.unavailable_reason
             ),
             "database_name": state.database_name if state is not None else None,
-            "last_polled_at": state.last_polled_at.isoformat() if state and state.last_polled_at else None,
+            "last_polled_at": (
+                state.last_polled_at.isoformat() if state and state.last_polled_at else None
+            ),
             "last_success_at": (
                 state.last_success_at.isoformat() if state and state.last_success_at else None
             ),

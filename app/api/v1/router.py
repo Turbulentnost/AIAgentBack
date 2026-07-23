@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from fastapi import APIRouter
+
 from app.api.v1.admin import users as admin_users
 from app.api.v1.endpoints import (
     agent_builder,
@@ -19,10 +21,12 @@ from app.api.v1.endpoints import (
     porucheniya,
     positions,
     procurement,
+    procurement_manager,
     roles,
     tasks,
     users,
 )
+
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
@@ -37,6 +41,10 @@ api_router.include_router(document_cards.router)
 api_router.include_router(knowledge_bases.router)
 api_router.include_router(meetings.router)
 api_router.include_router(porucheniya.router)
+# Manager routes are static (`.../procurement_logistics_agent/...`) and must be
+# registered before the parameterized `/role-agents/{agent_id}/...` routes.
+api_router.include_router(procurement_manager.router)
+api_router.include_router(procurement_manager.operations_router)
 api_router.include_router(procurement.router)
 api_router.include_router(otk.router)
 api_router.include_router(knowledge_base_indexing_ws.router)

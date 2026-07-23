@@ -1,0 +1,5431 @@
+{
+  "version": 2,
+  "materials": [
+    {
+      "nomenclature_id": "steel",
+      "nomenclature_name": "Сталь 20 лист 5 мм",
+      "unit": "кг",
+      "category": "metal"
+    },
+    {
+      "nomenclature_id": "10.01.00125",
+      "nomenclature_name": "Лист стальной 3 мм Ст3",
+      "unit": "шт",
+      "category": "metal"
+    },
+    {
+      "nomenclature_id": "10.01.00402",
+      "nomenclature_name": "Труба бесшовная Ø57×3,5",
+      "unit": "м",
+      "category": "pipes"
+    },
+    {
+      "nomenclature_id": "20.05.00088",
+      "nomenclature_name": "Кабель ВВГнг 3×2,5",
+      "unit": "м",
+      "category": "cable"
+    },
+    {
+      "nomenclature_id": "30.02.00015",
+      "nomenclature_name": "Болт М8×40 DIN 933",
+      "unit": "шт",
+      "category": "fasteners"
+    },
+    {
+      "nomenclature_id": "40.11.00003",
+      "nomenclature_name": "Микросхема STM32F103",
+      "unit": "шт",
+      "category": "electronics"
+    },
+    {
+      "nomenclature_id": "10.02.00010",
+      "nomenclature_name": "Уголок 50×50×5",
+      "unit": "м",
+      "category": "metal"
+    },
+    {
+      "nomenclature_id": "10.03.00044",
+      "nomenclature_name": "Швеллер 12П",
+      "unit": "м",
+      "category": "metal"
+    },
+    {
+      "nomenclature_id": "20.01.00012",
+      "nomenclature_name": "Подшипник 6205-2RS",
+      "unit": "шт",
+      "category": "bearings"
+    },
+    {
+      "nomenclature_id": "20.02.00033",
+      "nomenclature_name": "Ремень клиновой A-1250",
+      "unit": "шт",
+      "category": "drive"
+    },
+    {
+      "nomenclature_id": "30.01.00007",
+      "nomenclature_name": "Гайка М8 DIN 934",
+      "unit": "шт",
+      "category": "fasteners"
+    },
+    {
+      "nomenclature_id": "30.03.00021",
+      "nomenclature_name": "Шайба 8 DIN 125",
+      "unit": "шт",
+      "category": "fasteners"
+    },
+    {
+      "nomenclature_id": "40.01.00055",
+      "nomenclature_name": "Контактор КМИ-22510",
+      "unit": "шт",
+      "category": "electronics"
+    },
+    {
+      "nomenclature_id": "40.02.00018",
+      "nomenclature_name": "Автомат ВА47-29 16А",
+      "unit": "шт",
+      "category": "electronics"
+    },
+    {
+      "nomenclature_id": "50.01.00001",
+      "nomenclature_name": "Краска ГФ-021 серая",
+      "unit": "кг",
+      "category": "consumables"
+    },
+    {
+      "nomenclature_id": "50.02.00009",
+      "nomenclature_name": "Электрод МР-3 Ø3",
+      "unit": "кг",
+      "category": "consumables"
+    },
+    {
+      "nomenclature_id": "60.01.00014",
+      "nomenclature_name": "Масло индустриальное И-40А",
+      "unit": "л",
+      "category": "consumables"
+    },
+    {
+      "nomenclature_id": "70.01.00002",
+      "nomenclature_name": "Фильтр воздушный",
+      "unit": "шт",
+      "category": "spares"
+    },
+    {
+      "nomenclature_id": "70.02.00011",
+      "nomenclature_name": "Манжета 40×60×10",
+      "unit": "шт",
+      "category": "spares"
+    },
+    {
+      "nomenclature_id": "80.01.00005",
+      "nomenclature_name": "Профиль алюминиевый 40×40",
+      "unit": "м",
+      "category": "metal"
+    }
+  ],
+  "warehouses": [
+    {
+      "warehouse_id": "wh-raw-1",
+      "name": "Склад сырья №1",
+      "code": "RAW-01",
+      "location": "Корпус А"
+    },
+    {
+      "warehouse_id": "wh-comp-1",
+      "name": "Склад комплектующих",
+      "code": "CMP-01",
+      "location": "Корпус Б"
+    },
+    {
+      "warehouse_id": "wh-elec-1",
+      "name": "Склад электроники",
+      "code": "ELC-01",
+      "location": "Корпус В"
+    }
+  ],
+  "stock": [
+    {
+      "stock_id": "stock-001",
+      "warehouse_id": "wh-raw-1",
+      "nomenclature_id": "steel",
+      "nomenclature_name": "Сталь 20 лист 5 мм",
+      "quantity": 120,
+      "unit": "кг",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-002",
+      "warehouse_id": "wh-comp-1",
+      "nomenclature_id": "10.01.00125",
+      "nomenclature_name": "Лист стальной 3 мм Ст3",
+      "quantity": 80,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-003",
+      "warehouse_id": "wh-raw-1",
+      "nomenclature_id": "10.01.00402",
+      "nomenclature_name": "Труба бесшовная Ø57×3,5",
+      "quantity": 200,
+      "unit": "м",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-004",
+      "warehouse_id": "wh-comp-1",
+      "nomenclature_id": "30.02.00015",
+      "nomenclature_name": "Болт М8×40 DIN 933",
+      "quantity": 1500,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-005",
+      "warehouse_id": "wh-elec-1",
+      "nomenclature_id": "40.11.00003",
+      "nomenclature_name": "Микросхема STM32F103",
+      "quantity": 40,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-006",
+      "warehouse_id": "wh-raw-1",
+      "nomenclature_id": "steel",
+      "nomenclature_name": "Сталь 20 лист 5 мм",
+      "quantity": 50,
+      "unit": "кг",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-007",
+      "warehouse_id": "wh-comp-1",
+      "nomenclature_id": "20.01.00012",
+      "nomenclature_name": "Подшипник 6205-2RS",
+      "quantity": 90,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-008",
+      "warehouse_id": "wh-elec-1",
+      "nomenclature_id": "40.01.00055",
+      "nomenclature_name": "Контактор КМИ-22510",
+      "quantity": 25,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-009",
+      "warehouse_id": "wh-raw-1",
+      "nomenclature_id": "10.02.00010",
+      "nomenclature_name": "Уголок 50×50×5",
+      "quantity": 160,
+      "unit": "м",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-010",
+      "warehouse_id": "wh-comp-1",
+      "nomenclature_id": "30.01.00007",
+      "nomenclature_name": "Гайка М8 DIN 934",
+      "quantity": 2000,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-011",
+      "warehouse_id": "wh-elec-1",
+      "nomenclature_id": "40.02.00018",
+      "nomenclature_name": "Автомат ВА47-29 16А",
+      "quantity": 60,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-012",
+      "warehouse_id": "wh-raw-1",
+      "nomenclature_id": "10.03.00044",
+      "nomenclature_name": "Швеллер 12П",
+      "quantity": 70,
+      "unit": "м",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-013",
+      "warehouse_id": "wh-comp-1",
+      "nomenclature_id": "20.02.00033",
+      "nomenclature_name": "Ремень клиновой A-1250",
+      "quantity": 35,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-014",
+      "warehouse_id": "wh-elec-1",
+      "nomenclature_id": "20.05.00088",
+      "nomenclature_name": "Кабель ВВГнг 3×2,5",
+      "quantity": 300,
+      "unit": "м",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-015",
+      "warehouse_id": "wh-raw-1",
+      "nomenclature_id": "80.01.00005",
+      "nomenclature_name": "Профиль алюминиевый 40×40",
+      "quantity": 110,
+      "unit": "м",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-016",
+      "warehouse_id": "wh-comp-1",
+      "nomenclature_id": "50.01.00001",
+      "nomenclature_name": "Краска ГФ-021 серая",
+      "quantity": 45,
+      "unit": "кг",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-017",
+      "warehouse_id": "wh-elec-1",
+      "nomenclature_id": "70.01.00002",
+      "nomenclature_name": "Фильтр воздушный",
+      "quantity": 55,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-018",
+      "warehouse_id": "wh-raw-1",
+      "nomenclature_id": "50.02.00009",
+      "nomenclature_name": "Электрод МР-3 Ø3",
+      "quantity": 80,
+      "unit": "кг",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-019",
+      "warehouse_id": "wh-comp-1",
+      "nomenclature_id": "60.01.00014",
+      "nomenclature_name": "Масло индустриальное И-40А",
+      "quantity": 120,
+      "unit": "л",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-020",
+      "warehouse_id": "wh-elec-1",
+      "nomenclature_id": "70.02.00011",
+      "nomenclature_name": "Манжета 40×60×10",
+      "quantity": 200,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-021",
+      "warehouse_id": "wh-raw-1",
+      "nomenclature_id": "30.03.00021",
+      "nomenclature_name": "Шайба 8 DIN 125",
+      "quantity": 5000,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-022",
+      "warehouse_id": "wh-comp-1",
+      "nomenclature_id": "30.02.00015",
+      "nomenclature_name": "Болт М8×40 DIN 933",
+      "quantity": 500,
+      "unit": "шт",
+      "reserved": 0
+    },
+    {
+      "stock_id": "stock-023",
+      "warehouse_id": "wh-elec-1",
+      "nomenclature_id": "20.05.00088",
+      "nomenclature_name": "Кабель ВВГнг 3×2,5",
+      "quantity": 150,
+      "unit": "м",
+      "reserved": 0
+    }
+  ],
+  "suppliers": [
+    {
+      "supplier_id": "bank-sup-001",
+      "name": "ООО «МеталлСервис-001»",
+      "tax_id": "7700000001",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 56,
+      "delivery_rating": 53,
+      "commercial_rating": 57,
+      "is_active": true,
+      "contacts": {
+        "email": "sales001@supplier-bank.local",
+        "phone": "+7-495-101-11-21"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 21,
+          "available_qty": 21,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 116.4
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 42,
+          "available_qty": 42,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 598.0
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 60,
+          "available_qty": 60,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 448.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-002",
+      "name": "ООО «ПромСнаб-002»",
+      "tax_id": "7700000002",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 57,
+      "delivery_rating": 56,
+      "commercial_rating": 62,
+      "is_active": true,
+      "contacts": {
+        "email": "sales002@supplier-bank.local",
+        "phone": "+7-495-102-12-22"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 25,
+          "available_qty": 25,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 1037.0
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 46,
+          "available_qty": 46,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 317.2
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 64,
+          "available_qty": 64,
+          "unit": "кг",
+          "lead_time_days": 9,
+          "unit_price": 256.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-003",
+      "name": "ООО «ТехноТрейд-003»",
+      "tax_id": "7700000003",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 58,
+      "delivery_rating": 59,
+      "commercial_rating": 67,
+      "is_active": true,
+      "contacts": {
+        "email": "sales003@supplier-bank.local",
+        "phone": "+7-495-103-13-23"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 29,
+          "available_qty": 29,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 399.9
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 50,
+          "available_qty": 50,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 1006.2
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 68,
+          "available_qty": 68,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 225.75
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-004",
+      "name": "ООО «СнабРегион-004»",
+      "tax_id": "7700000004",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "fasteners"
+      ],
+      "quality_rating": 59,
+      "delivery_rating": 62,
+      "commercial_rating": 72,
+      "is_active": true,
+      "contacts": {
+        "email": "sales004@supplier-bank.local",
+        "phone": "+7-495-104-14-24"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 33,
+          "available_qty": 33,
+          "unit": "м",
+          "lead_time_days": 10,
+          "unit_price": 71.25
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 54,
+          "available_qty": 54,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 1.35
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 72,
+          "available_qty": 72,
+          "unit": "л",
+          "lead_time_days": 3,
+          "unit_price": 71.25
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-005",
+      "name": "ООО «Индустриум-005»",
+      "tax_id": "7700000005",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 60,
+      "delivery_rating": 65,
+      "commercial_rating": 77,
+      "is_active": true,
+      "contacts": {
+        "email": "sales005@supplier-bank.local",
+        "phone": "+7-495-105-15-25"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 37,
+          "available_qty": 37,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 3.69
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 58,
+          "available_qty": 58,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 0.74
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 76,
+          "available_qty": 76,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 524.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-006",
+      "name": "ООО «МеталлСервис-006»",
+      "tax_id": "7700000006",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "spares"
+      ],
+      "quality_rating": 61,
+      "delivery_rating": 68,
+      "commercial_rating": 82,
+      "is_active": true,
+      "contacts": {
+        "email": "sales006@supplier-bank.local",
+        "phone": "+7-495-106-16-26"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 41,
+          "available_qty": 41,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 160.2
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 62,
+          "available_qty": 62,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 1290.5
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 80,
+          "available_qty": 80,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 75.65
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-007",
+      "name": "ООО «ПромСнаб-007»",
+      "tax_id": "7700000007",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 62,
+      "delivery_rating": 71,
+      "commercial_rating": 87,
+      "is_active": true,
+      "contacts": {
+        "email": "sales007@supplier-bank.local",
+        "phone": "+7-495-107-17-27"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 45,
+          "available_qty": 45,
+          "unit": "м",
+          "lead_time_days": 6,
+          "unit_price": 134.4
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 66,
+          "available_qty": 66,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 374.4
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 84,
+          "available_qty": 84,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 412.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-008",
+      "name": "ООО «ТехноТрейд-008»",
+      "tax_id": "7700000008",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 63,
+      "delivery_rating": 74,
+      "commercial_rating": 92,
+      "is_active": true,
+      "contacts": {
+        "email": "sales008@supplier-bank.local",
+        "phone": "+7-495-108-18-28"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 49,
+          "available_qty": 49,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 535.6
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 70,
+          "available_qty": 70,
+          "unit": "кг",
+          "lead_time_days": 5,
+          "unit_price": 216.3
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 28,
+          "available_qty": 28,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 102.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-009",
+      "name": "ООО «СнабРегион-009»",
+      "tax_id": "7700000009",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 64,
+      "delivery_rating": 77,
+      "commercial_rating": 54,
+      "is_active": true,
+      "contacts": {
+        "email": "sales009@supplier-bank.local",
+        "phone": "+7-495-109-19-29"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 53,
+          "available_qty": 53,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 286.0
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 74,
+          "available_qty": 74,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 192.5
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 32,
+          "available_qty": 32,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 935.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-010",
+      "name": "ООО «Индустриум-010»",
+      "tax_id": "7700000010",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 65,
+      "delivery_rating": 80,
+      "commercial_rating": 59,
+      "is_active": true,
+      "contacts": {
+        "email": "sales010@supplier-bank.local",
+        "phone": "+7-495-110-20-30"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 57,
+          "available_qty": 57,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 912.6
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 78,
+          "available_qty": 78,
+          "unit": "л",
+          "lead_time_days": 9,
+          "unit_price": 111.15
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 36,
+          "available_qty": 36,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 362.7
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-011",
+      "name": "ООО «МеталлСервис-011»",
+      "tax_id": "7700000011",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 66,
+      "delivery_rating": 83,
+      "commercial_rating": 64,
+      "is_active": true,
+      "contacts": {
+        "email": "sales011@supplier-bank.local",
+        "phone": "+7-495-111-21-31"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 61,
+          "available_qty": 61,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 2.23
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 82,
+          "available_qty": 82,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 793.6
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 40,
+          "available_qty": 40,
+          "unit": "м",
+          "lead_time_days": 7,
+          "unit_price": 117.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-012",
+      "name": "ООО «ПромСнаб-012»",
+      "tax_id": "7700000012",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 67,
+      "delivery_rating": 86,
+      "commercial_rating": 69,
+      "is_active": true,
+      "contacts": {
+        "email": "sales012@supplier-bank.local",
+        "phone": "+7-495-112-22-32"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 65,
+          "available_qty": 65,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 1.18
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 86,
+          "available_qty": 86,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 111.35
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 44,
+          "available_qty": 44,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 5.9
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-013",
+      "name": "ООО «ТехноТрейд-013»",
+      "tax_id": "7700000013",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 68,
+      "delivery_rating": 89,
+      "commercial_rating": 74,
+      "is_active": true,
+      "contacts": {
+        "email": "sales013@supplier-bank.local",
+        "phone": "+7-495-113-23-33"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 69,
+          "available_qty": 69,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 1116.5
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 90,
+          "available_qty": 90,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 331.1
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 48,
+          "available_qty": 48,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 138.6
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-014",
+      "name": "ООО «СнабРегион-014»",
+      "tax_id": "7700000014",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 69,
+      "delivery_rating": 92,
+      "commercial_rating": 79,
+      "is_active": true,
+      "contacts": {
+        "email": "sales014@supplier-bank.local",
+        "phone": "+7-495-114-24-34"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 73,
+          "available_qty": 73,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 327.6
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 34,
+          "available_qty": 34,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 152.4
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 52,
+          "available_qty": 52,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 117.6
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-015",
+      "name": "ООО «Индустриум-015»",
+      "tax_id": "7700000015",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 70,
+      "delivery_rating": 50,
+      "commercial_rating": 84,
+      "is_active": true,
+      "contacts": {
+        "email": "sales015@supplier-bank.local",
+        "phone": "+7-495-115-25-35"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 77,
+          "available_qty": 77,
+          "unit": "кг",
+          "lead_time_days": 12,
+          "unit_price": 191.1
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 38,
+          "available_qty": 38,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 773.5
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 56,
+          "available_qty": 56,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 473.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-016",
+      "name": "ООО «МеталлСервис-016»",
+      "tax_id": "7700000016",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "pipes"
+      ],
+      "quality_rating": 71,
+      "delivery_rating": 53,
+      "commercial_rating": 89,
+      "is_active": true,
+      "contacts": {
+        "email": "sales016@supplier-bank.local",
+        "phone": "+7-495-116-26-36"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 81,
+          "available_qty": 81,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 171.5
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 42,
+          "available_qty": 42,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 303.8
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 60,
+          "available_qty": 60,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 254.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-017",
+      "name": "ООО «ПромСнаб-017»",
+      "tax_id": "7700000017",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "drive"
+      ],
+      "quality_rating": 72,
+      "delivery_rating": 56,
+      "commercial_rating": 94,
+      "is_active": true,
+      "contacts": {
+        "email": "sales017@supplier-bank.local",
+        "phone": "+7-495-117-27-37"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 85,
+          "available_qty": 85,
+          "unit": "л",
+          "lead_time_days": 6,
+          "unit_price": 99.75
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 46,
+          "available_qty": 46,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 99.75
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 64,
+          "available_qty": 64,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 819.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-018",
+      "name": "ООО «ТехноТрейд-018»",
+      "tax_id": "7700000018",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 73,
+      "delivery_rating": 59,
+      "commercial_rating": 56,
+      "is_active": true,
+      "contacts": {
+        "email": "sales018@supplier-bank.local",
+        "phone": "+7-495-118-28-38"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 89,
+          "available_qty": 89,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 716.8
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 50,
+          "available_qty": 50,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 5.04
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 68,
+          "available_qty": 68,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 2.02
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-019",
+      "name": "ООО «СнабРегион-019»",
+      "tax_id": "7700000019",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 74,
+      "delivery_rating": 62,
+      "commercial_rating": 61,
+      "is_active": true,
+      "contacts": {
+        "email": "sales019@supplier-bank.local",
+        "phone": "+7-495-119-29-39"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 93,
+          "available_qty": 93,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 101.15
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 54,
+          "available_qty": 54,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 214.2
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 72,
+          "available_qty": 72,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 1.07
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-020",
+      "name": "ООО «Индустриум-020»",
+      "tax_id": "7700000020",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 75,
+      "delivery_rating": 65,
+      "commercial_rating": 66,
+      "is_active": true,
+      "contacts": {
+        "email": "sales020@supplier-bank.local",
+        "phone": "+7-495-120-30-40"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 97,
+          "available_qty": 97,
+          "unit": "м",
+          "lead_time_days": 12,
+          "unit_price": 541.8
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 58,
+          "available_qty": 58,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 176.4
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 76,
+          "available_qty": 76,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 1827.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-021",
+      "name": "ООО «МеталлСервис-021»",
+      "tax_id": "7700000021",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 76,
+      "delivery_rating": 68,
+      "commercial_rating": 71,
+      "is_active": true,
+      "contacts": {
+        "email": "sales021@supplier-bank.local",
+        "phone": "+7-495-121-31-41"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 41,
+          "available_qty": 41,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 138.0
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 62,
+          "available_qty": 62,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 691.6
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 80,
+          "available_qty": 80,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 518.7
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-022",
+      "name": "ООО «ПромСнаб-022»",
+      "tax_id": "7700000022",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 77,
+      "delivery_rating": 71,
+      "commercial_rating": 76,
+      "is_active": true,
+      "contacts": {
+        "email": "sales022@supplier-bank.local",
+        "phone": "+7-495-122-32-42"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 45,
+          "available_qty": 45,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 671.5
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 66,
+          "available_qty": 66,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 205.4
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 84,
+          "available_qty": 84,
+          "unit": "кг",
+          "lead_time_days": 9,
+          "unit_price": 165.9
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-023",
+      "name": "ООО «ТехноТрейд-023»",
+      "tax_id": "7700000023",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 78,
+      "delivery_rating": 74,
+      "commercial_rating": 81,
+      "is_active": true,
+      "contacts": {
+        "email": "sales023@supplier-bank.local",
+        "phone": "+7-495-123-33-43"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 49,
+          "available_qty": 49,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 266.6
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 70,
+          "available_qty": 70,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 670.8
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 88,
+          "available_qty": 88,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 150.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-024",
+      "name": "ООО «СнабРегион-024»",
+      "tax_id": "7700000024",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "fasteners"
+      ],
+      "quality_rating": 79,
+      "delivery_rating": 77,
+      "commercial_rating": 86,
+      "is_active": true,
+      "contacts": {
+        "email": "sales024@supplier-bank.local",
+        "phone": "+7-495-124-34-44"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 53,
+          "available_qty": 53,
+          "unit": "м",
+          "lead_time_days": 10,
+          "unit_price": 88.35
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 74,
+          "available_qty": 74,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 1.67
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 92,
+          "available_qty": 92,
+          "unit": "л",
+          "lead_time_days": 3,
+          "unit_price": 88.35
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-025",
+      "name": "ООО «Индустриум-025»",
+      "tax_id": "7700000025",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 80,
+      "delivery_rating": 80,
+      "commercial_rating": 91,
+      "is_active": true,
+      "contacts": {
+        "email": "sales025@supplier-bank.local",
+        "phone": "+7-495-125-35-45"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 57,
+          "available_qty": 57,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 4.5
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 78,
+          "available_qty": 78,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 0.9
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 96,
+          "available_qty": 96,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 640.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-026",
+      "name": "ООО «МеталлСервис-026»",
+      "tax_id": "7700000026",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "spares"
+      ],
+      "quality_rating": 81,
+      "delivery_rating": 83,
+      "commercial_rating": 53,
+      "is_active": true,
+      "contacts": {
+        "email": "sales026@supplier-bank.local",
+        "phone": "+7-495-126-36-46"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 61,
+          "available_qty": 61,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 192.6
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 82,
+          "available_qty": 82,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 1551.5
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 20,
+          "available_qty": 20,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 90.95
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-027",
+      "name": "ООО «ПромСнаб-027»",
+      "tax_id": "7700000027",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 82,
+      "delivery_rating": 86,
+      "commercial_rating": 58,
+      "is_active": true,
+      "contacts": {
+        "email": "sales027@supplier-bank.local",
+        "phone": "+7-495-127-37-47"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 65,
+          "available_qty": 65,
+          "unit": "м",
+          "lead_time_days": 6,
+          "unit_price": 159.6
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 86,
+          "available_qty": 86,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 444.6
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 24,
+          "available_qty": 24,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 490.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-028",
+      "name": "ООО «ТехноТрейд-028»",
+      "tax_id": "7700000028",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 83,
+      "delivery_rating": 89,
+      "commercial_rating": 63,
+      "is_active": true,
+      "contacts": {
+        "email": "sales028@supplier-bank.local",
+        "phone": "+7-495-128-38-48"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 69,
+          "available_qty": 69,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 629.2
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 90,
+          "available_qty": 90,
+          "unit": "кг",
+          "lead_time_days": 5,
+          "unit_price": 254.1
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 48,
+          "available_qty": 48,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 123.6
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-029",
+      "name": "ООО «СнабРегион-029»",
+      "tax_id": "7700000029",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 84,
+      "delivery_rating": 92,
+      "commercial_rating": 68,
+      "is_active": true,
+      "contacts": {
+        "email": "sales029@supplier-bank.local",
+        "phone": "+7-495-129-39-49"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 73,
+          "available_qty": 73,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 332.8
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 94,
+          "available_qty": 94,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 224.0
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 52,
+          "available_qty": 52,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 1088.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-030",
+      "name": "ООО «Индустриум-030»",
+      "tax_id": "7700000030",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 85,
+      "delivery_rating": 50,
+      "commercial_rating": 73,
+      "is_active": true,
+      "contacts": {
+        "email": "sales030@supplier-bank.local",
+        "phone": "+7-495-130-40-50"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 77,
+          "available_qty": 77,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 1053.0
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 98,
+          "available_qty": 98,
+          "unit": "л",
+          "lead_time_days": 9,
+          "unit_price": 128.25
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 56,
+          "available_qty": 56,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 418.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-031",
+      "name": "ООО «МеталлСервис-031»",
+      "tax_id": "7700000031",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 86,
+      "delivery_rating": 53,
+      "commercial_rating": 78,
+      "is_active": true,
+      "contacts": {
+        "email": "sales031@supplier-bank.local",
+        "phone": "+7-495-131-41-51"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 81,
+          "available_qty": 81,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 1.46
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 22,
+          "available_qty": 22,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 518.4
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 60,
+          "available_qty": 60,
+          "unit": "м",
+          "lead_time_days": 7,
+          "unit_price": 76.95
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-032",
+      "name": "ООО «ПромСнаб-032»",
+      "tax_id": "7700000032",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 87,
+      "delivery_rating": 56,
+      "commercial_rating": 83,
+      "is_active": true,
+      "contacts": {
+        "email": "sales032@supplier-bank.local",
+        "phone": "+7-495-132-42-52"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 85,
+          "available_qty": 85,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 0.79
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 26,
+          "available_qty": 26,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 74.8
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 64,
+          "available_qty": 64,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 3.96
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-033",
+      "name": "ООО «ТехноТрейд-033»",
+      "tax_id": "7700000033",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 88,
+      "delivery_rating": 59,
+      "commercial_rating": 88,
+      "is_active": true,
+      "contacts": {
+        "email": "sales033@supplier-bank.local",
+        "phone": "+7-495-133-43-53"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 89,
+          "available_qty": 89,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 1377.5
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 30,
+          "available_qty": 30,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 408.5
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 68,
+          "available_qty": 68,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 171.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-034",
+      "name": "ООО «СнабРегион-034»",
+      "tax_id": "7700000034",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 89,
+      "delivery_rating": 62,
+      "commercial_rating": 93,
+      "is_active": true,
+      "contacts": {
+        "email": "sales034@supplier-bank.local",
+        "phone": "+7-495-134-44-54"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 93,
+          "available_qty": 93,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 397.8
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 54,
+          "available_qty": 54,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 100.8
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 72,
+          "available_qty": 72,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 142.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-035",
+      "name": "ООО «Индустриум-035»",
+      "tax_id": "7700000035",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 90,
+      "delivery_rating": 65,
+      "commercial_rating": 55,
+      "is_active": true,
+      "contacts": {
+        "email": "sales035@supplier-bank.local",
+        "phone": "+7-495-135-45-55"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 97,
+          "available_qty": 97,
+          "unit": "кг",
+          "lead_time_days": 12,
+          "unit_price": 228.9
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 58,
+          "available_qty": 58,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 926.5
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 76,
+          "available_qty": 76,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 566.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-036",
+      "name": "ООО «МеталлСервис-036»",
+      "tax_id": "7700000036",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "pipes"
+      ],
+      "quality_rating": 91,
+      "delivery_rating": 68,
+      "commercial_rating": 60,
+      "is_active": true,
+      "contacts": {
+        "email": "sales036@supplier-bank.local",
+        "phone": "+7-495-136-46-56"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 21,
+          "available_qty": 21,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 203.0
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 62,
+          "available_qty": 62,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 359.6
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 80,
+          "available_qty": 80,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 301.6
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-037",
+      "name": "ООО «ПромСнаб-037»",
+      "tax_id": "7700000037",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "drive"
+      ],
+      "quality_rating": 92,
+      "delivery_rating": 71,
+      "commercial_rating": 65,
+      "is_active": true,
+      "contacts": {
+        "email": "sales037@supplier-bank.local",
+        "phone": "+7-495-137-47-57"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 25,
+          "available_qty": 25,
+          "unit": "л",
+          "lead_time_days": 6,
+          "unit_price": 116.85
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 66,
+          "available_qty": 66,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 116.85
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 84,
+          "available_qty": 84,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 959.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-038",
+      "name": "ООО «ТехноТрейд-038»",
+      "tax_id": "7700000038",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 93,
+      "delivery_rating": 74,
+      "commercial_rating": 70,
+      "is_active": true,
+      "contacts": {
+        "email": "sales038@supplier-bank.local",
+        "phone": "+7-495-138-48-58"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 29,
+          "available_qty": 29,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 832.0
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 70,
+          "available_qty": 70,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 5.85
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 88,
+          "available_qty": 88,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 2.34
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-039",
+      "name": "ООО «СнабРегион-039»",
+      "tax_id": "7700000039",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 94,
+      "delivery_rating": 77,
+      "commercial_rating": 75,
+      "is_active": true,
+      "contacts": {
+        "email": "sales039@supplier-bank.local",
+        "phone": "+7-495-139-49-59"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 33,
+          "available_qty": 33,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 64.6
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 74,
+          "available_qty": 74,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 136.8
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 92,
+          "available_qty": 92,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 0.68
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-040",
+      "name": "ООО «Индустриум-040»",
+      "tax_id": "7700000040",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 55,
+      "delivery_rating": 80,
+      "commercial_rating": 80,
+      "is_active": true,
+      "contacts": {
+        "email": "sales040@supplier-bank.local",
+        "phone": "+7-495-140-50-60"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 37,
+          "available_qty": 37,
+          "unit": "м",
+          "lead_time_days": 12,
+          "unit_price": 356.9
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 78,
+          "available_qty": 78,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 116.2
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 96,
+          "available_qty": 96,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 1203.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-041",
+      "name": "ООО «МеталлСервис-041»",
+      "tax_id": "7700000041",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 56,
+      "delivery_rating": 83,
+      "commercial_rating": 85,
+      "is_active": true,
+      "contacts": {
+        "email": "sales041@supplier-bank.local",
+        "phone": "+7-495-141-51-61"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 61,
+          "available_qty": 61,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 159.6
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 82,
+          "available_qty": 82,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 468.0
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 20,
+          "available_qty": 20,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 351.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-042",
+      "name": "ООО «ПромСнаб-042»",
+      "tax_id": "7700000042",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 57,
+      "delivery_rating": 86,
+      "commercial_rating": 90,
+      "is_active": true,
+      "contacts": {
+        "email": "sales042@supplier-bank.local",
+        "phone": "+7-495-142-52-62"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 65,
+          "available_qty": 65,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 824.5
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 86,
+          "available_qty": 86,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 252.2
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 24,
+          "available_qty": 24,
+          "unit": "кг",
+          "lead_time_days": 9,
+          "unit_price": 203.7
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-043",
+      "name": "ООО «ТехноТрейд-043»",
+      "tax_id": "7700000043",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 58,
+      "delivery_rating": 89,
+      "commercial_rating": 52,
+      "is_active": true,
+      "contacts": {
+        "email": "sales043@supplier-bank.local",
+        "phone": "+7-495-143-53-63"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 69,
+          "available_qty": 69,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 322.4
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 90,
+          "available_qty": 90,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 811.2
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 28,
+          "available_qty": 28,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 182.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-044",
+      "name": "ООО «СнабРегион-044»",
+      "tax_id": "7700000044",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "fasteners"
+      ],
+      "quality_rating": 59,
+      "delivery_rating": 92,
+      "commercial_rating": 57,
+      "is_active": true,
+      "contacts": {
+        "email": "sales044@supplier-bank.local",
+        "phone": "+7-495-144-54-64"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 73,
+          "available_qty": 73,
+          "unit": "м",
+          "lead_time_days": 10,
+          "unit_price": 105.45
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 94,
+          "available_qty": 94,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 2.0
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 32,
+          "available_qty": 32,
+          "unit": "л",
+          "lead_time_days": 3,
+          "unit_price": 105.45
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-045",
+      "name": "ООО «Индустриум-045»",
+      "tax_id": "7700000045",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 60,
+      "delivery_rating": 50,
+      "commercial_rating": 62,
+      "is_active": true,
+      "contacts": {
+        "email": "sales045@supplier-bank.local",
+        "phone": "+7-495-145-55-65"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 77,
+          "available_qty": 77,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 5.31
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 98,
+          "available_qty": 98,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 1.06
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 36,
+          "available_qty": 36,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 755.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-046",
+      "name": "ООО «МеталлСервис-046»",
+      "tax_id": "7700000046",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "spares"
+      ],
+      "quality_rating": 61,
+      "delivery_rating": 53,
+      "commercial_rating": 67,
+      "is_active": true,
+      "contacts": {
+        "email": "sales046@supplier-bank.local",
+        "phone": "+7-495-146-56-66"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 81,
+          "available_qty": 81,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 225.0
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 22,
+          "available_qty": 22,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 1812.5
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 40,
+          "available_qty": 40,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 106.25
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-047",
+      "name": "ООО «ПромСнаб-047»",
+      "tax_id": "7700000047",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 62,
+      "delivery_rating": 56,
+      "commercial_rating": 72,
+      "is_active": true,
+      "contacts": {
+        "email": "sales047@supplier-bank.local",
+        "phone": "+7-495-147-57-67"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 85,
+          "available_qty": 85,
+          "unit": "м",
+          "lead_time_days": 6,
+          "unit_price": 184.8
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 26,
+          "available_qty": 26,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 514.8
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 44,
+          "available_qty": 44,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 567.6
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-048",
+      "name": "ООО «ТехноТрейд-048»",
+      "tax_id": "7700000048",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 63,
+      "delivery_rating": 59,
+      "commercial_rating": 77,
+      "is_active": true,
+      "contacts": {
+        "email": "sales048@supplier-bank.local",
+        "phone": "+7-495-148-58-68"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 89,
+          "available_qty": 89,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 405.6
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 30,
+          "available_qty": 30,
+          "unit": "кг",
+          "lead_time_days": 5,
+          "unit_price": 163.8
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 68,
+          "available_qty": 68,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 145.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-049",
+      "name": "ООО «СнабРегион-049»",
+      "tax_id": "7700000049",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 64,
+      "delivery_rating": 62,
+      "commercial_rating": 82,
+      "is_active": true,
+      "contacts": {
+        "email": "sales049@supplier-bank.local",
+        "phone": "+7-495-149-59-69"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 93,
+          "available_qty": 93,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 221.0
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 34,
+          "available_qty": 34,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 148.75
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 72,
+          "available_qty": 72,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 722.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-050",
+      "name": "ООО «Индустриум-050»",
+      "tax_id": "7700000050",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 65,
+      "delivery_rating": 65,
+      "commercial_rating": 87,
+      "is_active": true,
+      "contacts": {
+        "email": "sales050@supplier-bank.local",
+        "phone": "+7-495-150-60-70"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 97,
+          "available_qty": 97,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 717.6
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 38,
+          "available_qty": 38,
+          "unit": "л",
+          "lead_time_days": 9,
+          "unit_price": 87.4
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 76,
+          "available_qty": 76,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 285.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-051",
+      "name": "ООО «МеталлСервис-051»",
+      "tax_id": "7700000051",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 66,
+      "delivery_rating": 68,
+      "commercial_rating": 92,
+      "is_active": true,
+      "contacts": {
+        "email": "sales051@supplier-bank.local",
+        "phone": "+7-495-151-61-71"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 21,
+          "available_qty": 21,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 1.78
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 42,
+          "available_qty": 42,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 633.6
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 80,
+          "available_qty": 80,
+          "unit": "м",
+          "lead_time_days": 7,
+          "unit_price": 94.05
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-052",
+      "name": "ООО «ПромСнаб-052»",
+      "tax_id": "7700000052",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 67,
+      "delivery_rating": 71,
+      "commercial_rating": 54,
+      "is_active": true,
+      "contacts": {
+        "email": "sales052@supplier-bank.local",
+        "phone": "+7-495-152-62-72"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 25,
+          "available_qty": 25,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 0.95
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 46,
+          "available_qty": 46,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 90.1
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 84,
+          "available_qty": 84,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 4.77
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-053",
+      "name": "ООО «ТехноТрейд-053»",
+      "tax_id": "7700000053",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 68,
+      "delivery_rating": 74,
+      "commercial_rating": 59,
+      "is_active": true,
+      "contacts": {
+        "email": "sales053@supplier-bank.local",
+        "phone": "+7-495-153-63-73"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 29,
+          "available_qty": 29,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 1638.5
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 50,
+          "available_qty": 50,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 485.9
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 88,
+          "available_qty": 88,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 203.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-054",
+      "name": "ООО «СнабРегион-054»",
+      "tax_id": "7700000054",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 69,
+      "delivery_rating": 77,
+      "commercial_rating": 64,
+      "is_active": true,
+      "contacts": {
+        "email": "sales054@supplier-bank.local",
+        "phone": "+7-495-154-64-74"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 33,
+          "available_qty": 33,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 468.0
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 74,
+          "available_qty": 74,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 122.4
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 92,
+          "available_qty": 92,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 168.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-055",
+      "name": "ООО «Индустриум-055»",
+      "tax_id": "7700000055",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 70,
+      "delivery_rating": 80,
+      "commercial_rating": 69,
+      "is_active": true,
+      "contacts": {
+        "email": "sales055@supplier-bank.local",
+        "phone": "+7-495-155-65-75"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 37,
+          "available_qty": 37,
+          "unit": "кг",
+          "lead_time_days": 12,
+          "unit_price": 266.7
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 78,
+          "available_qty": 78,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 1079.5
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 96,
+          "available_qty": 96,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 660.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-056",
+      "name": "ООО «МеталлСервис-056»",
+      "tax_id": "7700000056",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "pipes"
+      ],
+      "quality_rating": 71,
+      "delivery_rating": 83,
+      "commercial_rating": 74,
+      "is_active": true,
+      "contacts": {
+        "email": "sales056@supplier-bank.local",
+        "phone": "+7-495-156-66-76"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 41,
+          "available_qty": 41,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 234.5
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 82,
+          "available_qty": 82,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 415.4
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 20,
+          "available_qty": 20,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 348.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-057",
+      "name": "ООО «ПромСнаб-057»",
+      "tax_id": "7700000057",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "drive"
+      ],
+      "quality_rating": 72,
+      "delivery_rating": 86,
+      "commercial_rating": 79,
+      "is_active": true,
+      "contacts": {
+        "email": "sales057@supplier-bank.local",
+        "phone": "+7-495-157-67-77"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 45,
+          "available_qty": 45,
+          "unit": "л",
+          "lead_time_days": 6,
+          "unit_price": 76.0
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 86,
+          "available_qty": 86,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 76.0
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 24,
+          "available_qty": 24,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 624.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-058",
+      "name": "ООО «ТехноТрейд-058»",
+      "tax_id": "7700000058",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 73,
+      "delivery_rating": 89,
+      "commercial_rating": 84,
+      "is_active": true,
+      "contacts": {
+        "email": "sales058@supplier-bank.local",
+        "phone": "+7-495-158-68-78"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 49,
+          "available_qty": 49,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 556.8
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 90,
+          "available_qty": 90,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 3.92
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 28,
+          "available_qty": 28,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 1.57
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-059",
+      "name": "ООО «СнабРегион-059»",
+      "tax_id": "7700000059",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 74,
+      "delivery_rating": 92,
+      "commercial_rating": 89,
+      "is_active": true,
+      "contacts": {
+        "email": "sales059@supplier-bank.local",
+        "phone": "+7-495-159-69-79"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 53,
+          "available_qty": 53,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 79.9
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 94,
+          "available_qty": 94,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 169.2
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 32,
+          "available_qty": 32,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 0.85
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-060",
+      "name": "ООО «Индустриум-060»",
+      "tax_id": "7700000060",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 75,
+      "delivery_rating": 50,
+      "commercial_rating": 94,
+      "is_active": true,
+      "contacts": {
+        "email": "sales060@supplier-bank.local",
+        "phone": "+7-495-160-70-80"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 57,
+          "available_qty": 57,
+          "unit": "м",
+          "lead_time_days": 12,
+          "unit_price": 434.3
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 98,
+          "available_qty": 98,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 141.4
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 36,
+          "available_qty": 36,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 1464.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-061",
+      "name": "ООО «МеталлСервис-061»",
+      "tax_id": "7700000061",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 76,
+      "delivery_rating": 53,
+      "commercial_rating": 56,
+      "is_active": true,
+      "contacts": {
+        "email": "sales061@supplier-bank.local",
+        "phone": "+7-495-161-71-81"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 81,
+          "available_qty": 81,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 108.0
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 22,
+          "available_qty": 22,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 561.6
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 40,
+          "available_qty": 40,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 421.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-062",
+      "name": "ООО «ПромСнаб-062»",
+      "tax_id": "7700000062",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 77,
+      "delivery_rating": 56,
+      "commercial_rating": 61,
+      "is_active": true,
+      "contacts": {
+        "email": "sales062@supplier-bank.local",
+        "phone": "+7-495-162-72-82"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 85,
+          "available_qty": 85,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 977.5
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 26,
+          "available_qty": 26,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 299.0
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 44,
+          "available_qty": 44,
+          "unit": "кг",
+          "lead_time_days": 9,
+          "unit_price": 241.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-063",
+      "name": "ООО «ТехноТрейд-063»",
+      "tax_id": "7700000063",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 78,
+      "delivery_rating": 59,
+      "commercial_rating": 66,
+      "is_active": true,
+      "contacts": {
+        "email": "sales063@supplier-bank.local",
+        "phone": "+7-495-163-73-83"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 89,
+          "available_qty": 89,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 378.2
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 30,
+          "available_qty": 30,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 951.6
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 48,
+          "available_qty": 48,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 213.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-064",
+      "name": "ООО «СнабРегион-064»",
+      "tax_id": "7700000064",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "fasteners"
+      ],
+      "quality_rating": 79,
+      "delivery_rating": 62,
+      "commercial_rating": 71,
+      "is_active": true,
+      "contacts": {
+        "email": "sales064@supplier-bank.local",
+        "phone": "+7-495-164-74-84"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 93,
+          "available_qty": 93,
+          "unit": "м",
+          "lead_time_days": 10,
+          "unit_price": 122.55
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 34,
+          "available_qty": 34,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 2.32
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 52,
+          "available_qty": 52,
+          "unit": "л",
+          "lead_time_days": 3,
+          "unit_price": 122.55
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-065",
+      "name": "ООО «Индустриум-065»",
+      "tax_id": "7700000065",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 80,
+      "delivery_rating": 65,
+      "commercial_rating": 76,
+      "is_active": true,
+      "contacts": {
+        "email": "sales065@supplier-bank.local",
+        "phone": "+7-495-165-75-85"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 97,
+          "available_qty": 97,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 3.38
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 38,
+          "available_qty": 38,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 0.68
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 56,
+          "available_qty": 56,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 480.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-066",
+      "name": "ООО «МеталлСервис-066»",
+      "tax_id": "7700000066",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "spares"
+      ],
+      "quality_rating": 81,
+      "delivery_rating": 68,
+      "commercial_rating": 81,
+      "is_active": true,
+      "contacts": {
+        "email": "sales066@supplier-bank.local",
+        "phone": "+7-495-166-76-86"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 21,
+          "available_qty": 21,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 147.6
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 42,
+          "available_qty": 42,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 1189.0
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 60,
+          "available_qty": 60,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 69.7
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-067",
+      "name": "ООО «ПромСнаб-067»",
+      "tax_id": "7700000067",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 82,
+      "delivery_rating": 71,
+      "commercial_rating": 86,
+      "is_active": true,
+      "contacts": {
+        "email": "sales067@supplier-bank.local",
+        "phone": "+7-495-167-77-87"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 25,
+          "available_qty": 25,
+          "unit": "м",
+          "lead_time_days": 6,
+          "unit_price": 124.6
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 46,
+          "available_qty": 46,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 347.1
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 64,
+          "available_qty": 64,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 382.7
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-068",
+      "name": "ООО «ТехноТрейд-068»",
+      "tax_id": "7700000068",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 83,
+      "delivery_rating": 74,
+      "commercial_rating": 91,
+      "is_active": true,
+      "contacts": {
+        "email": "sales068@supplier-bank.local",
+        "phone": "+7-495-168-78-88"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 29,
+          "available_qty": 29,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 499.2
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 50,
+          "available_qty": 50,
+          "unit": "кг",
+          "lead_time_days": 5,
+          "unit_price": 201.6
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 88,
+          "available_qty": 88,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 93.6
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-069",
+      "name": "ООО «СнабРегион-069»",
+      "tax_id": "7700000069",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 84,
+      "delivery_rating": 77,
+      "commercial_rating": 53,
+      "is_active": true,
+      "contacts": {
+        "email": "sales069@supplier-bank.local",
+        "phone": "+7-495-169-79-89"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 33,
+          "available_qty": 33,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 267.8
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 54,
+          "available_qty": 54,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 180.25
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 92,
+          "available_qty": 92,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 875.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-070",
+      "name": "ООО «Индустриум-070»",
+      "tax_id": "7700000070",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 85,
+      "delivery_rating": 80,
+      "commercial_rating": 58,
+      "is_active": true,
+      "contacts": {
+        "email": "sales070@supplier-bank.local",
+        "phone": "+7-495-170-80-20"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 37,
+          "available_qty": 37,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 858.0
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 58,
+          "available_qty": 58,
+          "unit": "л",
+          "lead_time_days": 9,
+          "unit_price": 104.5
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 96,
+          "available_qty": 96,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 341.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-071",
+      "name": "ООО «МеталлСервис-071»",
+      "tax_id": "7700000071",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 86,
+      "delivery_rating": 83,
+      "commercial_rating": 63,
+      "is_active": true,
+      "contacts": {
+        "email": "sales071@supplier-bank.local",
+        "phone": "+7-495-171-81-21"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 41,
+          "available_qty": 41,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 2.11
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 62,
+          "available_qty": 62,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 748.8
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 20,
+          "available_qty": 20,
+          "unit": "м",
+          "lead_time_days": 7,
+          "unit_price": 111.15
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-072",
+      "name": "ООО «ПромСнаб-072»",
+      "tax_id": "7700000072",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 87,
+      "delivery_rating": 86,
+      "commercial_rating": 68,
+      "is_active": true,
+      "contacts": {
+        "email": "sales072@supplier-bank.local",
+        "phone": "+7-495-172-82-22"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 45,
+          "available_qty": 45,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 1.12
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 66,
+          "available_qty": 66,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 105.4
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 24,
+          "available_qty": 24,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 5.58
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-073",
+      "name": "ООО «ТехноТрейд-073»",
+      "tax_id": "7700000073",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 88,
+      "delivery_rating": 89,
+      "commercial_rating": 73,
+      "is_active": true,
+      "contacts": {
+        "email": "sales073@supplier-bank.local",
+        "phone": "+7-495-173-83-23"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 49,
+          "available_qty": 49,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 1899.5
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 70,
+          "available_qty": 70,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 563.3
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 28,
+          "available_qty": 28,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 235.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-074",
+      "name": "ООО «СнабРегион-074»",
+      "tax_id": "7700000074",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 89,
+      "delivery_rating": 92,
+      "commercial_rating": 78,
+      "is_active": true,
+      "contacts": {
+        "email": "sales074@supplier-bank.local",
+        "phone": "+7-495-174-84-24"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 53,
+          "available_qty": 53,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 300.3
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 94,
+          "available_qty": 94,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 144.0
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 32,
+          "available_qty": 32,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 107.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-075",
+      "name": "ООО «Индустриум-075»",
+      "tax_id": "7700000075",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 90,
+      "delivery_rating": 50,
+      "commercial_rating": 83,
+      "is_active": true,
+      "contacts": {
+        "email": "sales075@supplier-bank.local",
+        "phone": "+7-495-175-85-25"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 57,
+          "available_qty": 57,
+          "unit": "кг",
+          "lead_time_days": 12,
+          "unit_price": 176.4
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 98,
+          "available_qty": 98,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 714.0
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 36,
+          "available_qty": 36,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 436.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-076",
+      "name": "ООО «МеталлСервис-076»",
+      "tax_id": "7700000076",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "pipes"
+      ],
+      "quality_rating": 91,
+      "delivery_rating": 53,
+      "commercial_rating": 88,
+      "is_active": true,
+      "contacts": {
+        "email": "sales076@supplier-bank.local",
+        "phone": "+7-495-176-86-26"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 61,
+          "available_qty": 61,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 159.25
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 22,
+          "available_qty": 22,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 282.1
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 40,
+          "available_qty": 40,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 236.6
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-077",
+      "name": "ООО «ПромСнаб-077»",
+      "tax_id": "7700000077",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "drive"
+      ],
+      "quality_rating": 92,
+      "delivery_rating": 56,
+      "commercial_rating": 93,
+      "is_active": true,
+      "contacts": {
+        "email": "sales077@supplier-bank.local",
+        "phone": "+7-495-177-87-27"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 65,
+          "available_qty": 65,
+          "unit": "л",
+          "lead_time_days": 6,
+          "unit_price": 93.1
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 26,
+          "available_qty": 26,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 93.1
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 44,
+          "available_qty": 44,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 764.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-078",
+      "name": "ООО «ТехноТрейд-078»",
+      "tax_id": "7700000078",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 93,
+      "delivery_rating": 59,
+      "commercial_rating": 55,
+      "is_active": true,
+      "contacts": {
+        "email": "sales078@supplier-bank.local",
+        "phone": "+7-495-178-88-28"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 69,
+          "available_qty": 69,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 672.0
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 30,
+          "available_qty": 30,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 4.73
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 48,
+          "available_qty": 48,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 1.89
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-079",
+      "name": "ООО «СнабРегион-079»",
+      "tax_id": "7700000079",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 94,
+      "delivery_rating": 62,
+      "commercial_rating": 60,
+      "is_active": true,
+      "contacts": {
+        "email": "sales079@supplier-bank.local",
+        "phone": "+7-495-179-89-29"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 73,
+          "available_qty": 73,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 95.2
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 34,
+          "available_qty": 34,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 201.6
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 52,
+          "available_qty": 52,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 1.01
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-080",
+      "name": "ООО «Индустриум-080»",
+      "tax_id": "7700000080",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 55,
+      "delivery_rating": 65,
+      "commercial_rating": 65,
+      "is_active": true,
+      "contacts": {
+        "email": "sales080@supplier-bank.local",
+        "phone": "+7-495-180-10-30"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 77,
+          "available_qty": 77,
+          "unit": "м",
+          "lead_time_days": 12,
+          "unit_price": 511.7
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 38,
+          "available_qty": 38,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 166.6
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 56,
+          "available_qty": 56,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 1725.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-081",
+      "name": "ООО «МеталлСервис-081»",
+      "tax_id": "7700000081",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 56,
+      "delivery_rating": 68,
+      "commercial_rating": 70,
+      "is_active": true,
+      "contacts": {
+        "email": "sales081@supplier-bank.local",
+        "phone": "+7-495-181-11-31"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 21,
+          "available_qty": 21,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 129.6
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 42,
+          "available_qty": 42,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 655.2
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 60,
+          "available_qty": 60,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 491.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-082",
+      "name": "ООО «ПромСнаб-082»",
+      "tax_id": "7700000082",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 57,
+      "delivery_rating": 71,
+      "commercial_rating": 75,
+      "is_active": true,
+      "contacts": {
+        "email": "sales082@supplier-bank.local",
+        "phone": "+7-495-182-12-32"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 25,
+          "available_qty": 25,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 1130.5
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 46,
+          "available_qty": 46,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 345.8
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 64,
+          "available_qty": 64,
+          "unit": "кг",
+          "lead_time_days": 9,
+          "unit_price": 279.3
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-083",
+      "name": "ООО «ТехноТрейд-083»",
+      "tax_id": "7700000083",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 58,
+      "delivery_rating": 74,
+      "commercial_rating": 80,
+      "is_active": true,
+      "contacts": {
+        "email": "sales083@supplier-bank.local",
+        "phone": "+7-495-183-13-33"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 29,
+          "available_qty": 29,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 244.9
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 50,
+          "available_qty": 50,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 616.2
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 68,
+          "available_qty": 68,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 138.25
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-084",
+      "name": "ООО «СнабРегион-084»",
+      "tax_id": "7700000084",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "fasteners"
+      ],
+      "quality_rating": 59,
+      "delivery_rating": 77,
+      "commercial_rating": 85,
+      "is_active": true,
+      "contacts": {
+        "email": "sales084@supplier-bank.local",
+        "phone": "+7-495-184-14-34"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 33,
+          "available_qty": 33,
+          "unit": "м",
+          "lead_time_days": 10,
+          "unit_price": 81.7
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 54,
+          "available_qty": 54,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 1.55
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 72,
+          "available_qty": 72,
+          "unit": "л",
+          "lead_time_days": 3,
+          "unit_price": 81.7
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-085",
+      "name": "ООО «Индустриум-085»",
+      "tax_id": "7700000085",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 60,
+      "delivery_rating": 80,
+      "commercial_rating": 90,
+      "is_active": true,
+      "contacts": {
+        "email": "sales085@supplier-bank.local",
+        "phone": "+7-495-185-15-35"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 37,
+          "available_qty": 37,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 4.18
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 58,
+          "available_qty": 58,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 0.84
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 76,
+          "available_qty": 76,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 595.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-086",
+      "name": "ООО «МеталлСервис-086»",
+      "tax_id": "7700000086",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "spares"
+      ],
+      "quality_rating": 61,
+      "delivery_rating": 83,
+      "commercial_rating": 52,
+      "is_active": true,
+      "contacts": {
+        "email": "sales086@supplier-bank.local",
+        "phone": "+7-495-186-16-36"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 41,
+          "available_qty": 41,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 180.0
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 62,
+          "available_qty": 62,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 1450.0
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 80,
+          "available_qty": 80,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 85.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-087",
+      "name": "ООО «ПромСнаб-087»",
+      "tax_id": "7700000087",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 62,
+      "delivery_rating": 86,
+      "commercial_rating": 57,
+      "is_active": true,
+      "contacts": {
+        "email": "sales087@supplier-bank.local",
+        "phone": "+7-495-187-17-37"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 45,
+          "available_qty": 45,
+          "unit": "м",
+          "lead_time_days": 6,
+          "unit_price": 149.8
+        },
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 66,
+          "available_qty": 66,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 417.3
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 84,
+          "available_qty": 84,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 460.1
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-088",
+      "name": "ООО «ТехноТрейд-088»",
+      "tax_id": "7700000088",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 63,
+      "delivery_rating": 89,
+      "commercial_rating": 62,
+      "is_active": true,
+      "contacts": {
+        "email": "sales088@supplier-bank.local",
+        "phone": "+7-495-188-18-38"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 49,
+          "available_qty": 49,
+          "unit": "м",
+          "lead_time_days": 8,
+          "unit_price": 592.8
+        },
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 70,
+          "available_qty": 70,
+          "unit": "кг",
+          "lead_time_days": 5,
+          "unit_price": 239.4
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 28,
+          "available_qty": 28,
+          "unit": "кг",
+          "lead_time_days": 11,
+          "unit_price": 115.2
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-089",
+      "name": "ООО «СнабРегион-089»",
+      "tax_id": "7700000089",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 64,
+      "delivery_rating": 92,
+      "commercial_rating": 67,
+      "is_active": true,
+      "contacts": {
+        "email": "sales089@supplier-bank.local",
+        "phone": "+7-495-189-19-39"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 53,
+          "available_qty": 53,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 314.6
+        },
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 74,
+          "available_qty": 74,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 211.75
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 32,
+          "available_qty": 32,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 1028.5
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-090",
+      "name": "ООО «Индустриум-090»",
+      "tax_id": "7700000090",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "drive",
+        "pipes"
+      ],
+      "quality_rating": 65,
+      "delivery_rating": 50,
+      "commercial_rating": 72,
+      "is_active": true,
+      "contacts": {
+        "email": "sales090@supplier-bank.local",
+        "phone": "+7-495-190-20-40"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 57,
+          "available_qty": 57,
+          "unit": "шт",
+          "lead_time_days": 12,
+          "unit_price": 998.4
+        },
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 78,
+          "available_qty": 78,
+          "unit": "л",
+          "lead_time_days": 9,
+          "unit_price": 121.6
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 36,
+          "available_qty": 36,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 396.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-091",
+      "name": "ООО «МеталлСервис-091»",
+      "tax_id": "7700000091",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 66,
+      "delivery_rating": 53,
+      "commercial_rating": 77,
+      "is_active": true,
+      "contacts": {
+        "email": "sales091@supplier-bank.local",
+        "phone": "+7-495-191-21-41"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 61,
+          "available_qty": 61,
+          "unit": "шт",
+          "lead_time_days": 4,
+          "unit_price": 2.43
+        },
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 82,
+          "available_qty": 82,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 864.0
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 40,
+          "available_qty": 40,
+          "unit": "м",
+          "lead_time_days": 7,
+          "unit_price": 128.25
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-092",
+      "name": "ООО «ПромСнаб-092»",
+      "tax_id": "7700000092",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 67,
+      "delivery_rating": 56,
+      "commercial_rating": 82,
+      "is_active": true,
+      "contacts": {
+        "email": "sales092@supplier-bank.local",
+        "phone": "+7-495-192-22-42"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 65,
+          "available_qty": 65,
+          "unit": "шт",
+          "lead_time_days": 6,
+          "unit_price": 0.73
+        },
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 86,
+          "available_qty": 86,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 68.85
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 44,
+          "available_qty": 44,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 3.65
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-093",
+      "name": "ООО «ТехноТрейд-093»",
+      "tax_id": "7700000093",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 68,
+      "delivery_rating": 59,
+      "commercial_rating": 87,
+      "is_active": true,
+      "contacts": {
+        "email": "sales093@supplier-bank.local",
+        "phone": "+7-495-193-23-43"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 69,
+          "available_qty": 69,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 1276.0
+        },
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 90,
+          "available_qty": 90,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 378.4
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 48,
+          "available_qty": 48,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 158.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-094",
+      "name": "ООО «СнабРегион-094»",
+      "tax_id": "7700000094",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 69,
+      "delivery_rating": 62,
+      "commercial_rating": 92,
+      "is_active": true,
+      "contacts": {
+        "email": "sales094@supplier-bank.local",
+        "phone": "+7-495-194-24-44"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "40.02.00018",
+          "nomenclature_name": "Автомат ВА47-29 16А",
+          "available_quantity": 73,
+          "available_qty": 73,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 370.5
+        },
+        {
+          "nomenclature_id": "steel",
+          "nomenclature_name": "Сталь 20 лист 5 мм",
+          "available_quantity": 34,
+          "available_qty": 34,
+          "unit": "кг",
+          "lead_time_days": 7,
+          "unit_price": 92.4
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 52,
+          "available_qty": 52,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 133.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-095",
+      "name": "ООО «Индустриум-095»",
+      "tax_id": "7700000095",
+      "source": "internal",
+      "categories": [
+        "consumables",
+        "metal"
+      ],
+      "quality_rating": 70,
+      "delivery_rating": 65,
+      "commercial_rating": 54,
+      "is_active": true,
+      "contacts": {
+        "email": "sales095@supplier-bank.local",
+        "phone": "+7-495-195-25-45"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.01.00001",
+          "nomenclature_name": "Краска ГФ-021 серая",
+          "available_quantity": 77,
+          "available_qty": 77,
+          "unit": "кг",
+          "lead_time_days": 12,
+          "unit_price": 214.2
+        },
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "available_quantity": 38,
+          "available_qty": 38,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 867.0
+        },
+        {
+          "nomenclature_id": "10.03.00044",
+          "nomenclature_name": "Швеллер 12П",
+          "available_quantity": 56,
+          "available_qty": 56,
+          "unit": "м",
+          "lead_time_days": 5,
+          "unit_price": 530.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-096",
+      "name": "ООО «МеталлСервис-096»",
+      "tax_id": "7700000096",
+      "source": "internal",
+      "categories": [
+        "bearings",
+        "consumables",
+        "pipes"
+      ],
+      "quality_rating": 71,
+      "delivery_rating": 68,
+      "commercial_rating": 59,
+      "is_active": true,
+      "contacts": {
+        "email": "sales096@supplier-bank.local",
+        "phone": "+7-495-196-26-46"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "50.02.00009",
+          "nomenclature_name": "Электрод МР-3 Ø3",
+          "available_quantity": 81,
+          "available_qty": 81,
+          "unit": "кг",
+          "lead_time_days": 4,
+          "unit_price": 190.75
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "available_quantity": 42,
+          "available_qty": 42,
+          "unit": "м",
+          "lead_time_days": 11,
+          "unit_price": 337.9
+        },
+        {
+          "nomenclature_id": "20.01.00012",
+          "nomenclature_name": "Подшипник 6205-2RS",
+          "available_quantity": 60,
+          "available_qty": 60,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 283.4
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-097",
+      "name": "ООО «ПромСнаб-097»",
+      "tax_id": "7700000097",
+      "source": "internal",
+      "categories": [
+        "cable",
+        "consumables",
+        "drive"
+      ],
+      "quality_rating": 72,
+      "delivery_rating": 71,
+      "commercial_rating": 64,
+      "is_active": true,
+      "contacts": {
+        "email": "sales097@supplier-bank.local",
+        "phone": "+7-495-197-27-47"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "60.01.00014",
+          "nomenclature_name": "Масло индустриальное И-40А",
+          "available_quantity": 85,
+          "available_qty": 85,
+          "unit": "л",
+          "lead_time_days": 6,
+          "unit_price": 110.2
+        },
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "available_quantity": 46,
+          "available_qty": 46,
+          "unit": "м",
+          "lead_time_days": 3,
+          "unit_price": 110.2
+        },
+        {
+          "nomenclature_id": "20.02.00033",
+          "nomenclature_name": "Ремень клиновой A-1250",
+          "available_quantity": 64,
+          "available_qty": 64,
+          "unit": "шт",
+          "lead_time_days": 9,
+          "unit_price": 904.8
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-098",
+      "name": "ООО «ТехноТрейд-098»",
+      "tax_id": "7700000098",
+      "source": "internal",
+      "categories": [
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 73,
+      "delivery_rating": 74,
+      "commercial_rating": 69,
+      "is_active": true,
+      "contacts": {
+        "email": "sales098@supplier-bank.local",
+        "phone": "+7-495-198-28-48"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.01.00002",
+          "nomenclature_name": "Фильтр воздушный",
+          "available_quantity": 89,
+          "available_qty": 89,
+          "unit": "шт",
+          "lead_time_days": 8,
+          "unit_price": 787.2
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "available_quantity": 50,
+          "available_qty": 50,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 5.54
+        },
+        {
+          "nomenclature_id": "30.01.00007",
+          "nomenclature_name": "Гайка М8 DIN 934",
+          "available_quantity": 68,
+          "available_qty": 68,
+          "unit": "шт",
+          "lead_time_days": 11,
+          "unit_price": 2.21
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-099",
+      "name": "ООО «СнабРегион-099»",
+      "tax_id": "7700000099",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "fasteners",
+        "spares"
+      ],
+      "quality_rating": 74,
+      "delivery_rating": 77,
+      "commercial_rating": 74,
+      "is_active": true,
+      "contacts": {
+        "email": "sales099@supplier-bank.local",
+        "phone": "+7-495-199-29-49"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "70.02.00011",
+          "nomenclature_name": "Манжета 40×60×10",
+          "available_quantity": 93,
+          "available_qty": 93,
+          "unit": "шт",
+          "lead_time_days": 10,
+          "unit_price": 110.5
+        },
+        {
+          "nomenclature_id": "40.11.00003",
+          "nomenclature_name": "Микросхема STM32F103",
+          "available_quantity": 54,
+          "available_qty": 54,
+          "unit": "шт",
+          "lead_time_days": 7,
+          "unit_price": 234.0
+        },
+        {
+          "nomenclature_id": "30.03.00021",
+          "nomenclature_name": "Шайба 8 DIN 125",
+          "available_quantity": 72,
+          "available_qty": 72,
+          "unit": "шт",
+          "lead_time_days": 3,
+          "unit_price": 1.17
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    },
+    {
+      "supplier_id": "bank-sup-100",
+      "name": "ООО «Индустриум-100»",
+      "tax_id": "7700000100",
+      "source": "internal",
+      "categories": [
+        "electronics",
+        "metal"
+      ],
+      "quality_rating": 75,
+      "delivery_rating": 80,
+      "commercial_rating": 79,
+      "is_active": true,
+      "contacts": {
+        "email": "sales100@supplier-bank.local",
+        "phone": "+7-495-200-30-50"
+      },
+      "offerings": [
+        {
+          "nomenclature_id": "80.01.00005",
+          "nomenclature_name": "Профиль алюминиевый 40×40",
+          "available_quantity": 97,
+          "available_qty": 97,
+          "unit": "м",
+          "lead_time_days": 12,
+          "unit_price": 326.8
+        },
+        {
+          "nomenclature_id": "10.02.00010",
+          "nomenclature_name": "Уголок 50×50×5",
+          "available_quantity": 58,
+          "available_qty": 58,
+          "unit": "м",
+          "lead_time_days": 9,
+          "unit_price": 106.4
+        },
+        {
+          "nomenclature_id": "40.01.00055",
+          "nomenclature_name": "Контактор КМИ-22510",
+          "available_quantity": 76,
+          "available_qty": 76,
+          "unit": "шт",
+          "lead_time_days": 5,
+          "unit_price": 1102.0
+        }
+      ],
+      "evidence": [
+        "coverage_seed"
+      ]
+    }
+  ],
+  "meta": {
+    "description": "Partial coverage of typical manager-case nomenclature; same items offered by multiple suppliers with unit_price + available_qty (capacity) for top-3 price/coverage ranking.",
+    "materials_catalog": [
+      "steel",
+      "10.01.00125",
+      "10.01.00402",
+      "20.05.00088",
+      "30.02.00015",
+      "40.11.00003",
+      "10.02.00010",
+      "10.03.00044",
+      "20.01.00012",
+      "20.02.00033",
+      "30.01.00007",
+      "30.03.00021",
+      "40.01.00055",
+      "40.02.00018",
+      "50.01.00001",
+      "50.02.00009",
+      "60.01.00014",
+      "70.01.00002",
+      "70.02.00011",
+      "80.01.00005"
+    ],
+    "offering_fields": [
+      "unit_price",
+      "available_quantity",
+      "available_qty"
+    ]
+  }
+}

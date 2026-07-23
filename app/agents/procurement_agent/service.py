@@ -21,6 +21,8 @@ from app.agents.procurement_agent.schemas import (
     ProcurementEvidence,
     ProcurementPlan,
 )
+from app.agents.procurement_manager_agent.service import ProcurementManagerService
+from app.agents.procurement_role_agents.schemas import ProcurementRoleAgentResult
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
 from app.models.enums import ConfidenceLevel, ProcurementCaseStatus
@@ -95,7 +97,23 @@ class ProcurementAgent(BaseAgent):
     def __init__(self) -> None:
         self._graph = build_graph()
 
-    async def run(self, payload: dict) -> ProcurementAgentResult:
+    async def run(
+        self,
+        payload: dict,
+    ) -> ProcurementAgentResult | ProcurementRoleAgentResult:
+        # The KT1 functional agent and the procurement-manager role share the
+        # historical registry slug. Dispatch by the orchestrator contract instead
+        # of registering a second class and silently overwriting the KT1 agent.
+        if payload.get("caller_agent_id") == "procurement_orchestrator" and payload.get(
+            "case_id"
+        ):
+            external_db = payload.get("db")
+            if isinstance(external_db, AsyncSession):
+                return await ProcurementManagerService(external_db).run_role(payload)
+            async with AsyncSessionLocal() as db:
+                result = await ProcurementManagerService(db).run_role(payload)
+                await db.commit()
+                return result
         try:
             request = ProcurementAgentRequest(**payload)
         except ValidationError as exc:
