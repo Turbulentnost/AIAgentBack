@@ -511,6 +511,9 @@ def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
             entry.protocol_draft_created_at.isoformat() if entry.protocol_draft_created_at else None
         ),
         protocol_draft_error=entry.protocol_draft_error,
+        protocol_status=payload.get("protocol_status")
+        if isinstance(payload.get("protocol_status"), str)
+        else None,
         outlook_item_id=entry.outlook_item_id,
         outlook_changekey=entry.outlook_changekey,
         outlook_meeting_url=entry.outlook_meeting_url,

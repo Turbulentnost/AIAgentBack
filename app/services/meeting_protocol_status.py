@@ -31,6 +31,10 @@ def protocol_status_is_terminal(status: str | None) -> bool:
     return bool(normalized and normalized in TERMINAL_PROTOCOL_STATUSES)
 
 
+def should_fetch_protocol_status_from_onec(stage: MeetingRegistryStage) -> bool:
+    return stage not in PROTOCOL_SYNC_SKIP_STAGES
+
+
 def stage_for_protocol_status(status: str | None) -> MeetingRegistryStage | None:
     normalized = normalize_protocol_status(status)
     if not normalized:

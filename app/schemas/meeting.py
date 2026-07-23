@@ -653,6 +653,10 @@ class MeetingRegistryItemRead(BaseModel):
     protocol_draft_at: str | None = None
     protocol_draft_created_at: str | None = None
     protocol_draft_error: str | None = None
+    protocol_status: str | None = Field(
+        default=None,
+        description="Последний известный статус протокола в 1С",
+    )
     outlook_item_id: str | None = None
     outlook_changekey: str | None = None
     outlook_meeting_url: str | None = None

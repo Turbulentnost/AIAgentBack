@@ -955,22 +955,67 @@ class MeetingRegistryService:
         entry.payload = payload
         flag_modified(entry, "payload")
 
+    def _cached_protocol_status(self, entry: MeetingRegistryEntry) -> str | None:
+        payload = entry.payload if isinstance(entry.payload, dict) else {}
+        from app.services.meeting_protocol_status import normalize_protocol_status
+
+        return normalize_protocol_status(payload.get("protocol_status"))
+
+    async def _advance_protocol_stage_from_status(
+        self,
+        entry: MeetingRegistryEntry,
+        *,
+        status: str,
+        target_stage: MeetingRegistryStage,
+        synced_at: datetime,
+        source: str,
+    ) -> bool:
+        if stage_index(target_stage) <= stage_index(entry.stage):
+            return False
+
+        previous_stage = entry.stage
+        entry.stage = target_stage
+        if target_stage == MeetingRegistryStage.MEETING_COMPLETED:
+            message = f"Протокол закрыт (статус «{status}») — совещание завершено"
+        else:
+            message = f"Протокол на исполнении (статус «{status}») — совещание проведено"
+        await self.append_event(
+            entry,
+            event_type=MeetingRegistryEventType.STAGE_CHANGED,
+            message=message,
+            occurred_at=synced_at,
+            payload={
+                "previous_stage": previous_stage.value,
+                "new_stage": target_stage.value,
+                "protocol_status": status,
+                "protocol_ref_key": entry.protocol_ref_key,
+                "source": source,
+            },
+        )
+        logger.info(
+            "meeting_registry.protocol_stage_advanced",
+            memo_ref_key=entry.memo_ref_key,
+            protocol_ref_key=entry.protocol_ref_key,
+            previous_stage=previous_stage.value,
+            new_stage=target_stage.value,
+            protocol_status=status,
+            source=source,
+        )
+        return True
+
     async def sync_protocol_stages(self) -> int:
         """Синхронизирует этапы карточек реестра по статусам протоколов в 1С."""
         from app.services.meeting_protocol_status import (
+            PROTOCOL_SYNC_SKIP_STAGES,
             fetch_protocol_status,
+            protocol_status_is_terminal,
             stage_for_protocol_status,
         )
 
         result = await self.db.execute(
             select(MeetingRegistryEntry).where(
                 MeetingRegistryEntry.protocol_ref_key.isnot(None),
-                MeetingRegistryEntry.stage.notin_(
-                    (
-                        MeetingRegistryStage.CANCELLED,
-                        MeetingRegistryStage.MEETING_COMPLETED,
-                    )
-                ),
+                MeetingRegistryEntry.stage.notin_(tuple(PROTOCOL_SYNC_SKIP_STAGES)),
             )
         )
         entries = list(result.scalars().all())
@@ -984,6 +1029,20 @@ class MeetingRegistryService:
             ref_key = (entry.protocol_ref_key or "").strip()
             if not ref_key:
                 continue
+
+            cached_status = self._cached_protocol_status(entry)
+            if protocol_status_is_terminal(cached_status):
+                target_stage = stage_for_protocol_status(cached_status)
+                if target_stage and await self._advance_protocol_stage_from_status(
+                    entry,
+                    status=str(cached_status),
+                    target_stage=target_stage,
+                    synced_at=now,
+                    source="cached_protocol_status",
+                ):
+                    updated += 1
+                continue
+
             try:
                 status = await fetch_protocol_status(ref_key)
             except Exception as exc:
@@ -999,37 +1058,14 @@ class MeetingRegistryService:
             target_stage = stage_for_protocol_status(status)
             if target_stage is None:
                 continue
-            if stage_index(target_stage) <= stage_index(entry.stage):
-                continue
-
-            previous_stage = entry.stage
-            entry.stage = target_stage
-            if target_stage == MeetingRegistryStage.MEETING_COMPLETED:
-                message = f"Протокол закрыт (статус «{status}») — совещание завершено"
-            else:
-                message = f"Протокол на исполнении (статус «{status}») — совещание проведено"
-            await self.append_event(
+            if await self._advance_protocol_stage_from_status(
                 entry,
-                event_type=MeetingRegistryEventType.STAGE_CHANGED,
-                message=message,
-                occurred_at=now,
-                payload={
-                    "previous_stage": previous_stage.value,
-                    "new_stage": target_stage.value,
-                    "protocol_status": status,
-                    "protocol_ref_key": ref_key,
-                    "source": "onec_protocol_status_sync",
-                },
-            )
-            updated += 1
-            logger.info(
-                "meeting_registry.protocol_stage_advanced",
-                memo_ref_key=entry.memo_ref_key,
-                protocol_ref_key=ref_key,
-                previous_stage=previous_stage.value,
-                new_stage=target_stage.value,
-                protocol_status=status,
-            )
+                status=str(status),
+                target_stage=target_stage,
+                synced_at=now,
+                source="onec_protocol_status_sync",
+            ):
+                updated += 1
 
         if updated:
             await self.db.flush()
