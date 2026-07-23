@@ -210,12 +210,13 @@ class ODataIntegrationService(IntegrationService):
         processed_at = now_attached_file_processed_at()
         enriched: list[AttachedFileInput] = []
         for item in files:
+            author = item.author_key or self._file_author_key or None
             enriched.append(
                 AttachedFileInput(
                     filename=item.filename,
                     content=item.content,
-                    author_key=item.author_key or self._file_author_key or None,
-                    edited_by_key=item.edited_by_key or None,
+                    author_key=author,
+                    edited_by_key=item.edited_by_key or author,
                     comment=item.comment,
                     processed_at=item.processed_at or processed_at,
                 )
