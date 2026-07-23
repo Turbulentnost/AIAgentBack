@@ -65,7 +65,8 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
             "defaults": {
                 # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
                 "storage_binary_type": "application/octet-stream",
-                "storage_kind": "ВТомахНаДиске",
+                # PUT /ФайлХранилище работает только для хранения в ИБ (не в томе).
+                "storage_kind": "ВИнформационнойБазе",
                 "upload_binary_via_stream": True,
             },
         }
@@ -108,6 +109,22 @@ def validate_file_content(content: bytes | None) -> bytes:
     return content
 
 
+def resolve_stream_content_type(
+    filename: str,
+    *,
+    defaults: dict[str, Any] | None = None,
+) -> str:
+    """Content-Type для PUT в Edm.Stream (Outlook/1С открывают .eml как message/rfc822)."""
+    cfg_defaults = defaults or {}
+    try:
+        _, extension = split_filename(filename)
+    except AttachedFileError:
+        extension = ""
+    if extension == "eml":
+        return "message/rfc822"
+    return str(cfg_defaults.get("storage_binary_type") or "application/octet-stream")
+
+
 def build_attached_file_payload(
     *,
     document_ref_key: str,
@@ -127,6 +144,10 @@ def build_attached_file_payload(
     upload_via_stream = bool(defaults.get("upload_binary_via_stream", True))
     if include_binary is None:
         include_binary = not upload_via_stream
+    if upload_via_stream:
+        storage_kind = "ВИнформационнойБазе"
+    else:
+        storage_kind = str(defaults.get("storage_kind") or "ВТомахНаДиске")
 
     payload: dict[str, Any] = {}
 
@@ -144,7 +165,11 @@ def build_attached_file_payload(
             payload[str(owner_type_field)] = owner_type_value
     if volume_field := fields.get("volume_key"):
         volume_value = (defaults.get("volume_key") or "").strip()
-        if volume_value and volume_value != _EMPTY_GUID:
+        if (
+            volume_value
+            and volume_value != _EMPTY_GUID
+            and storage_kind == "ВТомахНаДиске"
+        ):
             payload[str(volume_field)] = volume_value
     if include_binary:
         if storage_field := fields.get("storage_binary"):
@@ -155,7 +180,7 @@ def build_attached_file_payload(
                 "application/octet-stream",
             )
     if kind_field := fields.get("storage_kind"):
-        payload[str(kind_field)] = defaults.get("storage_kind", "ВТомахНаДиске")
+        payload[str(kind_field)] = storage_kind
     if size_field := fields.get("size"):
         payload[str(size_field)] = len(content)
     if file_input.author_key and (author_field := fields.get("author_key")):
@@ -176,6 +201,7 @@ def upload_attached_file_binary(
     ref_key: str,
     content: bytes,
     field_map: dict[str, Any] | None = None,
+    filename: str | None = None,
     content_type: str | None = None,
 ) -> None:
     """PUT двоичных данных в Edm.Stream-свойство ФайлХранилище после POST метаданных."""
@@ -193,6 +219,11 @@ def upload_attached_file_binary(
         stream_property,
         binary,
         content_type=content_type
+        or (
+            resolve_stream_content_type(filename, defaults=defaults)
+            if filename
+            else None
+        )
         or defaults.get("storage_binary_type")
         or "application/octet-stream",
     )
@@ -246,6 +277,7 @@ def attach_file_to_incoming_document(
             ref_key=ref_key,
             content=file_input.content,
             field_map=cfg,
+            filename=file_input.filename,
         )
 
     base_name, extension = split_filename(file_input.filename)

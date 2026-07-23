@@ -144,6 +144,18 @@ def test_ensure_full_email_bytes_prefers_imap_rfc822():
 
 
 def test_ensure_full_email_bytes_builds_synthetic_when_imap_missing():
+    from email import message_from_bytes
+    from email.header import decode_header
+
+    def decoded_header(value: str | None) -> str:
+        chunks: list[str] = []
+        for chunk, charset in decode_header(value or ""):
+            if isinstance(chunk, bytes):
+                chunks.append(chunk.decode(charset or "utf-8", errors="replace"))
+            else:
+                chunks.append(chunk)
+        return "".join(chunks)
+
     clear_attachment_cache()
     email = _email_without_attachments()
 
@@ -151,6 +163,40 @@ def test_ensure_full_email_bytes_builds_synthetic_when_imap_missing():
 
     assert b"Message-ID" in content
     assert email.body_text.encode("utf-8") in content
+    assert b"\r\n" in content
+    parsed = message_from_bytes(content)
+    assert decoded_header(parsed["Subject"]) == email.subject
+    assert parsed.get_content_type().startswith("multipart/") or parsed.get_content_type() == "text/plain"
+
+
+def test_synthetic_eml_includes_headers_for_outlook():
+    from email import message_from_bytes
+    from email.header import decode_header
+
+    from agent_pochta.services.erp_attachments import _build_synthetic_eml_bytes
+
+    def decoded_header(value: str | None) -> str:
+        chunks: list[str] = []
+        for chunk, charset in decode_header(value or ""):
+            if isinstance(chunk, bytes):
+                chunks.append(chunk.decode(charset or "utf-8", errors="replace"))
+            else:
+                chunks.append(chunk)
+        return "".join(chunks)
+
+    email = _email_without_attachments()
+    email.sender_name = "Отправитель"
+    email.to = ["recipient@example.com"]
+    email.subject = "Тестовая тема"
+
+    content = _build_synthetic_eml_bytes(email)
+    parsed = message_from_bytes(content)
+
+    assert parsed["From"]
+    assert parsed["To"] == "recipient@example.com"
+    assert decoded_header(parsed["Subject"]) == "Тестовая тема"
+    assert parsed["Date"]
+    assert parsed["MIME-Version"] == "1.0"
 
 
 def test_erp_full_email_filename_is_stable():

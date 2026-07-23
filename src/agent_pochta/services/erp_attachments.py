@@ -277,10 +277,11 @@ def erp_full_email_filename(_email: EmailMessage | None = None) -> str:
 
 def _build_synthetic_eml_bytes(email: EmailMessage) -> bytes:
     """Собирает .eml из полей EmailMessage, если IMAP недоступен."""
+    from email import policy
     from email.message import EmailMessage as StdEmailMessage
     from email.utils import format_datetime, formataddr
 
-    msg = StdEmailMessage()
+    msg = StdEmailMessage(policy=policy.SMTP)
     header_id = email.message_id.split("#", 1)[0].strip()
     if header_id:
         if not header_id.startswith("<"):
@@ -288,7 +289,7 @@ def _build_synthetic_eml_bytes(email: EmailMessage) -> bytes:
         msg["Message-ID"] = header_id
     if email.sender_name:
         msg["From"] = formataddr((email.sender_name, email.sender_email))
-    else:
+    elif email.sender_email:
         msg["From"] = email.sender_email
     if email.to:
         msg["To"] = ", ".join(email.to)
@@ -298,6 +299,7 @@ def _build_synthetic_eml_bytes(email: EmailMessage) -> bytes:
         msg["Reply-To"] = email.reply_to
     msg["Subject"] = email.subject or ""
     msg["Date"] = format_datetime(email.received_at)
+    msg["MIME-Version"] = "1.0"
 
     body_text = email.body_text or ""
     if email.body_html:

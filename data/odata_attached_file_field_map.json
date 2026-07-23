@@ -14,7 +14,7 @@
   },
   "defaults": {
     "storage_binary_type": "application/octet-stream",
-    "storage_kind": "ВТомахНаДиске",
+    "storage_kind": "ВИнформационнойБазе",
     "upload_binary_via_stream": true
   }
 }

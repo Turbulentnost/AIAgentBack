@@ -11,6 +11,7 @@ from agent_pochta.services.odata_attached_file import (
     AttachedFileInput,
     attach_file_to_incoming_document,
     build_attached_file_payload,
+    resolve_stream_content_type,
     split_filename,
 )
 from agent_pochta.services.odata_integration import ODataIntegrationService
@@ -39,7 +40,8 @@ def test_build_attached_file_payload_stream_mode_excludes_binary_by_default():
     assert payload["Description"] == "scan"
     assert payload["Расширение"] == "pdf"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
-    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert "Том_Key" not in payload
     assert "ФайлХранилище_Base64Data" not in payload
     assert "ФайлХранилище_Type" not in payload
     assert payload["Размер"] == 8
@@ -59,6 +61,7 @@ def test_build_attached_file_payload_sets_volume_key_from_defaults():
     _, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="scan.pdf", content=b"data"),
+        include_binary=True,
         field_map={
             "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
             "fields": {
@@ -72,11 +75,42 @@ def test_build_attached_file_payload_sets_volume_key_from_defaults():
             "defaults": {
                 "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
                 "storage_kind": "ВТомахНаДиске",
-                "upload_binary_via_stream": True,
+                "upload_binary_via_stream": False,
             },
         },
     )
     assert payload["Том_Key"] == "21886495-364e-11ea-82f2-ac1f6b05524c"
+    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+
+
+def test_stream_mode_skips_volume_key_even_if_configured():
+    _, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(filename="scan.pdf", content=b"data"),
+        field_map={
+            "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            "fields": {
+                "name": "Description",
+                "extension": "Расширение",
+                "owner_key": "ВладелецФайла_Key",
+                "volume_key": "Том_Key",
+                "storage_kind": "ТипХраненияФайла",
+                "size": "Размер",
+            },
+            "defaults": {
+                "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+                "storage_kind": "ВТомахНаДиске",
+                "upload_binary_via_stream": True,
+            },
+        },
+    )
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert "Том_Key" not in payload
+
+
+def test_resolve_stream_content_type_for_eml():
+    assert resolve_stream_content_type("Входящее_письмо.eml") == "message/rfc822"
+    assert resolve_stream_content_type("scan.pdf") == "application/octet-stream"
 
 
 def test_attach_file_validates_empty_document_ref():
@@ -132,6 +166,29 @@ def test_attach_file_posts_to_catalog():
         "ФайлХранилище",
         b"data",
         content_type="application/octet-stream",
+    )
+
+
+def test_attach_file_uploads_eml_with_rfc822_content_type():
+    client = MagicMock()
+    client.get_by_key.return_value = {"Ref_Key": DOC_KEY}
+    client.create_entity.return_value = {"Ref_Key": "dddddddd-dddd-dddd-dddd-dddddddddddd"}
+
+    attach_file_to_incoming_document(
+        client,
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="Входящее_письмо.eml",
+            content=b"From: a@b.com\r\nTo: c@d.com\r\nSubject: test\r\n\r\nbody\r\n",
+        ),
+    )
+
+    client.put_entity_stream.assert_called_once_with(
+        "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+        "ФайлХранилище",
+        b"From: a@b.com\r\nTo: c@d.com\r\nSubject: test\r\n\r\nbody\r\n",
+        content_type="message/rfc822",
     )
 
 
