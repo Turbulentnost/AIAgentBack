@@ -385,6 +385,60 @@ def test_mark_spam_on_done_sets_spam_status():
     repo.clear_xml_document.assert_called_once_with(row)
 
 
+def test_mark_spam_on_dialog_sets_spam_status():
+    row = _email_row(status=ProcessingStatus.DIALOG.value)
+    row.is_spam = False
+    client = TestClient(app)
+
+    with _mock_repo(row) as (repo, _session):
+        with patch(
+            "agent_pochta.api.app.learn_from_spam_mark",
+            return_value={
+                "spam_pattern_saved": True,
+                "spam_pattern_id": "p-dialog",
+                "qdrant_synced": False,
+            },
+        ):
+            response = client.post(
+                f"/api/v1/email-messages/{row.id}/resolve-human",
+                json={"decision": "mark_spam"},
+            )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "resolved"
+    assert row.status == ProcessingStatus.SPAM.value
+    assert row.is_spam is True
+    repo.clear_xml_document.assert_called_once_with(row)
+
+
+def test_mark_verified_on_dialog_keeps_status():
+    row = _email_row(status=ProcessingStatus.DIALOG.value)
+    row.is_spam = False
+    client = TestClient(app)
+
+    with _mock_repo(row) as (repo, _session):
+        with patch(
+            "agent_pochta.api.app._apply_operator_routing_save",
+            return_value={"routing_correction_saved": False},
+        ) as apply_save:
+            response = client.post(
+                f"/api/v1/email-messages/{row.id}/resolve-human",
+                json={
+                    "decision": "mark_verified",
+                    "department_id": "00-000001",
+                    "department_name": "Отдел",
+                },
+            )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "verified"
+    assert payload["operator_verified"] is True
+    assert row.status == ProcessingStatus.DIALOG.value
+    apply_save.assert_called_once()
+
+
 def test_mark_not_spam_on_awaiting_human_reprocesses():
     row = _email_row(status=ProcessingStatus.AWAITING_HUMAN.value)
     row.is_spam = False

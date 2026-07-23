@@ -1015,10 +1015,11 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
             if row.status not in {
                 ProcessingStatus.DONE.value,
                 ProcessingStatus.ERROR.value,
+                ProcessingStatus.DIALOG.value,
             }:
                 raise HTTPException(
                     status_code=400,
-                    detail="mark_verified allowed only for done or error",
+                    detail="mark_verified allowed only for done, error, or dialog",
                 )
             learning = _apply_operator_routing_save(
                 session,
