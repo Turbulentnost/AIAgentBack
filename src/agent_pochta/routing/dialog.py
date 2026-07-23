@@ -10,7 +10,9 @@ from functools import lru_cache
 from pathlib import Path
 
 from agent_pochta.config import PROJECT_ROOT, get_settings
+from agent_pochta.rules.hard_spam import detect_hard_spam, is_hard_spam
 from agent_pochta.routing.normalize import normalize_text
+from agent_pochta.schemas import EmailMessage, SpamResult
 from agent_pochta.routing.process_type import (
     PROCESS_ISPOLNENIYE,
     PROCESS_OZNAKOMLENIYE,
@@ -298,11 +300,24 @@ def classify_dialog(
     claim: bool = False,
     process_type: str = "",
     rules: dict | None = None,
+    spam: SpamResult | None = None,
+    email: EmailMessage | None = None,
+    skip_hard_spam_check: bool = False,
 ) -> DialogClassification:
     """Определяет, является ли письмо диалогом, и dormant vs activated."""
     cfg = rules if rules is not None else load_dialog_rules()
     if not cfg or not cfg.get("enabled", True):
         return DialogClassification(is_dialog=False)
+
+    if cfg.get("exclude_if_hard_spam", True) and not skip_hard_spam_check:
+        hard = spam if is_hard_spam(spam) else None
+        if hard is None and email is not None:
+            hard = detect_hard_spam(email)
+        if hard is not None:
+            return DialogClassification(
+                is_dialog=False,
+                reasoning=f"hard_spam: {hard.rule_hit or 'rule'} — диалог недоступен",
+            )
 
     text = normalize_text(f"{subject}\n{body}")
     document_kind = str(cfg.get("document_kind") or "dialog")

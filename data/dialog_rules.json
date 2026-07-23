@@ -12,6 +12,7 @@
   "queue_tier_activated": 1,
   "exclude_if_claim": true,
   "exclude_if_obligation": true,
+  "exclude_if_hard_spam": true,
   "exclude_process_types": ["исполнение"],
   "thread_markers": {
     "subject_prefixes": [

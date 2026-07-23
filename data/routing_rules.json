@@ -3,6 +3,36 @@
   "reserve_code": "00-000066",
   "reserve_name": "Управление делами (офис-менеджер)",
   "spam_code": "00-999999",
+  "hard_spam_rules": {
+    "description": "Детерминированный спам (этап 2.1 + ТЗ §9): не LLM, не learned_spam_pattern. Такие письма не могут стать «Диалог».",
+    "sources": [
+      "src/agent_pochta/rules/spam_rules.py",
+      "src/agent_pochta/routing/spam_tz.py",
+      "src/agent_pochta/rules/hard_spam.py"
+    ],
+    "persisted_learning": "data/spam_learning_patterns.json",
+    "not_hard": [
+      "learned_spam_pattern",
+      "llm",
+      "ministry_not_spam",
+      "trusted_sender"
+    ],
+    "rule_hits": [
+      "blacklist_address",
+      "blacklist_domain",
+      "stop_word",
+      "appendix_a",
+      "list_unsubscribe",
+      "suspicious_domain",
+      "no_reply_to_marketing",
+      "tz_noreply",
+      "tz_education",
+      "tz_transport",
+      "tz_omto_no_attach",
+      "tz_empty_notice"
+    ],
+    "exclude_dialog": true
+  },
   "dialog_category": {
     "enabled": true,
     "rules_file": "data/dialog_rules.json",
@@ -10,6 +40,7 @@
     "document_kind": "dialog",
     "status": "dialog",
     "description": "Переписка без нового поручения в начале письма; dormant не регистрируется в 1С",
+    "exclude_if_hard_spam": true,
     "detection": {
       "company_name_min_occurrences": 2,
       "company_name_patterns": [

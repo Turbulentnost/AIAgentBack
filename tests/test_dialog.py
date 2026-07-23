@@ -16,7 +16,9 @@ from agent_pochta.routing.dialog import (
 )
 from agent_pochta.routing.engine import rebuild_decision_xml
 from agent_pochta.routing.models import RoutingDecision, ServiceRoute
-from agent_pochta.schemas import EmailMessage, ProcessingStatus
+from agent_pochta.rules.hard_spam import detect_hard_spam, is_hard_spam
+from agent_pochta.rules.spam_rules import check_rule_spam
+from agent_pochta.schemas import EmailMessage, ProcessingStatus, SpamResult
 
 
 @pytest.fixture(autouse=True)
@@ -189,6 +191,75 @@ def test_classify_dormant_via_company_name_repeats():
         subject="Re: сроки поставки",
         body=body,
         sender_email="partner@example.ru",
+    )
+    assert result.is_dialog is True
+    assert result.mode == DialogMode.DORMANT
+
+
+def _dialog_thread_body(*, extra_line: str = "") -> str:
+    body = (
+        "Спасибо, принято.\n\n"
+        "С уважением, ООО НПО «Турбулентность-ДОН»\n"
+        "10.07.2026, manager@turbo-don.ru пишет:\n"
+        "> Уточните срок\n"
+        "ООО НПО «Турбулентность-ДОН» — ответ"
+    )
+    if extra_line:
+        body = f"{body}\n{extra_line}"
+    return body
+
+
+def test_classify_dialog_skips_hard_spam_with_re_and_turbulentnost():
+    body = _dialog_thread_body(extra_line="Приглашаем на бесплатный вебинар")
+    email = _email(subject="Re: сроки поставки", body_text=body)
+    hard = detect_hard_spam(email)
+    assert hard is not None
+    assert is_hard_spam(hard)
+
+    via_email = classify_dialog(
+        subject=email.subject,
+        body=body,
+        sender_email=email.sender_email,
+        email=email,
+    )
+    assert via_email.is_dialog is False
+
+    via_spam = classify_dialog(
+        subject=email.subject,
+        body=body,
+        sender_email=email.sender_email,
+        spam=hard,
+    )
+    assert via_spam.is_dialog is False
+    assert "hard_spam" in via_spam.reasoning
+
+
+def test_classify_dialog_skips_hard_spam_via_email_detection():
+    body = _dialog_thread_body(extra_line="Только сегодня выгодное предложение")
+    email = _email(subject="Fwd: переписка", body_text=body)
+    assert check_rule_spam(email) is not None
+
+    result = classify_dialog(
+        subject=email.subject,
+        body=body,
+        sender_email=email.sender_email,
+        email=email,
+    )
+    assert result.is_dialog is False
+
+
+def test_classify_dialog_allows_hard_spam_check_skip_for_restore():
+    body = _dialog_thread_body(extra_line="Приглашаем на бесплатный вебинар")
+    email = _email(subject="Re: сроки поставки", body_text=body)
+    hard = detect_hard_spam(email)
+    assert hard is not None
+
+    result = classify_dialog(
+        subject=email.subject,
+        body=body,
+        sender_email=email.sender_email,
+        spam=hard,
+        skip_hard_spam_check=True,
     )
     assert result.is_dialog is True
     assert result.mode == DialogMode.DORMANT

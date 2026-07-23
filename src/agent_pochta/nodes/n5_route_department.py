@@ -17,6 +17,7 @@ from agent_pochta.routing.xml_builder import build_subject_xml_theme, sanitize_t
 from agent_pochta.schemas import ProcessingStatus, RoutingResult, SenderIdentity, SpamResult
 from agent_pochta.services import ServiceContainer
 from agent_pochta.routing.dialog import DialogMode, apply_dialog_classification, classify_dialog
+from agent_pochta.rules.hard_spam import detect_hard_spam, is_hard_spam
 from agent_pochta.routing.priority import PriorityDecision, select_priority
 from agent_pochta.routing.process_type import infer_process_type_heuristic
 from agent_pochta.services.llm_analyze import resolve_partner_name
@@ -410,12 +411,25 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             process=resolved_process,
         )
 
+    skip_hard_spam_for_dialog = restored_from_spam or reanalyze
+    if not skip_hard_spam_for_dialog:
+        hard_spam = spam if is_hard_spam(spam) else detect_hard_spam(email, recipient=recipient)
+        if hard_spam is not None:
+            return {
+                "spam": hard_spam,
+                "status": ProcessingStatus.SPAM,
+                "trace": trace + ["hard_spam_skip_dialog"],
+            }
+
     dialog_cls = classify_dialog(
         subject=email.subject or "",
         body=text,
         sender_email=email.sender_email or "",
         claim=decision.claim,
         process_type=resolved_process or "",
+        spam=spam,
+        email=email,
+        skip_hard_spam_check=skip_hard_spam_for_dialog,
     )
     dialog_status: ProcessingStatus | None = None
     if dialog_cls.is_dialog:
