@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -53,29 +54,71 @@ def _hits_in_text(markers: list[str], text: str) -> list[str]:
     return found
 
 
+_EMAIL_DOMAIN_RE = re.compile(r"[\w.+-]+@([\w.-]+\.[\w.-]+)", re.IGNORECASE)
+_URL_HOST_RE = re.compile(r"https?://([\w.-]+(?:\.[\w.-]+)*|\[[\da-f:.]+\])", re.IGNORECASE)
+_WWW_HOST_RE = re.compile(r"\bwww\.([\w.-]+\.[\w.-]+)", re.IGNORECASE)
+_MAILTO_RE = re.compile(r"mailto:([\w.+-]+@[\w.-]+)", re.IGNORECASE)
+
+# Домены/TLD, которые НЕ считаются зарубежными для маршрутизации в ВЭД.
+_DOMESTIC_DOMAIN_SUFFIXES = (
+    ".com.ru",
+    ".net.ru",
+    ".org.ru",
+    ".pp.ru",
+    ".ru",
+    ".рф",
+    ".su",
+    ".com",
+    ".by",
+    ".kz",
+    ".uz",
+)
+
+
+def _normalize_domain(raw: str) -> str:
+    host = raw.strip().lower().rstrip(".,;:)>\"'")
+    if host.startswith("www."):
+        host = host[4:]
+    if "@" in host:
+        host = host.rsplit("@", 1)[-1]
+    return host
+
+
+def _is_domestic_domain(domain: str, exclude: set[str]) -> bool:
+    if not domain or domain in exclude:
+        return True
+    for suffix in _DOMESTIC_DOMAIN_SUFFIXES:
+        if domain == suffix.lstrip(".") or domain.endswith(suffix):
+            return True
+    return False
+
+
+def _extract_domains_from_text(text: str, sender_email: str) -> set[str]:
+    domains: set[str] = set()
+    sender = (sender_email or "").strip()
+    if "@" in sender:
+        domains.add(_normalize_domain(sender))
+
+    for pattern in (_EMAIL_DOMAIN_RE, _MAILTO_RE):
+        for match in pattern.finditer(text):
+            domains.add(_normalize_domain(match.group(1)))
+
+    for pattern in (_URL_HOST_RE, _WWW_HOST_RE):
+        for match in pattern.finditer(text):
+            domains.add(_normalize_domain(match.group(1)))
+
+    return {domain for domain in domains if domain and "." in domain}
+
+
 def _is_foreign(text: str, sender_email: str, rules: dict) -> tuple[bool, list[str]]:
-    hits = _hits_in_text(list(rules.get("foreign_markers") or []), text)
-    # Domain TLD markers like ".com" — only count on sender domain, not random body noise
-    sender = (sender_email or "").lower()
-    domain = sender.rsplit("@", 1)[-1] if "@" in sender else ""
+    """ВЭД только при явных зарубежных доменах в адресах/URL, не по ключевым словам."""
     exclude = {d.lower() for d in (rules.get("foreign_exclude_domains") or [])}
-    foreign_tlds = [h for h in hits if h.startswith(".")]
-    other_hits = [h for h in hits if not h.startswith(".")]
-    tld_hit = ""
-    if domain and domain not in exclude:
-        for tld in (".com", ".de", ".cn", ".eu", ".uk", ".pl", ".kz", ".by", ".uz"):
-            if domain.endswith(tld) and not domain.endswith(".ru"):
-                tld_hit = tld
-                break
-        # non-ru domains that aren't free mail
-        if not tld_hit and "." in domain and not domain.endswith(".ru"):
-            tld_hit = domain
-    matched = other_hits[:]
-    if tld_hit:
-        matched.append(tld_hit)
-    # Need stronger signal than alone "евро" noise: foreign if TLD or >=1 lexical marker
-    if tld_hit or other_hits:
-        return True, matched
+    foreign_domains: list[str] = []
+    for domain in sorted(_extract_domains_from_text(text, sender_email)):
+        if not _is_domestic_domain(domain, exclude):
+            foreign_domains.append(domain)
+    if foreign_domains:
+        return True, foreign_domains
     return False, []
 
 
@@ -156,7 +199,6 @@ def match_deterministic_sales(
 
     # 2) Продажи: нужен sales-context ИЛИ уже industrial/dealer/gazprom/orkk маркер
     sales_hits = _hits_in_text(list(cfg.get("sales_context_markers") or []), text)
-    foreign_marker_hits = _hits_in_text(list(cfg.get("foreign_markers") or []), text)
     dealer_hits = _hits_in_text(list(cfg.get("dealer_markers") or []), text)
     industrial_hits = _hits_in_text(list(cfg.get("industrial_markers") or []), text)
     gazprom_hits = _hits_in_text(list(cfg.get("gazprom_markers") or []), text)
@@ -176,7 +218,6 @@ def match_deterministic_sales(
     )
     sales_context = bool(
         sales_hits
-        or foreign_marker_hits
         or dealer_hits
         or gazprom_hits
         or orkk_hits

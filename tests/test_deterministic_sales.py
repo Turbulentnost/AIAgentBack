@@ -70,11 +70,55 @@ def test_service_routes_to_service_department(engine):
     assert decision.match_source == "det_product_service"
 
 
-def test_export_routes_to_foreign_sales_without_other_sales_marker(engine):
-    decision = _route(engine, "Запрос на export оборудования в Казахстан.")
+def test_foreign_domain_in_body_routes_to_ved(engine):
+    decision = _route(
+        engine,
+        "Запрос КП. Контакт: sales@partner-export.de",
+        sender_email="client@example.ru",
+    )
 
     assert decision.services[0].code == "00-000015"
     assert decision.match_source == "det_sales_foreign"
+
+
+def test_export_keyword_without_foreign_domain_does_not_route_to_ved(engine):
+    decision = _route(engine, "Запрос на export оборудования в Казахстан.")
+
+    assert decision.services[0].code != "00-000015"
+    assert decision.match_source != "det_sales_foreign"
+
+
+def test_com_sender_without_foreign_domain_does_not_route_to_ved(engine):
+    decision = _route(
+        engine,
+        "Запрос КП на оборудование.",
+        sender_email="info@hebei-export.com",
+    )
+
+    assert decision.services[0].code != "00-000015"
+    assert decision.match_source != "det_sales_foreign"
+
+
+def test_ru_domain_in_url_does_not_route_to_ved(engine):
+    decision = _route(
+        engine,
+        "Счёт на поставку: https://turbo-don.ru/price",
+        sender_email="client@example.ru",
+    )
+
+    assert decision.services[0].code != "00-000015"
+    assert decision.match_source != "det_sales_foreign"
+
+
+def test_domestic_invoice_keywords_do_not_route_to_ved(engine):
+    decision = _route(
+        engine,
+        "Счет на поставку, сообщите стоимость.",
+        sender_email="client@example.ru",
+    )
+
+    assert decision.services[0].code != "00-000015"
+    assert decision.match_source != "det_sales_foreign"
 
 
 @pytest.mark.parametrize("marker", ["Гранд", "UFG-H"])

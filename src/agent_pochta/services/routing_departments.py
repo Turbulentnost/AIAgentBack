@@ -143,7 +143,6 @@ def build_departments_from_rules(rules: dict) -> list[Department]:
             for keyword in rule.get("keywords") or []:
                 _add_keywords(keywords_by_code, code, str(keyword))
     for department_id, markers_key in (
-        (deterministic_rules.get("foreign_department_id"), "foreign_markers"),
         (deterministic_rules.get("dealer_department_id"), "dealer_markers"),
         (deterministic_rules.get("gazprom_department_id"), "gazprom_markers"),
         (deterministic_rules.get("orkk_department_id"), "orkk_holdings"),

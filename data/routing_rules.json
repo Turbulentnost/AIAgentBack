@@ -974,26 +974,6 @@
     },
     {
       "keywords": [
-        "пурс",
-        "счет",
-        "поверка",
-        "поставка",
-        "стоимость",
-        "запрос цены",
-        "кроме росии",
-        "подбор обрудования",
-        "сообщить стоимость",
-        "ценовое предложение",
-        "коммерческое предложение",
-        "подобрать измерительный комплекс"
-      ],
-      "code": "00-000015",
-      "name": "начальник отдела ВЭД",
-      "direction": "ПР",
-      "about": "ТКП, технико-коммерческое предложение, КП, коммерческое предложение, ценовое пре"
-    },
-    {
-      "keywords": [
         "минпромторг",
         "министерство",
         "администрация",
@@ -3799,6 +3779,262 @@
           "запрос ооо гтн газ для цветковой анастасии",
           "td_odppo7",
           "техническое"
+        ]
+      },
+      {
+        "id": "2fae8dcf-391b-44d1-85b7-0f67389c4fca",
+        "created_at": "2026-07-22T11:32:34.792656+00:00",
+        "partner": "ООО \"Металл-Актив",
+        "organization": "НП",
+        "department_id": "00-000065",
+        "department_name": "Отдел МТО",
+        "sender_email": "2233777@mail.ru",
+        "recipient": "uk_omto11@turbo-don.ru",
+        "subject": "документы для ооо нпо \"турбулентность-дон\" от ооо \"металл-актив\"",
+        "keywords": [
+          "документы для ооо нпо \"турбулентность-дон\" от ооо \"металл-актив",
+          "uk_omto11",
+          "на оплату",
+          "счет на"
+        ]
+      },
+      {
+        "id": "bf873938-42a7-44c1-9575-fd05f0ab3013",
+        "created_at": "2026-07-22T11:34:21.715946+00:00",
+        "partner": "АО «РОСПАН ИНТЕРНЕШНЛ»",
+        "organization": "НП",
+        "department_id": "00-000054",
+        "department_name": "Тендерный офис",
+        "sender_email": "ovyadviga@rspn.rosneft.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "приглашение на участие в закупочной процедуре",
+        "keywords": [
+          "приглашение на участие в закупочной процедуре",
+          "info",
+          "требуется"
+        ]
+      },
+      {
+        "id": "a578bfb2-2fcc-47df-bad3-34335f28ff42",
+        "created_at": "2026-07-22T11:34:46.197381+00:00",
+        "partner": "АО «РОСПАН ИНТЕРНЕШНЛ»",
+        "organization": "НП",
+        "department_id": "00-000054",
+        "department_name": "Тендерный офис",
+        "sender_email": "ovyadviga@rspn.rosneft.ru",
+        "recipient": "test_ii@turbo-don.ru",
+        "subject": "приглашение на участие в закупочной процедуре",
+        "keywords": [
+          "приглашение на участие в закупочной процедуре",
+          "test_ii"
+        ]
+      },
+      {
+        "id": "3023ed83-89f9-4cae-b671-b88ec00e8d8b",
+        "created_at": "2026-07-22T11:44:14.336868+00:00",
+        "partner": "ООО Газпром трансгаз Югорск",
+        "organization": "НП",
+        "department_id": "00-000028",
+        "department_name": "Отдел сервисного обслуживания",
+        "sender_email": "ri.ahshiyatov@ttg.gazprom.ru",
+        "recipient": "npo_pto2@turbo-don.ru",
+        "subject": "письмо входящее № 50-014-009812 от 18.03.2026 от ооо _газпром комплектация_, о рекламационной работе.",
+        "keywords": [
+          "письмо входящее № 50-014-009812 от 18.03.2026 от ооо _газпром комплектация_, о рекламационной работе",
+          "npo_pto2",
+          "входящее 50-014-009812 от"
+        ]
+      },
+      {
+        "id": "a0e53f32-c962-4710-b825-13757d51a791",
+        "created_at": "2026-07-22T11:45:15.136240+00:00",
+        "partner": "ООО 'Няганские газораспределительные сети'",
+        "organization": "НП",
+        "department_id": "00-000074",
+        "department_name": "Отдел продаж эталонного оборудования и услуг",
+        "sender_email": "oge-ngrs@yandex.ru",
+        "recipient": "opmu@turbo-don.ru",
+        "subject": "re: ооо \" няганские газораспределительные сети\"",
+        "keywords": [
+          "ооо \" няганские газораспределительные сети",
+          "opmu",
+          "ufg-f",
+          "запрос",
+          "ооо няганские"
+        ]
+      },
+      {
+        "id": "106b75e5-8947-4ad5-b701-51d34420e043",
+        "created_at": "2026-07-22T11:45:32.128669+00:00",
+        "partner": "ИП Седых Таисья Алексеевна",
+        "organization": "НП",
+        "department_id": "00-000074",
+        "department_name": "Отдел продаж эталонного оборудования и услуг",
+        "sender_email": "sedykhta@inbox.ru",
+        "recipient": "opmu@turbo-don.ru",
+        "subject": "re: re: поверка газового счетчика",
+        "keywords": [
+          "поверка газового счетчика",
+          "opmu",
+          "алексеевна направила"
+        ]
+      },
+      {
+        "id": "8ef61846-70ba-4a03-984e-dc3db9ff1047",
+        "created_at": "2026-07-22T11:50:48.867055+00:00",
+        "partner": "СМК-Новатор",
+        "organization": "АЛ",
+        "department_id": "00-000074",
+        "department_name": "Отдел продаж эталонного оборудования и услуг",
+        "sender_email": "sale3@smknovator.ru",
+        "recipient": "almaz_proizvodstvo@turbo-don.ru",
+        "subject": "re: паспорт гранд",
+        "keywords": [
+          "паспорт гранд",
+          "almaz_proizvodstvo",
+          "выставить счет",
+          "гранд 6",
+          "для прибора"
+        ]
+      },
+      {
+        "id": "cf544365-8a2b-4e4b-a2f8-2f2d3905def1",
+        "created_at": "2026-07-22T12:06:04.242031+00:00",
+        "partner": "ЦР БРИФ Росатом",
+        "organization": "НП",
+        "department_id": "00-000042",
+        "department_name": "Отдел по работе с ключевыми клиентами",
+        "sender_email": "info_brif@greenatom.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "важные изменения в цр \"бриф\"",
+        "keywords": [
+          "важные изменения в цр \"бриф",
+          "info",
+          "в цр бриф"
+        ]
+      },
+      {
+        "id": "d4dd37cf-5ce8-4235-9fdb-936477cb361e",
+        "created_at": "2026-07-22T12:34:27.281747+00:00",
+        "partner": "ООО \"Газпром трансгаз Самара\"",
+        "organization": "НП",
+        "department_id": "00-000076",
+        "department_name": "Отдел по работе с ПАО Газпром",
+        "sender_email": "g.kulakovskiy@samaratransgaz.gazprom.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "газпром трансгаз самара",
+        "keywords": [
+          "газпром трансгаз самара",
+          "info",
+          "a.safonov samaratransgaz.gazprom.ru"
+        ]
+      },
+      {
+        "id": "eb706d88-8698-4ad7-9329-8be7be3f06ee",
+        "created_at": "2026-07-23T05:12:53.307713+00:00",
+        "partner": "АО «Самаранефтегаз»",
+        "organization": "НП",
+        "department_id": "00-000128",
+        "department_name": "Отдел продаж БМИ",
+        "sender_email": "khorenkosv@samng.rosneft.ru",
+        "recipient": "td_bmi2@turbo-don.ru",
+        "subject": "fw: гк \"турбулентность-дон\"",
+        "keywords": [
+          "гк \"турбулентность-дон",
+          "td_bmi2",
+          "гк турбулентность-дон",
+          "flow tfg-s-x-1-0300-а-07",
+          "tfg-s-x-1-0300-а-07 внутренний",
+          "turbo flow",
+          "ао самаранефтегаз"
+        ]
+      },
+      {
+        "id": "422032b6-80e5-4cfc-9f4e-62247d4edf47",
+        "created_at": "2026-07-23T05:15:43.759559+00:00",
+        "partner": "АО \"Уромгаз\"",
+        "organization": "НП",
+        "department_id": "00-000042",
+        "department_name": "Отдел по работе с ключевыми клиентами",
+        "sender_email": "chadovvn@uromgaz.ru",
+        "recipient": "td_orkk2@turbo-don.ru",
+        "subject": "",
+        "keywords": [
+          "td_orkk2",
+          "на поставку",
+          "ufg-f-050-c-xx-х-2г-016е-х5-с1тр-ххх-хх-да-0 16",
+          "ао уромгаз",
+          "в течение",
+          "выставления счета"
+        ]
+      },
+      {
+        "id": "7d6170c7-70ff-4f07-b7b7-a9c899e5e0e3",
+        "created_at": "2026-07-23T05:18:05.884219+00:00",
+        "partner": "ООО «ГАЗПРОМ ТРАНСГАЗ НИЖНИЙ НОВГОРОД»",
+        "organization": "НП",
+        "department_id": "00-000076",
+        "department_name": "Отдел по работе с ПАО Газпром",
+        "sender_email": "pachuevae@vtg.gazprom.ru",
+        "recipient": "d.shamray@turbo-don.ru",
+        "subject": "необходимые мтр",
+        "keywords": [
+          "необходимые мтр",
+          "d.shamray",
+          "газпром трансгаз",
+          "запрос",
+          "108х4 0"
+        ]
+      },
+      {
+        "id": "4613a5da-b7d4-4fe9-9280-ae373a45f022",
+        "created_at": "2026-07-23T05:20:17.541672+00:00",
+        "partner": "АО «Тюменнефтегаз»",
+        "organization": "НП",
+        "department_id": "00-000042",
+        "department_name": "Отдел по работе с ключевыми клиентами",
+        "sender_email": "ayu_bessonov@tng.rosneft.ru",
+        "recipient": "opmu@turbo-don.ru",
+        "subject": "о turboflow",
+        "keywords": [
+          "о turboflow",
+          "opmu",
+          "turboflow зав",
+          "автоматизацию и",
+          "ао тюменнефтегаз",
+          "выдачи прибора",
+          "зав 6864"
+        ]
+      },
+      {
+        "id": "d62acb25-d937-489c-84ad-7eb9cdfac569",
+        "created_at": "2026-07-23T05:57:09.536188+00:00",
+        "partner": "ООО «РГП»",
+        "organization": "НП",
+        "department_id": "00-000099",
+        "department_name": "Отдел технической поддержки",
+        "sender_email": "info@rusgasproject.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "26-ргп-0221 от 22.07.2026 о направлении дополнительных соглашений",
+        "keywords": [
+          "26-ргп-0221 от 22.07.2026 о направлении дополнительных соглашений",
+          "info"
+        ]
+      },
+      {
+        "id": "c3c73add-e0ac-4061-a714-38f2a58075a7",
+        "created_at": "2026-07-23T05:58:35.640346+00:00",
+        "partner": "«АМФ экспо»",
+        "organization": "НП",
+        "department_id": "00-000054",
+        "department_name": "Тендерный офис",
+        "sender_email": "lp@amfexpo.com",
+        "recipient": "info@tpp-titan.ru",
+        "subject": "запрос на тендер - застройка стенда на форуме «пмгф - 2026»",
+        "keywords": [
+          "запрос на тендер - застройка стенда на форуме «пмгф - 2026",
+          "info",
+          "требуется"
         ]
       }
     ]
