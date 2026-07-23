@@ -4942,6 +4942,238 @@
       ],
       "label": "spam",
       "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "a4bd2a4c-68b9-4a14-a110-0b49dd77b5f7",
+      "created_at": "2026-07-22T10:01:47.749515+00:00",
+      "message_id": "<80fb7eca5174458887acc5a868ceedee@dellin.ru>#uk_aho2@turbo-don.ru",
+      "sender_email": "tatyana.petrova@dellin.ru",
+      "keywords": [
+        "срочно 26-00871020912",
+        "от перевозчика",
+        "перевозчика деловые",
+        "деловые линии",
+        "tatyana.petrova"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "c7e95f35-d0ce-456b-82ce-a76ca2f264bf",
+      "created_at": "2026-07-22T10:35:15.020217+00:00",
+      "message_id": "<R0EGtRUYsPU7WtqgOy7D9NBo0W8WQ9nkYShkMT3eo@mediatechnology.ru>#info@turbo-don.ru",
+      "sender_email": "coksender@mediatechnology.ru",
+      "keywords": [
+        "новости сок 17.07.2026",
+        "сок 17.07.2026 22.07.2026",
+        "coksender"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "d3140244-f94c-42f3-bad2-5c9f6537bf48",
+      "created_at": "2026-07-23T06:13:24.487263+00:00",
+      "message_id": "<ArgqThNte4UZVrFtW7AOFuHtGxP7X87duVaTHBx1M@consult-cct.ru>#info@turbo-don.ru",
+      "sender_email": "info@npcsb.ru",
+      "keywords": [
+        "spam сст новости",
+        "сст новости страхования",
+        "новости страхования от",
+        "страхования от 22.07.2026"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "dac8c343-9765-4c50-a5a0-9a2cb75045ba",
+      "created_at": "2026-07-23T06:13:25.131884+00:00",
+      "message_id": "<ArgqThNte4UZVrFtW7AOFuHtGxP7X87duVaTHBx1M@consult-cct.ru>#info@turbo-don.ru",
+      "sender_email": "info@npcsb.ru",
+      "keywords": [
+        "spam сст новости",
+        "сст новости страхования",
+        "новости страхования от",
+        "страхования от 22.07.2026"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "50a58ce4-88ad-46ef-8c7a-81558e4d3930",
+      "created_at": "2026-07-23T06:15:03.411539+00:00",
+      "message_id": "<37DIuHuyUNRtQaSyARUPORg2508kFE5xqIO0fw@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "2bd2c4ef-b451-4e85-a09a-0b3830933e56",
+      "created_at": "2026-07-23T06:18:11.020179+00:00",
+      "message_id": "<vojfjPTucxPUIH4Zpw7zxpGFOntrGVnmb6T7L3OCTc@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "931212f5-2c59-42c0-b673-88f1e12cd5b5",
+      "created_at": "2026-07-23T06:18:15.661999+00:00",
+      "message_id": "<3TXtke6FuT67jI4nRy7IpR6xoaOaJqUNxjmnPvPaA@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "f30e68a1-daa1-4495-a42a-5c889e5c7236",
+      "created_at": "2026-07-23T06:18:23.741115+00:00",
+      "message_id": "<G6g9GD8T4vg2t07k7Jit3DPQ2a9CAGYnjnlEBB09vo@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "6a353997-da61-4c7f-bc18-ad30f4c0c02f",
+      "created_at": "2026-07-23T06:18:28.009892+00:00",
+      "message_id": "<G9m3izFUggmM1Dsyoctz1Tz8EQ0oAVOeDvoxQafc2c@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "76aa4902-a641-407f-8bcc-79cbd12b4e9f",
+      "created_at": "2026-07-23T06:18:53.838583+00:00",
+      "message_id": "<Lde885CTD5uXWgrlud23t351dicD93USGTJ1zlutTIU@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "f3abc474-8a02-48d6-aa8c-9ca323297fb0",
+      "created_at": "2026-07-23T06:18:56.265702+00:00",
+      "message_id": "<P34cPR4nVNAXjoK4QZ7hHDbUFCyLJpdwKr3wV94DyA@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "c8e569a9-92ea-4a1b-a4af-03efec1f93ed",
+      "created_at": "2026-07-23T06:41:18.066425+00:00",
+      "message_id": "<6KBsomObwYdn4tniGgrGGXIQjz4wLCsxWqfjc@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "abfaa8f3-49c3-4e37-a6f3-6432c4a98669",
+      "created_at": "2026-07-23T06:41:21.099371+00:00",
+      "message_id": "<qVBnHekrn5xjh3z3rtkRbWHHMqLzbaKvQ5S28KZZBGE@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "50c9a3d8-01eb-4b6f-b3ff-141a778c59b9",
+      "created_at": "2026-07-23T06:41:24.057685+00:00",
+      "message_id": "<D3M9LPMOz5P8JF4gfk159pglW1h2qLT03KJO16gBqxI@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "3a7a72e7-b16d-4fe7-b33c-ba82aae92eeb",
+      "created_at": "2026-07-23T06:41:26.761849+00:00",
+      "message_id": "<GXH187GcFDMmfXVet0mk3QBNnbbnjkXrrfSR3jHo6Y@akd-223-prod-corp1>#info@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей",
+        "по вашей сфере",
+        "вашей сфере деятельности",
+        "сфере деятельности за",
+        "деятельности за 22.07.2026",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
     }
   ]
 }
