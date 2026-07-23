@@ -499,3 +499,43 @@ def validate_meeting_memo_document(document: dict[str, Any] | None) -> list[Memo
         seen_fields.add(issue.field)
 
     return [item for item in issues if item.severity == "error"] or issues
+
+
+def validate_memo_series_planning(document: dict[str, Any] | None) -> list[MemoValidationIssue]:
+    """Предупреждение, если периодичность в тексте СЗ распознана неполностью."""
+    if not document:
+        return []
+
+    from app.services.meeting_memo_recurrence import resolve_memo_recurrence
+
+    header = document.get("header") or document.get("memo") or {}
+    draft = resolve_memo_recurrence(header, document)
+    if not draft.is_series:
+        return []
+
+    issues: list[MemoValidationIssue] = []
+    if draft.confidence == "low":
+        issues.append(
+            MemoValidationIssue(
+                field="series_planning",
+                severity="warning",
+                message=(
+                    "Периодичность в тексте распознана неполностью; "
+                    "уточните формулировку или выберите единоразовое совещание"
+                ),
+            )
+        )
+        return issues
+
+    if draft.requires_user_choice:
+        issues.append(
+            MemoValidationIssue(
+                field="series_planning",
+                severity="info",
+                message=(
+                    f"В тексте указана серия совещаний: {draft.recurrence_label}. "
+                    "Выберите «Запланировать серию» или «Единоразовое совещание»"
+                ),
+            )
+        )
+    return issues

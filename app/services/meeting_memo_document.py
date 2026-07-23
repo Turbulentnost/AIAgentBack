@@ -112,15 +112,13 @@ def parse_odata_time_component(value: str | None) -> tuple[int, int] | None:
     return dt.hour, dt.minute
 
 
-from app.tools.onec.lookup_user_ref import is_empty_key
-
-
 def resolve_meeting_manager_key(
     header: dict[str, Any],
     *,
     application: dict[str, Any] | None = None,
 ) -> str | None:
     """Ключ руководителя совещания; если не задан — fallback на инициатора (Ответственный)."""
+    from app.tools.onec.lookup_user_ref import is_empty_key
     manager_key = header.get("РуководительСовещания_Key")
     if isinstance(manager_key, str) and not is_empty_key(manager_key):
         return manager_key
@@ -180,3 +178,23 @@ def schedule_duration_minutes(start: datetime | None, end: datetime | None) -> i
         return None
     minutes = int((end - start).total_seconds() // 60)
     return minutes if minutes > 0 else None
+
+
+def extract_memo_text(
+    header: dict[str, Any] | None = None,
+    *,
+    queue: dict[str, Any] | None = None,
+    application: dict[str, Any] | None = None,
+) -> str | None:
+    """Только полный текст СЗ из ТекстСлужебнойЗаписки — без темы, цели и повестки."""
+    for source in (header, queue):
+        if not isinstance(source, dict):
+            continue
+        text = clean_text(source.get("ТекстСлужебнойЗаписки"))
+        if text:
+            return text
+    if isinstance(application, dict):
+        text = clean_text(application.get("memo_text"))
+        if text:
+            return text
+    return None

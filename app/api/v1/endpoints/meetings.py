@@ -6,6 +6,10 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.agents.meeting_agent.dashboard import load_login_context
 from app.services.meeting_memo_cache import MeetingMemoCacheService, MemoCacheMissError
+from app.services.meeting_memo_series_service import (
+    MeetingMemoSeriesService,
+    MeetingMemoSeriesServiceError,
+)
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.meeting import (
     MeetingAgentSlotApproveRead,
@@ -19,6 +23,10 @@ from app.schemas.meeting import (
     MeetingInviteSendRequest,
     MeetingLoginContext,
     MeetingMemoDetailRead,
+    MeetingMemoSeriesPlanningChoiceRead,
+    MeetingMemoSeriesPlanningChoiceRequest,
+    MeetingMemoSeriesCreateRead,
+    MeetingMemoSeriesCreateRequest,
     MeetingMemoRead,
     MeetingMemoApproveRead,
     MeetingMemoApproveRequest,
@@ -666,6 +674,65 @@ async def get_meeting_memo_detail(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/memos/{memo_ref_key}/series-planning-choice",
+    response_model=MeetingMemoSeriesPlanningChoiceRead,
+)
+async def save_meeting_memo_series_planning_choice(
+    memo_ref_key: uuid.UUID,
+    payload: MeetingMemoSeriesPlanningChoiceRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingMemoSeriesPlanningChoiceRead:
+    await _require_agent_access(db, current_user)
+    cache = MeetingMemoCacheService()
+    normalized = str(memo_ref_key).strip().lower()
+    try:
+        await cache.set_series_planning_choice(normalized, payload.mode)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return MeetingMemoSeriesPlanningChoiceRead(ref_key=normalized, mode=payload.mode)
+
+
+@router.post(
+    "/memos/{memo_ref_key}/create-series",
+    response_model=MeetingMemoSeriesCreateRead,
+)
+async def create_meeting_memo_series(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: MeetingMemoSeriesCreateRequest | None = None,
+) -> MeetingMemoSeriesCreateRead:
+    """Создать серию в графике (статус «создано») и согласовать СЗ. Без Outlook."""
+    await _require_agent_access(db, current_user)
+    normalized = str(memo_ref_key).strip().lower()
+    body = payload or MeetingMemoSeriesCreateRequest()
+    try:
+        result = await MeetingMemoSeriesService(db).create_series_from_memo(
+            normalized,
+            current_user=current_user,
+            meeting_topic=body.meeting_topic,
+        )
+        await db.commit()
+    except MeetingMemoSeriesServiceError as exc:
+        await db.rollback()
+        raise HTTPException(exc.status_code, detail=str(exc)) from exc
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    created = result.scheduled_meeting
+    return MeetingMemoSeriesCreateRead(
+        ref_key=normalized,
+        scheduled_meeting_id=created.id,
+        scheduled_meeting_title=created.title,
+        recurrence_label=created.recurrence_label,
+        occurrence_count=result.occurrence_count,
+        memo_approved=result.memo_approved,
+        memo_approve_message=result.memo_approve_message,
+    )
 
 
 @router.post("/memos/{memo_ref_key}/agent/slot-preview", response_model=MeetingAgentSlotPreviewRead)

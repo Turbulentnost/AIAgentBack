@@ -14,6 +14,7 @@ from app.agents.meeting_agent.memo_validation import (
     is_sto_direction_valid,
     validate_meeting_memo_document,
     validate_meeting_memo_sto,
+    validate_memo_series_planning,
 )
 from app.tools.onec.connection import ODataConfig
 from app.tools.onec.get_meetings import (
@@ -33,8 +34,13 @@ from app.services.meeting_psd_level import (
     is_psd_level_header,
 )
 
+from app.services.meeting_memo_recurrence import (
+    build_series_planning_read,
+    resolve_memo_recurrence,
+)
 from app.services.meeting_memo_document import (
     clean_text as _clean_text,
+    extract_memo_text,
     format_document_date_label,
     is_empty_odata_date,
     looks_like_guid as _looks_like_guid,
@@ -73,7 +79,7 @@ def _extract_title(header: dict[str, Any]) -> str | None:
 
 
 def _extract_agenda(header: dict[str, Any]) -> str | None:
-    return _clean_text(header.get("ТекстСлужебнойЗаписки")) or _extract_title(header)
+    return _clean_text(header.get("ТемаСовещания")) or _extract_title(header)
 
 
 def _meeting_type_label(raw: str | None) -> str | None:
@@ -527,12 +533,34 @@ def _attach_cached_emails(
             apply(participant)
 
 
+def _build_series_planning(
+    header: dict[str, Any],
+    document: dict[str, Any] | None = None,
+    *,
+    selected_mode: str | None = None,
+) -> dict[str, Any]:
+    draft = resolve_memo_recurrence(header, document)
+    payload = build_series_planning_read(draft)
+    if selected_mode in {"series", "single"}:
+        payload["selected_mode"] = selected_mode
+    return payload
+
+
+def _apply_series_fields_to_queue(
+    item: dict[str, Any],
+    series_planning: dict[str, Any],
+) -> None:
+    item["series_detected"] = bool(series_planning.get("detected"))
+    item["series_recurrence_label"] = series_planning.get("recurrence_label")
+
+
 def _build_validation_checks(
     document: dict[str, Any],
     *,
     participants_count: int,
 ) -> list[dict[str, Any]]:
     issues = validate_meeting_memo_document(document)
+    issues.extend(validate_memo_series_planning(document))
     checks: list[dict[str, Any]] = []
 
     def add(field: str, label: str, severity: str, message: str, *, passed: bool) -> None:
@@ -769,8 +797,9 @@ def build_queue_item_from_row(
         config=config,
         users_by_key=users_by_key,
     )
+    series_planning = _build_series_planning(header, {"header": header, "memo": header})
 
-    return {
+    queue_item = {
         "ref_key": header.get("Ref_Key"),
         "number": header.get("Number"),
         "title": _extract_title(header),
@@ -800,11 +829,14 @@ def build_queue_item_from_row(
         "РуководительСовещания_Key": header.get("РуководительСовещания_Key"),
         "ТемаСовещания": _clean_text(header.get("ТемаСовещания")),
         "ЦельПланаСовещания": _clean_text(header.get("ЦельПланаСовещания")),
+        "ТекстСлужебнойЗаписки": _clean_text(header.get("ТекстСлужебнойЗаписки")),
         "ПланСовещания": header.get("ПланСовещания"),
         "Приоритет_Key": header.get("Приоритет_Key"),
         "Приоритет": header.get("Приоритет"),
         "СписокУчастников": header.get("СписокУчастников"),
     }
+    _apply_series_fields_to_queue(queue_item, series_planning)
+    return queue_item
 
 
 def build_memo_detail(
@@ -863,6 +895,7 @@ def build_memo_detail(
         "participants": participants,
         "participants_count": participants_count,
         "agenda": _extract_agenda(header),
+        "memo_text": extract_memo_text(header),
         "scheduled_label": _slot_label(start, end, fallback=doc_dt),
         "document_date": _clean_text(header.get("Date")),
         "document_date_label": format_document_date_label(_clean_text(header.get("Date"))),
@@ -883,6 +916,7 @@ def build_memo_detail(
     _attach_cached_emails(application, config=config)
 
     sto = build_sto_payload(document)
+    series_planning = _build_series_planning(header, document)
 
     return {
         "ref_key": header.get("Ref_Key"),
@@ -902,6 +936,7 @@ def build_memo_detail(
         "auto_approve_allowed": sto["auto_approve_allowed"],
         "sto_issues": sto["sto_issues"],
         "sto_checklist": sto["sto_checklist"],
+        "series_planning": series_planning,
     }
 
 

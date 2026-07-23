@@ -362,9 +362,9 @@ async def test_get_detail_reads_next_occurrence_from_outlook() -> None:
 
     tz = ZoneInfo("Europe/Moscow")
     next_occurrence = SeriesOccurrence(
-        occurrence_date=date(2026, 7, 16),
-        slot_start=datetime(2026, 7, 16, 9, 0, tzinfo=tz),
-        slot_end=datetime(2026, 7, 16, 9, 30, tzinfo=tz),
+        occurrence_date=date(2027, 7, 16),
+        slot_start=datetime(2027, 7, 16, 9, 0, tzinfo=tz),
+        slot_end=datetime(2027, 7, 16, 9, 30, tzinfo=tz),
         outlook_item_id="occ-2",
         outlook_changekey="ck-2",
         subject="Технический совет",
@@ -401,8 +401,10 @@ async def test_get_detail_reads_next_occurrence_from_outlook() -> None:
     sync_card.assert_awaited_once_with(meeting_id)
 
     assert detail.next_occurrence is not None
-    assert detail.next_occurrence.occurrence_date == date(2026, 7, 16)
+    assert detail.next_occurrence.occurrence_date == date(2027, 7, 16)
     assert detail.next_occurrence.source == "outlook"
+    assert len(detail.upcoming_occurrences) == 1
+    assert detail.upcoming_occurrences[0].occurrence_date == date(2027, 7, 16)
     assert len(detail.past_occurrences) == 1
     assert detail.past_occurrences[0].occurrence_date == date(2026, 7, 15)
 

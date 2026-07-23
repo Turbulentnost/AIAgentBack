@@ -64,6 +64,28 @@ def test_build_queue_item_from_row_resolves_location_label() -> None:
     assert item["document_date_label"] == "18.06.2026"
 
 
+def test_build_queue_item_from_row_includes_series_planning_fields() -> None:
+    row = {
+        "Ref_Key": "37da8ed8-6b19-11f1-9825-6cb31113810e",
+        "Number": "000011832",
+        "Date": "2026-07-23T09:40:53",
+        "Статус": "НеСогласована",
+        "ТемаСовещания": "тест",
+        "ЖелаемаяДатаПроведенияСовещания": "2026-07-24T00:00:00",
+        "ВремяНачалаСовещания": "0001-01-01T13:00:00",
+        "ВремяОкончанияСовещания": "0001-01-01T13:20:00",
+        "ТекстСлужебнойЗаписки": (
+            "Прошу распланировать совещания на две недели ежедневно с 13:15-14:00"
+        ),
+    }
+
+    item = build_queue_item_from_row(row)
+
+    assert item["series_detected"] is True
+    assert item["series_recurrence_label"] is not None
+    assert "ежедневно" in item["series_recurrence_label"]
+
+
 def test_header_with_people_keys_fetches_full_header_when_date_missing() -> None:
     row = {
         "Ref_Key": "37da8ed8-6b19-11f1-9825-6cb31113810e",

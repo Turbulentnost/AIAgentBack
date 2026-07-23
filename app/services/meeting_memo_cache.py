@@ -13,6 +13,7 @@ from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_sete
 from app.services.meeting_attendees import attendee_fio_from_detail
 from app.services.meeting_memo_document import (
     clean_text,
+    extract_memo_text,
     format_document_date_label,
     parse_odata_datetime,
     resolve_meeting_schedule,
@@ -26,7 +27,7 @@ from app.services.meeting_psd_level import (
 )
 from app.services.meeting_agent_errors import format_onec_load_error, format_participants_missing_error
 from app.tools.onec.connection import CONFIG, create_session
-from app.tools.onec.get_meetings import meeting_theme
+from app.tools.onec.get_meetings import fetch_document_header, meeting_theme
 
 logger = get_logger(__name__)
 
@@ -40,6 +41,10 @@ class MemoCacheMissError(LookupError):
 
 def _cache_key(ref_key: str) -> str:
     return f"{_CACHE_KEY_PREFIX}:{ref_key.strip().lower()}"
+
+
+def _series_mode_cache_key(ref_key: str) -> str:
+    return f"{_CACHE_KEY_PREFIX}:{ref_key.strip().lower()}:series_mode"
 
 
 def _dashboard_cache_key(target_date: date) -> str:
@@ -274,6 +279,10 @@ def _enrich_cached_header(queue: dict[str, Any], app: dict[str, Any]) -> dict[st
     if theme:
         header["ТемаСовещания"] = theme
 
+    memo_text = extract_memo_text(header, application=app)
+    if memo_text:
+        header["ТекстСлужебнойЗаписки"] = memo_text
+
     if app.get("meeting_start"):
         header["ВремяНачалаСовещания"] = app["meeting_start"]
     if app.get("meeting_end"):
@@ -323,6 +332,9 @@ def _sync_detail_display_fields(detail: dict[str, Any], header: dict[str, Any]) 
         app["location"] = header["location"]
     if header.get("ТемаСовещания"):
         app["agenda"] = header["ТемаСовещания"]
+    memo_text = extract_memo_text(header, queue=queue, application=app)
+    if memo_text:
+        app["memo_text"] = memo_text
     start, end = resolve_meeting_schedule(header)
     if start is not None:
         app["meeting_start"] = start.isoformat()
@@ -387,6 +399,7 @@ def build_detail_from_dashboard_item(item: dict[str, Any]) -> dict[str, Any]:
             "participants": participants,
             "participants_count": participants_count,
             "agenda": item.get("subject") or item.get("title") or item.get("ТемаСовещания"),
+            "memo_text": extract_memo_text(item),
             "scheduled_label": item.get("scheduled_label"),
             "document_date": document_date,
             "document_date_label": document_date_label,
@@ -433,6 +446,9 @@ def document_from_cached_detail(detail: dict[str, Any]) -> dict[str, Any]:
     """Собирает документ 1С из кэшированного detail для пересчёта СТО."""
     app = detail.get("application") or {}
     header = _enrich_cached_header(dict(detail.get("queue") or {}), app)
+    memo_text = extract_memo_text(header, queue=detail.get("queue"), application=app)
+    if memo_text:
+        header["ТекстСлужебнойЗаписки"] = memo_text
 
     participants = [{"ФИО": name} for name in attendee_fio_from_detail(detail)]
     return {
@@ -443,7 +459,64 @@ def document_from_cached_detail(detail: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def refresh_cached_detail_assessment(detail: dict[str, Any]) -> dict[str, Any]:
+def refresh_series_planning(
+    detail: dict[str, Any],
+    *,
+    selected_mode: str | None = None,
+) -> dict[str, Any]:
+    from app.agents.meeting_agent.memo_presenter import (
+        _apply_series_fields_to_queue,
+        _build_series_planning,
+    )
+
+    document = document_from_cached_detail(detail)
+    header = document.get("header") or {}
+    series_planning = _build_series_planning(
+        header,
+        document,
+        selected_mode=selected_mode,
+    )
+    detail["series_planning"] = series_planning
+    queue = detail.get("queue")
+    if isinstance(queue, dict):
+        _apply_series_fields_to_queue(queue, series_planning)
+    return series_planning
+
+
+async def refresh_series_planning_async(
+    detail: dict[str, Any],
+    *,
+    ref_key: str | None = None,
+    selected_mode: str | None = None,
+) -> dict[str, Any]:
+    from app.agents.meeting_agent.memo_presenter import (
+        _apply_series_fields_to_queue,
+    )
+    from app.services.meeting_memo_series_llm import build_series_planning_read_async
+
+    document = document_from_cached_detail(detail)
+    header = document.get("header") or {}
+    normalized_ref = (
+        ref_key or detail.get("ref_key") or clean_text(header.get("Ref_Key")) or ""
+    ).strip().lower() or None
+    series_planning = await build_series_planning_read_async(
+        header,
+        document,
+        ref_key=normalized_ref,
+        selected_mode=selected_mode,
+    )
+    detail["series_planning"] = series_planning
+    queue = detail.get("queue")
+    if isinstance(queue, dict):
+        _apply_series_fields_to_queue(queue, series_planning)
+    return series_planning
+
+
+def refresh_cached_detail_assessment(
+    detail: dict[str, Any],
+    *,
+    include_series_planning: bool = True,
+) -> dict[str, Any]:
     """Пересчитывает чек-лист СТО и связанные поля по актуальным правилам."""
     from app.agents.meeting_agent.memo_presenter import _build_validation_checks, _build_warnings
     from app.agents.meeting_agent.memo_validation import build_sto_payload
@@ -465,6 +538,72 @@ def refresh_cached_detail_assessment(detail: dict[str, Any]) -> dict[str, Any]:
     updated["warnings"] = _build_warnings(updated["validation_checks"])
     if isinstance(updated.get("queue"), dict):
         updated["queue"] = {**updated["queue"], "warnings": updated["warnings"]}
+    if include_series_planning:
+        refresh_series_planning(updated)
+    return updated
+
+
+async def ensure_memo_text_in_detail(
+    detail: dict[str, Any],
+    *,
+    ref_key: str | None = None,
+) -> dict[str, Any]:
+    """Подгружает ТекстСлужебнойЗаписки из 1С, если в кэше его нет."""
+    app = dict(detail.get("application") or {})
+    queue = dict(detail.get("queue") or {})
+    memo_text = extract_memo_text(queue=queue, application=app)
+    if memo_text:
+        app["memo_text"] = memo_text
+        queue["ТекстСлужебнойЗаписки"] = memo_text
+        detail["application"] = app
+        detail["queue"] = queue
+        return detail
+
+    normalized_ref = (
+        ref_key
+        or detail.get("ref_key")
+        or clean_text(queue.get("ref_key"))
+        or clean_text(queue.get("Ref_Key"))
+        or ""
+    ).strip()
+    if not normalized_ref:
+        return detail
+
+    try:
+        header = await asyncio.to_thread(
+            fetch_document_header,
+            create_session(CONFIG),
+            CONFIG,
+            normalized_ref,
+        )
+    except Exception as exc:
+        logger.warning("meeting_memo_text_fetch_failed: %s", exc)
+        return detail
+
+    memo_text = extract_memo_text(header)
+    if not memo_text:
+        return detail
+
+    app["memo_text"] = memo_text
+    queue["ТекстСлужебнойЗаписки"] = memo_text
+    detail["application"] = app
+    detail["queue"] = queue
+    return detail
+
+
+async def enrich_memo_detail_payload(
+    payload: dict[str, Any],
+    *,
+    ref_key: str,
+    selected_mode: str | None = None,
+) -> dict[str, Any]:
+    updated = await ensure_memo_text_in_detail(payload, ref_key=ref_key)
+    updated = refresh_cached_detail_assessment(updated, include_series_planning=False)
+    await refresh_series_planning_async(
+        updated,
+        ref_key=ref_key,
+        selected_mode=selected_mode,
+    )
     return updated
 
 
@@ -496,6 +635,41 @@ def detail_to_memo_document(detail: dict[str, Any]) -> dict[str, Any]:
 
 
 class MeetingMemoCacheService:
+    async def get_series_planning_choice(self, ref_key: str) -> str | None:
+        normalized = ref_key.strip().lower()
+        try:
+            raw = await meeting_redis_get(_series_mode_cache_key(normalized))
+        except Exception as exc:
+            logger.warning(
+                "meeting_memo_series_mode_read_failed",
+                ref_key=normalized,
+                error=str(exc),
+            )
+            return None
+        if raw in {"series", "single"}:
+            return raw
+        return None
+
+    async def set_series_planning_choice(self, ref_key: str, mode: str) -> None:
+        normalized = ref_key.strip().lower()
+        if mode not in {"series", "single"}:
+            raise ValueError("mode must be 'series' or 'single'")
+        await meeting_redis_setex(
+            _series_mode_cache_key(normalized),
+            settings.MEETING_DASHBOARD_CACHE_TTL_SECONDS,
+            mode,
+        )
+
+    async def _apply_cached_series_choice(
+        self,
+        payload: dict[str, Any],
+        ref_key: str,
+    ) -> dict[str, Any]:
+        mode = await self.get_series_planning_choice(ref_key)
+        if mode:
+            await refresh_series_planning_async(payload, ref_key=ref_key, selected_mode=mode)
+        return payload
+
     async def get_memo_detail(
         self,
         ref_key: str,
@@ -507,6 +681,8 @@ class MeetingMemoCacheService:
         normalized = ref_key.strip().lower()
         if force_refresh:
             payload, fetched_at = await self._fetch_and_store(normalized)
+            payload = await enrich_memo_detail_payload(payload, ref_key=normalized)
+            payload = await self._apply_cached_series_choice(payload, normalized)
             return payload, fetched_at, False
 
         if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
@@ -516,7 +692,11 @@ class MeetingMemoCacheService:
 
         cached = await self._read_cache(normalized)
         if cached is not None:
-            payload = refresh_cached_detail_assessment(cached["payload"])
+            payload = await enrich_memo_detail_payload(
+                cached["payload"],
+                ref_key=normalized,
+            )
+            payload = await self._apply_cached_series_choice(payload, normalized)
             return payload, cached["fetched_at"], True
 
         fallback = await self._read_detail_from_dashboard_cache(
@@ -525,7 +705,8 @@ class MeetingMemoCacheService:
         )
         if fallback is not None:
             payload, fetched_at = fallback
-            payload = refresh_cached_detail_assessment(payload)
+            payload = await enrich_memo_detail_payload(payload, ref_key=normalized)
+            payload = await self._apply_cached_series_choice(payload, normalized)
             return payload, fetched_at, True
 
         raise MemoCacheMissError(
@@ -546,7 +727,11 @@ class MeetingMemoCacheService:
 
         cached = await self._read_cache(normalized)
         if cached is not None and detail_is_agent_ready(cached["payload"]):
-            payload = refresh_cached_detail_assessment(cached["payload"])
+            payload = await enrich_memo_detail_payload(
+                cached["payload"],
+                ref_key=normalized,
+            )
+            payload = await self._apply_cached_series_choice(payload, normalized)
             return payload, cached["fetched_at"], True
 
         logger.info(
@@ -562,6 +747,8 @@ class MeetingMemoCacheService:
         if not detail_is_agent_ready(payload):
             raise MemoCacheMissError(format_participants_missing_error())
 
+        payload = await enrich_memo_detail_payload(payload, ref_key=normalized)
+        payload = await self._apply_cached_series_choice(payload, normalized)
         return payload, fetched_at, False
 
     async def _read_detail_from_dashboard_cache(

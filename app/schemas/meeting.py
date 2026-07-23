@@ -34,6 +34,14 @@ class MeetingDashboardItem(BaseModel):
     initiator: MeetingPersonRead | None = None
     manager: MeetingPersonRead | None = None
     psd_level: bool = False
+    series_detected: bool = Field(
+        default=False,
+        description="В тексте СЗ распознана периодичность серии",
+    )
+    series_recurrence_label: str | None = Field(
+        default=None,
+        description="Краткая подсказка по серии для списка заявок",
+    )
 
 
 class MeetingPersonRead(BaseModel):
@@ -69,6 +77,53 @@ class MeetingStoIssueRead(BaseModel):
     message: str
 
 
+class MeetingMemoSeriesPlanningRead(BaseModel):
+    detected: bool = False
+    requires_user_choice: bool = False
+    confidence: Literal["high", "medium", "low"] = "low"
+    recurrence_label: str | None = Field(
+        default=None,
+        description="Подсказка для УД: периодичность и срок серии",
+    )
+    series_start_date: str | None = None
+    series_end_date: str | None = None
+    occurrence_count: int | None = None
+    source_quote: str | None = None
+    ambiguities: list[str] = Field(default_factory=list)
+    planning_options: list[Literal["series", "single"]] = Field(default_factory=list)
+    selected_mode: Literal["series", "single"] | None = Field(
+        default=None,
+        description="Выбор УД: серия или единоразовое совещание",
+    )
+
+
+class MeetingMemoSeriesPlanningChoiceRequest(BaseModel):
+    mode: Literal["series", "single"]
+
+
+class MeetingMemoSeriesPlanningChoiceRead(BaseModel):
+    ref_key: str
+    mode: Literal["series", "single"]
+    stored: bool = True
+
+
+class MeetingMemoSeriesCreateRead(BaseModel):
+    ref_key: str
+    scheduled_meeting_id: uuid.UUID
+    scheduled_meeting_title: str
+    recurrence_label: str | None = None
+    occurrence_count: int | None = None
+    memo_approved: bool = False
+    memo_approve_message: str | None = None
+
+
+class MeetingMemoSeriesCreateRequest(BaseModel):
+    meeting_topic: dict[str, Any] | None = Field(
+        default=None,
+        description="Выбранная тема совещания из workflow check/resolve",
+    )
+
+
 class MeetingHistoryEventRead(BaseModel):
     timestamp: str = Field(validation_alias=AliasChoices("timestamp", "at"))
     message: str
@@ -80,6 +135,7 @@ class MeetingApplicationRead(BaseModel):
     participants: list[MeetingParticipantDetailRead] = Field(default_factory=list)
     participants_count: int = 0
     agenda: str | None = None
+    memo_text: str | None = None
     scheduled_label: str | None = None
     document_date: str | None = None
     document_date_label: str | None = None
@@ -112,6 +168,7 @@ class MeetingMemoDetailRead(BaseModel):
     auto_approve_allowed: bool = False
     sto_issues: list[MeetingStoIssueRead] = Field(default_factory=list)
     sto_checklist: list[MeetingStoChecklistItemRead] = Field(default_factory=list)
+    series_planning: MeetingMemoSeriesPlanningRead | None = None
 
 
 class MeetingLoginContext(BaseModel):

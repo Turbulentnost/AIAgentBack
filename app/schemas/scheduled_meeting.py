@@ -81,6 +81,10 @@ class ScheduledMeetingRead(ORMModel):
     series_start_date: date
     series_end_date: date
     recurrence_label: str
+    occurrence_count: int | None = Field(
+        default=None,
+        description="Число вхождений серии по правилам recurrence",
+    )
     recurrence_rule: dict
     outlook_series_id: str | None = None
     outlook_changekey: str | None = None
@@ -151,6 +155,10 @@ class ScheduledMeetingCreate(BaseModel):
     series_end_date: date | None = Field(
         default=None,
         description="Срок серии (по); по умолчанию 31.12 года начала",
+    )
+    recurrence_label: str | None = Field(
+        default=None,
+        description="Подпись серии; если не задана — формируется из recurrence",
     )
     participants: list[ScheduledMeetingParticipantCreate] = Field(default_factory=list)
     comment: str | None = Field(default=None, max_length=4000)
@@ -247,6 +255,7 @@ class ScheduledMeetingOccurrenceRead(BaseModel):
 class ScheduledMeetingDetailRead(BaseModel):
     series: ScheduledMeetingRead
     next_occurrence: ScheduledMeetingOccurrenceRead | None = None
+    upcoming_occurrences: list[ScheduledMeetingOccurrenceRead] = Field(default_factory=list)
     past_occurrences: list[ScheduledMeetingOccurrenceRead] = Field(default_factory=list)
     current_card: MeetingRegistryItemRead | None = None
     history: list[MeetingRegistryEventRead] = Field(default_factory=list)

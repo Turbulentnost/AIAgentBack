@@ -12,6 +12,7 @@ from app.services.meeting_memo_cache import (
     build_detail_from_dashboard_item,
     collect_memo_ref_keys,
     detail_is_agent_ready,
+    ensure_memo_text_in_detail,
     refresh_cached_detail_assessment,
 )
 
@@ -137,10 +138,19 @@ async def test_get_memo_detail_force_refresh_hits_onec(sample_detail) -> None:
             "_fetch_and_store",
             AsyncMock(return_value=(sample_detail, fetched_at)),
         ) as fetch_and_store:
-            payload, result_fetched_at, from_cache = await service.get_memo_detail(
-                ref_key,
-                force_refresh=True,
-            )
+            with patch(
+                "app.services.meeting_memo_cache.enrich_memo_detail_payload",
+                AsyncMock(side_effect=lambda payload, **_: payload),
+            ):
+                with patch.object(
+                    service,
+                    "_apply_cached_series_choice",
+                    AsyncMock(side_effect=lambda payload, _: payload),
+                ):
+                    payload, result_fetched_at, from_cache = await service.get_memo_detail(
+                        ref_key,
+                        force_refresh=True,
+                    )
 
     read_cache.assert_not_called()
     fetch_and_store.assert_awaited_once_with(ref_key)
@@ -180,6 +190,57 @@ def test_build_detail_from_dashboard_item_uses_queue_fields() -> None:
     assert detail["application"]["participants_count"] == 2
     assert detail["application"]["participants"][0]["full_name"] == "Иванов Иван Иванович"
     assert detail["warnings"] == ["Нет времени"]
+
+
+def test_build_detail_from_dashboard_item_includes_memo_text() -> None:
+    item = {
+        "ref_key": "11111111-1111-1111-1111-111111111111",
+        "number": "0001",
+        "title": "Тест периодичности",
+        "ТекстСлужебнойЗаписки": "Прошу назначить совещание еженедельно по средам в 9:00",
+    }
+    detail = build_detail_from_dashboard_item(item)
+    assert detail["application"]["memo_text"] == item["ТекстСлужебнойЗаписки"]
+
+
+def test_refresh_cached_detail_assessment_does_not_use_agenda_as_memo_text() -> None:
+    detail = build_detail_from_dashboard_item(
+        {
+            "ref_key": "11111111-1111-1111-1111-111111111111",
+            "title": "тест периодичности",
+            "ТемаСовещания": "тест периодичности",
+            "subject": "тест периодичности",
+        }
+    )
+    refreshed = refresh_cached_detail_assessment(detail, include_series_planning=False)
+    assert refreshed["application"].get("memo_text") is None
+    assert refreshed["application"]["agenda"] == "тест периодичности"
+
+
+@pytest.mark.asyncio
+async def test_ensure_memo_text_in_detail_fetches_from_onec() -> None:
+    detail = build_detail_from_dashboard_item(
+        {
+            "ref_key": "ffc53a2a-866d-11f1-984a-6cb31113810e",
+            "title": "тест периодичности",
+            "ТемаСовещания": "тест периодичности",
+        }
+    )
+    with patch(
+        "app.services.meeting_memo_cache.fetch_document_header",
+        return_value={
+            "Ref_Key": "ffc53a2a-866d-11f1-984a-6cb31113810e",
+            "ТекстСлужебнойЗаписки": "прошу распланировать ежедневные совещания на всю неделю",
+        },
+    ):
+        updated = await ensure_memo_text_in_detail(
+            detail,
+            ref_key="ffc53a2a-866d-11f1-984a-6cb31113810e",
+        )
+    assert (
+        updated["application"]["memo_text"]
+        == "прошу распланировать ежедневные совещания на всю неделю"
+    )
 
 
 def test_detail_is_agent_ready_rejects_dashboard_fallback() -> None:
@@ -229,7 +290,18 @@ async def test_get_memo_detail_for_agent_fetches_from_onec_on_cache_miss(agent_r
             AsyncMock(return_value=(agent_ready_detail, fetched_at)),
         ) as fetch:
             with patch.object(service, "_read_detail_from_dashboard_cache", AsyncMock()) as dashboard:
-                payload, result_fetched_at, from_cache = await service.get_memo_detail_for_agent(ref_key)
+                with patch(
+                    "app.services.meeting_memo_cache.enrich_memo_detail_payload",
+                    AsyncMock(side_effect=lambda payload, **_: payload),
+                ):
+                    with patch.object(
+                        service,
+                        "_apply_cached_series_choice",
+                        AsyncMock(side_effect=lambda payload, _: payload),
+                    ):
+                        payload, result_fetched_at, from_cache = await service.get_memo_detail_for_agent(
+                            ref_key
+                        )
 
     fetch.assert_awaited_once_with(ref_key)
     dashboard.assert_not_called()
@@ -261,7 +333,18 @@ async def test_get_memo_detail_for_agent_refetches_when_cache_is_dashboard_shape
             "_fetch_and_store",
             AsyncMock(return_value=(agent_ready_detail, refetched_at)),
         ) as fetch:
-            payload, result_fetched_at, from_cache = await service.get_memo_detail_for_agent(ref_key)
+            with patch(
+                "app.services.meeting_memo_cache.enrich_memo_detail_payload",
+                AsyncMock(side_effect=lambda payload, **_: payload),
+            ):
+                with patch.object(
+                    service,
+                    "_apply_cached_series_choice",
+                    AsyncMock(side_effect=lambda payload, _: payload),
+                ):
+                    payload, result_fetched_at, from_cache = await service.get_memo_detail_for_agent(
+                        ref_key
+                    )
 
     fetch.assert_awaited_once_with(ref_key)
     assert from_cache is False

@@ -42,6 +42,7 @@ from app.services.scheduled_meeting_outlook_update import update_series_end_date
 from app.services.scheduled_meeting_recurrence import (
     build_recurrence_rule,
     format_recurrence_label,
+    iter_occurrence_dates,
 )
 from app.services.scheduled_meeting_roles import (
     merge_scheduled_meeting_participants,
@@ -136,7 +137,11 @@ class ScheduledMeetingService:
             weekday_position=recurrence_input.weekday_position,
             series_start_date=recurrence_input.series_start_date,
             series_end_date=recurrence_input.series_end_date,
-            recurrence_label=format_recurrence_label(recurrence_input),
+            recurrence_label=(
+                payload.recurrence_label.strip()
+                if payload.recurrence_label and payload.recurrence_label.strip()
+                else format_recurrence_label(recurrence_input)
+            ),
             recurrence_rule=build_recurrence_rule(recurrence_input),
             payload=payload.resolved_payload(),
         )
@@ -482,6 +487,11 @@ class ScheduledMeetingService:
         )
 
         next_item = find_next_occurrence(occurrences, now=now)
+        upcoming_items = [
+            item
+            for item in sorted(occurrences, key=lambda entry: entry.slot_start)
+            if item.slot_end >= now and not item.is_cancelled
+        ]
         past_items = [
             item
             for item in sorted(occurrences, key=lambda entry: entry.slot_start, reverse=True)
@@ -501,6 +511,12 @@ class ScheduledMeetingService:
                 **occurrence_to_read(item, outlook_meeting_url=series_url, source=source)
             )
             for item in past_items
+        ]
+        upcoming_occurrences = [
+            ScheduledMeetingOccurrenceRead(
+                **occurrence_to_read(item, outlook_meeting_url=series_url, source=source)
+            )
+            for item in upcoming_items
         ]
 
         registry = MeetingRegistryService(self.db)
@@ -532,6 +548,7 @@ class ScheduledMeetingService:
         return ScheduledMeetingDetailRead(
             series=self.to_read(meeting),
             next_occurrence=next_occurrence,
+            upcoming_occurrences=upcoming_occurrences,
             past_occurrences=past_occurrences,
             current_card=current_card,
             history=history,
@@ -664,6 +681,7 @@ class ScheduledMeetingService:
             )
             for participant in sorted(meeting.participants, key=lambda item: item.sort_order)
         ]
+        recurrence_input = recurrence_input_from_meeting(meeting)
         return ScheduledMeetingRead(
             id=meeting.id,
             title=meeting.title,
@@ -694,6 +712,7 @@ class ScheduledMeetingService:
             series_start_date=meeting.series_start_date,
             series_end_date=meeting.series_end_date,
             recurrence_label=meeting.recurrence_label,
+            occurrence_count=len(iter_occurrence_dates(recurrence_input)),
             recurrence_rule=meeting.recurrence_rule,
             outlook_series_id=meeting.outlook_series_id,
             outlook_changekey=meeting.outlook_changekey,
