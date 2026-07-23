@@ -78,7 +78,7 @@ def test_foreign_domain_in_body_routes_to_ved(engine):
     )
 
     assert decision.services[0].code == "00-000015"
-    assert decision.match_source == "det_sales_foreign"
+    assert decision.match_source == "det_foreign_domain"
 
 
 def test_export_keyword_without_foreign_domain_does_not_route_to_ved(engine):
@@ -88,15 +88,57 @@ def test_export_keyword_without_foreign_domain_does_not_route_to_ved(engine):
     assert decision.match_source != "det_sales_foreign"
 
 
-def test_com_sender_without_foreign_domain_does_not_route_to_ved(engine):
+def test_com_sender_with_sales_context_routes_to_ved(engine):
     decision = _route(
         engine,
         "Запрос КП на оборудование.",
         sender_email="info@hebei-export.com",
     )
 
+    assert decision.services[0].code == "00-000015"
+    assert decision.match_source in {"det_sales_foreign", "det_foreign_domain"}
+
+
+def test_foreign_sender_routes_to_ved_without_sales_context(engine):
+    decision = _route(
+        engine,
+        "Please send quotation for spare parts.",
+        sender_email="wy003@weiyemachinery.cn",
+        mailbox="uk_omto10@turbo-don.ru",
+        routing_recipient="uk_omto10@turbo-don.ru",
+    )
+
+    assert decision.services[0].code == "00-000015"
+    assert decision.match_source == "det_foreign_domain"
+
+
+def test_foreign_domain_in_cc_routes_to_ved(engine):
+    email = _email(
+        sender_email="client@example.ru",
+        mailbox="info@turbo-don.ru",
+        routing_recipient="info@turbo-don.ru",
+    )
+    email = email.model_copy(update={"cc": ["sales@partner-export.de"]})
+    decision = route_email(
+        email,
+        combined_text="Forwarding supplier request.",
+        recipient="info@turbo-don.ru",
+        engine=engine,
+    )
+
+    assert decision.services[0].code == "00-000015"
+    assert decision.match_source == "det_foreign_domain"
+
+
+def test_gmail_com_is_not_foreign(engine):
+    decision = _route(
+        engine,
+        "Запрос КП на оборудование.",
+        sender_email="user@gmail.com",
+    )
+
     assert decision.services[0].code != "00-000015"
-    assert decision.match_source != "det_sales_foreign"
+    assert decision.match_source != "det_foreign_domain"
 
 
 def test_ru_domain_in_url_does_not_route_to_ved(engine):

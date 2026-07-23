@@ -189,3 +189,53 @@ def test_commercial_departments_use_pr_direction(engine, department_id: str) -> 
         )
         == DIRECTION_DEFAULT
     )
+
+
+def test_omto_mailbox_uses_pr_direction(engine) -> None:
+    decision = route_email(
+        _email(
+            subject="Счёт на оплату",
+            mailbox="uk_omto11@turbo-don.ru",
+            routing_recipient="uk_omto11@turbo-don.ru",
+        ),
+        combined_text="Счёт на оплату поставщика",
+        recipient="uk_omto11@turbo-don.ru",
+        engine=engine,
+    )
+    assert decision.services[0].code == "00-000065"
+    assert decision.direction == DIRECTION_DEFAULT
+
+
+def test_rebuild_decision_xml_omto_keeps_pr_direction(engine) -> None:
+    from agent_pochta.routing.engine import rebuild_decision_xml
+
+    decision = route_email(
+        _email(
+            subject="Счёт",
+            mailbox="uk_omto4@turbo-don.ru",
+            routing_recipient="uk_omto4@turbo-don.ru",
+        ),
+        combined_text="Счёт на поставку",
+        recipient="uk_omto4@turbo-don.ru",
+        engine=engine,
+    )
+    updated = rebuild_decision_xml(
+        _email(
+            subject="Счёт",
+            mailbox="uk_omto4@turbo-don.ru",
+            routing_recipient="uk_omto4@turbo-don.ru",
+        ),
+        decision,
+        recipient="uk_omto4@turbo-don.ru",
+        department_id="00-000065",
+        department_name="ОМТО",
+    )
+    assert updated.direction == DIRECTION_DEFAULT
+    assert "<направление>ПР</направление>" in (updated.xml_document or "")
+
+
+def test_directions_by_code_omto_prefers_email_keyword_pr(engine) -> None:
+    from agent_pochta.services.routing_departments import directions_by_code_from_rules
+
+    directions = directions_by_code_from_rules(engine.rules)
+    assert directions["00-000065"] == DIRECTION_DEFAULT

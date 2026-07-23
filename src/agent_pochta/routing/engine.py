@@ -9,7 +9,10 @@ from pathlib import Path
 from agent_pochta.config import PROJECT_ROOT
 from agent_pochta.routing.confidence import calculate_confidence
 from agent_pochta.routing.corrections import find_correction_match
-from agent_pochta.routing.deterministic_sales import match_deterministic_sales
+from agent_pochta.routing.deterministic_sales import (
+    match_deterministic_sales,
+    match_foreign_domain_route,
+)
 from agent_pochta.routing.models import ConfidenceLevel, RoutingDecision, ServiceRoute
 from agent_pochta.routing.normalize import (
     contains_claim_marker,
@@ -24,6 +27,7 @@ from agent_pochta.routing.organizations import (
     DIRECTION_DEFAULT,
     DIRECTION_UNCLEAR,
     KS_PAYER_DIRECTION_DEPARTMENT_CODES,
+    PRODUCTION_DIRECTION_DEPARTMENT_CODES,
     leadership_department_allowed,
     normalize_organization_code,
     resolve_direction_for_department,
@@ -259,6 +263,40 @@ class RouteEngine:
             content_hits=max(1, len(hit.matched_keywords)),
             organization=hit.organization,
             matched_keywords=keywords,
+        )
+        return self._accept_leadership_candidate(recipient, candidate)
+
+    def _foreign_domain_match(
+        self,
+        subject: str,
+        body: str,
+        *,
+        sender_email: str = "",
+        to_addresses: list[str] | None = None,
+        cc_addresses: list[str] | None = None,
+        reply_to: str | None = None,
+        recipient: str = "",
+    ) -> _Candidate | None:
+        """Зарубежный домен в from/to/cc/теле → ВЭД (до keyword/content)."""
+        hit = match_foreign_domain_route(
+            subject=subject,
+            body=body,
+            sender_email=sender_email,
+            to_addresses=to_addresses,
+            cc_addresses=cc_addresses,
+            reply_to=reply_to,
+        )
+        if hit is None:
+            return None
+        candidate = _Candidate(
+            code=hit.code,
+            name=self._dept_name(hit.code, hit.name),
+            direction=hit.direction,
+            source=hit.source,
+            reasoning=hit.reasoning,
+            topic_hits=max(2, len(hit.matched_keywords)),
+            content_hits=max(1, len(hit.matched_keywords)),
+            matched_keywords=list(hit.matched_keywords),
         )
         return self._accept_leadership_candidate(recipient, candidate)
 
@@ -612,11 +650,26 @@ class RouteEngine:
         body: str,
         partner: str | None,
         sender_email: str = "",
+        *,
+        to_addresses: list[str] | None = None,
+        cc_addresses: list[str] | None = None,
+        reply_to: str | None = None,
     ) -> list[_Candidate]:
         recipient = normalize_email_address(recipient, self.rules.get("email_aliases"))
         correction = self._correction_match(recipient, sender_email, subject, body)
         if correction is not None and self._leadership_allowed(recipient, correction):
             return [correction]
+        foreign = self._foreign_domain_match(
+            subject,
+            body,
+            sender_email=sender_email,
+            to_addresses=to_addresses,
+            cc_addresses=cc_addresses,
+            reply_to=reply_to,
+            recipient=recipient,
+        )
+        if foreign is not None:
+            return [foreign]
         gazprom_np_reply = self._gazprom_np_reply_match(
             subject, body, sender_email, recipient=recipient
         )
@@ -704,6 +757,9 @@ class RouteEngine:
             body,
             partner,
             sender_email=email.sender_email,
+            to_addresses=email.to,
+            cc_addresses=email.cc,
+            reply_to=email.reply_to,
         )
 
         unique_codes = {c.code for c in candidates}
@@ -736,6 +792,8 @@ class RouteEngine:
         direction = self.detect_direction(organization, primary.direction)
         if primary.code in COMMERCIAL_DEPARTMENT_CODES:
             direction = DIRECTION_COMMERCIAL
+        elif primary.code in PRODUCTION_DIRECTION_DEPARTMENT_CODES:
+            direction = DIRECTION_DEFAULT
         elif primary.code in KS_PAYER_DIRECTION_DEPARTMENT_CODES:
             direction = DIRECTION_UNCLEAR
         claim = contains_claim_marker(f"{subject} {body}")

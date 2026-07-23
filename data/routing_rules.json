@@ -622,35 +622,35 @@
       "email": "zavgar@turbo-don.ru",
       "code": "00-000065",
       "name": "Начальник ОМТО",
-      "direction": "КС",
+      "direction": "ПР",
       "about": "Предложение ТМЦ"
     },
     {
       "email": "mgs_sklad@turbo-don.ru",
       "code": "00-000065",
       "name": "Начальник ОМТО",
-      "direction": "КС",
+      "direction": "ПР",
       "about": "Предложение ТМЦ"
     },
     {
       "email": "npo_sklad1@turbo-don.ru",
       "code": "00-000065",
       "name": "Начальник ОМТО",
-      "direction": "КС",
+      "direction": "ПР",
       "about": "Предложение ТМЦ"
     },
     {
       "email": "sklad_gp@turbo-don.ru",
       "code": "00-000065",
       "name": "Начальник ОМТО",
-      "direction": "КС",
+      "direction": "ПР",
       "about": "Предложение ТМЦ"
     },
     {
       "email": "npo_ceh1.12@turbo-don.ru",
       "code": "00-000065",
       "name": "Начальник ОМТО",
-      "direction": "КС",
+      "direction": "ПР",
       "about": "Предложение ТМЦ"
     },
     {
@@ -1074,7 +1074,7 @@
       ],
       "code": "00-000065",
       "name": "Начальник ОМТО",
-      "direction": "КС",
+      "direction": "ПР",
       "about": "Предложение ТМЦ"
     },
     {
@@ -4140,6 +4140,26 @@
           "email gorbunova_km",
           "gfg2-f-c2tp-g-0025.01-p-0tki-exi-c-0010e 1",
           "gorbunova_km odk-gt.ru"
+        ]
+      },
+      {
+        "id": "06ccd135-a53d-4fce-8186-cf62b123a28b",
+        "created_at": "2026-07-23T11:26:49.580123+00:00",
+        "partner": "ООО «Сибирское купечество»",
+        "organization": "АЛ",
+        "department_id": "00-000155",
+        "department_name": "Отдел дилерских продаж",
+        "sender_email": "busines.quattro.pro@bk.ru",
+        "recipient": "info@turbo-don.ru",
+        "subject": "",
+        "keywords": [
+          "info",
+          "счетчики",
+          "spi-grand g10",
+          "веса и",
+          "вложениях изображения",
+          "во вложениях",
+          "габаритов веса"
         ]
       }
     ]

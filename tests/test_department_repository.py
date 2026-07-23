@@ -39,6 +39,7 @@ def test_directions_by_code_from_rules():
     directions = directions_by_code_from_rules(rules)
     assert directions["00-000002"] == "ПР"
     assert directions["00-000076"] == "ПР"
+    assert directions["00-000065"] == "ПР"
 
 
 def test_build_department_records_for_db():

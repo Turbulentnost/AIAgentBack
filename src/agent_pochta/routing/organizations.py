@@ -37,6 +37,13 @@ COMMERCIAL_DEPARTMENT_CODES = frozenset(
     }
 )
 
+# Производственный/снабженческий контур: направление ПР (не КС из legacy content-правил).
+PRODUCTION_DIRECTION_DEPARTMENT_CODES = frozenset(
+    {
+        "00-000065",  # ОМТО
+    }
+)
+
 # Руководство: направление плательщика всегда КС.
 LEADERSHIP_DEPARTMENT_CODES = frozenset(
     {
@@ -146,6 +153,9 @@ def resolve_direction_for_department(
 
     if code in COMMERCIAL_DEPARTMENT_CODES:
         return DIRECTION_COMMERCIAL
+
+    if code in PRODUCTION_DIRECTION_DEPARTMENT_CODES:
+        return DIRECTION_DEFAULT
 
     candidate = (fallback_direction or "").strip() or None
     if rules and code:

@@ -68,7 +68,6 @@ _DOMESTIC_DOMAIN_SUFFIXES = (
     ".ru",
     ".рф",
     ".su",
-    ".com",
     ".by",
     ".kz",
     ".uz",
@@ -93,11 +92,19 @@ def _is_domestic_domain(domain: str, exclude: set[str]) -> bool:
     return False
 
 
-def _extract_domains_from_text(text: str, sender_email: str) -> set[str]:
+def _extract_domains_from_text(
+    text: str,
+    sender_email: str,
+    *,
+    to_addresses: list[str] | None = None,
+    cc_addresses: list[str] | None = None,
+    reply_to: str | None = None,
+) -> set[str]:
     domains: set[str] = set()
-    sender = (sender_email or "").strip()
-    if "@" in sender:
-        domains.add(_normalize_domain(sender))
+    for address in [sender_email, reply_to, *(to_addresses or []), *(cc_addresses or [])]:
+        value = (address or "").strip()
+        if "@" in value:
+            domains.add(_normalize_domain(value))
 
     for pattern in (_EMAIL_DOMAIN_RE, _MAILTO_RE):
         for match in pattern.finditer(text):
@@ -110,16 +117,68 @@ def _extract_domains_from_text(text: str, sender_email: str) -> set[str]:
     return {domain for domain in domains if domain and "." in domain}
 
 
-def _is_foreign(text: str, sender_email: str, rules: dict) -> tuple[bool, list[str]]:
+def _is_foreign(
+    text: str,
+    sender_email: str,
+    rules: dict,
+    *,
+    to_addresses: list[str] | None = None,
+    cc_addresses: list[str] | None = None,
+    reply_to: str | None = None,
+) -> tuple[bool, list[str]]:
     """ВЭД только при явных зарубежных доменах в адресах/URL, не по ключевым словам."""
     exclude = {d.lower() for d in (rules.get("foreign_exclude_domains") or [])}
     foreign_domains: list[str] = []
-    for domain in sorted(_extract_domains_from_text(text, sender_email)):
+    for domain in sorted(
+        _extract_domains_from_text(
+            text,
+            sender_email,
+            to_addresses=to_addresses,
+            cc_addresses=cc_addresses,
+            reply_to=reply_to,
+        )
+    ):
         if not _is_domestic_domain(domain, exclude):
             foreign_domains.append(domain)
     if foreign_domains:
         return True, foreign_domains
     return False, []
+
+
+def match_foreign_domain_route(
+    *,
+    subject: str,
+    body: str,
+    sender_email: str = "",
+    to_addresses: list[str] | None = None,
+    cc_addresses: list[str] | None = None,
+    reply_to: str | None = None,
+    rules: dict | None = None,
+) -> DeterministicHit | None:
+    """Маршрут в ВЭД по зарубежному домену без sales-context и ключевых слов."""
+    cfg = rules if rules is not None else load_deterministic_sales_rules()
+    if not cfg:
+        return None
+    text = normalize_text(f"{subject} {body}")
+    sender = (sender_email or "").lower().strip()
+    is_foreign, foreign_hits = _is_foreign(
+        text,
+        sender,
+        cfg,
+        to_addresses=to_addresses,
+        cc_addresses=cc_addresses,
+        reply_to=reply_to,
+    )
+    if not is_foreign:
+        return None
+    return DeterministicHit(
+        code=str(cfg["foreign_department_id"]),
+        name=str(cfg.get("foreign_department_name") or "ВЭД"),
+        direction=DIRECTION_COMMERCIAL,
+        source="det_foreign_domain",
+        reasoning="Зарубежный домен в from/to/cc/URL → ВЭД",
+        matched_keywords=foreign_hits,
+    )
 
 
 def match_deterministic_sales(

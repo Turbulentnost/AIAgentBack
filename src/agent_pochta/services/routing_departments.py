@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter, defaultdict
 from functools import lru_cache
 from pathlib import Path
 
@@ -630,15 +629,15 @@ def list_active_departments_for_ui(
 
 
 def directions_by_code_from_rules(rules: dict) -> dict[str, str]:
-    """Наиболее частое направление по коду из правил RuleRouter."""
-    counts: dict[str, Counter[str]] = defaultdict(Counter)
-    for section in ("email_keyword_rules", "exact_email_rules", "content_rules"):
+    """Направление по коду: email_keyword > exact_email > content (не majority vote)."""
+    result: dict[str, str] = {}
+    for section in ("content_rules", "exact_email_rules", "email_keyword_rules"):
         for rule in rules.get(section, []):
             code = str(rule["code"])
             direction = str(rule.get("direction", "")).strip()
             if direction:
-                counts[code][direction] += 1
-    return {code: counter.most_common(1)[0][0] for code, counter in counts.items()}
+                result[code] = direction
+    return result
 
 
 def _primary_email_for_code(
