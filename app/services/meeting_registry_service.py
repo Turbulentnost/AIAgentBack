@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.models.enums import MeetingRegistryEventType, MeetingRegistryStage
 from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
 from app.models.user import User
@@ -24,6 +26,8 @@ from app.services.meeting_invite_format import (
     resolve_invite_subject,
 )
 from app.services.meeting_slot import format_slot_label, parse_slot_datetime
+
+logger = get_logger(__name__)
 
 STAGE_ORDER: tuple[MeetingRegistryStage, ...] = (
     MeetingRegistryStage.SCHEDULED,
@@ -109,17 +113,52 @@ def resolve_registry_participant_names(
     return []
 
 
+def _topic_description_from_payload(meeting_topic: dict[str, Any] | None) -> str | None:
+    if not isinstance(meeting_topic, dict):
+        return None
+    description = meeting_topic.get("description")
+    if isinstance(description, str) and description.strip():
+        return description.strip()
+    return None
+
+
+def registry_display_title(
+    *,
+    subject: str | None = None,
+    memo_detail: dict[str, Any] | None = None,
+    meeting_topic: dict[str, Any] | None = None,
+    stored_title: str | None = None,
+) -> str | None:
+    """Заголовок карточки реестра: тема 1С / subject приглашения, не title служебной записки."""
+    topic_title = _topic_description_from_payload(meeting_topic)
+    if topic_title:
+        return topic_title
+    explicit_subject = (subject or "").strip()
+    if explicit_subject:
+        return explicit_subject
+    if stored_title and stored_title.strip():
+        return stored_title.strip()
+    memo_title = (memo_detail or {}).get("title")
+    if isinstance(memo_title, str) and memo_title.strip():
+        return memo_title.strip()
+    return resolve_invite_subject(memo_detail)
+
+
 def _snapshot_from_detail(
     memo_detail: dict[str, Any] | None,
     *,
     subject: str | None,
     location: str | None,
     participant_names: list[str] | None = None,
+    meeting_topic: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     application = (memo_detail or {}).get("application") or {}
-    title = (memo_detail or {}).get("title")
-    if not isinstance(title, str) or not title.strip():
-        title = resolve_invite_subject(memo_detail, override=subject)
+    resolved_subject = (subject or "").strip() or resolve_invite_subject(memo_detail)
+    title = registry_display_title(
+        subject=subject,
+        memo_detail=memo_detail,
+        meeting_topic=meeting_topic,
+    ) or resolved_subject
     resolved_location = location or format_invite_location_from_detail(memo_detail)
     if not resolved_location:
         resolved_location = place_from_detail(memo_detail)
@@ -132,7 +171,7 @@ def _snapshot_from_detail(
     return {
         "memo_number": (memo_detail or {}).get("number"),
         "title": title,
-        "subject": subject or resolve_invite_subject(memo_detail),
+        "subject": resolved_subject,
         "location": resolved_location,
         "initiator_name": _person_name(application.get("initiator")),
         "manager_name": manager_name_from_detail(memo_detail)
@@ -195,6 +234,7 @@ _PRESERVED_PAYLOAD_KEYS = (
     "scheduled_meeting_id",
     "series_recurrence_label",
     "occurrence_participant_names",
+    "meeting_topic",
 )
 
 
@@ -244,6 +284,43 @@ def _slot_label_from_entry(entry: MeetingRegistryEntry) -> str | None:
     start = entry.slot_start.isoformat()
     end = entry.slot_end.isoformat() if entry.slot_end else start
     return format_slot_label(start, end)
+
+
+def _read_meeting_topic_from_entry(entry: MeetingRegistryEntry) -> dict[str, Any] | None:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    topic = payload.get("meeting_topic")
+    return topic if isinstance(topic, dict) else None
+
+
+async def _sync_new_topic_closed_date(
+    db: AsyncSession,
+    entry: MeetingRegistryEntry,
+    topic: dict[str, Any],
+    slot_start: str,
+) -> None:
+    from app.services.meeting_topic_service import sync_new_topic_closed_date_after_scheduling
+
+    try:
+        result = await sync_new_topic_closed_date_after_scheduling(topic, slot_start)
+    except Exception as exc:
+        logger.warning(
+            "meeting_topic.closed_date_sync_failed",
+            memo_ref_key=entry.memo_ref_key,
+            topic_ref_key=topic.get("ref_key"),
+            slot_start=slot_start,
+            error=str(exc),
+        )
+        return
+    if not result:
+        return
+
+    payload = dict(entry.payload or {})
+    stored_topic = dict(payload.get("meeting_topic") or topic)
+    stored_topic["closed_date"] = result["closed_date"]
+    stored_topic["closed_date_synced_at"] = datetime.now(timezone.utc).isoformat()
+    payload["meeting_topic"] = stored_topic
+    entry.payload = payload
+    await db.flush()
 
 
 class MeetingRegistryService:
@@ -317,6 +394,7 @@ class MeetingRegistryService:
             subject=subject,
             location=location,
             participant_names=names,
+            meeting_topic=meeting_topic,
         )
         participants_count = len(names) if names else int(snapshot.get("participants_count") or 0)
         outlook_fields = _outlook_fields_from_sent_payload(sent_payload)
@@ -324,8 +402,13 @@ class MeetingRegistryService:
         slot_end_dt = parse_slot_datetime(slot_end)
 
         is_new_entry = entry is None
+        was_cancelled = False
         previous_slot_label = _slot_label_from_entry(entry) if entry else None
-        payload = _operational_payload(attendees=attendees, sent_payload=sent_payload)
+        payload = _operational_payload(
+            attendees=attendees,
+            sent_payload=sent_payload,
+            preserve_from=entry.payload if entry and isinstance(entry.payload, dict) else None,
+        )
 
         if entry is None:
             entry = MeetingRegistryEntry(
@@ -351,11 +434,10 @@ class MeetingRegistryService:
             )
             self.db.add(entry)
         else:
-            if entry.stage == MeetingRegistryStage.CANCELLED:
-                await self.db.flush()
-                return entry
-            if entry.stage == MeetingRegistryStage.INVITATIONS_SENT:
-                entry.stage = MeetingRegistryStage.INVITATIONS_SENT
+            was_cancelled = entry.stage == MeetingRegistryStage.CANCELLED
+            if was_cancelled:
+                entry.cancelled_at = None
+            entry.stage = MeetingRegistryStage.INVITATIONS_SENT
             entry.memo_number = snapshot.get("memo_number") or entry.memo_number
             entry.title = snapshot.get("title") or entry.title
             entry.subject = snapshot.get("subject") or entry.subject
@@ -385,6 +467,8 @@ class MeetingRegistryService:
         slot_label = format_slot_label(slot_start, slot_end)
         if is_new_entry:
             invite_message = f"Отправлены приглашения на {slot_label}"
+        elif was_cancelled:
+            invite_message = f"Совещание восстановлено, отправлены приглашения на {slot_label}"
         else:
             invite_message = f"Повторно отправлены приглашения на {slot_label}"
         await self.append_event(
@@ -410,7 +494,16 @@ class MeetingRegistryService:
                 entry,
                 topic=meeting_topic,
             )
-        await self.refresh_protocol_draft_schedule_for_entry(entry)
+            await _sync_new_topic_closed_date(
+                self.db,
+                entry,
+                meeting_topic,
+                slot_start,
+            )
+        if not is_new_entry and was_cancelled:
+            await self.recreate_protocol_draft_on_reschedule(entry)
+        else:
+            await self.refresh_protocol_draft_schedule_for_entry(entry)
         return entry
 
     async def save_meeting_topic_resolution(
@@ -564,7 +657,11 @@ class MeetingRegistryService:
             participant_names=participant_names,
             attendee_details=attendee_details,
         )
-        payload = _operational_payload(attendees=attendees, sent_payload=sent_payload)
+        payload = _operational_payload(
+            attendees=attendees,
+            sent_payload=sent_payload,
+            preserve_from=entry.payload if isinstance(entry.payload, dict) else None,
+        )
 
         entry.stage = MeetingRegistryStage.INVITATIONS_SENT
         entry.cancelled_at = None
@@ -608,6 +705,9 @@ class MeetingRegistryService:
         )
         await self.db.flush()
         await self.db.refresh(entry)
+        topic = _read_meeting_topic_from_entry(entry)
+        if topic:
+            await _sync_new_topic_closed_date(self.db, entry, topic, slot_start)
         await self.recreate_protocol_draft_on_reschedule(entry)
         return entry
 
@@ -842,6 +942,95 @@ class MeetingRegistryService:
         await self.db.refresh(entry)
         return entry
 
-    async def sync_protocol_stages(self) -> None:
-        """Заготовка для синхронизации этапов протокола из 1С."""
-        return None
+    def _store_protocol_status_in_payload(
+        self,
+        entry: MeetingRegistryEntry,
+        *,
+        status: str | None,
+        synced_at: datetime,
+    ) -> None:
+        payload = dict(entry.payload or {})
+        payload["protocol_status"] = status
+        payload["protocol_status_synced_at"] = synced_at.isoformat()
+        entry.payload = payload
+        flag_modified(entry, "payload")
+
+    async def sync_protocol_stages(self) -> int:
+        """Синхронизирует этапы карточек реестра по статусам протоколов в 1С."""
+        from app.services.meeting_protocol_status import (
+            fetch_protocol_status,
+            stage_for_protocol_status,
+        )
+
+        result = await self.db.execute(
+            select(MeetingRegistryEntry).where(
+                MeetingRegistryEntry.protocol_ref_key.isnot(None),
+                MeetingRegistryEntry.stage.notin_(
+                    (
+                        MeetingRegistryStage.CANCELLED,
+                        MeetingRegistryStage.MEETING_COMPLETED,
+                    )
+                ),
+            )
+        )
+        entries = list(result.scalars().all())
+        if not entries:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        updated = 0
+
+        for entry in entries:
+            ref_key = (entry.protocol_ref_key or "").strip()
+            if not ref_key:
+                continue
+            try:
+                status = await fetch_protocol_status(ref_key)
+            except Exception as exc:
+                logger.warning(
+                    "meeting_registry.protocol_status_sync_failed",
+                    memo_ref_key=entry.memo_ref_key,
+                    protocol_ref_key=ref_key,
+                    error=str(exc),
+                )
+                continue
+
+            self._store_protocol_status_in_payload(entry, status=status, synced_at=now)
+            target_stage = stage_for_protocol_status(status)
+            if target_stage is None:
+                continue
+            if stage_index(target_stage) <= stage_index(entry.stage):
+                continue
+
+            previous_stage = entry.stage
+            entry.stage = target_stage
+            if target_stage == MeetingRegistryStage.MEETING_COMPLETED:
+                message = f"Протокол закрыт (статус «{status}») — совещание завершено"
+            else:
+                message = f"Протокол на исполнении (статус «{status}») — совещание проведено"
+            await self.append_event(
+                entry,
+                event_type=MeetingRegistryEventType.STAGE_CHANGED,
+                message=message,
+                occurred_at=now,
+                payload={
+                    "previous_stage": previous_stage.value,
+                    "new_stage": target_stage.value,
+                    "protocol_status": status,
+                    "protocol_ref_key": ref_key,
+                    "source": "onec_protocol_status_sync",
+                },
+            )
+            updated += 1
+            logger.info(
+                "meeting_registry.protocol_stage_advanced",
+                memo_ref_key=entry.memo_ref_key,
+                protocol_ref_key=ref_key,
+                previous_stage=previous_stage.value,
+                new_stage=target_stage.value,
+                protocol_status=status,
+            )
+
+        if updated:
+            await self.db.flush()
+        return updated

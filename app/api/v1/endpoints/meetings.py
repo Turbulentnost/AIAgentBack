@@ -39,6 +39,7 @@ from app.schemas.meeting import (
     MeetingRegistryParticipantsRemovalConfirmRead,
     MeetingRegistryParticipantsRemovalConfirmRequest,
     MeetingRegistryProtocolDraftDispatchRead,
+    MeetingRegistryProtocolCreateRead,
     MeetingRegistryRescheduleApproveRead,
     MeetingRegistryRescheduleApproveRequest,
     MeetingRegistryRescheduleSlotPreviewRead,
@@ -71,6 +72,7 @@ from app.schemas.meeting_topic import (
     MeetingTopicCheckSimilarRequest,
     MeetingTopicResolveRead,
     MeetingTopicResolveRequest,
+    MeetingTopicValidationRead,
 )
 from app.services.scheduled_meeting_service import (
     ScheduledMeetingService,
@@ -254,6 +256,17 @@ async def resolve_meeting_topic(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
+@router.get("/topics/{topic_ref_key}/validate", response_model=MeetingTopicValidationRead)
+async def validate_meeting_topic_ref(
+    topic_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingTopicValidationRead:
+    """Проверяет, что тема существует в 1С и пригодна для совещания."""
+    await _require_agent_access(db, current_user)
+    return await MeetingTopicService().validate_topic_ref_key(str(topic_ref_key))
+
+
 @router.get("/scheduled/{meeting_id}", response_model=ScheduledMeetingRead)
 async def get_scheduled_meeting(
     db: DbSession,
@@ -329,6 +342,29 @@ async def dispatch_registry_protocol_drafts(
         result = await MeetingService(db).dispatch_protocol_drafts(current_user=current_user)
         await db.commit()
         return MeetingRegistryProtocolDraftDispatchRead.model_validate(result)
+    except MeetingServiceError as exc:
+        await db.rollback()
+        raise _service_error(exc) from exc
+
+
+@router.post(
+    "/registry/{memo_ref_key}/create-protocol",
+    response_model=MeetingRegistryProtocolCreateRead,
+)
+async def create_registry_protocol(
+    memo_ref_key: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> MeetingRegistryProtocolCreateRead:
+    """Создать черновик протокола в 1С для карточки реестра."""
+    await _require_agent_access(db, current_user)
+    try:
+        result = await MeetingService(db).create_registry_protocol(
+            str(memo_ref_key),
+            current_user=current_user,
+        )
+        await db.commit()
+        return MeetingRegistryProtocolCreateRead.model_validate(result)
     except MeetingServiceError as exc:
         await db.rollback()
         raise _service_error(exc) from exc

@@ -713,6 +713,18 @@ class MeetingRegistryMeetingTopicSaveRead(BaseModel):
     protocol_draft_at: str | None = None
 
 
+class MeetingRegistryProtocolCreateRead(BaseModel):
+    ref_key: str
+    created: bool = False
+    skipped: bool = False
+    reason: str | None = None
+    message: str | None = None
+    protocol_ref_key: str | None = None
+    protocol_number: str | None = None
+    stage: MeetingRegistryStageRead | None = None
+    protocol_draft_created_at: str | None = None
+
+
 class MeetingRegistryParticipantsRead(BaseModel):
     ref_key: str
     participants: list[str] = Field(default_factory=list)

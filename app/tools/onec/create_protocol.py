@@ -25,14 +25,27 @@ import requests
 
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import entity_url
-from app.tools.onec.lookup_user_ref import is_empty_key, resolve_user_by_fio
+from app.tools.onec.lookup_user_ref import is_empty_key, load_persons_for_keys, resolve_user_by_fio
+from app.tools.onec.meeting_topic_participants import (
+    extract_participant_keys,
+    fetch_participant_rows,
+)
 
 PROTOCOL_DOCUMENT = "Document_ТД_Протокол"
 PROTOCOL_TASKS_REGISTER = "InformationRegister_ТД_ЗадачиПротоколов"
+PROTOCOL_ATTENDEES_SECTION = "ПрисутствующиеНаСовещании"
 DEFAULT_MEETING_TYPE = "Отчетное"
 DEFAULT_STATUS = "Подготовлен"
 SKIP_HEADER_FIELDS = frozenset(
-    {"Ref_Key", "Number", "Date", "Posted", "DeletionMark", "DataVersion"}
+    {
+        "Ref_Key",
+        "Number",
+        "Date",
+        "ДатаСоздания",
+        "Posted",
+        "DeletionMark",
+        "DataVersion",
+    }
 )
 
 
@@ -122,6 +135,60 @@ def copy_header_fields(source: dict[str, Any], *, include_number: bool = False) 
     return payload
 
 
+def resolve_protocol_attendee_person_keys(
+    session: requests.Session,
+    config: ODataConfig,
+    participant_ref_keys: list[str],
+) -> list[str]:
+    """В протоколе Участник_Key — это Catalog_ФизическиеЛица, не Catalog_Пользователи."""
+    from app.tools.onec.lookup_user_ref import resolve_person_keys_by_refs
+
+    return resolve_person_keys_by_refs(
+        session,
+        participant_ref_keys,
+        config=config,
+        error_context="участника протокола",
+    )
+
+
+def build_protocol_attendees_rows(
+    participant_person_keys: list[str],
+    *,
+    document_ref_key: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, participant_ref in enumerate(participant_person_keys, start=1):
+        ref_key = str(participant_ref or "").strip()
+        if is_empty_key(ref_key):
+            continue
+        rows.append(
+            {
+                "Ref_Key": document_ref_key,
+                "LineNumber": str(index),
+                "Участник_Key": ref_key,
+            }
+        )
+    return rows
+
+
+def resolve_topic_participant_ref_keys(
+    session: requests.Session,
+    config: ODataConfig,
+    topic_key: str,
+) -> list[str]:
+    normalized_topic_key = str(topic_key or "").strip()
+    if is_empty_key(normalized_topic_key):
+        raise ValueError("Не указан Ref_Key темы совещания для участников протокола")
+    rows = fetch_participant_rows(session, config, normalized_topic_key)
+    participant_keys = extract_participant_keys(rows)
+    if not participant_keys:
+        raise ValueError(
+            "У темы совещания не указаны участники — укажите их при создании темы, "
+            "чтобы они попали в протокол"
+        )
+    return participant_keys
+
+
 def _apply_user_ref(
     session: requests.Session,
     config: ODataConfig,
@@ -148,6 +215,7 @@ def build_protocol_payload(
     topic_key: str | None = None,
     meeting_type: str | None = None,
     department_key: str | None = None,
+    participant_ref_keys: list[str] | None = None,
     session: requests.Session | None = None,
     config: ODataConfig = CONFIG,
 ) -> dict[str, Any]:
@@ -157,6 +225,7 @@ def build_protocol_payload(
         {
             "Ref_Key": str(uuid.uuid4()),
             "Date": now,
+            "ДатаСоздания": now,
             "DeletionMark": False,
             "Posted": False,
             "Комментарий": comment,
@@ -182,6 +251,25 @@ def build_protocol_payload(
         _apply_user_ref(session, config, payload, field_key="Руководитель_Key", fio=manager_fio)
         _apply_user_ref(session, config, payload, field_key="Ответственный_Key", fio=responsible_fio)
         _apply_user_ref(session, config, payload, field_key="Подготовил_Key", fio=prepared_by_fio)
+
+    attendee_keys = list(participant_ref_keys or [])
+    if not attendee_keys and topic_key and session is not None:
+        attendee_keys = resolve_topic_participant_ref_keys(session, config, topic_key)
+    if attendee_keys:
+        if session is None:
+            raise ValueError(
+                "Для заполнения участников протокола нужна активная OData-сессия"
+            )
+        person_keys = resolve_protocol_attendee_person_keys(session, config, attendee_keys)
+        payload[PROTOCOL_ATTENDEES_SECTION] = build_protocol_attendees_rows(
+            person_keys,
+            document_ref_key=str(payload["Ref_Key"]),
+        )
+    elif topic_key:
+        raise ValueError(
+            "У темы совещания не указаны участники — укажите их при создании темы, "
+            "чтобы они попали в протокол"
+        )
     return payload
 
 
@@ -278,6 +366,7 @@ def create_meeting_protocol(
     topic_key: str | None = None,
     meeting_type: str | None = None,
     department_key: str | None = None,
+    participant_ref_keys: list[str] | None = None,
     tasks: list[dict[str, Any]] | None = None,
     config: ODataConfig = CONFIG,
 ) -> dict[str, Any]:
@@ -302,6 +391,7 @@ def create_meeting_protocol(
         topic_key=topic_key,
         meeting_type=meeting_type,
         department_key=department_key,
+        participant_ref_keys=participant_ref_keys,
         session=session,
         config=config,
     )

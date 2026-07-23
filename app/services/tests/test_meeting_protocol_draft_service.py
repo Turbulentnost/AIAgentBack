@@ -99,7 +99,14 @@ async def test_create_protocol_draft_skips_without_topic() -> None:
     )
     service.get_entry = AsyncMock(return_value=entry)
 
-    result = await service.create_protocol_draft_for_entry(entry_id)
+    with patch.object(
+        service,
+        "resolve_meeting_topic_for_protocol",
+        AsyncMock(
+            side_effect=ValueError("Тема совещания не сохранена в реестре — черновик протокола не создан")
+        ),
+    ):
+        result = await service.create_protocol_draft_for_entry(entry_id)
 
     assert result["skipped"] is True
     assert result["reason"] == "missing_meeting_topic"
@@ -133,6 +140,22 @@ async def test_create_protocol_draft_success() -> None:
             AsyncMock(return_value="dept-1"),
         ),
         patch(
+            "app.services.meeting_protocol_draft_service.MeetingProtocolDraftService.resolve_meeting_topic_for_protocol",
+            AsyncMock(
+                return_value={
+                    "ref_key": "topic-1",
+                    "meeting_type": "Отчетное",
+                    "description": "Еженедельное совещание",
+                    "participants": [
+                        {
+                            "participant_ref_key": "11111111-1111-1111-1111-111111111111",
+                            "fio": "Хозуян Иван Владимирович",
+                        }
+                    ],
+                }
+            ),
+        ),
+        patch(
             "app.services.meeting_protocol_draft_service.create_meeting_protocol",
             return_value={
                 "protocol": {"ref_key": "proto-1", "number": "НСР_001_О_042"},
@@ -148,6 +171,9 @@ async def test_create_protocol_draft_success() -> None:
     create_mock.assert_called_once()
     assert "number" not in create_mock.call_args.kwargs
     assert create_mock.call_args.kwargs["department_key"] == "dept-1"
+    assert create_mock.call_args.kwargs["participant_ref_keys"] == [
+        "11111111-1111-1111-1111-111111111111"
+    ]
 
 
 @pytest.mark.asyncio

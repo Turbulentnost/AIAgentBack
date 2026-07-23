@@ -20,6 +20,7 @@ from app.services.meeting_registry_service import (
     MeetingRegistryService,
     build_stage_counts,
     participant_names_diff,
+    registry_display_title,
     stage_index,
 )
 from app.services.meeting_service import MeetingService, MeetingServiceError
@@ -28,6 +29,27 @@ from app.services.meeting_service import MeetingService, MeetingServiceError
 @pytest.fixture
 def user() -> User:
     return User(id=uuid4(), email="test@turbo-don.ru", full_name="Тестовый Пользователь")
+
+
+def test_registry_display_title_prefers_meeting_topic_over_memo_title() -> None:
+    assert (
+        registry_display_title(
+            subject="Тема из приглашения",
+            memo_detail={"title": "Тестирование"},
+            meeting_topic={"description": "Еженедельное совещание с главным метрологом"},
+        )
+        == "Еженедельное совещание с главным метрологом"
+    )
+
+
+def test_registry_display_title_prefers_subject_over_memo_title() -> None:
+    assert (
+        registry_display_title(
+            subject="Еженедельное совещание с главным метрологом",
+            memo_detail={"title": "Тестирование"},
+        )
+        == "Еженедельное совещание с главным метрологом"
+    )
 
 
 def _entry(stage: MeetingRegistryStage) -> MeetingRegistryEntry:
@@ -352,14 +374,21 @@ async def test_upsert_from_invite_saves_participants_from_memo_detail(user) -> N
         memo_ref_key="c9d6ccaa-d60c-5814-8468-7d440d393ee0",
         slot_start="2026-07-14 16:00",
         slot_end="2026-07-14 17:00",
-        subject="Тема",
+        subject="Еженедельное совещание с главным метрологом",
         location="Зал",
         attendees=["a@turbo-don.ru"],
         approved_by=user,
         memo_detail=memo_detail,
+        meeting_topic={
+            "ref_key": "topic-1",
+            "description": "Еженедельное совещание с главным метрологом",
+            "meeting_type": "Отчетное",
+        },
     )
 
     assert added_entry is not None
+    assert added_entry.title == "Еженедельное совещание с главным метрологом"
+    assert added_entry.subject == "Еженедельное совещание с главным метрологом"
     assert added_entry.participants == [
         "Мануков Роман Григорьевич",
         "Арсуноев Михаил Магомедович",
@@ -371,6 +400,99 @@ async def test_upsert_from_invite_saves_participants_from_memo_detail(user) -> N
     events = [call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], MeetingRegistryEvent)]
     assert len(events) == 1
     assert events[0].event_type == MeetingRegistryEventType.INVITATIONS_SENT
+
+
+@pytest.mark.asyncio
+async def test_upsert_from_invite_syncs_closed_date_for_new_topic(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    added_entry: MeetingRegistryEntry | None = None
+
+    def capture_add(item: object) -> None:
+        nonlocal added_entry
+        if isinstance(item, MeetingRegistryEntry):
+            added_entry = item
+
+    db.add = MagicMock(side_effect=capture_add)
+    result_mock = MagicMock()
+    result_mock.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result_mock)
+
+    meeting_topic = {
+        "ref_key": "topic-1",
+        "description": "Новая тема",
+        "created": True,
+        "used_existing": False,
+    }
+
+    with (
+        patch(
+            "app.services.meeting_protocol_draft_service.MeetingProtocolDraftService"
+        ) as draft_service_cls,
+        patch(
+            "app.services.meeting_registry_service.sync_new_topic_closed_date_after_scheduling",
+            new=AsyncMock(
+                return_value={"ref_key": "topic-1", "closed_date": "2026-07-28T00:00:00"}
+            ),
+        ) as sync_mock,
+        patch.object(
+            service,
+            "refresh_protocol_draft_schedule_for_entry",
+            new=AsyncMock(),
+        ),
+    ):
+        draft_service_cls.return_value.save_meeting_topic = AsyncMock()
+        await service.upsert_from_invite(
+            memo_ref_key="c9d6ccaa-d60c-5814-8468-7d440d393ee0",
+            slot_start="2026-07-14T16:00:00+03:00",
+            slot_end="2026-07-14T17:00:00+03:00",
+            subject="Новая тема",
+            location="Зал",
+            attendees=["a@turbo-don.ru"],
+            approved_by=user,
+            meeting_topic=meeting_topic,
+        )
+
+    sync_mock.assert_awaited_once_with(meeting_topic, "2026-07-14T16:00:00+03:00")
+    assert added_entry is not None
+    assert added_entry.payload["meeting_topic"]["closed_date"] == "2026-07-28T00:00:00"
+
+
+@pytest.mark.asyncio
+async def test_upsert_from_invite_reactivates_cancelled_entry(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    db.refresh = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    entry = _entry(MeetingRegistryStage.CANCELLED)
+    entry.cancelled_at = datetime(2026, 7, 22, 15, 34, tzinfo=timezone.utc)
+    entry.payload = {"attendees": ["a@turbo-don.ru"], "sent_payload": {}}
+
+    result_mock = MagicMock()
+    result_mock.scalar_one_or_none.return_value = entry
+    db.execute = AsyncMock(return_value=result_mock)
+
+    with (
+        patch.object(service, "recreate_protocol_draft_on_reschedule", new=AsyncMock(return_value=entry)),
+        patch.object(service, "refresh_protocol_draft_schedule_for_entry", new=AsyncMock()),
+    ):
+        updated = await service.upsert_from_invite(
+            memo_ref_key=entry.memo_ref_key,
+            slot_start="2026-07-23T16:30:00+03:00",
+            slot_end="2026-07-23T17:00:00+03:00",
+            subject="Новая тема",
+            location="Зал",
+            attendees=["a@turbo-don.ru"],
+            approved_by=user,
+        )
+
+    assert updated.stage == MeetingRegistryStage.INVITATIONS_SENT
+    assert updated.cancelled_at is None
+    service.recreate_protocol_draft_on_reschedule.assert_awaited_once_with(entry)
+    service.refresh_protocol_draft_schedule_for_entry.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1024,3 +1146,132 @@ async def test_apply_registry_participants_fails_when_added_email_missing(user) 
             )
 
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_sync_protocol_stages_advances_on_execution_status(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    entry = _entry(MeetingRegistryStage.PROTOCOL_CREATED)
+    entry.protocol_ref_key = "11111111-2222-3333-4444-555555555555"
+    entry.payload = {}
+
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = [entry]
+    db.execute = AsyncMock(return_value=result_mock)
+    added: list[object] = []
+    db.add = MagicMock(side_effect=lambda item: added.append(item))
+
+    with patch(
+        "app.services.meeting_protocol_status.fetch_protocol_status",
+        new=AsyncMock(return_value="На исполнении"),
+    ):
+        updated = await service.sync_protocol_stages()
+
+    assert updated == 1
+    assert entry.stage == MeetingRegistryStage.PROTOCOL_CONDUCTED
+    assert entry.payload["protocol_status"] == "На исполнении"
+    events = [item for item in added if isinstance(item, MeetingRegistryEvent)]
+    assert len(events) == 1
+    assert events[0].event_type == MeetingRegistryEventType.STAGE_CHANGED
+    assert "совещание проведено" in events[0].message
+
+
+@pytest.mark.asyncio
+async def test_sync_protocol_stages_advances_conducted_to_completed_on_closed(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    entry = _entry(MeetingRegistryStage.PROTOCOL_CONDUCTED)
+    entry.protocol_ref_key = "11111111-2222-3333-4444-555555555555"
+    entry.payload = {"protocol_status": "На исполнении"}
+
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = [entry]
+    db.execute = AsyncMock(return_value=result_mock)
+    added: list[object] = []
+    db.add = MagicMock(side_effect=lambda item: added.append(item))
+
+    with patch(
+        "app.services.meeting_protocol_status.fetch_protocol_status",
+        new=AsyncMock(return_value="Закрыт"),
+    ):
+        updated = await service.sync_protocol_stages()
+
+    assert updated == 1
+    assert entry.stage == MeetingRegistryStage.MEETING_COMPLETED
+    assert entry.payload["protocol_status"] == "Закрыт"
+    events = [item for item in added if isinstance(item, MeetingRegistryEvent)]
+    assert len(events) == 1
+    assert "совещание завершено" in events[0].message
+
+
+@pytest.mark.asyncio
+async def test_sync_protocol_stages_skips_prepared_status(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    entry = _entry(MeetingRegistryStage.PROTOCOL_CREATED)
+    entry.protocol_ref_key = "11111111-2222-3333-4444-555555555555"
+    entry.payload = {}
+
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = [entry]
+    db.execute = AsyncMock(return_value=result_mock)
+    db.add = MagicMock()
+
+    with patch(
+        "app.services.meeting_protocol_status.fetch_protocol_status",
+        new=AsyncMock(return_value="Подготовлен"),
+    ):
+        updated = await service.sync_protocol_stages()
+
+    assert updated == 0
+    assert entry.stage == MeetingRegistryStage.PROTOCOL_CREATED
+    assert entry.payload["protocol_status"] == "Подготовлен"
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_protocol_stages_ignores_onec_errors(user) -> None:
+    db = AsyncMock()
+    db.flush = AsyncMock()
+    service = MeetingRegistryService(db)
+
+    entry = _entry(MeetingRegistryStage.PROTOCOL_CREATED)
+    entry.protocol_ref_key = "11111111-2222-3333-4444-555555555555"
+
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = [entry]
+    db.execute = AsyncMock(return_value=result_mock)
+
+    with patch(
+        "app.services.meeting_protocol_status.fetch_protocol_status",
+        new=AsyncMock(side_effect=RuntimeError("1C unavailable")),
+    ):
+        updated = await service.sync_protocol_stages()
+
+    assert updated == 0
+    assert entry.stage == MeetingRegistryStage.PROTOCOL_CREATED
+
+
+@pytest.mark.asyncio
+async def test_list_registry_syncs_protocol_stages_before_loading(user) -> None:
+    db = AsyncMock()
+    service = MeetingService(db)
+    service._ensure_access = AsyncMock()
+
+    entry = _entry(MeetingRegistryStage.PROTOCOL_CREATED)
+    registry = MagicMock()
+    registry.sync_protocol_stages = AsyncMock(return_value=0)
+    registry.list_entries = AsyncMock(return_value=[entry])
+
+    with patch("app.services.meeting_service.MeetingRegistryService", return_value=registry):
+        result = await service.list_registry(stage=None, current_user=user)
+
+    registry.sync_protocol_stages.assert_awaited_once()
+    assert len(result.items) == 1

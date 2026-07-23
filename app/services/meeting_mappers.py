@@ -12,6 +12,7 @@ from app.services.meeting_backend import (
     MeetingSlot,
     MeetingSlotConflict,
 )
+from app.services.meeting_registry_service import registry_display_title
 from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
 from app.services.meeting_attendees import registry_participants_for_display
 from app.schemas.meeting import (
@@ -483,10 +484,17 @@ def _registry_series_fields(entry: MeetingRegistryEntry) -> dict[str, object]:
 
 
 def registry_item_read(entry: MeetingRegistryEntry) -> MeetingRegistryItemRead:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    meeting_topic = payload.get("meeting_topic")
+    display_title = registry_display_title(
+        subject=entry.subject,
+        meeting_topic=meeting_topic if isinstance(meeting_topic, dict) else None,
+        stored_title=entry.title,
+    )
     return MeetingRegistryItemRead(
         ref_key=entry.memo_ref_key,
         memo_number=entry.memo_number,
-        title=entry.title,
+        title=display_title or entry.title,
         subject=entry.subject,
         location=entry.location,
         initiator_name=entry.initiator_name,

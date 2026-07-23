@@ -807,6 +807,7 @@ class MeetingService:
         await self._ensure_access(current_user)
         registry = MeetingRegistryService(self.db)
         try:
+            await registry.sync_protocol_stages()
             all_entries = await registry.list_entries(stage_filter="all")
             if stage and stage.strip().lower() not in {"", "all", "approved"}:
                 entries = await registry.list_entries(stage_filter=stage)
@@ -837,6 +838,14 @@ class MeetingService:
             "meeting_type": topic_resolution.topic.meeting_type,
             "used_existing": topic_resolution.used_existing,
             "created": topic_resolution.created,
+            "participants": [
+                {
+                    "participant_ref_key": participant.participant_ref_key,
+                    "fio": participant.fio,
+                }
+                for participant in (topic_resolution.topic.participants or [])
+                if participant.participant_ref_key or participant.fio
+            ],
         }
         try:
             entry = await registry.save_meeting_topic_resolution(
@@ -862,6 +871,57 @@ class MeetingService:
             "catchup_created": result.catchup_created,
             "skipped": result.skipped,
             "errors": result.errors,
+        }
+
+    async def create_registry_protocol(
+        self,
+        memo_ref_key: str,
+        *,
+        current_user: User,
+    ) -> dict[str, Any]:
+        await self._ensure_access(current_user)
+        normalized_ref = memo_ref_key.strip().lower()
+        registry = MeetingRegistryService(self.db)
+        entry = await registry.get_entry(normalized_ref)
+        if entry is None:
+            raise MeetingServiceError("Совещание не найдено в реестре", status_code=404)
+
+        from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+        try:
+            result = await MeetingProtocolDraftService(self.db).create_protocol_draft_for_entry(
+                entry.id,
+                force=True,
+            )
+        except Exception as exc:
+            raise MeetingServiceError(
+                f"Не удалось создать протокол: {exc}",
+                status_code=502,
+            ) from exc
+        if result.get("skipped"):
+            reason = str(result.get("reason") or "skipped")
+            message = str(result.get("message") or "Протокол не создан")
+            status_code = 409 if reason == "already_created" else 400
+            raise MeetingServiceError(message, status_code=status_code)
+
+        await self.db.refresh(entry)
+        return {
+            "ref_key": entry.memo_ref_key,
+            "created": True,
+            "skipped": False,
+            "protocol_ref_key": entry.protocol_ref_key,
+            "protocol_number": entry.protocol_number,
+            "stage": entry.stage.value,
+            "protocol_draft_created_at": (
+                entry.protocol_draft_created_at.isoformat()
+                if entry.protocol_draft_created_at
+                else None
+            ),
+            "message": (
+                f"Создан протокол №{entry.protocol_number}"
+                if entry.protocol_number
+                else "Протокол создан"
+            ),
         }
 
     async def get_registry_participants(
@@ -2747,6 +2807,7 @@ def _meeting_topic_payload_from_request(raw: dict[str, Any] | None) -> dict[str,
         "meeting_type": raw.get("meeting_type"),
         "used_existing": bool(raw.get("used_existing")),
         "created": bool(raw.get("created")),
+        "participants": raw.get("participants") if isinstance(raw.get("participants"), list) else [],
     }
 
 

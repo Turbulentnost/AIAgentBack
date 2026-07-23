@@ -6,6 +6,7 @@ from app.tools.onec.meeting_topics_registry import (
     fetch_topic_by_key,
     is_topic_active,
     normalize_topic,
+    topic_closed_date_from_meeting_start,
 )
 
 
@@ -52,6 +53,11 @@ def test_build_filter_parts_active_only_includes_future_close_dates() -> None:
     )
 
     assert any("ДатаЗакрытияТемы gt datetime'" in part for part in parts)
+
+
+def test_topic_closed_date_from_meeting_start_adds_two_weeks() -> None:
+    closed = topic_closed_date_from_meeting_start("2026-07-22T13:00:00+03:00")
+    assert closed == "2026-08-05T00:00:00"
 
 
 def test_fetch_topic_by_key_falls_back_when_expand_unsupported() -> None:

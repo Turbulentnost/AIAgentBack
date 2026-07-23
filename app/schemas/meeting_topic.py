@@ -4,7 +4,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.tools.onec.create_meeting_topic import MEETING_TYPES
+from app.tools.onec.create_meeting_topic import (
+    MEETING_TYPES,
+    merge_topic_participant_fios,
+    require_topic_participant_fios,
+)
 
 
 class MeetingTopicSimilarityBreakdownRead(BaseModel):
@@ -53,7 +57,11 @@ class MeetingTopicCheckSimilarRequest(BaseModel):
     )
     participant_fios: list[str] = Field(
         default_factory=list,
-        description="Участники темы по ФИО",
+        description="Участники темы по ФИО (инициатор и руководитель добавляются автоматически)",
+    )
+    initiator_fio: str | None = Field(
+        default=None,
+        description="ФИО инициатора СЗ — всегда включается в участников темы",
     )
 
 
@@ -90,6 +98,7 @@ class MeetingTopicResolveRequest(BaseModel):
     is_management_circle_topic: bool | None = None
     topic_details: str | None = None
     participant_fios: list[str] = Field(default_factory=list)
+    initiator_fio: str | None = None
     dry_run: bool = False
 
     @model_validator(mode="after")
@@ -108,6 +117,13 @@ class MeetingTopicResolveRequest(BaseModel):
             missing.append("manager_fio")
         if not (self.meeting_type or "").strip():
             missing.append("meeting_type")
+        merged_participants = merge_topic_participant_fios(
+            self.participant_fios,
+            manager_fio=self.manager_fio,
+            initiator_fio=self.initiator_fio,
+        )
+        if not merged_participants:
+            missing.append("participant_fios")
         if missing:
             raise ValueError(
                 "Для decision=create_new заполните поля: "
@@ -129,3 +145,9 @@ class MeetingTopicResolveRead(BaseModel):
     topic: MeetingTopicSummaryRead
     participants_count: int = 0
     message: str
+
+
+class MeetingTopicValidationRead(BaseModel):
+    valid: bool
+    topic: MeetingTopicSummaryRead | None = None
+    reason: str | None = None

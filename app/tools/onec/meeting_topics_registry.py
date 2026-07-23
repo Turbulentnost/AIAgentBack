@@ -13,12 +13,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import requests
 
+from app.core.config import settings
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import entity_url, odata_get_json
 
@@ -69,6 +71,57 @@ def is_topic_active(raw_closed_date: str | None, *, today: date | None = None) -
         return True
     current = today or date.today()
     return closed > current
+
+
+def _display_timezone() -> ZoneInfo:
+    tz_name = (settings.OUTLOOK_TIMEZONE or "Europe/Moscow").strip() or "Europe/Moscow"
+    return ZoneInfo(tz_name)
+
+
+def _parse_meeting_start(slot_start: str) -> datetime:
+    normalized = str(slot_start).strip().replace(" ", "T").replace("Z", "+00:00")
+    if not normalized:
+        raise ValueError(f"Некорректная дата совещания: {slot_start!r}")
+    try:
+        meeting_dt = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"Некорректная дата совещания: {slot_start!r}") from exc
+    if meeting_dt.tzinfo is None:
+        meeting_dt = meeting_dt.replace(tzinfo=ZoneInfo("UTC"))
+    return meeting_dt
+
+
+def topic_closed_date_from_meeting_start(
+    slot_start: str,
+    *,
+    weeks: int = 2,
+) -> str:
+    """Дата закрытия темы = дата совещания + N недель (поле ДатаЗакрытияТемы в 1С)."""
+    meeting_date = _parse_meeting_start(slot_start).astimezone(_display_timezone()).date()
+    closed_date = meeting_date + timedelta(weeks=weeks)
+    return f"{closed_date.isoformat()}T00:00:00"
+
+
+def update_meeting_topic_closed_date(
+    topic_ref_key: str,
+    closed_date: str,
+    *,
+    config: ODataConfig = CONFIG,
+) -> dict[str, Any]:
+    normalized_ref = (topic_ref_key or "").strip()
+    if is_empty_key(normalized_ref):
+        raise ValueError("Не указан Ref_Key темы совещания")
+
+    session = create_session(config)
+    url = f"{entity_url(config.url, CATALOG_ENTITY)}(guid'{normalized_ref}')?$format=json"
+    payload = {"ДатаЗакрытияТемы": closed_date}
+    response = session.patch(url, json=payload, timeout=config.timeout)
+    if not response.ok:
+        raise RuntimeError(
+            "Ошибка обновления даты закрытия темы совещания: "
+            f"HTTP {response.status_code}: {response.text[:800]}"
+        )
+    return response.json()
 
 
 def related_description(value: Any) -> str | None:

@@ -7,7 +7,7 @@ InformationRegister_ТД_СоответствиеТемыСовещанияИУ�
 
 Поля регистра:
   - Совещание_Key — Ref_Key темы (Catalog_ТД_ТемыСовещаний)
-  - УчастникСовещания_Key — Ref_Key участника (Catalog_Пользователи)
+  - УчастникСовещания_Key — Ref_Key участника (Catalog_ФизическиеЛица)
 
 Пример:
   python -m app.tools.onec.meeting_topic_participants --code 000009459
@@ -30,6 +30,7 @@ from app.tools.onec.get_porucheniya import load_users_for_keys
 from app.tools.onec.lookup_user_ref import (
     is_empty_key,
     load_persons_for_keys,
+    resolve_person_keys_by_refs,
     resolve_user_by_fio,
     user_fio,
 )
@@ -44,7 +45,7 @@ REGISTER_ENTITY = "InformationRegister_ТД_СоответствиеТемыСо
 TOPIC_KEY_FIELD = "Совещание_Key"
 PARTICIPANT_KEY_FIELD = "УчастникСовещания_Key"
 TOPIC_TYPE = f"StandardODATA.{CATALOG_ENTITY}"
-PARTICIPANT_TYPE = "StandardODATA.Catalog_Пользователи"
+PARTICIPANT_TYPE = "StandardODATA.Catalog_ФизическиеЛица"
 
 
 def build_participant_record_payload(
@@ -98,18 +99,36 @@ def resolve_participant_refs_by_fio(
     config: ODataConfig,
     participant_fios: list[str],
 ) -> list[dict[str, str]]:
-    resolved: list[dict[str, str]] = []
-    seen: set[str] = set()
+    user_items: list[dict[str, str]] = []
+    seen_users: set[str] = set()
     for raw_fio in participant_fios:
         fio = (raw_fio or "").strip()
         if not fio:
             continue
         user_ref, resolved_fio, _ = resolve_user_by_fio(session, fio, config=config)
         normalized = user_ref.strip().lower()
-        if normalized in seen:
+        if normalized in seen_users:
             continue
-        seen.add(normalized)
-        resolved.append({"participant_ref_key": user_ref, "fio": resolved_fio})
+        seen_users.add(normalized)
+        user_items.append({"user_ref_key": user_ref, "fio": resolved_fio})
+
+    if not user_items:
+        return []
+
+    person_keys = resolve_person_keys_by_refs(
+        session,
+        [item["user_ref_key"] for item in user_items],
+        config=config,
+        error_context="участника темы совещания",
+    )
+    resolved: list[dict[str, str]] = []
+    seen_persons: set[str] = set()
+    for item, person_key in zip(user_items, person_keys, strict=True):
+        normalized = person_key.casefold()
+        if normalized in seen_persons:
+            continue
+        seen_persons.add(normalized)
+        resolved.append({"participant_ref_key": person_key, "fio": item["fio"]})
     return resolved
 
 
@@ -217,12 +236,21 @@ def normalize_participant_row(
     persons: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     participant_key = row.get(PARTICIPANT_KEY_FIELD)
+    person = persons.get(participant_key or "", {})
+    if person:
+        fio = (person.get("Description") or person.get("ФИО") or "").strip()
+        return {
+            "participant_ref_key": participant_key,
+            "fio": fio or None,
+            "topic_ref_key": row.get(TOPIC_KEY_FIELD),
+        }
+
     user = users.get(participant_key or "", {})
     person_key = user.get("ФизическоеЛицо_Key")
-    person = persons.get(person_key or "", {}) if person_key else {}
-    fio = user_fio(user, {person_key: person} if person_key and person else persons)
-    if not fio and person:
-        fio = (person.get("Description") or person.get("ФИО") or "").strip()
+    linked_person = persons.get(person_key or "", {}) if person_key else {}
+    fio = user_fio(user, {person_key: linked_person} if person_key and linked_person else persons)
+    if not fio and linked_person:
+        fio = (linked_person.get("Description") or linked_person.get("ФИО") or "").strip()
     if not fio:
         fio = (user.get("Description") or "").strip()
 
@@ -253,13 +281,18 @@ def get_meeting_topic_participants(
         for row in rows
         if not is_empty_key(row.get(PARTICIPANT_KEY_FIELD))
     }
-    users = load_users_for_keys(session, participant_keys, config=config)
+    persons = load_persons_for_keys(session, participant_keys, config=config)
+    unresolved_keys = {
+        key for key in participant_keys if key not in persons
+    }
+    users = load_users_for_keys(session, unresolved_keys, config=config)
     person_keys = {
         user.get("ФизическоеЛицо_Key")
         for user in users.values()
         if not is_empty_key(user.get("ФизическоеЛицо_Key"))
     }
-    persons = load_persons_for_keys(session, person_keys, config=config)
+    if person_keys:
+        persons.update(load_persons_for_keys(session, person_keys, config=config))
 
     participants = [
         normalize_participant_row(row, users=users, persons=persons)

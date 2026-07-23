@@ -9,6 +9,7 @@
   - description (Description) — наименование темы
   - manager_fio → Руководитель_Key — руководитель совещания
   - meeting_type (ВидСовещания) — Отчетное | Внеплановое | Плановое | Селекторное
+  - participant_fios — участники темы (попадают в протокол)
 
 CLI:
   python -m app.tools.onec.create_meeting_topic \\
@@ -31,7 +32,7 @@ import requests
 
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import entity_url
-from app.tools.onec.lookup_user_ref import resolve_user_by_fio
+from app.tools.onec.lookup_user_ref import resolve_person_keys_by_refs, resolve_user_by_fio
 from app.tools.onec.meeting_topic_participants import (
     add_meeting_topic_participants,
     resolve_participant_refs_by_fio,
@@ -148,21 +149,82 @@ def post_meeting_topic(
     return response.json()
 
 
+def normalize_participant_fios(participant_fios: list[str] | None) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in participant_fios or []:
+        fio = str(raw or "").strip()
+        if not fio:
+            continue
+        key = fio.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(fio)
+    return unique
+
+
+def merge_topic_participant_fios(
+    participant_fios: list[str] | None,
+    *,
+    manager_fio: str | None = None,
+    initiator_fio: str | None = None,
+) -> list[str]:
+    """Инициатор и руководитель всегда входят в состав участников темы."""
+    ordered: list[str] = []
+    for raw in (initiator_fio, manager_fio, *(participant_fios or [])):
+        fio = str(raw or "").strip()
+        if fio:
+            ordered.append(fio)
+    return normalize_participant_fios(ordered)
+
+
+def require_topic_participant_fios(participant_fios: list[str] | None) -> list[str]:
+    normalized = normalize_participant_fios(participant_fios)
+    if not normalized:
+        raise ValueError(
+            "Укажите участников темы совещания — они сохраняются в 1С и попадают в протокол"
+        )
+    return normalized
+
+
 def resolve_topic_participants(
     session: requests.Session,
     config: ODataConfig,
     *,
     manager_ref: str,
+    initiator_ref: str | None = None,
     participant_fios: list[str] | None,
 ) -> list[dict[str, str]]:
-    resolved = (
+    resolved: list[dict[str, str]] = []
+    seen_persons: set[str] = set()
+
+    def add_person(person_key: str, fio: str | None = None) -> None:
+        normalized = person_key.casefold()
+        if normalized in seen_persons:
+            return
+        seen_persons.add(normalized)
+        resolved.append({"participant_ref_key": person_key, "fio": fio})
+
+    ordered_user_refs: list[str] = []
+    if initiator_ref:
+        ordered_user_refs.append(initiator_ref)
+    ordered_user_refs.append(manager_ref)
+    for person_key in resolve_person_keys_by_refs(
+        session,
+        ordered_user_refs,
+        config=config,
+        error_context="участника темы совещания",
+    ):
+        add_person(person_key)
+
+    for item in (
         resolve_participant_refs_by_fio(session, config, participant_fios)
         if participant_fios
         else []
-    )
-    seen = {item["participant_ref_key"].strip().lower() for item in resolved}
-    if manager_ref.strip().lower() not in seen:
-        resolved.insert(0, {"participant_ref_key": manager_ref, "fio": None})
+    ):
+        add_person(item["participant_ref_key"], item.get("fio"))
+
     return resolved
 
 
@@ -222,6 +284,7 @@ def create_meeting_topic(
     priority: str | None = None,
     topic_details: str | None = None,
     participant_fios: list[str] | None = None,
+    initiator_fio: str | None = None,
     skip_similarity_check: bool = False,
     dry_run: bool = False,
     config: ODataConfig = CONFIG,
@@ -232,6 +295,21 @@ def create_meeting_topic(
         manager_fio,
         config=config,
     )
+    normalized_participant_fios = require_topic_participant_fios(
+        merge_topic_participant_fios(
+            participant_fios,
+            manager_fio=resolved_manager_fio,
+            initiator_fio=initiator_fio,
+        )
+    )
+
+    initiator_ref: str | None = None
+    if initiator_fio:
+        initiator_ref, _, _ = resolve_user_by_fio(
+            session,
+            initiator_fio,
+            config=config,
+        )
 
     reviewer_ref: str | None = None
     resolved_reviewer_fio: str | None = None
@@ -250,7 +328,7 @@ def create_meeting_topic(
             description=description,
             meeting_type=meeting_type,
             topic_details=topic_details,
-            participant_fios=participant_fios,
+            participant_fios=normalized_participant_fios,
         )
         if similar_topic:
             return build_skip_result(
@@ -292,7 +370,8 @@ def create_meeting_topic(
         session,
         config,
         manager_ref=manager_ref,
-        participant_fios=participant_fios,
+        initiator_ref=initiator_ref,
+        participant_fios=normalized_participant_fios,
     )
 
     result: dict[str, Any] = {

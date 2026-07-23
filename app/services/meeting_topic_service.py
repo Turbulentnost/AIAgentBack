@@ -11,24 +11,60 @@ from app.schemas.meeting_topic import (
     MeetingTopicResolveRequest,
     MeetingTopicSimilarityBreakdownRead,
     MeetingTopicSummaryRead,
+    MeetingTopicValidationRead,
 )
 from app.services.meeting_exceptions import MeetingServiceError
 from app.tools.onec.connection import CONFIG, create_session
-from app.tools.onec.create_meeting_topic import create_meeting_topic
+from app.tools.onec.create_meeting_topic import (
+    create_meeting_topic,
+    merge_topic_participant_fios,
+    normalize_participant_fios,
+    require_topic_participant_fios,
+)
 from app.tools.onec.lookup_user_ref import resolve_user_by_fio
 from app.tools.onec.meeting_topic_participants import get_meeting_topic_participants
 from app.tools.onec.meeting_topic_similarity import find_similar_topic_for_manager_async
-from app.tools.onec.meeting_topics_registry import fetch_topic_by_key, normalize_topic
+from app.tools.onec.meeting_topics_registry import (
+    fetch_topic_by_key,
+    normalize_topic,
+    topic_closed_date_from_meeting_start,
+    update_meeting_topic_closed_date,
+)
 
 CREATE_TOPIC_REQUIRED_FIELDS = [
     "description",
     "manager_fio",
     "meeting_type",
+    "participant_fios",
 ]
 
 
 class MeetingTopicServiceError(MeetingServiceError):
     pass
+
+
+def is_newly_created_meeting_topic(topic: dict[str, Any] | None) -> bool:
+    if not topic:
+        return False
+    return bool(topic.get("created")) and not bool(topic.get("used_existing"))
+
+
+async def sync_new_topic_closed_date_after_scheduling(
+    topic: dict[str, Any],
+    slot_start: str,
+) -> dict[str, Any] | None:
+    """Для новой темы при планировании совещания ставит дату закрытия = дата совещания + 2 недели."""
+    ref_key = str(topic.get("ref_key") or "").strip()
+    if not ref_key or not is_newly_created_meeting_topic(topic):
+        return None
+
+    closed_date = topic_closed_date_from_meeting_start(slot_start)
+
+    def _update() -> dict[str, Any]:
+        return update_meeting_topic_closed_date(ref_key, closed_date)
+
+    await asyncio.to_thread(_update)
+    return {"ref_key": ref_key, "closed_date": closed_date}
 
 
 def _breakdown_from_topic(topic: dict[str, Any]) -> MeetingTopicSimilarityBreakdownRead | None:
@@ -131,7 +167,11 @@ class MeetingTopicService:
             description=payload.description,
             meeting_type=payload.meeting_type,
             topic_details=payload.topic_details,
-            participant_fios=payload.participant_fios or None,
+            participant_fios=merge_topic_participant_fios(
+                payload.participant_fios,
+                manager_fio=payload.manager_fio,
+                initiator_fio=payload.initiator_fio,
+            ),
         )
 
         if not similar_topic:
@@ -172,6 +212,12 @@ class MeetingTopicService:
         if payload.decision == "use_existing":
             ref_key = str(payload.existing_topic_ref_key or "").strip()
             topic = await _load_topic_detail(ref_key)
+            if not topic.participants:
+                raise MeetingTopicServiceError(
+                    "У выбранной темы совещания не указаны участники. "
+                    "Создайте новую тему с участниками или дополните тему в 1С.",
+                    status_code=400,
+                )
             return MeetingTopicResolveRead(
                 decision="use_existing",
                 used_existing=True,
@@ -204,7 +250,14 @@ class MeetingTopicService:
             end_time=payload.end_time,
             is_management_circle_topic=payload.is_management_circle_topic,
             topic_details=payload.topic_details,
-            participant_fios=payload.participant_fios or None,
+            participant_fios=require_topic_participant_fios(
+                merge_topic_participant_fios(
+                    payload.participant_fios,
+                    manager_fio=str(payload.manager_fio),
+                    initiator_fio=payload.initiator_fio,
+                )
+            ),
+            initiator_fio=payload.initiator_fio,
             skip_similarity_check=True,
             dry_run=payload.dry_run,
         )
@@ -223,3 +276,38 @@ class MeetingTopicService:
                 or f"Создана тема совещания №{topic.code or '?'}."
             ),
         )
+
+    async def validate_topic_ref_key(self, topic_ref_key: str) -> MeetingTopicValidationRead:
+        normalized_ref = str(topic_ref_key or "").strip()
+        if not normalized_ref:
+            return MeetingTopicValidationRead(
+                valid=False,
+                reason="Не указан Ref_Key темы совещания",
+            )
+
+        def _fetch() -> dict[str, Any] | None:
+            session = create_session(CONFIG)
+            return fetch_topic_by_key(
+                session,
+                CONFIG,
+                normalized_ref,
+                expand_related=False,
+            )
+
+        row = await asyncio.to_thread(_fetch)
+        if not row:
+            return MeetingTopicValidationRead(
+                valid=False,
+                reason="Тема совещания не найдена в 1С или удалена",
+            )
+
+        topic = normalize_topic(row, expand_related=False)
+        participants = await _load_topic_participants(normalized_ref)
+        summary = _summary_from_topic(topic, participants=participants)
+        if not summary.participants:
+            return MeetingTopicValidationRead(
+                valid=False,
+                topic=summary,
+                reason="У темы совещания не указаны участники",
+            )
+        return MeetingTopicValidationRead(valid=True, topic=summary)

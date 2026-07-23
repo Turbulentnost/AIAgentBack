@@ -9,6 +9,8 @@ from app.tools.onec.create_meeting_topic import (
     build_skip_result,
     default_closed_date,
     meeting_time,
+    merge_topic_participant_fios,
+    require_topic_participant_fios,
     resolve_topic_participants,
 )
 
@@ -74,19 +76,57 @@ def test_build_skip_result() -> None:
     assert "000009370" in result["message"]
 
 
-def test_resolve_topic_participants_adds_manager_and_explicit_fios() -> None:
+def test_resolve_topic_participants_adds_initiator_manager_and_explicit_fios() -> None:
     class Session:
         pass
 
-    with patch(
-        "app.tools.onec.create_meeting_topic.resolve_participant_refs_by_fio",
-        return_value=[{"participant_ref_key": "user-2", "fio": "Хозуян Иван Владимирович"}],
+    with (
+        patch(
+            "app.tools.onec.create_meeting_topic.resolve_person_keys_by_refs",
+            side_effect=lambda _session, refs, **_kwargs: {
+                "user-0": ["person-0"],
+                "user-1": ["person-1"],
+                "user-0,user-1": ["person-0", "person-1"],
+            }[",".join(refs)],
+        ),
+        patch(
+            "app.tools.onec.create_meeting_topic.resolve_participant_refs_by_fio",
+            return_value=[{"participant_ref_key": "person-2", "fio": "Хозуян Иван Владимирович"}],
+        ),
     ):
         resolved = resolve_topic_participants(
             Session(),
             None,
             manager_ref="user-1",
+            initiator_ref="user-0",
             participant_fios=["Хозуян Иван Владимирович"],
         )
 
-    assert [item["participant_ref_key"] for item in resolved] == ["user-1", "user-2"]
+    assert [item["participant_ref_key"] for item in resolved] == [
+        "person-0",
+        "person-1",
+        "person-2",
+    ]
+
+
+def test_require_topic_participant_fios_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="Укажите участников"):
+        require_topic_participant_fios([])
+
+
+def test_require_topic_participant_fios_normalizes() -> None:
+    assert require_topic_participant_fios(["  Иванов ", "Иванов"]) == ["Иванов"]
+
+
+def test_merge_topic_participant_fios_includes_initiator_and_manager() -> None:
+    merged = merge_topic_participant_fios(
+        ["Мангасарян Давид Каренович"],
+        manager_fio="Соломичева Светлана Викторовна",
+        initiator_fio="Комарькова Анастасия Эдуардовна",
+    )
+
+    assert merged == [
+        "Комарькова Анастасия Эдуардовна",
+        "Соломичева Светлана Викторовна",
+        "Мангасарян Давид Каренович",
+    ]
