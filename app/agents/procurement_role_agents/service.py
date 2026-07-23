@@ -13,6 +13,7 @@ from app.agents.production_dispatcher_agent.service import ProductionDispatcherS
 from app.agents.production_preparation_engineer_agent.service import (
     ProductionPreparationEngineerService,
 )
+from app.agents.warehouse_picker_agent.service import WarehousePickerService
 from app.models.enums import ConfidenceLevel
 
 
@@ -104,6 +105,35 @@ class ProductionPreparationEngineerAgent(_WaitingProcurementRoleAgent):
 
 
 @agent_registry.register
+class WarehousePickerAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.WAREHOUSE_PICKER_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Проверяет наличие ТМЦ в кладовой монтажного участка №2, "
+        "подтверждает выдачу или дефицит и передаёт заключение оркестратору."
+    )
+    allowed_tools = [
+        "onec_get_store_room_stock",
+        "onec_get_production_supply_evidence",
+        "onec_get_free_stock",
+        "onec_get_quality_stock",
+    ]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await WarehousePickerService().run(
+            payload,
+            agent_id=self.agent_id,
+        )
+
+
+@agent_registry.register
+class OmtoChiefAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.OMTO_CHIEF_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = "Обработка заключения кладовщика-комплектовщика по закупке ТМЦ."
+
+
+@agent_registry.register
 class DepartmentInitiatorAgent(_WaitingProcurementRoleAgent):
     agent_id = config.DEPARTMENT_INITIATOR_AGENT_ID
     name = config.AGENT_LABELS[agent_id]
@@ -119,7 +149,9 @@ class WarehouseManagerAgent(_WaitingProcurementRoleAgent):
 
 __all__ = [
     "DepartmentInitiatorAgent",
+    "OmtoChiefAgent",
     "ProductionDispatcherAgent",
     "ProductionPreparationEngineerAgent",
     "WarehouseManagerAgent",
+    "WarehousePickerAgent",
 ]

@@ -132,6 +132,23 @@ class ProcurementCaseSummary(BaseModel):
     dispatcher_action_at: datetime | None = None
     dispatcher_critical_acknowledged_at: datetime | None = None
     dispatcher_stream: Literal["reorder_point", "after_engineer"] | None = None
+    department_name: str | None = None
+    picker_bucket: Literal["success", "attention", "critical"] | None = None
+    picker_bucket_reason: str | None = None
+    picker_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    picker_decision_kind: Literal[
+        "none",
+        "stock_confirmation",
+        "deficit_confirmation",
+        "discrepancy_return",
+        "critical_acknowledgement",
+    ] | None = None
+    picker_invoked_at: datetime | None = None
+    picker_workspace_archived_at: datetime | None = None
+    picker_action_at: datetime | None = None
+    picker_critical_acknowledged_at: datetime | None = None
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):
@@ -232,6 +249,7 @@ class ProcurementEngineerActionRead(BaseModel):
         "purchase_confirmed",
         "critical_acknowledged",
         "supply_confirmed",
+        "picker_confirmed",
     ]
     case_id: str
 

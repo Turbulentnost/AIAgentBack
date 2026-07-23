@@ -8,12 +8,15 @@ from sqlalchemy import event, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import selectinload
 
 from app.agents.procurement_agent.source_discovery import normalize_source_document
 from app.agents.procurement_role_agents.config import (
+    OMTO_CHIEF_AGENT_ID,
     PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     SOURCE_AGENT_MAP,
+    WAREHOUSE_PICKER_AGENT_ID,
 )
 from app.db.base import Base
 from app.models.enums import ProcurementSourceType, TaskStatus
@@ -218,6 +221,121 @@ async def test_role_agent_is_routed_by_source_type(
     assert case.assigned_agents == [expected_agent]
     assert task.task_metadata["agent_slug"] == expected_agent
     assert task.task_type == "procurement_role_agent"
+
+
+@pytest.mark.asyncio
+async def test_montage_section_2_material_order_goes_to_picker_not_engineer(
+    db_session: AsyncSession,
+):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    result = await service._upsert_case_from_document(
+        _document(
+            ref,
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    assert result == "enqueued"
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    await db_session.flush()
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    assert await service._enqueue_role_agent(case) is True
+    assert case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+    task = await db_session.get(Task, case.current_task_id)
+    assert (task.task_metadata or {}).get("agent_slug") == WAREHOUSE_PICKER_AGENT_ID
+    assert case.case_metadata.get("picker_invoked_at")
+    assert case.case_metadata.get("engineer_invoked_at") is None
+
+
+@pytest.mark.asyncio
+async def test_montage_section_2_ignores_old_engineer_dispatcher_handoff(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.control_point = "chief_dispatcher"
+    case.current_task_id = None
+    case.current_agent_id = PRODUCTION_DISPATCHER_AGENT_ID
+    case.case_metadata = {
+        "engineer_handoff_agent_id": PRODUCTION_DISPATCHER_AGENT_ID,
+        "engineer_invoked_at": "2026-07-21T12:00:00+00:00",
+        "dispatcher_invoked_at": "2026-07-21T12:10:00+00:00",
+    }
+    await db_session.flush()
+    assert service._resolve_role_agent_id(case) == WAREHOUSE_PICKER_AGENT_ID
+    assert await service._enqueue_role_agent(case) is True
+    assert case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+
+
+@pytest.mark.asyncio
+async def test_picker_confirmation_hands_off_to_omto(db_session: AsyncSession):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    await service._enqueue_role_agent(case)
+    task = await db_session.get(Task, case.current_task_id)
+    output = {
+        "decision_kind": "deficit_confirmation",
+        "conclusion": {"confirmed_deficit": "5", "quantity_to_purchase": "5"},
+        "positions": [{"confirmed_deficit": "5"}],
+    }
+    task.status = TaskStatus.WAITING_HUMAN
+    task.final_result = {
+        "agent_id": WAREHOUSE_PICKER_AGENT_ID,
+        "role_status": "waiting_human",
+        "output_data": output,
+    }
+    case.case_metadata = {
+        **(case.case_metadata or {}),
+        "picker_decision_kind": "deficit_confirmation",
+        "warehouse_picker_output": output,
+    }
+    await db_session.flush()
+
+    result = await service.confirm_picker_conclusion(
+        case.id,
+        user_id="picker-1",
+        action="confirm_deficit",
+    )
+    assert result is not None
+    assert case.control_point == "omto"
+    assert case.current_agent_id == OMTO_CHIEF_AGENT_ID
+    assert case.case_metadata["picker_handoff_agent_id"] == OMTO_CHIEF_AGENT_ID
+    assert case.case_metadata["picker_workspace_status"] == "archived"
 
 
 @pytest.mark.asyncio

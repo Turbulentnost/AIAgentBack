@@ -5,9 +5,13 @@ import pytest
 from app.agents import agent_registry
 from app.agents.procurement_role_agents.config import (
     AGENT_LABELS,
+    DEPARTMENT_INITIATOR_AGENT_ID,
+    OMTO_CHIEF_AGENT_ID,
     PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     SOURCE_AGENT_MAP,
+    WAREHOUSE_MANAGER_AGENT_ID,
+    WAREHOUSE_PICKER_AGENT_ID,
 )
 
 
@@ -15,29 +19,29 @@ from app.agents.procurement_role_agents.config import (
 @pytest.mark.parametrize(
     "agent_id",
     [
-        value
-        for value in AGENT_LABELS
-        if value
-        not in {
-            PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
-            PRODUCTION_DISPATCHER_AGENT_ID,
-        }
+        DEPARTMENT_INITIATOR_AGENT_ID,
+        WAREHOUSE_MANAGER_AGENT_ID,
+        OMTO_CHIEF_AGENT_ID,
     ],
 )
 async def test_role_agent_is_registered_and_waits_for_rules(agent_id: str):
     agent_cls = agent_registry.get(agent_id)
     assert agent_cls is not None
+    source_type = next(
+        (
+            mapped_source
+            for mapped_source, configured_agent in SOURCE_AGENT_MAP.items()
+            if configured_agent == agent_id
+        ),
+        "production_material_order",
+    )
 
     result = await agent_cls().run(
         {
             "task_id": "task-1",
             "case_id": "case-1",
             "correlation_id": "proc:test:case-1",
-            "source_type": next(
-                source_type
-                for source_type, configured_agent in SOURCE_AGENT_MAP.items()
-                if configured_agent == agent_id
-            ),
+            "source_type": source_type,
             "source_1c_ref": "ref-1",
             "idempotency_key": "role:case-1:v1",
             "source_data": {"positions": []},

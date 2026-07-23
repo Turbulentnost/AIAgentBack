@@ -18,13 +18,16 @@ from app.schemas.procurement import (
     ProcurementRoleAgentResumeRequest,
     ProcurementSyncStatusRead,
 )
+from app.agents.warehouse_picker_agent.department import is_montage_section_2_department
 from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
 from app.services.procurement_permission import (
     PRODUCTION_DISPATCHER_AGENT_SLUG,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG,
+    WAREHOUSE_PICKER_AGENT_SLUG,
     can_access_procurement_orchestrator,
     can_access_production_dispatcher,
     can_access_production_preparation_engineer,
+    can_access_warehouse_picker,
     can_refresh_procurement_orchestrator,
 )
 
@@ -58,6 +61,13 @@ async def _require_role_workspace(
                 detail="Рабочее место доступно только диспетчеру производства",
             )
         return agent_id
+    if agent_id == WAREHOUSE_PICKER_AGENT_SLUG:
+        if not await can_access_warehouse_picker(db, user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Рабочее место доступно только кладовщику-комплектовщику",
+            )
+        return agent_id
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ролевой агент не найден")
 
 
@@ -81,11 +91,14 @@ async def get_procurement_permissions(
     can_access = await can_access_procurement_orchestrator(db, current_user)
     can_access_engineer = await can_access_production_preparation_engineer(db, current_user)
     can_access_dispatcher = await can_access_production_dispatcher(db, current_user)
+    can_access_picker = await can_access_warehouse_picker(db, current_user)
     accessible = []
     if can_access_engineer:
         accessible.append(PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG)
     if can_access_dispatcher:
         accessible.append(PRODUCTION_DISPATCHER_AGENT_SLUG)
+    if can_access_picker:
+        accessible.append(WAREHOUSE_PICKER_AGENT_SLUG)
     return ProcurementPermissionsRead(
         can_access_orchestrator=can_access,
         can_access_role_workspace=bool(accessible),
@@ -113,6 +126,12 @@ async def get_procurement_role_dashboard(
             view=view,
             source_type="production_material_order",
             engineer_workspace=True,
+        )
+    elif agent_id == WAREHOUSE_PICKER_AGENT_SLUG:
+        payload = await service.list_dashboard(
+            view=view,
+            source_type="production_material_order",
+            picker_workspace=True,
         )
     else:
         payload = await service.list_dashboard(
@@ -186,6 +205,59 @@ async def get_procurement_role_case(
                 "case_created_from_source",
                 "source_document_changed",
                 "case_archived_from_source",
+            }
+        ]
+    elif agent_id == WAREHOUSE_PICKER_AGENT_SLUG:
+        if payload.get("source_type") != "production_material_order":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
+        if not (
+            metadata.get("picker_invoked_at")
+            or metadata.get("warehouse_picker_output")
+            or is_montage_section_2_department(payload.get("department_name"))
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
+        payload["case_metadata"] = {
+            "warehouse_picker_output": metadata.get("warehouse_picker_output"),
+            "picker_evidence_fingerprint": metadata.get("picker_evidence_fingerprint"),
+            "picker_calculated_at": metadata.get("picker_calculated_at"),
+            "picker_decision_kind": metadata.get("picker_decision_kind"),
+            "picker_invoked_at": metadata.get("picker_invoked_at"),
+            "picker_workspace_archived_at": metadata.get("picker_workspace_archived_at"),
+            "picker_action_at": metadata.get("picker_action_at"),
+            "picker_confirmed_action": metadata.get("picker_confirmed_action"),
+            "picker_critical_acknowledged_at": metadata.get(
+                "picker_critical_acknowledged_at"
+            ),
+            "production_order_1c_ref": metadata.get("production_order_1c_ref"),
+        }
+        payload["assigned_agents"] = [WAREHOUSE_PICKER_AGENT_SLUG]
+        payload["route_stages"] = []
+        payload["events"] = [
+            event
+            for event in payload.get("events") or []
+            if event.get("agent_id") == WAREHOUSE_PICKER_AGENT_SLUG
+            or event.get("event_type")
+            in {
+                "case_created_from_source",
+                "source_document_changed",
+                "case_archived_from_source",
+                "picker_conclusion_confirmed",
+                "picker_critical_acknowledged",
+                "picker_handoff_to_omto_chief",
+            }
+        ]
+        payload["timeline"] = [
+            item
+            for item in payload.get("timeline") or []
+            if item.get("actor_id") == WAREHOUSE_PICKER_AGENT_SLUG
+            or item.get("kind")
+            in {
+                "case_created_from_source",
+                "source_document_changed",
+                "case_archived_from_source",
+                "picker_conclusion_confirmed",
+                "picker_critical_acknowledged",
+                "picker_handoff_to_omto_chief",
             }
         ]
     else:
@@ -292,6 +364,10 @@ async def acknowledge_role_critical(
         result = await service.acknowledge_engineer_critical(
             case_id, user_id=str(current_user.id)
         )
+    elif agent_id == WAREHOUSE_PICKER_AGENT_SLUG:
+        result = await service.acknowledge_picker_critical(
+            case_id, user_id=str(current_user.id)
+        )
     else:
         result = await service.acknowledge_dispatcher_critical(
             case_id, user_id=str(current_user.id)
@@ -302,6 +378,36 @@ async def acknowledge_role_critical(
             detail="Кейс не ожидает ознакомления с критической ошибкой",
         )
     await db.commit()
+    return ProcurementEngineerActionRead.model_validate(result)
+
+
+@router.post(
+    "/role-agents/{agent_id}/cases/{case_id}/confirm-conclusion",
+    response_model=ProcurementEngineerActionRead,
+)
+async def confirm_picker_conclusion(
+    agent_id: str,
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    action: str | None = Query(default=None),
+) -> ProcurementEngineerActionRead:
+    await _require_role_workspace(db, current_user, agent_id)
+    if agent_id != WAREHOUSE_PICKER_AGENT_SLUG:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Действие недоступно")
+    service = ProcurementOrchestratorService(db, enqueue_case=False)
+    result = await service.confirm_picker_conclusion(
+        case_id,
+        user_id=str(current_user.id),
+        action=action,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Кейс не ожидает подтверждения заключения по кладовой",
+        )
+    await db.commit()
+    _dispatch_pending(service)
     return ProcurementEngineerActionRead.model_validate(result)
 
 

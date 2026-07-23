@@ -21,11 +21,14 @@ from app.agents.procurement_agent.source_discovery import (
     parse_1c_datetime,
 )
 from app.agents.procurement_role_agents.config import (
+    OMTO_CHIEF_AGENT_ID,
     PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+    WAREHOUSE_PICKER_AGENT_ID,
     agent_id_for_source,
     agent_label,
 )
+from app.agents.warehouse_picker_agent.department import is_montage_section_2_department
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
@@ -554,6 +557,29 @@ class ProcurementOrchestratorService:
             case.source_data_version = source_data_version
         if source_content_hash is not None:
             case.source_content_hash = source_content_hash
+        # Ролевые рабочие места должны видеть тот же архив, что и оркестратор.
+        metadata = dict(case.case_metadata or {})
+        archived_at = datetime.now(UTC).isoformat()
+        if (
+            case.source_type == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value
+            and is_montage_section_2_department(case.department_name)
+        ) or metadata.get("picker_invoked_at"):
+            metadata.setdefault("picker_workspace_archived_at", archived_at)
+            metadata.setdefault("picker_archived_bucket", "attention")
+            metadata["picker_workspace_status"] = "archived"
+        if metadata.get("engineer_invoked_at") and not is_montage_section_2_department(
+            case.department_name
+        ):
+            metadata.setdefault("engineer_workspace_archived_at", archived_at)
+            metadata.setdefault("engineer_archived_bucket", "attention")
+            metadata["engineer_workspace_status"] = "archived"
+        if metadata.get("dispatcher_invoked_at") or case.source_type == (
+            ProcurementSourceType.REORDER_POINT.value
+        ):
+            metadata.setdefault("dispatcher_workspace_archived_at", archived_at)
+            metadata.setdefault("dispatcher_archived_bucket", "attention")
+            metadata["dispatcher_workspace_status"] = "archived"
+        case.case_metadata = metadata
         await self._cancel_current_task(case, reason=case.deviation_summary)
         await self._append_event(
             case,
@@ -1151,6 +1177,28 @@ class ProcurementOrchestratorService:
     @staticmethod
     def _resolve_role_agent_id(case: ProcurementCase) -> str:
         metadata = case.case_metadata or {}
+        # Заказы материалов МУ №2 всегда идут кладовщику (не инженеру/диспетчеру),
+        # даже если раньше был ошибочный handoff инженера → диспетчер.
+        if case.source_type == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value:
+            if (
+                metadata.get("picker_handoff_agent_id") == OMTO_CHIEF_AGENT_ID
+                or (
+                    case.current_agent_id == OMTO_CHIEF_AGENT_ID
+                    and case.control_point == "omto"
+                )
+            ):
+                return OMTO_CHIEF_AGENT_ID
+            if is_montage_section_2_department(case.department_name):
+                return WAREHOUSE_PICKER_AGENT_ID
+            if (
+                metadata.get("engineer_handoff_agent_id") == PRODUCTION_DISPATCHER_AGENT_ID
+                and case.control_point == "chief_dispatcher"
+            ) or (
+                case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
+                and case.control_point == "chief_dispatcher"
+            ):
+                return PRODUCTION_DISPATCHER_AGENT_ID
+            return PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
         if (
             metadata.get("engineer_handoff_agent_id") == PRODUCTION_DISPATCHER_AGENT_ID
             and case.control_point == "chief_dispatcher"
@@ -1171,7 +1219,11 @@ class ProcurementOrchestratorService:
             or case.updated_at.isoformat()
         )
         if (
-            agent_id == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+            agent_id
+            in {
+                PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+                WAREHOUSE_PICKER_AGENT_ID,
+            }
             and case.source_synced_at is not None
         ):
             source_revision = f"{source_revision}:{case.source_synced_at.isoformat()}"
@@ -1391,6 +1443,22 @@ class ProcurementOrchestratorService:
             ):
                 metadata.pop(key, None)
             case.case_metadata = metadata
+        if agent_id == WAREHOUSE_PICKER_AGENT_ID:
+            metadata = dict(case.case_metadata or {})
+            metadata.setdefault("picker_invoked_at", datetime.now(UTC).isoformat())
+            metadata["picker_workspace_status"] = "processing"
+            for key in (
+                "picker_workspace_archived_at",
+                "picker_archived_bucket",
+                "picker_decision_kind",
+                "picker_action_at",
+                "picker_action_by",
+                "picker_confirmed_action",
+                "picker_critical_acknowledged_at",
+                "picker_critical_acknowledged_by",
+            ):
+                metadata.pop(key, None)
+            case.case_metadata = metadata
         await self._append_event(
             case,
             event_type="role_agent_task_enqueued",
@@ -1527,6 +1595,18 @@ class ProcurementOrchestratorService:
             metadata["dispatcher_calculated_at"] = output_data.get("calculated_at")
             metadata["dispatcher_decision_kind"] = output_data.get("decision_kind")
             case.case_metadata = metadata
+        if (
+            result_payload.get("agent_id") == WAREHOUSE_PICKER_AGENT_ID
+            and isinstance(output_data, dict)
+        ):
+            metadata = dict(case.case_metadata or {})
+            metadata["warehouse_picker_output"] = output_data
+            metadata["picker_evidence_fingerprint"] = output_data.get(
+                "evidence_fingerprint"
+            )
+            metadata["picker_calculated_at"] = output_data.get("calculated_at")
+            metadata["picker_decision_kind"] = output_data.get("decision_kind")
+            case.case_metadata = metadata
         task.final_result = result_payload
         task.requires_human_review = role_status == "waiting_human"
         wait_reason = str(
@@ -1548,6 +1628,10 @@ class ProcurementOrchestratorService:
             if result_payload.get("agent_id") == PRODUCTION_DISPATCHER_AGENT_ID:
                 metadata = dict(case.case_metadata or {})
                 metadata["dispatcher_workspace_status"] = "awaiting_action"
+                case.case_metadata = metadata
+            if result_payload.get("agent_id") == WAREHOUSE_PICKER_AGENT_ID:
+                metadata = dict(case.case_metadata or {})
+                metadata["picker_workspace_status"] = "awaiting_action"
                 case.case_metadata = metadata
         elif role_status == "waiting_external":
             task.status = TaskStatus.WAITING_EXTERNAL
@@ -1620,6 +1704,59 @@ class ProcurementOrchestratorService:
                         "archived_at": archived_at.isoformat(),
                     },
                     agent_id=PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+                )
+                previous_enqueue = self.enqueue_case
+                self.enqueue_case = True
+                try:
+                    await self._enqueue_role_agent(case)
+                finally:
+                    self.enqueue_case = previous_enqueue
+            if result_payload.get("agent_id") == WAREHOUSE_PICKER_AGENT_ID:
+                metadata = dict(case.case_metadata or {})
+                decision = str(
+                    (output_data.get("decision_kind") if isinstance(output_data, dict) else None)
+                    or metadata.get("picker_decision_kind")
+                    or "none"
+                )
+                archived_bucket = (
+                    "critical"
+                    if decision == "critical_acknowledgement"
+                    else "attention"
+                    if decision
+                    in {
+                        "stock_confirmation",
+                        "deficit_confirmation",
+                        "discrepancy_return",
+                    }
+                    else "success"
+                )
+                archived_at = datetime.now(UTC)
+                metadata["picker_workspace_status"] = "archived"
+                metadata["picker_workspace_archived_at"] = archived_at.isoformat()
+                metadata["picker_archived_bucket"] = archived_bucket
+                metadata["picker_handoff_agent_id"] = OMTO_CHIEF_AGENT_ID
+                case.case_metadata = metadata
+                case.control_point = "omto"
+                case.requested_operation = "route_to_omto_chief"
+                case.current_agent_id = OMTO_CHIEF_AGENT_ID
+                case.assigned_agents = [OMTO_CHIEF_AGENT_ID]
+                await self._append_event(
+                    case,
+                    event_type="picker_handoff_to_omto_chief",
+                    idempotency_key=f"picker-handoff:{case.id}:{task.id}"[:255],
+                    previous_status=previous_status,
+                    new_status=case.status,
+                    payload={
+                        "picker_bucket": archived_bucket,
+                        "next_agent_id": OMTO_CHIEF_AGENT_ID,
+                        "archived_at": archived_at.isoformat(),
+                        "conclusion": (
+                            output_data.get("conclusion")
+                            if isinstance(output_data, dict)
+                            else {}
+                        ),
+                    },
+                    agent_id=WAREHOUSE_PICKER_AGENT_ID,
                 )
                 previous_enqueue = self.enqueue_case
                 self.enqueue_case = True
@@ -1940,6 +2077,139 @@ class ProcurementOrchestratorService:
             "case_id": str(case.id),
         }
 
+    async def confirm_picker_conclusion(
+        self,
+        case_id: uuid.UUID,
+        *,
+        user_id: str,
+        action: str | None = None,
+    ) -> dict[str, Any] | None:
+        case = await self.db.scalar(
+            select(ProcurementCase)
+            .options(selectinload(ProcurementCase.positions))
+            .where(ProcurementCase.id == case_id)
+        )
+        if case is None:
+            return None
+        metadata = dict(case.case_metadata or {})
+        if (
+            metadata.get("picker_workspace_status") == "archived"
+            and metadata.get("picker_archived_bucket") in {"attention", "success"}
+        ):
+            return {
+                "status": "completed",
+                "action": "picker_confirmed",
+                "case_id": str(case.id),
+            }
+        decision = metadata.get("picker_decision_kind")
+        if (
+            decision
+            not in {
+                "stock_confirmation",
+                "deficit_confirmation",
+                "discrepancy_return",
+            }
+            or case.current_task_id is None
+        ):
+            return None
+        task = await self.db.get(Task, case.current_task_id)
+        if task is None or task.status != TaskStatus.WAITING_HUMAN:
+            return None
+        action_at = datetime.now(UTC)
+        confirmed_action = action or {
+            "stock_confirmation": "issue_from_stock",
+            "deficit_confirmation": "confirm_deficit",
+            "discrepancy_return": "return_discrepancy",
+        }.get(str(decision), "confirm")
+        metadata["picker_action_at"] = action_at.isoformat()
+        metadata["picker_action_by"] = user_id
+        metadata["picker_confirmed_action"] = confirmed_action
+        case.case_metadata = metadata
+        await self._append_event(
+            case,
+            event_type="picker_conclusion_confirmed",
+            idempotency_key=f"picker-conclusion-confirmed:{task.id}"[:255],
+            previous_status=case.status,
+            new_status=case.status,
+            payload={
+                "user_id": user_id,
+                "confirmed_at": action_at.isoformat(),
+                "action": confirmed_action,
+            },
+            agent_id=WAREHOUSE_PICKER_AGENT_ID,
+        )
+        summary_by_action = {
+            "issue_from_stock": "Выдача из кладовой подтверждена кладовщиком-комплектовщиком.",
+            "partial_issue": "Частичная выдача и дефицит согласованы кладовщиком-комплектовщиком.",
+            "confirm_deficit": "Дефицит подтверждён кладовщиком-комплектовщиком.",
+            "return_discrepancy": "Кейс возвращён из-за расхождений учёта и факта.",
+        }
+        payload = dict(task.final_result or {})
+        payload.update(
+            {
+                "role_status": "completed",
+                "status": "completed",
+                "summary": summary_by_action.get(
+                    confirmed_action,
+                    "Заключение по складскому наличию подтверждено.",
+                ),
+                "requires_human_review": False,
+            }
+        )
+        payload.setdefault(
+            "output_data",
+            metadata.get("warehouse_picker_output") or {},
+        )
+        await self._apply_role_agent_result(
+            case,
+            task,
+            payload,
+            event_type="role_agent_resumed",
+        )
+        return {
+            "status": "completed",
+            "action": "picker_confirmed",
+            "case_id": str(case.id),
+        }
+
+    async def acknowledge_picker_critical(
+        self,
+        case_id: uuid.UUID,
+        *,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        case = await self.db.get(ProcurementCase, case_id)
+        if case is None:
+            return None
+        metadata = dict(case.case_metadata or {})
+        if metadata.get("picker_decision_kind") != "critical_acknowledgement":
+            return None
+        if metadata.get("picker_critical_acknowledged_at"):
+            return {
+                "status": "waiting_for_source_update",
+                "action": "critical_acknowledged",
+                "case_id": str(case.id),
+            }
+        acknowledged_at = datetime.now(UTC)
+        metadata["picker_critical_acknowledged_at"] = acknowledged_at.isoformat()
+        metadata["picker_critical_acknowledged_by"] = user_id
+        case.case_metadata = metadata
+        await self._append_event(
+            case,
+            event_type="picker_critical_acknowledged",
+            idempotency_key=f"picker-critical-ack:{case.current_task_id or case.id}"[:255],
+            previous_status=case.status,
+            new_status=case.status,
+            payload={"user_id": user_id, "acknowledged_at": acknowledged_at.isoformat()},
+            agent_id=WAREHOUSE_PICKER_AGENT_ID,
+        )
+        await self.db.flush()
+        return {
+            "status": "waiting_for_source_update",
+            "action": "critical_acknowledged",
+            "case_id": str(case.id),
+        }
+
     async def list_dashboard(
         self,
         *,
@@ -1947,9 +2217,10 @@ class ProcurementOrchestratorService:
         source_type: str | None = None,
         engineer_workspace: bool = False,
         dispatcher_workspace: bool = False,
+        picker_workspace: bool = False,
     ) -> dict[str, Any]:
         normalized_view = view if view in {"active", "processing", "archive"} else "active"
-        if engineer_workspace or dispatcher_workspace:
+        if engineer_workspace or dispatcher_workspace or picker_workspace:
             status_filter = None
         elif normalized_view == "archive":
             status_filter = list(TERMINAL_CASE_STATUSES)
@@ -1977,8 +2248,13 @@ class ProcurementOrchestratorService:
             engineer_cases = [
                 case
                 for case in loaded_cases
-                if (case.case_metadata or {}).get("engineer_invoked_at")
-                or (case.case_metadata or {}).get("production_preparation_engineer_output")
+                if not is_montage_section_2_department(case.department_name)
+                and (
+                    (case.case_metadata or {}).get("engineer_invoked_at")
+                    or (case.case_metadata or {}).get(
+                        "production_preparation_engineer_output"
+                    )
+                )
             ]
 
             def is_engineer_archived(case: ProcurementCase) -> bool:
@@ -2035,6 +2311,35 @@ class ProcurementOrchestratorService:
                 if normalized_view == "archive"
                 else active_dispatcher_cases
             )
+        elif picker_workspace:
+            picker_cases = [
+                case
+                for case in loaded_cases
+                if (case.case_metadata or {}).get("picker_invoked_at")
+                or (case.case_metadata or {}).get("warehouse_picker_output")
+                or (
+                    case.source_type == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value
+                    and is_montage_section_2_department(case.department_name)
+                )
+            ]
+
+            def is_picker_archived(case: ProcurementCase) -> bool:
+                metadata = case.case_metadata or {}
+                return bool(metadata.get("picker_workspace_archived_at")) or (
+                    case.status in TERMINAL_CASE_STATUSES
+                )
+
+            active_picker_cases = [
+                case for case in picker_cases if not is_picker_archived(case)
+            ]
+            archived_picker_cases = [
+                case for case in picker_cases if is_picker_archived(case)
+            ]
+            cases = (
+                archived_picker_cases
+                if normalized_view == "archive"
+                else active_picker_cases
+            )
         else:
             cases = loaded_cases
         if normalized_view == "processing":
@@ -2047,6 +2352,9 @@ class ProcurementOrchestratorService:
         elif dispatcher_workspace:
             archive_count = len(archived_dispatcher_cases)
             processing_count = len(active_dispatcher_cases)
+        elif picker_workspace:
+            archive_count = len(archived_picker_cases)
+            processing_count = len(active_picker_cases)
         else:
             archive_filters = [ProcurementCase.status.in_(list(TERMINAL_CASE_STATUSES))]
             processing_filters = [ProcurementCase.status.in_(list(ACTIVE_CASE_STATUSES))]
@@ -2239,6 +2547,8 @@ class ProcurementOrchestratorService:
     def _engineer_bucket(case: ProcurementCase) -> tuple[str | None, str | None]:
         if case.source_type != ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value:
             return None, None
+        if is_montage_section_2_department(case.department_name):
+            return None, None
         result = case.latest_result or {}
         metadata = case.case_metadata or {}
         archived_bucket = metadata.get("engineer_archived_bucket")
@@ -2331,9 +2641,60 @@ class ProcurementOrchestratorService:
             return "attention", "Диспетчер выполняет расчёт или кейс ожидает решения."
         return "attention", "Кейс ожидает обработки диспетчером производства."
 
+    @staticmethod
+    def _picker_bucket(case: ProcurementCase) -> tuple[str | None, str | None]:
+        metadata = case.case_metadata or {}
+        is_picker_case = (
+            metadata.get("picker_invoked_at")
+            or metadata.get("warehouse_picker_output")
+            or (
+                case.source_type == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value
+                and is_montage_section_2_department(case.department_name)
+            )
+        )
+        if not is_picker_case:
+            return None, None
+        if case.status in TERMINAL_CASE_STATUSES:
+            closed_label = CLOSED_REASON_LABELS.get(case.closed_reason or "") or (
+                case.deviation_summary or "Кейс закрыт оркестратором."
+            )
+            archived_bucket = metadata.get("picker_archived_bucket")
+            if archived_bucket not in {"success", "attention", "critical"}:
+                archived_bucket = "attention"
+            return str(archived_bucket), str(closed_label)
+        archived_bucket = metadata.get("picker_archived_bucket")
+        if archived_bucket in {"success", "attention", "critical"}:
+            return str(archived_bucket), "Состояние сохранено при передаче начальнику ОМТО."
+        result = case.latest_result or {}
+        output = result.get("output_data") or metadata.get("warehouse_picker_output")
+        output = output if isinstance(output, dict) else {}
+        role_status = str(result.get("role_status") or "")
+        decision_kind = str(
+            metadata.get("picker_decision_kind") or output.get("decision_kind") or ""
+        )
+        if decision_kind in {
+            "stock_confirmation",
+            "deficit_confirmation",
+            "discrepancy_return",
+        }:
+            return "attention", "Требуется подтверждение заключения по кладовой."
+        if decision_kind == "critical_acknowledgement" or role_status == "failed":
+            missing = output.get("missing_data") or []
+            return "critical", str(
+                (missing[0] if missing else None)
+                or case.deviation_summary
+                or "Недостаточно данных для проверки кладовой."
+            )
+        if decision_kind == "none" and role_status == "completed":
+            return "success", "Наличие подтверждено, кейс передан начальнику ОМТО."
+        if case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID or case.current_task_id:
+            return "attention", "Кладовщик выполняет проверку или кейс ожидает решения."
+        return "attention", "Кейс ожидает обработки кладовщиком-комплектовщиком."
+
     def _serialize_case_summary(self, case: ProcurementCase) -> dict[str, Any]:
         engineer_bucket, engineer_bucket_reason = self._engineer_bucket(case)
         dispatcher_bucket, dispatcher_bucket_reason = self._dispatcher_bucket(case)
+        picker_bucket, picker_bucket_reason = self._picker_bucket(case)
         role_status = str((case.latest_result or {}).get("role_status") or "")
         metadata = case.case_metadata or {}
         if engineer_bucket is None:
@@ -2371,6 +2732,27 @@ class ProcurementOrchestratorService:
             dispatcher_work_status = "completed"
         else:
             dispatcher_work_status = "awaiting_action"
+        if picker_bucket is None:
+            picker_work_status = None
+        elif metadata.get("picker_workspace_archived_at") or (
+            case.status in TERMINAL_CASE_STATUSES
+        ):
+            picker_work_status = "archived"
+        elif (
+            case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+            and role_status in {"waiting_human", "waiting_external", "failed"}
+        ):
+            picker_work_status = "awaiting_action"
+        elif (
+            case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+            and case.current_task_id
+            and role_status != "completed"
+        ):
+            picker_work_status = "processing"
+        elif picker_bucket == "success":
+            picker_work_status = "completed"
+        else:
+            picker_work_status = "awaiting_action"
         return {
             "id": str(case.id),
             "correlation_id": case.correlation_id,
@@ -2441,6 +2823,17 @@ class ProcurementOrchestratorService:
                 == PRODUCTION_DISPATCHER_AGENT_ID
                 or metadata.get("production_preparation_engineer_output")
                 else None
+            ),
+            "department_name": case.department_name,
+            "picker_bucket": picker_bucket,
+            "picker_bucket_reason": picker_bucket_reason,
+            "picker_work_status": picker_work_status,
+            "picker_decision_kind": metadata.get("picker_decision_kind"),
+            "picker_invoked_at": metadata.get("picker_invoked_at"),
+            "picker_workspace_archived_at": metadata.get("picker_workspace_archived_at"),
+            "picker_action_at": metadata.get("picker_action_at"),
+            "picker_critical_acknowledged_at": metadata.get(
+                "picker_critical_acknowledged_at"
             ),
         }
 
