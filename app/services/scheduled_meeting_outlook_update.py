@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from exchangelib.items import SEND_ONLY_TO_ALL
@@ -133,3 +133,62 @@ async def update_series_end_date_in_outlook(
         meeting,
         new_end_date=new_end_date,
     )
+
+
+def _update_series_recurrence_schedule(meeting: ScheduledMeeting) -> dict[str, Any]:
+    if not meeting.outlook_series_id:
+        raise ScheduledMeetingOutlookError(
+            "Серия не связана с календарём Outlook",
+            status_code=409,
+        )
+    if meeting.status != ScheduledMeetingStatus.PLANNED:
+        raise ScheduledMeetingOutlookError(
+            "Изменение периодичности в Outlook доступно только для распланированной серии",
+            status_code=409,
+        )
+    if meeting.series_end_date < meeting.series_start_date:
+        raise ScheduledMeetingOutlookError(
+            "Дата окончания серии не может быть раньше даты начала",
+            status_code=400,
+        )
+
+    config = load_config()
+    item = get_meeting_by_id(
+        config=config,
+        item_id=meeting.outlook_series_id,
+        changekey=meeting.outlook_changekey or "",
+    )
+    recurrence = getattr(item, "recurrence", None)
+    if recurrence is None:
+        raise ScheduledMeetingOutlookError(
+            "У совещания в Outlook не задано правило повторения",
+            status_code=400,
+        )
+
+    start = _combine_start(meeting, config.timezone)
+    meeting_end = start + timedelta(minutes=meeting.duration_minutes)
+    item.start = start
+    item.end = meeting_end
+    item.recurrence = _build_recurrence(meeting, start)
+    item.save(update_fields=["start", "end", "recurrence"], send_meeting_invitations=SEND_ONLY_TO_ALL)
+    company_item_id, company_changekey = _company_calendar_ids_from_payload(meeting)
+    company_meta = sync_meeting_to_company_calendar(
+        item,
+        config=config,
+        company_item_id=company_item_id,
+        company_changekey=company_changekey,
+    )
+    outlook_meta = calendar_item_outlook_meta(item, config)
+    _merge_company_calendar_payload(meeting, company_meta)
+    return {
+        "action": "series_recurrence_updated",
+        **outlook_meta,
+        **company_meta,
+    }
+
+
+async def update_series_recurrence_in_outlook(
+    _db: AsyncSession,
+    meeting: ScheduledMeeting,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_update_series_recurrence_schedule, meeting)

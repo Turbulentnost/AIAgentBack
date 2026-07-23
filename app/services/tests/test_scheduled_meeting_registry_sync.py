@@ -42,7 +42,9 @@ def _series_stub(*, series_id: uuid.UUID) -> SimpleNamespace:
         participants=[
             SimpleNamespace(
                 sort_order=0,
+                person_fio="Главный инженер",
                 position=department,
+                user=SimpleNamespace(full_name="Главный инженер"),
             )
         ],
     )
@@ -119,6 +121,7 @@ async def test_sync_series_card_rolls_past_occurrence() -> None:
         slot_end=datetime(2026, 7, 15, 9, 30, tzinfo=tz),
         stage=MeetingRegistryStage.SCHEDULED,
         series_occurrence_date=date(2026, 7, 15),
+        protocol_ref_key=None,
         outlook_item_id="occ-1",
         outlook_changekey="ck-1",
         outlook_meeting_url=series.outlook_meeting_url,
@@ -147,6 +150,10 @@ async def test_sync_series_card_rolls_past_occurrence() -> None:
         ),
         patch(
             "app.services.scheduled_meeting_registry_sync.MeetingRegistryService.append_event",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.scheduled_meeting_registry_sync.MeetingRegistryService.recreate_protocol_draft_on_reschedule",
             AsyncMock(),
         ),
     ):
@@ -190,6 +197,7 @@ async def test_sync_series_card_preserves_ad_hoc_participants_on_roll() -> None:
         slot_end=datetime(2026, 7, 15, 9, 30, tzinfo=tz),
         stage=MeetingRegistryStage.SCHEDULED,
         series_occurrence_date=date(2026, 7, 15),
+        protocol_ref_key=None,
         outlook_item_id="occ-1",
         outlook_changekey="ck-1",
         outlook_meeting_url=series.outlook_meeting_url,
@@ -224,6 +232,10 @@ async def test_sync_series_card_preserves_ad_hoc_participants_on_roll() -> None:
         ),
         patch(
             "app.services.scheduled_meeting_registry_sync.MeetingRegistryService.append_event",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.scheduled_meeting_registry_sync.MeetingRegistryService.recreate_protocol_draft_on_reschedule",
             AsyncMock(),
         ),
     ):
@@ -341,6 +353,9 @@ def test_registry_item_read_marks_scheduled_series_card() -> None:
             outlook_meeting_url="https://example.test/meeting",
             cancelled_at=None,
             updated_at=datetime(2026, 7, 15, 8, 0, tzinfo=timezone.utc),
+            protocol_draft_at=None,
+            protocol_draft_created_at=None,
+            protocol_draft_error=None,
             payload={
                 "source": "scheduled_series",
                 "series_recurrence_label": "ежедневно, 9:00",

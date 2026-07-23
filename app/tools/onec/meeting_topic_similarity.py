@@ -385,8 +385,11 @@ async def find_similar_topic_for_candidate(
             participants_by_topic=participants_by_topic,
         )
         total_score = compute_weighted_similarity(active_scores)
-        if total_score >= resolved_threshold:
-            candidates.append((total_score, topic, breakdown))
+        # Сильное совпадение названия достаточно: участники серии часто
+        # отличаются от сохранённых в теме 1С и не должны блокировать подсказку.
+        qualifying_score = max(total_score, breakdown["topic"])
+        if qualifying_score >= resolved_threshold:
+            candidates.append((qualifying_score, topic, breakdown))
 
     return _attach_best_match(candidates, similarity_method=method)
 

@@ -82,17 +82,21 @@ class ScheduledMeetingRegistrySyncService:
         names: list[str] = []
         seen: set[str] = set()
         for participant in sorted(meeting.participants, key=lambda item: item.sort_order):
-            position = participant.position
-            if position is None:
+            fio = (participant.person_fio or "").strip()
+            if not fio and participant.user is not None:
+                fio = (participant.user.full_name or "").strip()
+            if not fio:
+                position = participant.position
+                if position is None:
+                    continue
+                fio = position.name.strip()
+            if not fio:
                 continue
-            name = position.name.strip()
-            if not name:
-                continue
-            key = name.casefold()
+            key = fio.casefold()
             if key in seen:
                 continue
             seen.add(key)
-            names.append(name)
+            names.append(fio)
         return names
 
     def _merge_occurrence_participants(

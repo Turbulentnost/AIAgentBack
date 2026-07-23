@@ -18,16 +18,17 @@ from app.schemas.common import ORMModel
 from app.schemas.meeting import MeetingRegistryEventRead, MeetingRegistryItemRead
 from app.services.scheduled_meeting_recurrence import (
     RecurrenceInput,
-    build_recurrence_rule,
     default_series_end_date,
-    format_recurrence_label,
     validate_recurrence_input,
 )
 
 
 class ScheduledMeetingParticipantRead(ORMModel):
     id: uuid.UUID
-    position_id: uuid.UUID
+    user_id: uuid.UUID | None = None
+    person_fio: str | None = None
+    person_email: str | None = None
+    position_id: uuid.UUID | None = None
     position_name: str | None = None
     department_id: uuid.UUID | None = Field(
         default=None,
@@ -47,6 +48,30 @@ class ScheduledMeetingParticipantOptionRead(BaseModel):
     slug: str | None = None
 
 
+class ScheduledMeetingEmployeeOptionRead(BaseModel):
+    id: uuid.UUID
+    fio: str
+    email: str
+    position_name: str | None = None
+    position_id: uuid.UUID | None = None
+
+
+class ScheduledMeetingPositionResolveRequest(BaseModel):
+    position_ids: list[uuid.UUID] = Field(min_length=1, max_length=50)
+
+
+class ScheduledMeetingPositionResolveItemRead(BaseModel):
+    position_id: uuid.UUID
+    position_name: str
+    status: Literal["resolved", "ambiguous", "empty", "not_found"]
+    employee: ScheduledMeetingEmployeeOptionRead | None = None
+    candidates: list[ScheduledMeetingEmployeeOptionRead] = Field(default_factory=list)
+
+
+class ScheduledMeetingPositionResolveRead(BaseModel):
+    items: list[ScheduledMeetingPositionResolveItemRead]
+
+
 class MeetingCategoryRead(ORMModel):
     id: uuid.UUID
     name: str
@@ -64,8 +89,12 @@ class ScheduledMeetingRead(ORMModel):
     title: str
     meeting_category_id: uuid.UUID
     meeting_category_name: str | None = None
+    manager_user_id: uuid.UUID | None = None
+    manager_user_fio: str | None = None
     manager_position_id: uuid.UUID
     manager_position_name: str | None = None
+    responsible_user_id: uuid.UUID | None = None
+    responsible_user_fio: str | None = None
     responsible_position_id: uuid.UUID
     responsible_position_name: str | None = None
     meeting_type: ScheduledMeetingType
@@ -123,6 +152,9 @@ class ScheduledMeetingRecurrencePayload(BaseModel):
 
 
 class ScheduledMeetingParticipantCreate(BaseModel):
+    user_id: uuid.UUID | None = None
+    person_fio: str | None = Field(default=None, max_length=255)
+    person_email: str | None = Field(default=None, max_length=255)
     position_id: uuid.UUID | None = None
     department_id: uuid.UUID | None = Field(
         default=None,
@@ -132,19 +164,23 @@ class ScheduledMeetingParticipantCreate(BaseModel):
     is_required: bool = True
 
     @model_validator(mode="after")
-    def resolve_position_id(self) -> ScheduledMeetingParticipantCreate:
+    def resolve_legacy_fields(self) -> ScheduledMeetingParticipantCreate:
         if self.position_id is not None:
             return self
         if self.department_id is not None:
             return self.model_copy(update={"position_id": self.department_id})
-        raise ValueError("Укажите position_id участника серии")
+        if self.user_id is not None:
+            return self
+        raise ValueError("Укажите user_id участника серии")
 
 
 class ScheduledMeetingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=512)
     meeting_category_id: uuid.UUID
-    manager_position_id: uuid.UUID
-    responsible_position_id: uuid.UUID
+    manager_user_id: uuid.UUID
+    responsible_user_id: uuid.UUID
+    manager_position_id: uuid.UUID | None = None
+    responsible_position_id: uuid.UUID | None = None
     meeting_type: ScheduledMeetingType
     status: ScheduledMeetingStatus = ScheduledMeetingStatus.PLANNED
     recurrence: ScheduledMeetingRecurrencePayload
@@ -160,6 +196,10 @@ class ScheduledMeetingCreate(BaseModel):
         default=None,
         description="Подпись серии; если не задана — формируется из recurrence",
     )
+    manager_person_fio: str | None = Field(default=None, max_length=255)
+    manager_person_email: str | None = Field(default=None, max_length=255)
+    responsible_person_fio: str | None = Field(default=None, max_length=255)
+    responsible_person_email: str | None = Field(default=None, max_length=255)
     participants: list[ScheduledMeetingParticipantCreate] = Field(default_factory=list)
     comment: str | None = Field(default=None, max_length=4000)
     payload: dict | None = None
@@ -194,16 +234,12 @@ class ScheduledMeetingCreate(BaseModel):
             payload["comment"] = self.comment.strip()
         return payload or None
 
-    def recurrence_label(self) -> str:
-        return format_recurrence_label(self.resolved_recurrence_input())
-
-    def recurrence_rule(self) -> dict:
-        return build_recurrence_rule(self.resolved_recurrence_input())
-
 
 class ScheduledMeetingUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=512)
     meeting_category_id: uuid.UUID | None = None
+    manager_user_id: uuid.UUID | None = None
+    responsible_user_id: uuid.UUID | None = None
     manager_position_id: uuid.UUID | None = None
     responsible_position_id: uuid.UUID | None = None
     meeting_type: ScheduledMeetingType | None = None
@@ -259,3 +295,16 @@ class ScheduledMeetingDetailRead(BaseModel):
     past_occurrences: list[ScheduledMeetingOccurrenceRead] = Field(default_factory=list)
     current_card: MeetingRegistryItemRead | None = None
     history: list[MeetingRegistryEventRead] = Field(default_factory=list)
+
+
+class ScheduledMeetingCancelRequest(BaseModel):
+    message: str = Field(default="", max_length=2000)
+
+
+class ScheduledMeetingCancelRead(BaseModel):
+    series: ScheduledMeetingRead
+    cancelled: bool = True
+    outlook_cancelled: bool = False
+    outlook_warning: str | None = None
+    registry_warning: str | None = None
+    message: str | None = None

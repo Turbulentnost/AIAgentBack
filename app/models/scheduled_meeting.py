@@ -73,6 +73,16 @@ class ScheduledMeeting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("positions.id", ondelete="RESTRICT"),
         index=True,
     )
+    manager_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    responsible_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     meeting_type: Mapped[ScheduledMeetingType] = mapped_column(
         SAEnum(
             ScheduledMeetingType,
@@ -147,6 +157,8 @@ class ScheduledMeeting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     responsible_position: Mapped["Position"] = relationship(
         foreign_keys=[responsible_position_id],
     )
+    manager_user: Mapped["User | None"] = relationship(foreign_keys=[manager_user_id])
+    responsible_user: Mapped["User | None"] = relationship(foreign_keys=[responsible_user_id])
     participants: Mapped[list["ScheduledMeetingParticipant"]] = relationship(
         back_populates="meeting",
         order_by="ScheduledMeetingParticipant.sort_order",
@@ -168,16 +180,26 @@ class ScheduledMeetingParticipant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("scheduled_meetings.id", ondelete="CASCADE"),
         index=True,
     )
-    position_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    person_fio: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    person_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    position_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("positions.id", ondelete="RESTRICT"),
         index=True,
+        nullable=True,
     )
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_required: Mapped[bool] = mapped_column(Boolean, default=True)
 
     meeting: Mapped[ScheduledMeeting] = relationship(back_populates="participants")
-    position: Mapped["Position"] = relationship()
+    user: Mapped["User | None"] = relationship()
+    position: Mapped["Position | None"] = relationship()
 
 
 from app.models.meeting_category import MeetingCategory  # noqa: E402
 from app.models.position import Position  # noqa: E402
+from app.models.user import User  # noqa: E402

@@ -627,9 +627,15 @@ def registry_cancel_read(
 
 def registry_event_read(event: MeetingRegistryEvent) -> MeetingRegistryEventRead:
     payload = event.payload if isinstance(event.payload, dict) else {}
+    raw_type = event.event_type.value
+    try:
+        event_type = MeetingRegistryEventTypeRead(raw_type)
+    except ValueError:
+        event_type = MeetingRegistryEventTypeRead.STAGE_CHANGED
+        payload = {**payload, "original_event_type": raw_type}
     return MeetingRegistryEventRead(
         id=str(event.id),
-        event_type=MeetingRegistryEventTypeRead(event.event_type.value),
+        event_type=event_type,
         occurred_at=event.occurred_at.isoformat(),
         message=event.message,
         actor_user_id=str(event.actor_user_id) if event.actor_user_id else None,

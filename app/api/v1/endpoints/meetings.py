@@ -68,9 +68,14 @@ from app.services.meeting_exceptions import MeetingServiceError
 from app.services.meeting_service import MeetingService
 from app.schemas.scheduled_meeting import (
     MeetingCategoryRead,
+    ScheduledMeetingCancelRead,
+    ScheduledMeetingCancelRequest,
     ScheduledMeetingCreate,
     ScheduledMeetingDetailRead,
+    ScheduledMeetingEmployeeOptionRead,
     ScheduledMeetingParticipantOptionRead,
+    ScheduledMeetingPositionResolveRead,
+    ScheduledMeetingPositionResolveRequest,
     ScheduledMeetingRead,
     ScheduledMeetingUpdate,
     ScheduledMeetingUpdateRead,
@@ -165,6 +170,38 @@ async def list_scheduled_meeting_category_options(
 
 
 @router.get(
+    "/scheduled/employee-options",
+    response_model=list[ScheduledMeetingEmployeeOptionRead],
+)
+async def list_scheduled_meeting_employee_options(
+    db: DbSession,
+    current_user: CurrentUser,
+    search: str | None = None,
+    limit: int = 20,
+) -> list[ScheduledMeetingEmployeeOptionRead]:
+    """Сотрудники для выбора руководителя, ответственного и участников графика."""
+    await _require_agent_access(db, current_user)
+    return await ScheduledMeetingService(db).list_employee_options(
+        search=search,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/scheduled/resolve-positions",
+    response_model=ScheduledMeetingPositionResolveRead,
+)
+async def resolve_scheduled_meeting_positions(
+    payload: ScheduledMeetingPositionResolveRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ScheduledMeetingPositionResolveRead:
+    """Подставить сотрудников по должностям (для заполнения серии из нормативки)."""
+    await _require_agent_access(db, current_user)
+    return await ScheduledMeetingService(db).resolve_positions(payload.position_ids)
+
+
+@router.get(
     "/scheduled/participant-options",
     response_model=list[ScheduledMeetingParticipantOptionRead],
 )
@@ -189,7 +226,10 @@ async def list_scheduled_meetings(
 ) -> list[ScheduledMeetingRead]:
     """Список серий совещаний из графика."""
     await _require_agent_access(db, current_user)
-    return await ScheduledMeetingService(db).list()
+    service = ScheduledMeetingService(db)
+    await service.archive_expired_series()
+    await db.commit()
+    return await service.list()
 
 
 @router.post(
@@ -225,6 +265,29 @@ async def plan_scheduled_meeting(
         meeting = await ScheduledMeetingService(db).plan(meeting_id)
         await db.commit()
         return meeting
+    except ScheduledMeetingServiceError as exc:
+        await db.rollback()
+        raise _scheduled_meeting_error(exc) from exc
+
+
+@router.post("/scheduled/{meeting_id}/cancel", response_model=ScheduledMeetingCancelRead)
+async def cancel_scheduled_meeting(
+    db: DbSession,
+    current_user: CurrentUser,
+    meeting_id: uuid.UUID,
+    payload: ScheduledMeetingCancelRequest | None = None,
+) -> ScheduledMeetingCancelRead:
+    """Отмена распланированной серии в Outlook и перевод записи в архив."""
+    await _require_agent_access(db, current_user)
+    body = payload or ScheduledMeetingCancelRequest()
+    try:
+        result = await ScheduledMeetingService(db).cancel(
+            meeting_id,
+            body,
+            current_user=current_user,
+        )
+        await db.commit()
+        return result
     except ScheduledMeetingServiceError as exc:
         await db.rollback()
         raise _scheduled_meeting_error(exc) from exc

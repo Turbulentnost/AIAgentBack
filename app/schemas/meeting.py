@@ -845,6 +845,7 @@ class MeetingRegistryEventTypeRead(str, Enum):
     PARTICIPANTS_UPDATED = "participants_updated"
     STAGE_CHANGED = "stage_changed"
     OCCURRENCE_ROLLED = "occurrence_rolled"
+    PROTOCOL_DRAFT_SCHEDULED = "protocol_draft_scheduled"
 
 
 class MeetingRegistryEventRead(BaseModel):

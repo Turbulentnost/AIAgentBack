@@ -315,3 +315,24 @@ def occurrence_slot_bounds(
     slot_start = datetime.combine(occurrence_date, time_local, tzinfo=tz)
     slot_end = slot_start + timedelta(minutes=duration_minutes)
     return slot_start, slot_end
+
+
+def apply_recurrence_payload_to_meeting(
+    meeting,
+    recurrence,
+) -> None:
+    from app.schemas.scheduled_meeting import ScheduledMeetingRecurrencePayload
+
+    if not isinstance(recurrence, ScheduledMeetingRecurrencePayload):
+        raise TypeError("recurrence must be ScheduledMeetingRecurrencePayload")
+
+    meeting.frequency = recurrence.frequency
+    meeting.interval = recurrence.interval
+    meeting.time_local = recurrence.time_local
+    meeting.duration_minutes = recurrence.duration_minutes
+    meeting.monthly_mode = recurrence.monthly_mode
+    meeting.day_of_month = recurrence.day_of_month
+    meeting.weekday = recurrence.weekday
+    meeting.weekday_position = recurrence.weekday_position
+    if recurrence.series_end_date is not None:
+        meeting.series_end_date = recurrence.series_end_date

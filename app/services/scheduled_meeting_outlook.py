@@ -492,28 +492,68 @@ async def resolve_removed_emails_from_outlook_series(
     )
 
 
+async def _resolve_participant_invitable_email(
+    db: AsyncSession,
+    participant: Any,
+) -> tuple[str, str] | None:
+    fio = (getattr(participant, "person_fio", None) or "").strip()
+    email = (getattr(participant, "person_email", None) or "").strip()
+    if email and _is_invitable_attendee_email(email):
+        return fio or email, email
+
+    user_id = getattr(participant, "user_id", None)
+    if user_id is not None:
+        user = await db.get(User, user_id)
+        if user is not None:
+            from app.services.scheduled_meeting_person import _invitable_email_for_user
+
+            invitable = await _invitable_email_for_user(user)
+            if invitable:
+                resolved_fio = fio or (user.full_name or "").strip() or invitable
+                return resolved_fio, invitable
+
+    if fio:
+        from app.services.scheduled_meeting_person import _resolve_gal_person
+
+        gal_match = await _resolve_gal_person(fio)
+        if gal_match is not None:
+            gal_fio, gal_email = gal_match
+            if _is_invitable_attendee_email(gal_email):
+                return gal_fio, gal_email
+
+    return None
+
+
 async def resolve_attendees(
     db: AsyncSession,
     meeting: ScheduledMeeting,
 ) -> list[tuple[str, str]]:
-    titles: list[str] = []
+    attendees: list[tuple[str, str]] = []
+    seen: set[str] = set()
     unresolved: list[str] = []
+
     for participant in sorted(meeting.participants, key=lambda item: item.sort_order):
-        title = (
-            participant.position.name.strip()
-            if participant.position is not None and participant.position.name
-            else ""
-        )
-        if not title:
-            unresolved.append(str(participant.position_id))
+        resolved = await _resolve_participant_invitable_email(db, participant)
+        if resolved is None:
+            fio = (getattr(participant, "person_fio", None) or "").strip()
+            unresolved.append(
+                fio or str(getattr(participant, "user_id", None) or getattr(participant, "id", ""))
+            )
             continue
-        titles.append(title)
+        fio, email = resolved
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        attendees.append((fio or email, email))
 
     if unresolved:
         raise ScheduledMeetingOutlookError(
-            "Не удалось найти e-mail для должностей: " + ", ".join(unresolved)
+            "Не удалось определить e-mail участников серии: " + ", ".join(unresolved)
         )
-    return await resolve_attendees_for_position_titles(db, titles)
+    if not attendees:
+        raise ScheduledMeetingOutlookError("Не удалось определить e-mail участников серии")
+    return attendees
 
 
 async def resolve_attendee_emails(db: AsyncSession, meeting: ScheduledMeeting) -> list[str]:
@@ -560,6 +600,36 @@ async def plan_scheduled_meeting_in_outlook(
     meeting.payload = stored_payload or None
     await db.flush()
     return result
+
+
+async def cancel_scheduled_meeting_in_outlook(
+    meeting: ScheduledMeeting,
+    *,
+    message: str = "",
+) -> dict[str, Any]:
+    if not meeting.outlook_series_id:
+        raise ScheduledMeetingOutlookError(
+            "Серия не связана с календарём Outlook",
+            status_code=409,
+        )
+
+    from app.tools.Outlook.cancel_meeting import dispatch_cancel_meeting
+
+    company_item_id, company_changekey = _company_calendar_ids_from_meeting_payload(meeting)
+    try:
+        return await asyncio.to_thread(
+            dispatch_cancel_meeting,
+            item_id=meeting.outlook_series_id,
+            changekey=meeting.outlook_changekey or "",
+            message=message,
+            cancel_scope="series",
+            company_calendar_item_id=company_item_id,
+            company_calendar_changekey=company_changekey,
+        )
+    except RuntimeError as exc:
+        if "уже отменено" in str(exc).lower():
+            return {"status": "cancelled", "already_cancelled": True}
+        raise ScheduledMeetingOutlookError(str(exc)) from exc
 
 
 def _company_calendar_ids_from_meeting_payload(meeting: ScheduledMeeting) -> tuple[str | None, str | None]:

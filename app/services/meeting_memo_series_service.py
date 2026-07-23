@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import ScheduledMeetingType, ScheduledMeetingStatus
 from app.models.meeting_category import MeetingCategory
-from app.models.position import Position
 from app.models.scheduled_meeting import ScheduledMeeting
 from app.models.user import User
 from app.schemas.meeting import MeetingMemoApproveRequest
@@ -21,9 +20,9 @@ from app.schemas.scheduled_meeting import (
     ScheduledMeetingRecurrencePayload,
     ScheduledMeetingRead,
 )
-from app.services.enterprise_positions_report import (
-    normalize_position_title,
-    primary_position_for_fio,
+from app.services.scheduled_meeting_person import (
+    ScheduledMeetingPersonError,
+    resolve_person,
 )
 from app.services.meeting_memo_cache import (
     MemoCacheMissError,
@@ -34,7 +33,6 @@ from app.services.meeting_memo_recurrence import MemoRecurrenceDraft
 from app.services.meeting_memo_series_llm import resolve_memo_recurrence_async
 from app.services.meeting_schedule_categories import MEETING_CATEGORY_NAMES
 from app.services.meeting_service import MeetingService, MeetingServiceError
-from app.services.position_service import PositionService
 from app.services.scheduled_meeting_service import (
     ScheduledMeetingService,
     ScheduledMeetingServiceError,
@@ -115,33 +113,41 @@ class MeetingMemoSeriesService:
         initiator = application.get("initiator")
         participants_raw = application.get("participants") or []
 
-        manager_position_id = await self._resolve_position_id_for_person(
+        manager_person = await self._resolve_person_for_memo_participant(
             manager,
             role_label="руководитель",
         )
-        responsible_position_id = await self._resolve_position_id_for_person(
+        responsible_person = await self._resolve_person_for_memo_participant(
             initiator or manager,
             role_label="ответственный",
         )
 
-        participant_ids: list[uuid.UUID] = []
-        seen_participant_ids: set[uuid.UUID] = set()
+        participant_people: list[ScheduledMeetingParticipantCreate] = []
+        seen_user_ids: set[uuid.UUID] = set()
         for participant in participants_raw:
             if not isinstance(participant, dict):
                 continue
             try:
-                position_id = await self._resolve_position_id_for_person(
+                person = await self._resolve_person_for_memo_participant(
                     participant,
                     role_label="участник",
                 )
             except MeetingMemoSeriesServiceError:
                 continue
-            if position_id in seen_participant_ids:
+            if person.user_id in seen_user_ids:
                 continue
-            if position_id in {manager_position_id, responsible_position_id}:
+            if person.user_id in {manager_person.user_id, responsible_person.user_id}:
                 continue
-            seen_participant_ids.add(position_id)
-            participant_ids.append(position_id)
+            seen_user_ids.add(person.user_id)
+            participant_people.append(
+                ScheduledMeetingParticipantCreate(
+                    user_id=person.user_id,
+                    person_fio=person.fio,
+                    person_email=person.email,
+                    position_id=person.position_id,
+                    sort_order=len(participant_people),
+                )
+            )
 
         category = await self._resolve_meeting_category(
             detail.get("title") or detail.get("subject") or ""
@@ -164,8 +170,10 @@ class MeetingMemoSeriesService:
         payload = ScheduledMeetingCreate(
             title=series_title,
             meeting_category_id=category.id,
-            manager_position_id=manager_position_id,
-            responsible_position_id=responsible_position_id,
+            manager_user_id=manager_person.user_id,
+            responsible_user_id=responsible_person.user_id,
+            manager_position_id=manager_person.position_id,
+            responsible_position_id=responsible_person.position_id,
             meeting_type=meeting_type,
             status=ScheduledMeetingStatus.CREATED,
             series_start_date=recurrence.series_start_date,
@@ -183,10 +191,7 @@ class MeetingMemoSeriesService:
                 series_start_date=recurrence.series_start_date,
                 series_end_date=recurrence.series_end_date,
             ),
-            participants=[
-                ScheduledMeetingParticipantCreate(position_id=position_id, sort_order=index)
-                for index, position_id in enumerate(participant_ids)
-            ],
+            participants=participant_people,
             comment=(application.get("agenda") or None),
             payload=series_payload,
         )
@@ -267,57 +272,15 @@ class MeetingMemoSeriesService:
             return description
         return fallback
 
-    async def _resolve_position_id_for_person(
+    async def _resolve_person_for_memo_participant(
         self,
         person: dict[str, Any] | None,
         *,
         role_label: str,
-    ) -> uuid.UUID:
+    ):
         if not isinstance(person, dict):
             raise MeetingMemoSeriesServiceError(f"Не указан {role_label}")
-
-        title = (person.get("position") or "").strip()
-        fio = (person.get("full_name") or "").strip()
-        if not title and fio:
-            title = primary_position_for_fio(fio) or ""
-        if not title:
-            raise MeetingMemoSeriesServiceError(
-                f"Не удалось определить должность для {role_label}"
-                + (f" ({fio})" if fio else "")
-            )
-
-        position = await self._find_position_by_title(title)
-        if position is None:
-            raise MeetingMemoSeriesServiceError(
-                f"Должность «{title}» не найдена в справочнике ({role_label})"
-            )
-        return position.id
-
-    async def _find_position_by_title(self, title: str) -> Position | None:
-        normalized_target = normalize_position_title(title)
-        if normalized_target:
-            result = await self.db.execute(
-                select(Position)
-                .where(
-                    Position.is_active.is_(True),
-                    Position.normalized_name == normalized_target,
-                )
-                .limit(1)
-            )
-            exact = result.scalar_one_or_none()
-            if exact is not None:
-                return exact
-
-        candidates = await PositionService(self.db).list(search=title, limit=20)
-        exact_matches = [
-            candidate
-            for candidate in candidates
-            if normalize_position_title(candidate.name) == normalized_target
-        ]
-        if len(exact_matches) == 1:
-            return exact_matches[0]
-        if len(exact_matches) > 1:
-            return exact_matches[0]
-        if len(candidates) == 1:
-            return candidates[0]
-        return None
+        try:
+            return await resolve_person(self.db, memo_person=person)
+        except ScheduledMeetingPersonError as exc:
+            raise MeetingMemoSeriesServiceError(str(exc), status_code=exc.status_code) from exc

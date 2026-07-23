@@ -13,13 +13,18 @@ def test_merge_scheduled_meeting_participants_adds_roles_first() -> None:
 
     merged = merge_scheduled_meeting_participants(
         [
-            ScheduledMeetingParticipantCreate(position_id=extra_id, sort_order=5),
+            ScheduledMeetingParticipantCreate(
+                user_id=extra_id,
+                person_fio="Extra User",
+                person_email="extra@turbo-don.ru",
+                sort_order=5,
+            ),
         ],
-        manager_position_id=manager_id,
-        responsible_position_id=responsible_id,
+        manager_user_id=manager_id,
+        responsible_user_id=responsible_id,
     )
 
-    assert [item.position_id for item in merged] == [manager_id, responsible_id, extra_id]
+    assert [item.user_id for item in merged] == [manager_id, responsible_id, extra_id]
 
 
 def test_merge_scheduled_meeting_participants_deduplicates_roles() -> None:
@@ -29,11 +34,21 @@ def test_merge_scheduled_meeting_participants_deduplicates_roles() -> None:
 
     merged = merge_scheduled_meeting_participants(
         [
-            ScheduledMeetingParticipantCreate(position_id=manager_id, sort_order=1),
-            ScheduledMeetingParticipantCreate(position_id=extra_id, sort_order=2),
+            ScheduledMeetingParticipantCreate(
+                user_id=manager_id,
+                person_fio="Manager",
+                person_email="manager@turbo-don.ru",
+                sort_order=1,
+            ),
+            ScheduledMeetingParticipantCreate(
+                user_id=extra_id,
+                person_fio="Extra User",
+                person_email="extra@turbo-don.ru",
+                sort_order=2,
+            ),
         ],
-        manager_position_id=manager_id,
-        responsible_position_id=responsible_id,
+        manager_user_id=manager_id,
+        responsible_user_id=responsible_id,
     )
 
-    assert [item.position_id for item in merged] == [manager_id, extra_id]
+    assert [item.user_id for item in merged] == [manager_id, extra_id]

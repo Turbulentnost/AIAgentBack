@@ -155,6 +155,71 @@ async def test_find_similar_topic_for_candidate_uses_participants_and_details() 
     assert match["similarity_breakdown"]["details"] == 1.0
 
 
+def test_topic_title_similarity_score_planerka_partial_title() -> None:
+    score = topic_title_similarity_score("планерка 2", "Планерка СР")
+    assert score >= 0.85
+
+
+def test_find_similar_topic_by_text_planerka_with_participant_penalty() -> None:
+    topics = [
+        {
+            "ref_key": "planerka",
+            "code": "000003945",
+            "description": "Планерка СР",
+            "meeting_type": "Отчетное",
+        }
+    ]
+
+    with patch(
+        "app.tools.onec.meeting_topic_similarity.load_participants_by_topic",
+        return_value={"planerka": {"manager-ref", "other-ref"}},
+    ):
+        match = find_similar_topic_by_text(
+            topics,
+            description="планерка 2",
+            meeting_type="Отчетное",
+            threshold=0.85,
+        )
+
+    assert match is not None
+    assert match["ref_key"] == "planerka"
+    assert match["similarity_breakdown"]["topic"] >= 0.85
+
+
+@pytest.mark.asyncio
+async def test_find_similar_topic_title_match_not_blocked_by_participants() -> None:
+    topics = [
+        {
+            "ref_key": "planerka",
+            "code": "000003945",
+            "description": "Планерка СР",
+            "meeting_type": "Отчетное",
+        }
+    ]
+    candidate = TopicComparisonInput(
+        title="планерка 2",
+        meeting_type="Отчетное",
+        participant_refs=frozenset({"manager-ref", "a-ref", "b-ref"}),
+    )
+
+    with patch(
+        "app.tools.onec.meeting_topic_similarity.load_participants_by_topic",
+        return_value={"planerka": {"manager-ref", "other-ref"}},
+    ):
+        match = await find_similar_topic_for_candidate(
+            session=AsyncMock(),
+            config=AsyncMock(),
+            candidate=candidate,
+            topics=topics,
+            threshold=0.85,
+            use_embeddings=False,
+        )
+
+    assert match is not None
+    assert match["ref_key"] == "planerka"
+    assert match["similarity_score"] >= 0.85
+
+
 def test_topic_title_similarity_score_range() -> None:
     score = topic_title_similarity_score("abc", "abd")
     assert 0.0 < score < 1.0

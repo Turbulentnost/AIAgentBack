@@ -96,9 +96,12 @@ async def test_create_series_from_memo_rejects_low_confidence() -> None:
 @pytest.mark.asyncio
 async def test_create_series_from_memo_creates_scheduled_meeting_and_approves_memo() -> None:
     db = AsyncMock()
-    manager_id = uuid.uuid4()
-    responsible_id = uuid.uuid4()
-    participant_id = uuid.uuid4()
+    manager_user_id = uuid.uuid4()
+    responsible_user_id = uuid.uuid4()
+    participant_user_id = uuid.uuid4()
+    manager_position_id = uuid.uuid4()
+    responsible_position_id = uuid.uuid4()
+    participant_position_id = uuid.uuid4()
     category_id = uuid.uuid4()
     meeting_id = uuid.uuid4()
 
@@ -129,8 +132,29 @@ async def test_create_series_from_memo_creates_scheduled_meeting_and_approves_me
         ):
             with patch.object(
                 service,
-                "_resolve_position_id_for_person",
-                AsyncMock(side_effect=[manager_id, responsible_id, participant_id]),
+                "_resolve_person_for_memo_participant",
+                AsyncMock(
+                    side_effect=[
+                        SimpleNamespace(
+                            user_id=manager_user_id,
+                            fio="Иванов Иван Иванович",
+                            email="ivanov@turbo-don.ru",
+                            position_id=manager_position_id,
+                        ),
+                        SimpleNamespace(
+                            user_id=responsible_user_id,
+                            fio="Петров Петр Петрович",
+                            email="petrov@turbo-don.ru",
+                            position_id=responsible_position_id,
+                        ),
+                        SimpleNamespace(
+                            user_id=participant_user_id,
+                            fio="Сидоров Сидор Сидорович",
+                            email="sidorov@turbo-don.ru",
+                            position_id=participant_position_id,
+                        ),
+                    ]
+                ),
             ):
                 with patch(
                     "app.services.meeting_memo_series_service.MeetingMemoCacheService"
@@ -171,7 +195,10 @@ async def test_create_series_from_memo_creates_scheduled_meeting_and_approves_me
     assert payload.meeting_type == ScheduledMeetingType.PLANNED
     assert payload.status == ScheduledMeetingStatus.CREATED
     assert payload.meeting_category_id == category_id
+    assert payload.manager_user_id == manager_user_id
+    assert payload.responsible_user_id == responsible_user_id
     assert payload.recurrence_label == draft.recurrence_label
+    assert payload.participants[0].user_id == participant_user_id
     assert payload.payload["memo_ref_key"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     cache.set_series_planning_choice.assert_awaited_once_with(
         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",

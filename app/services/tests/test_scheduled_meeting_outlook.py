@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import date, time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -109,76 +110,88 @@ def test_is_invitable_attendee_email_rejects_sync_placeholder() -> None:
 
 
 @pytest.mark.asyncio
-@patch("app.services.scheduled_meeting_outlook.lookup_fios_by_position_title")
-@patch("app.tools.onec.lookup_email_by_fio.lookup_email_by_fio")
-async def test_resolve_attendees_skips_sync_placeholder_and_uses_gal(
-    mock_lookup_email,
-    mock_lookup_fios,
-) -> None:
-    position = SimpleNamespace(name="Заместитель по экономике")
-    participant = SimpleNamespace(position_id="pos-1", position=position, sort_order=0)
+async def test_resolve_attendees_uses_stored_email() -> None:
+    participant = SimpleNamespace(
+        user_id=uuid.uuid4(),
+        person_fio="Соломичева Светлана Викторовна",
+        person_email="solomicheva@turbo-don.ru",
+        sort_order=0,
+    )
     meeting = _meeting(participants=[participant])
 
-    mock_db = AsyncMock()
-    mock_db.execute = AsyncMock(
-        return_value=MagicMock(
-            all=MagicMock(
-                return_value=[
-                    (
-                        "Соломичева Светлана Викторовна",
-                        "1c+8f027ed9-a80e-11eb-85c7-ac1f6b05524d@enterprise.sync.local",
-                        "Заместитель по экономике",
-                    )
-                ]
-            )
-        )
-    )
-    mock_lookup_fios.return_value = ["Соломичева Светлана Викторовна"]
-    mock_lookup_email.return_value = {
-        "emails": [{"email": "solomicheva@turbo-don.ru"}],
-    }
-
-    attendees = await resolve_attendees(mock_db, meeting)
+    attendees = await resolve_attendees(AsyncMock(), meeting)
 
     assert attendees == [("Соломичева Светлана Викторовна", "solomicheva@turbo-don.ru")]
-    mock_lookup_fios.assert_called_once_with("Заместитель по экономике")
-    mock_lookup_email.assert_called_once_with("Соломичева Светлана Викторовна")
 
 
 @pytest.mark.asyncio
-@patch("app.services.scheduled_meeting_outlook.lookup_fios_by_position_title")
-@patch("app.tools.onec.lookup_email_by_fio.lookup_email_by_fio")
-async def test_resolve_attendees_prefers_db_corporate_email_without_duplicate(
-    mock_lookup_email,
-    mock_lookup_fios,
-) -> None:
-    position = SimpleNamespace(name="Заместитель по экономике")
-    participant = SimpleNamespace(position_id="pos-1", position=position, sort_order=0)
+async def test_resolve_attendees_loads_email_from_user() -> None:
+    user_id = uuid.uuid4()
+    participant = SimpleNamespace(
+        user_id=user_id,
+        person_fio="Иванов Иван Иванович",
+        person_email=None,
+        sort_order=0,
+    )
     meeting = _meeting(participants=[participant])
 
     mock_db = AsyncMock()
-    mock_db.execute = AsyncMock(
-        return_value=MagicMock(
-            all=MagicMock(
-                return_value=[
-                    (
-                        "Соломичева Светлана Викторовна",
-                        "director@turbo-don.ru",
-                        "Заместитель по экономике",
-                    )
-                ]
-            )
+    mock_db.get = AsyncMock(
+        return_value=SimpleNamespace(
+            full_name="Иванов Иван Иванович",
+            email="ivanov@turbo-don.ru",
         )
     )
-    mock_lookup_fios.return_value = ["Соломичева Светлана Викторовна"]
-    mock_lookup_email.return_value = {
-        "emails": [{"email": "director@turbo-don.ru"}],
-    }
 
-    attendees = await resolve_attendees(mock_db, meeting)
+    with patch(
+        "app.services.scheduled_meeting_person._invitable_email_for_user",
+        AsyncMock(return_value="ivanov@turbo-don.ru"),
+    ):
+        attendees = await resolve_attendees(mock_db, meeting)
 
-    assert attendees == [("Соломичева Светлана Викторовна", "director@turbo-don.ru")]
-    mock_lookup_email.assert_called_once()
+    assert attendees == [("Иванов Иван Иванович", "ivanov@turbo-don.ru")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_attendees_falls_back_to_outlook_for_placeholder_email() -> None:
+    user_id = uuid.uuid4()
+    participant = SimpleNamespace(
+        user_id=user_id,
+        person_fio="Соломичева Светлана Викторовна",
+        person_email="1c+test@enterprise.sync.local",
+        sort_order=0,
+    )
+    meeting = _meeting(participants=[participant])
+    mock_db = AsyncMock()
+    mock_db.get = AsyncMock(
+        return_value=SimpleNamespace(
+            full_name="Соломичева Светлана Викторовна",
+            email="1c+test@enterprise.sync.local",
+        )
+    )
+
+    with patch(
+        "app.services.scheduled_meeting_person._invitable_email_for_user",
+        AsyncMock(return_value="solom@turbo-don.ru"),
+    ):
+        attendees = await resolve_attendees(mock_db, meeting)
+
+    assert attendees == [("Соломичева Светлана Викторовна", "solom@turbo-don.ru")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_attendees_rejects_missing_email() -> None:
+    participant = SimpleNamespace(
+        user_id=None,
+        person_fio="Без email",
+        person_email=None,
+        id="participant-1",
+        sort_order=0,
+    )
+    meeting = _meeting(participants=[participant])
+
+    with pytest.raises(ScheduledMeetingOutlookError, match="e-mail"):
+        await resolve_attendees(AsyncMock(), meeting)
 
 
 @patch("app.services.scheduled_meeting_outlook.lookup_fios_by_position_title")

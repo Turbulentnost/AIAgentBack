@@ -17,11 +17,15 @@ from app.services.scheduled_meeting_roles import is_scheduled_meeting_structure_
 class SeriesUpdateChangeSet:
     new_series_end_date: date
     series_end_changed: bool
+    recurrence_changed: bool
+    new_recurrence: ScheduledMeetingRecurrencePayload | None
     comment_changed: bool
     meeting_category_changed: bool
     manager_changed: bool
     responsible_changed: bool
     new_meeting_category_id: uuid.UUID | None
+    new_manager_user_id: uuid.UUID | None
+    new_responsible_user_id: uuid.UUID | None
     new_manager_position_id: uuid.UUID | None
     new_responsible_position_id: uuid.UUID | None
     participants_changed: bool
@@ -42,17 +46,18 @@ def resolved_update_series_end_date(
     return meeting.series_end_date
 
 
-def _participant_position_ids(meeting: ScheduledMeeting) -> list[uuid.UUID]:
+def _participant_user_ids(meeting: ScheduledMeeting) -> list[uuid.UUID]:
     return [
-        participant.position_id
+        participant.user_id
         for participant in sorted(meeting.participants, key=lambda item: item.sort_order)
+        if participant.user_id is not None
     ]
 
 
-def _payload_participant_position_ids(
+def _payload_participant_user_ids(
     participants: list[ScheduledMeetingParticipantCreate],
 ) -> list[uuid.UUID]:
-    return [item.position_id for item in participants if item.position_id is not None]
+    return [item.user_id for item in participants if item.user_id is not None]
 
 
 def _normalize_time(value: time) -> time:
@@ -99,23 +104,17 @@ def _unsupported_update_fields(
         unsupported.append("статус")
     if payload.series_start_date is not None and payload.series_start_date != meeting.series_start_date:
         unsupported.append("дата начала серии")
-    if payload.recurrence is not None and _recurrence_schedule_changed(meeting, payload.recurrence):
-        unsupported.append("периодичность")
-
     if structure_locked:
         if (
             payload.meeting_category_id is not None
             and payload.meeting_category_id != meeting.meeting_category_id
         ):
             unsupported.append("вид совещания")
-        if (
-            payload.manager_position_id is not None
-            and payload.manager_position_id != meeting.manager_position_id
-        ):
+        if payload.manager_user_id is not None and payload.manager_user_id != meeting.manager_user_id:
             unsupported.append("руководитель")
         if (
-            payload.responsible_position_id is not None
-            and payload.responsible_position_id != meeting.responsible_position_id
+            payload.responsible_user_id is not None
+            and payload.responsible_user_id != meeting.responsible_user_id
         ):
             unsupported.append("ответственный")
 
@@ -125,29 +124,30 @@ def _unsupported_update_fields(
 def _role_field_changes(
     meeting: ScheduledMeeting,
     payload: ScheduledMeetingUpdate,
-) -> tuple[bool, bool, bool, uuid.UUID | None, uuid.UUID | None, uuid.UUID | None]:
+) -> tuple[bool, bool, bool, uuid.UUID | None, uuid.UUID | None, uuid.UUID | None, uuid.UUID | None]:
     if is_scheduled_meeting_structure_locked(meeting):
-        return False, False, False, None, None, None
+        return False, False, False, None, None, None, None
 
     meeting_category_changed = (
         payload.meeting_category_id is not None
         and payload.meeting_category_id != meeting.meeting_category_id
     )
     manager_changed = (
-        payload.manager_position_id is not None
-        and payload.manager_position_id != meeting.manager_position_id
+        payload.manager_user_id is not None
+        and payload.manager_user_id != meeting.manager_user_id
     )
     responsible_changed = (
-        payload.responsible_position_id is not None
-        and payload.responsible_position_id != meeting.responsible_position_id
+        payload.responsible_user_id is not None
+        and payload.responsible_user_id != meeting.responsible_user_id
     )
     return (
         meeting_category_changed,
         manager_changed,
         responsible_changed,
         payload.meeting_category_id if meeting_category_changed else None,
-        payload.manager_position_id if manager_changed else None,
-        payload.responsible_position_id if responsible_changed else None,
+        payload.manager_user_id if manager_changed else None,
+        payload.responsible_user_id if responsible_changed else None,
+        payload.manager_position_id if manager_changed and payload.manager_position_id else None,
     )
 
 
@@ -158,16 +158,16 @@ def _participant_update_change(
     if payload.participants is None:
         return False, (), (), ()
 
-    current_ids = _participant_position_ids(meeting)
+    current_ids = _participant_user_ids(meeting)
     new_items = tuple(payload.participants)
-    new_ids = _payload_participant_position_ids(payload.participants)
+    new_ids = _payload_participant_user_ids(payload.participants)
     if current_ids == new_ids:
         return False, (), (), ()
 
     current_set = set(current_ids)
     new_set = set(new_ids)
-    added = tuple(position_id for position_id in new_ids if position_id not in current_set)
-    removed = tuple(position_id for position_id in current_ids if position_id not in new_set)
+    added = tuple(user_id for user_id in new_ids if user_id not in current_set)
+    removed = tuple(user_id for user_id in current_ids if user_id not in new_set)
     return True, added, removed, new_items
 
 
@@ -195,24 +195,38 @@ def build_series_update_change_set(
     participants_changed, participants_added, participants_removed, new_participants = (
         _participant_update_change(meeting, payload)
     )
+    recurrence_changed = (
+        payload.recurrence is not None
+        and _recurrence_schedule_changed(meeting, payload.recurrence)
+    )
     unsupported = list(_unsupported_update_fields(meeting, payload))
     (
         meeting_category_changed,
         manager_changed,
         responsible_changed,
         new_meeting_category_id,
+        new_manager_user_id,
+        new_responsible_user_id,
         new_manager_position_id,
-        new_responsible_position_id,
     ) = _role_field_changes(meeting, payload)
+    new_responsible_position_id = (
+        payload.responsible_position_id
+        if responsible_changed and payload.responsible_position_id
+        else None
+    )
 
     return SeriesUpdateChangeSet(
         new_series_end_date=new_end,
         series_end_changed=new_end != meeting.series_end_date,
+        recurrence_changed=recurrence_changed,
+        new_recurrence=payload.recurrence if recurrence_changed else None,
         comment_changed=comment_changed,
         meeting_category_changed=meeting_category_changed,
         manager_changed=manager_changed,
         responsible_changed=responsible_changed,
         new_meeting_category_id=new_meeting_category_id,
+        new_manager_user_id=new_manager_user_id,
+        new_responsible_user_id=new_responsible_user_id,
         new_manager_position_id=new_manager_position_id,
         new_responsible_position_id=new_responsible_position_id,
         participants_changed=participants_changed,
