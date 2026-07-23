@@ -82,7 +82,6 @@ def main() -> None:
             content=content,
             processed_at=processed_at,
             author_key=author_key or None,
-            edited_by_key=author_key or None,
         ),
         field_map=field_map,
         verify_owner_exists=True,

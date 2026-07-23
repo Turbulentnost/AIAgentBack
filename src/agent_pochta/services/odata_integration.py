@@ -41,6 +41,8 @@ def resolve_attached_file_author_key(
     defaults_path = Path(incoming_defaults_file) if incoming_defaults_file else (
         PROJECT_ROOT / "data" / "odata_incoming_defaults.json"
     )
+    if not defaults_path.is_absolute():
+        defaults_path = PROJECT_ROOT / defaults_path
     if defaults_path.is_file():
         try:
             defaults = json.loads(defaults_path.read_text(encoding="utf-8"))
@@ -213,7 +215,7 @@ class ODataIntegrationService(IntegrationService):
                     filename=item.filename,
                     content=item.content,
                     author_key=item.author_key or self._file_author_key or None,
-                    edited_by_key=item.edited_by_key or self._file_author_key or None,
+                    edited_by_key=item.edited_by_key or None,
                     comment=item.comment,
                     processed_at=item.processed_at or processed_at,
                 )

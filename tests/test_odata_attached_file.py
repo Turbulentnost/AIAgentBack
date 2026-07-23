@@ -77,7 +77,7 @@ def test_build_attached_file_payload_uses_explicit_processed_at():
     assert payload["ДатаСоздания"] == format_attached_file_created_at(ts)
     assert payload["ДатаМодификацииУниверсальная"] == format_attached_file_modified_universal(ts)
     assert payload["Автор_Key"] == AUTHOR_KEY
-    assert payload["Редактировал_Key"] == AUTHOR_KEY
+    assert "Редактировал_Key" not in payload
 
 
 def test_build_attached_file_payload_defaults_to_msk_now(monkeypatch):
@@ -346,7 +346,7 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert out[0]["filename"] == "НП00-003877.eml"
     _entity, payload = service._client.create_entity.call_args[0]
     assert payload["Автор_Key"] == AUTHOR_KEY
-    assert payload["Редактировал_Key"] == AUTHOR_KEY
+    assert "Редактировал_Key" not in payload
     assert payload["Description"] == "НП00-003877"
     service._client.put_entity_stream.assert_not_called()
 
