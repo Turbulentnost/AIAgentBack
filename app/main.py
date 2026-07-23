@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -30,6 +29,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("app.shutdown")
 
 
+def _upgrade_alembic_head() -> None:
+    from alembic import command
+    from alembic.config import Config
+
+    root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(root / "alembic.ini"))
+    command.upgrade(cfg, "head")
+
+
 async def _run_database_migrations() -> None:
     scripts = sorted((Path(__file__).resolve().parents[1] / "alembic" / "versions").glob("*.py"))
     if not scripts:
@@ -40,26 +48,18 @@ async def _run_database_migrations() -> None:
         return
 
     try:
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["alembic", "upgrade", "head"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            output = f"{result.stdout or ''}{result.stderr or ''}".strip()
-            if "Can't locate revision identified by" in output:
-                logger.warning(
-                    "app.migrations.revision_mismatch",
-                    hint="DB alembic_version does not match local alembic/versions/*.py",
-                    output=output,
-                )
-                return
-            raise RuntimeError(output or f"alembic exit code {result.returncode}")
+        await asyncio.to_thread(_upgrade_alembic_head)
         logger.info("app.migrations.upgraded")
     except Exception as exc:
-        logger.exception("app.migrations.failed", error=str(exc))
+        message = str(exc)
+        if "Can't locate revision identified by" in message:
+            logger.warning(
+                "app.migrations.revision_mismatch",
+                hint="DB alembic_version does not match local alembic/versions/*.py",
+                output=message,
+            )
+            return
+        logger.exception("app.migrations.failed", error=message)
 
 
 def create_app(app_settings: Settings = settings) -> FastAPI:

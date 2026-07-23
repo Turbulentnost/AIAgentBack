@@ -253,6 +253,35 @@ class NdChangeResultStatus(str, enum.Enum):
     SENT_TO_APPROVAL = "sent_to_approval"
     FAILED = "failed"
 
+class QmsDocumentKind(str, enum.Enum):
+    POLICY = "policy"
+    PROVISION = "provision"
+    REGULATION = "regulation"
+    STO = "sto"
+    INSTRUCTION = "instruction"
+
+
+class QmsLevel(str, enum.Enum):
+    STRATEGIC = "strategic"
+    ORGANIZATIONAL = "organizational"
+    PROCESS = "process"
+    TECHNICAL = "technical"
+    OPERATIONAL = "operational"
+
+
+class DocumentCardStatus(str, enum.Enum):
+    ACTIVE = "active"
+    DRAFT = "draft"
+    ARCHIVED = "archived"
+    CANCELLED = "cancelled"
+
+
+class ConfidentialityLevel(str, enum.Enum):
+    PUBLIC = "public"
+    DSP = "dsp"
+    CONFIDENTIAL = "confidential"
+
+
 class AgentType(str, enum.Enum):
     CONSULTANT = "consultant"
     ACTION = "action"
@@ -487,6 +516,23 @@ class DepartmentAnalysisStep(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
+
+class EskdDocumentKind(str, enum.Enum):
+    DRAWING = "drawing"
+    ASSEMBLY_DRAWING = "assembly_drawing"
+    SPECIFICATION = "specification"
+    TEXT_DOCUMENT = "text_document"
+    ELECTRIC_SCHEME = "electric_scheme"
+    OTHER = "other"
+
+
+class EskdRegistrationStatus(str, enum.Enum):
+    REGISTERED = "registered"
+    PROCESSING = "processing"
+    PENDING_VALIDATION = "pending_validation"
+    VALIDATED = "validated"
+    REJECTED = "rejected"
+    FAILED = "failed"
 
 class ProcurementSourceType(str, enum.Enum):
     INTERNAL_CONSUMPTION_ORDER = "internal_consumption_order"

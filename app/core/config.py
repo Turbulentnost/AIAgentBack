@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     REDOC_URL: str = "/redoc"
     ENVIRONMENT: Literal["dev", "test", "ope", "prod"] = "dev"
     DEBUG: bool = True
+    # Local/dev only: accept API calls without Bearer and inject a DB superuser.
+    # Ignored unless ENVIRONMENT is "dev" or "test" (never enable in ope/prod).
+    AUTH_DISABLED: bool = False
+    # Optional email of the user to impersonate when AUTH_DISABLED (else first active superuser).
+    AUTH_DISABLED_USER_EMAIL: str = ""
     SQLALCHEMY_ECHO: bool = False
     SECRET_KEY: str = "change_me"
     ALGORITHM: str = "HS256"

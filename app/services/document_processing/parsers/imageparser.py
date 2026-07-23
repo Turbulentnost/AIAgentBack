@@ -176,7 +176,12 @@ class ImageParsingService:
                 return response.json()
 
         data = await run_async_document_task(_request)
-        return str(data["choices"][0]["message"]["content"])
+        message = (data.get("choices") or [{}])[0].get("message") or {}
+        for key in ("content", "reasoning_content", "reasoning"):
+            value = message.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
 
     def _parse_vision_response(
         self,

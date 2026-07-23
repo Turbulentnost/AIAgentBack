@@ -22,10 +22,13 @@ from app.agents.procurement_agent.source_discovery import (
 )
 from app.agents.procurement_role_agents.config import (
     OMTO_CHIEF_AGENT_ID,
+    OMTO_SUPPORT_MANAGER_AGENT_ID,
     PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     PURCHASE_MANAGER_AGENT_ID,
+    QUALITY_ROLE_AGENT_IDS,
     WAREHOUSE_PICKER_AGENT_ID,
+    agent_id_for_quality_status,
     agent_id_for_source,
     agent_label,
 )
@@ -51,6 +54,16 @@ ACTIVE_CASE_STATUSES = frozenset(
         ProcurementCaseStatus.COVERAGE_CHECK.value,
         ProcurementCaseStatus.HUMAN_REQUIRED.value,
         ProcurementCaseStatus.BLOCKED.value,
+        ProcurementCaseStatus.QUALITY_QUEUED.value,
+        ProcurementCaseStatus.QUALITY_ASSIGNED.value,
+        ProcurementCaseStatus.QUALITY_DOC_CHECK.value,
+        ProcurementCaseStatus.QUALITY_INSPECTION.value,
+        ProcurementCaseStatus.QUALITY_DECISION.value,
+        ProcurementCaseStatus.ISOLATED.value,
+        ProcurementCaseStatus.NONCONFORMITY.value,
+        ProcurementCaseStatus.REWORK.value,
+        ProcurementCaseStatus.REINSPECTION.value,
+        ProcurementCaseStatus.QUALITY_RELEASED.value,
     }
 )
 SOURCE_MONITORED_CASE_STATUSES = ACTIVE_CASE_STATUSES | {
@@ -1347,7 +1360,14 @@ class ProcurementOrchestratorService:
         if not self.enqueue_case or case.status in TERMINAL_CASE_STATUSES:
             return False
 
-        agent_id = self._resolve_role_agent_id(case)
+        metadata = dict(case.case_metadata or {})
+        quality_agent = metadata.get("next_quality_agent") or agent_id_for_quality_status(
+            case.status
+        )
+        if quality_agent:
+            agent_id = str(quality_agent)
+        else:
+            agent_id = self._resolve_role_agent_id(case)
         completion_key = self._role_completion_key(case, agent_id)
         if (case.case_metadata or {}).get("role_agent_completion_key") == completion_key:
             return False
@@ -1371,6 +1391,51 @@ class ProcurementOrchestratorService:
             case.current_task_id = None
 
         run_key = f"role:{case.id}:{completion_key}"[:255]
+        if metadata.get("quality_stage"):
+            quality_stage = str(metadata.get("quality_stage"))
+        elif case.status.startswith("quality_") or case.status in {
+            "nonconformity",
+            "isolated",
+            "rework",
+            "reinspection",
+        }:
+            quality_stage = case.status
+        else:
+            quality_stage = None
+        role_context = {
+            "case_number": case.source_number or str(case.id),
+            "source_database": case.source_database,
+            "source_date": case.source_date.isoformat() if case.source_date else None,
+            "source_status": case.source_status,
+            "source_data_version": case.source_data_version,
+            "source_synced_at": (
+                case.source_synced_at.isoformat() if case.source_synced_at else None
+            ),
+            "initiator_1c_ref": case.initiator_1c_ref,
+            "initiator_name": case.initiator_name,
+            "department_1c_ref": case.department_1c_ref,
+            "department_name": case.department_name,
+            "warehouse_1c_ref": case.warehouse_1c_ref,
+            "warehouse_name": case.warehouse_name,
+            "warehouse_from_1c_ref": case.warehouse_from_1c_ref,
+            "warehouse_to_1c_ref": case.warehouse_to_1c_ref,
+            "organization_1c_ref": case.organization_1c_ref,
+            "priority_1c_ref": case.priority_1c_ref,
+            "required_date": (
+                case.required_date.isoformat() if case.required_date else None
+            ),
+            "source_basis_1c_ref": metadata.get("source_basis_1c_ref"),
+            "source_basis_type": metadata.get("source_basis_type"),
+            "source_basis_number": metadata.get("source_basis_number"),
+            "source_basis_date": metadata.get("source_basis_date"),
+            "source_basis_status": metadata.get("source_basis_status"),
+            "production_order_1c_ref": metadata.get("production_order_1c_ref"),
+            "production_order_type": metadata.get("production_order_type"),
+        }
+        if quality_stage:
+            role_context["quality_stage"] = quality_stage
+            role_context.update(dict(metadata.get("quality_context") or {}))
+
         task = Task(
             id=uuid.uuid4(),
             title=f"{agent_label(agent_id)}: {case.source_number or case.source_1c_ref}",
@@ -1386,50 +1451,7 @@ class ProcurementOrchestratorService:
                 "caller_agent_id": "procurement_orchestrator",
                 "idempotency_key": run_key,
                 "source_data": self._role_source_data(case),
-                "role_context": {
-                    "case_number": case.source_number or str(case.id),
-                    "source_database": case.source_database,
-                    "source_date": case.source_date.isoformat() if case.source_date else None,
-                    "source_status": case.source_status,
-                    "source_data_version": case.source_data_version,
-                    "source_synced_at": (
-                        case.source_synced_at.isoformat() if case.source_synced_at else None
-                    ),
-                    "initiator_1c_ref": case.initiator_1c_ref,
-                    "initiator_name": case.initiator_name,
-                    "department_1c_ref": case.department_1c_ref,
-                    "department_name": case.department_name,
-                    "warehouse_1c_ref": case.warehouse_1c_ref,
-                    "warehouse_name": case.warehouse_name,
-                    "warehouse_from_1c_ref": case.warehouse_from_1c_ref,
-                    "warehouse_to_1c_ref": case.warehouse_to_1c_ref,
-                    "organization_1c_ref": case.organization_1c_ref,
-                    "priority_1c_ref": case.priority_1c_ref,
-                    "required_date": (
-                        case.required_date.isoformat() if case.required_date else None
-                    ),
-                    "source_basis_1c_ref": (case.case_metadata or {}).get(
-                        "source_basis_1c_ref"
-                    ),
-                    "source_basis_type": (case.case_metadata or {}).get(
-                        "source_basis_type"
-                    ),
-                    "source_basis_number": (case.case_metadata or {}).get(
-                        "source_basis_number"
-                    ),
-                    "source_basis_date": (case.case_metadata or {}).get(
-                        "source_basis_date"
-                    ),
-                    "source_basis_status": (case.case_metadata or {}).get(
-                        "source_basis_status"
-                    ),
-                    "production_order_1c_ref": (case.case_metadata or {}).get(
-                        "production_order_1c_ref"
-                    ),
-                    "production_order_type": (case.case_metadata or {}).get(
-                        "production_order_type"
-                    ),
-                },
+                "role_context": role_context,
             },
             task_metadata={
                 "procurement_case_id": str(case.id),
@@ -1673,6 +1695,26 @@ class ProcurementOrchestratorService:
             metadata["purchase_manager_output"] = output_data
             metadata["purchase_manager_workspace_status"] = "awaiting_action"
             case.case_metadata = metadata
+        result_agent_id = str(result_payload.get("agent_id") or case.current_agent_id or "")
+        if result_agent_id in QUALITY_ROLE_AGENT_IDS and isinstance(output_data, dict):
+            metadata = dict(case.case_metadata or {})
+            metadata[f"{result_agent_id}_output"] = output_data
+            metadata["quality_calculated_at"] = output_data.get("calculated_at")
+            if output_data.get("next_agent"):
+                metadata["next_quality_agent"] = output_data.get("next_agent")
+            elif role_status == "completed":
+                metadata.pop("next_quality_agent", None)
+            if output_data.get("next_status"):
+                metadata["quality_stage"] = output_data.get("next_status")
+            case.case_metadata = metadata
+        if (
+            result_agent_id == OMTO_SUPPORT_MANAGER_AGENT_ID
+            and isinstance(output_data, dict)
+        ):
+            metadata = dict(case.case_metadata or {})
+            metadata["omto_support_manager_output"] = output_data
+            metadata["omto_calculated_at"] = output_data.get("calculated_at")
+            case.case_metadata = metadata
         task.final_result = result_payload
         task.requires_human_review = role_status == "waiting_human"
         wait_reason = str(
@@ -1685,7 +1727,22 @@ class ProcurementOrchestratorService:
         if role_status == "waiting_human":
             task.status = TaskStatus.WAITING_HUMAN
             task.finished_at = None
-            case.status = ProcurementCaseStatus.AGENT_WAITING.value
+            next_quality_status = (
+                output_data.get("next_status")
+                if isinstance(output_data, dict)
+                else None
+            )
+            if (
+                result_agent_id in QUALITY_ROLE_AGENT_IDS
+                and next_quality_status
+                and str(next_quality_status)
+                in {
+                    s.value for s in ProcurementCaseStatus
+                }
+            ):
+                case.status = str(next_quality_status)
+            else:
+                case.status = ProcurementCaseStatus.AGENT_WAITING.value
             case.deviation_summary = wait_reason
             if result_payload.get("agent_id") == PRODUCTION_PREPARATION_ENGINEER_AGENT_ID:
                 metadata = dict(case.case_metadata or {})
@@ -1711,7 +1768,20 @@ class ProcurementOrchestratorService:
         elif role_status == "completed":
             task.status = TaskStatus.COMPLETED
             task.finished_at = datetime.now(UTC)
-            case.status = ProcurementCaseStatus.NEW.value
+            next_quality_status = (
+                output_data.get("next_status")
+                if isinstance(output_data, dict)
+                else None
+            )
+            if (
+                result_agent_id in QUALITY_ROLE_AGENT_IDS
+                and next_quality_status
+                and str(next_quality_status)
+                in {s.value for s in ProcurementCaseStatus}
+            ):
+                case.status = str(next_quality_status)
+            else:
+                case.status = ProcurementCaseStatus.NEW.value
             case.deviation_summary = None
             metadata = dict(case.case_metadata or {})
             metadata["role_agent_completion_key"] = (task.task_metadata or {}).get(

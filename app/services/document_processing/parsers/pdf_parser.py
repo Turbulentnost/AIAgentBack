@@ -22,6 +22,8 @@ from app.services.document_processing.concurrency import (
     run_async_document_task,
     run_blocking_document_task,
 )
+from app.schemas.kd_parse import KDParseResult
+from app.services.document_processing.kd.pdf import merge_kd_into_pdf_metadata, parse_kd_pdf_bytes
 from app.services.document_processing.parsers.vision_json import parse_pdf_vision_response
 
 
@@ -354,6 +356,9 @@ class PdfParsingService:
         return [{"role": "user", "content": content}]
 
     async def _call_vision_model(self, messages: list[dict[str, Any]]) -> str:
+        if not settings.VISION_LM_STUDIO_BASE_URL.strip():
+            raise PdfParsingError("VISION_LM_STUDIO_BASE_URL не задан — OCR недоступен")
+
         url = f"{settings.VISION_LM_STUDIO_BASE_URL.rstrip('/')}/chat/completions"
         payload = {
             "model": settings.VISION_LM_STUDIO_MODEL,
@@ -365,7 +370,16 @@ class PdfParsingService:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
-        return str(data["choices"][0]["message"]["content"])
+        return self._extract_completion_text(data)
+
+    @staticmethod
+    def _extract_completion_text(data: dict[str, Any]) -> str:
+        message = (data.get("choices") or [{}])[0].get("message") or {}
+        for key in ("content", "reasoning_content", "reasoning"):
+            value = message.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
 
     def _parse_vision_response(self, response: str, page_numbers: list[int]) -> dict[int, dict[str, Any]]:
         return parse_pdf_vision_response(response, page_numbers)
@@ -686,3 +700,117 @@ class PdfParsingService:
         if "vision_ocr" in methods:
             return "vision_ocr"
         return "pymupdf"
+
+    async def parse_kd_structure(
+        self,
+        *,
+        document_id: uuid.UUID | None = None,
+        document_version_id: uuid.UUID | None = None,
+        page_numbers: list[int] | None = None,
+        persist_metadata: bool = True,
+    ) -> KDParseResult:
+        """Извлекает зоны КД (штамп, схема) из PDF в MinIO.
+
+        Дополняет стандартный ``parse_document``: не заменяет chunking/OCR pipeline,
+        а сохраняет структуру для проверок ЕСКД в ``metadata_['kd_parsing']``.
+        """
+        document, document_version = await self._load_document(
+            document_id=document_id,
+            document_version_id=document_version_id,
+        )
+        if not document.object_name:
+            raise PdfParsingError("У документа нет object_name MinIO")
+
+        pdf_data = await run_blocking_document_task(object_storage.get_object, document.object_name)
+        result = await run_blocking_document_task(
+            parse_kd_pdf_bytes,
+            pdf_data,
+            filename=document.original_filename,
+            page_numbers=page_numbers,
+        )
+
+        if result.requires_ocr:
+            page_images = await run_blocking_document_task(
+                self._extract_kd_stamp_images,
+                pdf_data,
+                [page.page_number for page in result.pages if page.requires_ocr],
+            )
+            ocr_result = await self._extract_with_vision(
+                page_images,
+                list(page_images.keys()),
+            )
+            result = self._apply_kd_ocr(result, ocr_result)
+
+        if persist_metadata:
+            document.metadata_ = merge_kd_into_pdf_metadata(document.metadata_, result)
+            document_version.metadata_ = merge_kd_into_pdf_metadata(document_version.metadata_, result)
+            await self.db.flush()
+
+        return result
+
+    def _extract_kd_stamp_images(
+        self,
+        pdf_data: bytes,
+        page_numbers: list[int],
+    ) -> dict[int, bytes]:
+        from app.services.document_processing.kd.regions import detect_page_regions, render_region_png
+
+        images: dict[int, bytes] = {}
+        with fitz.open(stream=pdf_data, filetype="pdf") as pdf:
+            for page_number in page_numbers:
+                if page_number < 1 or page_number > pdf.page_count:
+                    continue
+                page = pdf[page_number - 1]
+                regions = detect_page_regions(page)
+                images[page_number] = render_region_png(page, regions.title_block, zoom=3.0)
+        return images
+
+    @staticmethod
+    def _apply_kd_ocr(
+        result: KDParseResult,
+        ocr_result: dict[int, dict[str, Any]],
+    ) -> KDParseResult:
+        from app.schemas.kd_parse import KDPageResult, KDRegionText
+
+        updated_pages: list[KDPageResult] = []
+        ocr_used = False
+        for page in result.pages:
+            if not page.requires_ocr:
+                updated_pages.append(page)
+                continue
+            page_data = ocr_result.get(page.page_number)
+            if not page_data or page_data.get("error"):
+                updated_pages.append(page)
+                continue
+            text = str(page_data.get("text") or "").strip()
+            if not text:
+                blocks = page_data.get("text_blocks") or []
+                text = "\n".join(str(item).strip() for item in blocks if str(item).strip())
+            if not text:
+                updated_pages.append(page)
+                continue
+            ocr_used = True
+            updated_pages.append(
+                page.model_copy(
+                    update={
+                        "title_block": page.title_block.model_copy(
+                            update={"text": text, "method": "vision_ocr", "char_count": len(text)}
+                        ),
+                        "eskd_text": text,
+                    }
+                )
+            )
+        eskd_text = "\n\n".join(
+            f"--- PAGE {p.page_number} ---\n{p.eskd_text.strip()}"
+            if len(updated_pages) > 1 and p.eskd_text.strip()
+            else p.eskd_text.strip()
+            for p in updated_pages
+            if p.eskd_text.strip()
+        )
+        return result.model_copy(
+            update={
+                "pages": updated_pages,
+                "eskd_document_text": eskd_text,
+                "ocr_used": ocr_used,
+            }
+        )

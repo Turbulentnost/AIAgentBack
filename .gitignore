@@ -11,14 +11,52 @@ exports/
 _tmp_*
 .env
 .env.*
-.env.example
+!.env.example
 alembic/versions/*.py
 !alembic/versions/.gitkeep
+!alembic/versions/0043_nd_change_journal.py
+!alembic/versions/0045_meeting_registry_outlook_link.py
+!alembic/versions/0046_merge_platform_and_pochta_heads.py
+!alembic/versions/0050_procurement_case_lifecycle.py
 !alembic/versions/0051_procurement_role_waiting_status.py
 !alembic/versions/0052_procurement_source_synced_at.py
 !alembic/versions/0053_production_preparation_engineer_agent.py
 !alembic/versions/0054_activate_procurement_agents.py
+!alembic/versions/0054_omto_support_manager_agent.py
 !alembic/versions/0055_production_dispatcher_agent.py
+!alembic/versions/0055_quality_agents.py
 !alembic/versions/0056_warehouse_picker_agent.py
 !alembic/versions/0060_legal_specialist_agent.py
 !alembic/versions/0064_supplier_order_reconciliation.py
+!alembic/versions/20260722_protocol_draft.py
+
+# Build / coverage
+dist/
+build/
+htmlcov/
+.coverage
+coverage.xml
+*.egg
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & runtime output
+*.log
+_kb_import_log.txt
+reports/
+
+# Local binaries (install Tesseract separately; see tesseract_ocr.py)
+tools/tesseract/
+
+# Local documents & path notes (not repo content)
+/*.pdf
+
+# One-off / scratch scripts
+scripts/_*.py

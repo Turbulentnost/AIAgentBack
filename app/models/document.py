@@ -54,6 +54,7 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document", cascade="all, delete-orphan")
     chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    qms_card: Mapped["QmsDocumentCard | None"] = relationship(back_populates="document", uselist=False, cascade="all, delete-orphan")
 
 class DocumentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "document_versions"

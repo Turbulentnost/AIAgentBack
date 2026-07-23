@@ -1,7 +1,7 @@
 """supplier order reconciliation and purchase manager agent
 
 Revision ID: 0064_supplier_order_reconciliation
-Revises: 0063_fix_warehouse_agent_modules
+Revises: 0056_warehouse_picker_agent
 Create Date: 2026-07-23
 """
 
@@ -12,7 +12,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0064_supplier_order_reconciliation"
-down_revision = "0063_fix_warehouse_agent_modules"
+down_revision = "0056_warehouse_picker_agent"
 branch_labels = None
 depends_on = None
 

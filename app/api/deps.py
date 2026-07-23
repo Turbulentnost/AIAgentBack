@@ -12,6 +12,49 @@ from app.db.session import get_db
 from app.models.user import User, UserSession
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login", auto_error=False)
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+def _auth_disabled_allowed() -> bool:
+    return settings.AUTH_DISABLED and settings.ENVIRONMENT in ("dev", "test")
+
+
+async def _resolve_dev_bypass_user(db: AsyncSession) -> User:
+    """Pick a real DB user for AUTH_DISABLED (FK-safe, superuser preferred)."""
+    email = (settings.AUTH_DISABLED_USER_EMAIL or "").strip()
+    if email:
+        user = await db.scalar(
+            select(User).where(User.email == email, User.is_active.is_(True), User.deleted_at.is_(None))
+        )
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"AUTH_DISABLED: пользователь {email} не найден или неактивен",
+            )
+        return user
+
+    user = await db.scalar(
+        select(User)
+        .where(User.is_superuser.is_(True), User.is_active.is_(True), User.deleted_at.is_(None))
+        .order_by(User.created_at.asc())
+        .limit(1)
+    )
+    if user is not None:
+        return user
+
+    user = await db.scalar(
+        select(User)
+        .where(User.is_active.is_(True), User.deleted_at.is_(None))
+        .order_by(User.created_at.asc())
+        .limit(1)
+    )
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AUTH_DISABLED: в БД нет активного пользователя для impersonation",
+        )
+    return user
+
+
 async def authenticate_access_token(db: AsyncSession, token: str) -> User:
     exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Не удалось проверить учётные данные")
     if not token:
@@ -37,8 +80,15 @@ async def authenticate_access_token(db: AsyncSession, token: str) -> User:
 
 async def get_current_user(db: DbSession, token: Annotated[str | None, Depends(oauth2_scheme)]) -> User:
     if not token:
+        if _auth_disabled_allowed():
+            return await _resolve_dev_bypass_user(db)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Не удалось проверить учётные данные")
-    return await authenticate_access_token(db, token)
+    try:
+        return await authenticate_access_token(db, token)
+    except HTTPException:
+        if _auth_disabled_allowed():
+            return await _resolve_dev_bypass_user(db)
+        raise
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
