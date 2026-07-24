@@ -21,11 +21,16 @@ from agent_pochta.services.email_msg import (  # noqa: E402
 from agent_pochta.services.odata_attached_file import (  # noqa: E402
     AttachedFileInput,
     attach_files_to_incoming_document,
+    build_volume_storage_filename,
     delete_attached_files_for_document,
     load_attached_file_field_map,
     now_attached_file_processed_at,
     read_attached_file_storage_bytes,
 )
+from agent_pochta.services.erp_attachments import ensure_full_email_bytes_for_erp  # noqa: E402
+from agent_pochta.schemas import EmailMessage  # noqa: E402
+from agent_pochta.services.vault import StubVaultClient  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
 from agent_pochta.services.odata_client import ODataClient  # noqa: E402
 from agent_pochta.services.odata_integration import resolve_attached_file_author_key  # noqa: E402
 
@@ -61,6 +66,48 @@ def newest_doc_ref(base: str, auth, number: str, doc_entity: str) -> str | None:
     )
     items = httpx.get(url, auth=auth, timeout=120).json().get("value", [])
     return items[0].get("Ref_Key") if items else None
+
+
+def extract_eml_subject(eml_bytes: bytes) -> str:
+    msg = BytesParser(policy=policy.default).parsebytes(eml_bytes)
+    return (msg.get("Subject") or "").strip()
+
+
+def load_762_eml_bytes(settings) -> tuple[bytes, str]:
+    """Локальный EML или IMAP по строке email_messages для АЛ00-000762."""
+    eml_path = EML_FALLBACK
+    if not eml_path.is_file():
+        eml_path = next(
+            (p for p in (ROOT / "data/temp/compare_762").glob("*000762.eml") if "PROBE" not in p.name),
+            None,
+        )
+    if eml_path is not None and eml_path.is_file():
+        return eml_path.read_bytes(), str(eml_path)
+
+    engine = create_engine(settings.database_url)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT message_id, mailbox, sender_email, subject, received_at "
+                "FROM email_messages WHERE erp_document_number = :doc "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"doc": DOC_NUMBER},
+        ).fetchone()
+    if not row:
+        raise FileNotFoundError(f"762 EML not found locally and no DB row for {DOC_NUMBER}")
+
+    email = EmailMessage(
+        message_id=row.message_id,
+        mailbox=row.mailbox or "",
+        sender_email=row.sender_email or "",
+        subject=row.subject or "",
+        received_at=row.received_at,
+        attachments=[],
+    )
+    vault = StubVaultClient()
+    eml_bytes = ensure_full_email_bytes_for_erp(email, vault)
+    return eml_bytes, f"imap:{row.message_id}"
 
 
 def extract_pdf_attachment(eml_bytes: bytes) -> tuple[str, bytes] | None:
@@ -115,20 +162,13 @@ def main() -> None:
         print(json.dumps({"error": f"document {DOC_NUMBER} not found"}, ensure_ascii=False))
         raise SystemExit(1)
 
-    eml_path = EML_FALLBACK
-    if not eml_path.is_file():
-        eml_path = next(
-            (p for p in (ROOT / "data/temp/compare_762").glob("*000762.eml") if "PROBE" not in p.name),
-            None,
-        )
-    if eml_path is None or not eml_path.is_file():
-        print(json.dumps({"error": "762 EML not found"}, ensure_ascii=False))
-        raise SystemExit(1)
+    eml_bytes, eml_source = load_762_eml_bytes(settings)
+    subject = extract_eml_subject(eml_bytes) or DOC_NUMBER
+    msg_filename = build_volume_storage_filename(subject, "msg")
 
     deleted = delete_attached_files_for_document(
         client, document_ref_key=doc_ref, field_map=fm
     )
-    eml_bytes = eml_path.read_bytes()
     msg_bytes = eml_bytes_to_msg_bytes(eml_bytes, embed_attachments=False)
     pdf = extract_pdf_attachment(eml_bytes)
     if not pdf:
@@ -146,7 +186,7 @@ def main() -> None:
         document_ref_key=doc_ref,
         files=[
             AttachedFileInput(
-                filename=f"{DOC_NUMBER}.msg",
+                filename=msg_filename,
                 content=msg_bytes,
                 author_key=author or None,
                 processed_at=attach_time,
@@ -174,6 +214,9 @@ def main() -> None:
     report = {
         "document": DOC_NUMBER,
         "doc_ref": doc_ref,
+        "eml_source": eml_source,
+        "email_subject": subject,
+        "msg_filename": msg_filename,
         "deleted_refs": deleted,
         "strategy": "volume-body-only-msg-plus-separate-pdf",
         "storage_mode": "volume",

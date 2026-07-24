@@ -244,7 +244,22 @@ def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
 
 def test_format_volume_file_path_uses_msk_date():
     ts = datetime(2026, 7, 24, 1, 0, 0, tzinfo=timezone.utc)
-    assert format_volume_file_path(ts, "АЛ00-000762", "msg") == "20260724\\АЛ00-000762.msg"
+    assert format_volume_file_path(ts, "АЛ00-000762.msg") == "20260724\\АЛ00-000762.msg"
+
+
+def test_build_attached_file_payload_volume_path_matches_outlook_subject():
+    ts = datetime(2026, 7, 24, 10, 30, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+    _, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="Заявка!.msg",
+            content=b"\xd0\xcf\x11\xe0" + b"\x00" * 64,
+            processed_at=ts,
+        ),
+        field_map=_VOLUME_FIELD_MAP,
+    )
+    assert payload["Description"] == "Заявка!"
+    assert payload["ПутьКФайлу"] == "20260724\\Заявка!.msg"
 
 
 def test_resolve_attached_file_storage_mode():

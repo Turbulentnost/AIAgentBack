@@ -19,7 +19,13 @@ from agent_pochta.imap.client import ImapMailboxClient, resolve_imap_credentials
 from agent_pochta.schemas import Attachment, EmailMessage
 from agent_pochta.services.integration_service import IntegrationService
 from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes
-from agent_pochta.services.odata_attached_file import AttachedFileInput, now_attached_file_processed_at
+from agent_pochta.services.odata_attached_file import (
+    AttachedFileInput,
+    build_volume_storage_filename,
+    load_attached_file_field_map,
+    now_attached_file_processed_at,
+    resolve_attached_file_storage_mode,
+)
 from agent_pochta.services.odata_integration import ODataIntegrationService
 from agent_pochta.services.vault import VaultClient
 
@@ -385,7 +391,10 @@ def erp_email_already_uploaded(
     skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
     if not skip:
         return False
-    return bool(skip & erp_email_upload_marker_names(erp_document_number))
+    if skip & erp_email_upload_marker_names(erp_document_number):
+        return True
+    # На томе письмо часто сохраняют под темой (Заявка!.msg), а не под номером документа.
+    return any(name.lower().endswith(".msg") for name in skip)
 
 
 # Обратная совместимость имён функций (ранее .eml)
@@ -514,7 +523,18 @@ def _collect_erp_upload_files(
     skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
     attach_time = processed_at or now_attached_file_processed_at()
 
-    msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
+    storage_mode = resolve_attached_file_storage_mode(
+        load_attached_file_field_map().get("defaults")
+    )
+    if storage_mode == "volume":
+        subject = (email.subject or "").strip()
+        msg_name = (
+            build_volume_storage_filename(subject, "msg")
+            if subject
+            else erp_full_email_filename(email, erp_document_number=erp_document_number)
+        )
+    else:
+        msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
     if not full_email_bytes:
         return []
     if not msg_name.lower().endswith(".msg"):

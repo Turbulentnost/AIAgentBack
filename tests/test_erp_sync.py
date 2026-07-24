@@ -194,7 +194,7 @@ def test_sync_existing_force_reattach_eml() -> None:
         "fields": {},
     }
     integration.attach_files_to_incoming_correspondence.return_value = [
-        {"ref_key": "eml-new", "filename": "ВК-000050.msg", "size_bytes": 1000},
+        {"ref_key": "eml-new", "filename": "Счёт.msg", "size_bytes": 1000},
     ]
 
     result = sync_existing_erp_document(
@@ -213,7 +213,7 @@ def test_sync_existing_force_reattach_eml() -> None:
     assert result["attached_count"] == 1
     integration.attach_files_to_incoming_correspondence.assert_called_once()
     files = integration.attach_files_to_incoming_correspondence.call_args.kwargs["files"]
-    assert any(item.filename == "ВК-000050.msg" for item in files)
+    assert any(item.filename == "Счёт.msg" for item in files)
     payload = json.loads(result["raw_payload_json"] or row.raw_payload_json or "{}")
     assert payload.get("erp_attachments") == []
 
@@ -232,7 +232,7 @@ def test_sync_existing_force_reattach_deletes_odata_attachments() -> None:
     }
     integration.delete_attached_files_for_document.return_value = ["old-1", "old-2"]
     integration.attach_files_to_incoming_correspondence.return_value = [
-        {"ref_key": "eml-new", "filename": "ВК-000050.msg", "size_bytes": 1000},
+        {"ref_key": "eml-new", "filename": "Счёт.msg", "size_bytes": 1000},
     ]
 
     result = sync_existing_erp_document(

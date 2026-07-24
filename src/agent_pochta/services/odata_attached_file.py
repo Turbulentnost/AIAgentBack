@@ -255,15 +255,29 @@ def is_volume_storage_kind(storage_kind: str | None) -> bool:
     return str(storage_kind or "").strip() == _VOLUME_STORAGE_KIND
 
 
+def build_volume_storage_filename(base_name: str, extension: str = "") -> str:
+    """Имя файла на томе: Description + .Расширение (как в ручных загрузках 1С)."""
+    base = str(base_name or "").strip()
+    ext = str(extension or "").strip().lstrip(".")
+    if ext:
+        if not base:
+            raise AttachedFileError("Имя файла на томе не задано")
+        return f"{base}.{ext}"
+    if not base:
+        raise AttachedFileError("Имя файла на томе не задано")
+    return base
+
+
 def format_volume_file_path(
     processed_at: datetime,
-    base_name: str,
-    extension: str,
+    storage_filename: str,
 ) -> str:
     """Относительный путь на томе: YYYYMMDD\\ИМЯ.расш (MSK, как в ручных загрузках 1С)."""
     ts = _coerce_processing_timestamp(processed_at).astimezone(_MSK)
     date_part = ts.strftime("%Y%m%d")
-    filename = f"{base_name}.{extension}" if extension else base_name
+    filename = str(storage_filename or "").strip().replace("/", "\\")
+    if not filename or "\\" in filename:
+        raise AttachedFileError(f"Некорректное имя файла на томе: {storage_filename!r}")
     return f"{date_part}\\{filename}"
 
 
@@ -344,8 +358,7 @@ def build_attached_file_payload(
         if path_field := fields.get("file_path"):
             payload[str(path_field)] = format_volume_file_path(
                 processed_at,
-                base_name,
-                extension,
+                build_volume_storage_filename(base_name, extension),
             )
         if storage_type_field := fields.get("storage_binary_type"):
             payload[str(storage_type_field)] = plan["binary_type"]
