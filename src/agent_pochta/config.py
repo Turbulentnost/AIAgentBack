@@ -98,6 +98,10 @@ class Settings(BaseSettings):
         default="Document_ТД_ВходящаяКорреспонденция",
         alias="ODATA_INCOMING_DOC_ENTITY",
     )
+    odata_business_process_entities: str = Field(
+        default="BusinessProcess_Задание,BusinessProcess_CRM_БизнесПроцесс",
+        alias="ODATA_BUSINESS_PROCESS_ENTITIES",
+    )
     odata_incoming_field_map: str = Field(default="", alias="ODATA_INCOMING_FIELD_MAP")
     odata_incoming_extra_fields: str = Field(default="", alias="ODATA_INCOMING_EXTRA_FIELDS")
     odata_incoming_defaults_file: str = Field(

@@ -48,6 +48,9 @@ from agent_pochta.routing.organizations import list_organizations_for_ui, normal
 from agent_pochta.services.routing_departments import list_active_departments_for_ui
 from agent_pochta.services.contractor_seed import contractor_id_from_email, is_valid_sender_email, partner_from_payload
 from agent_pochta.services.llm_analyze import normalize_partner_name
+from agent_pochta.services import build_container
+from agent_pochta.services.erp_attachments import existing_erp_document_ref_key
+from agent_pochta.services.erp_process import delete_linked_processes_on_spam
 from agent_pochta.services.rag_qdrant import search_contractors as qdrant_search_contractors
 from agent_pochta.routing.xml_parser import parse_document_xml
 from agent_pochta.attachments.download import (
@@ -934,6 +937,10 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
                     session=session,
                     email_id=row.id,
                 )
+            erp_process_result = delete_linked_processes_on_spam(
+                build_container().integration,
+                document_ref_key=existing_erp_document_ref_key(row),
+            )
             session.commit()
             return {
                 "status": "resolved",
@@ -941,6 +948,10 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
                 "spam_pattern_saved": learning.get("spam_pattern_saved", False),
                 "spam_pattern_id": learning.get("spam_pattern_id"),
                 "qdrant_synced": learning.get("qdrant_synced", False),
+                "erp_process_deleted_count": sum(
+                    1 for item in erp_process_result.get("deleted", []) if item.get("deleted")
+                ),
+                "erp_process": erp_process_result,
             }
         elif body.decision == "mark_not_spam":
             log_spam_decision(
