@@ -684,10 +684,7 @@ def test_odata_integration_attach_files_delegates_to_client():
         call.args[2].get("Редактирует_Key") == "00000000-0000-0000-0000-000000000000"
         for call in patch_calls
     )
-    assert any(
-        call.args[2].get("Изменил_Key") == AUTHOR_KEY
-        for call in patch_calls
-    )
+    assert not any("Изменил_Key" in call.args[2] for call in patch_calls)
     service._client.put_entity_stream.assert_not_called()
 
 
@@ -817,7 +814,7 @@ def test_release_attached_file_edit_lock_verifies_cleared_lock():
     payload = client.patch_entity.call_args[0][2]
     assert payload["Автор_Key"] == AUTHOR_KEY
     assert payload["Редактирует_Key"] == "00000000-0000-0000-0000-000000000000"
-    assert payload["Изменил_Key"] == AUTHOR_KEY
+    assert "Изменил_Key" not in payload
 
 
 def test_release_attached_file_edit_lock_raises_if_still_locked():

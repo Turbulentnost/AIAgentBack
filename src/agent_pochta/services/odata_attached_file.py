@@ -392,7 +392,8 @@ def build_attached_file_payload(
         payload[str(modified_field)] = format_attached_file_modified_universal(processed_at)
     if file_input.author_key and (author_field := fields.get("author_key")):
         payload[str(author_field)] = file_input.author_key
-    modified_by = (file_input.edited_by_key or file_input.author_key or "").strip()
+    # Изменил_Key — только при явном edited_by_key (шаблон АЛ00-000760: пустой GUID).
+    modified_by = (file_input.edited_by_key or "").strip()
     if modified_by and modified_by != _EMPTY_GUID and (
         modified_field := fields.get("modified_by_key")
     ):
@@ -650,20 +651,17 @@ def release_attached_file_edit_lock(
     """Снимает блокировку Редактирует_Key после OData POST (иначе файл «недоступен» в 1С).
 
     Редактирует_Key — флаг «файл занят», не «кто редактировал»; целевое значение — пустой GUID.
-    Колонка «Отредактировал» в форме 1С берётся из Изменил_Key (не из Автор_Key).
+    Изменил_Key не трогаем — рабочий шаблон АЛ00-000760 оставляет его пустым.
     """
     cfg = field_map or load_attached_file_field_map()
     fields = cfg.get("fields") or {}
     lock_field = str(fields.get("edit_lock_key") or "Редактирует_Key").strip()
-    modified_by_field = str(fields.get("modified_by_key") or "Изменил_Key").strip()
     patch_payload: dict[str, Any] = {}
     if lock_field:
         patch_payload[lock_field] = _EMPTY_GUID
     if author_key and author_key != _EMPTY_GUID:
         if author_field := fields.get("author_key"):
             patch_payload[str(author_field)] = author_key
-        if modified_by_field:
-            patch_payload[modified_by_field] = author_key
     if not patch_payload:
         return
     patch_attached_file_metadata(
