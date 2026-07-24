@@ -165,6 +165,13 @@ async def analyze_document_excel_files(
             }
             for plan in result.production_schedule_plans
         ],
+        "detailed_production_schedule_files": result.detailed_production_schedule_files,
+        "detailed_schedule_month": result.detailed_schedule_month,
+        "daily_demand_nonzero_count": sum(
+            1
+            for row in result.merged_nomenclatures
+            if any(value > 0 for value in row.daily_demand.values())
+        ),
         "product_spec_links": [
             {
                 "schedule_product": link.schedule_product,
