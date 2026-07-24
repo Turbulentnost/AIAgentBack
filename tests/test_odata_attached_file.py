@@ -24,6 +24,7 @@ from agent_pochta.services.odata_attached_file import (
     release_attached_file_edit_lock,
     resolve_stream_content_type,
     split_filename,
+    verify_attached_file_reference_fields,
     verify_attached_file_storage,
 )
 from agent_pochta.services.odata_integration import (
@@ -64,6 +65,20 @@ def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
     assert payload["ДатаСоздания"]
     assert payload["ДатаМодификацииУниверсальная"]
     assert not str(payload["ДатаСоздания"]).startswith("0001")
+
+
+def test_build_attached_file_payload_ignores_edited_by_key():
+    _, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="АЛ00-000762.msg",
+            content=b"msg-bytes",
+            author_key=AUTHOR_KEY,
+            edited_by_key=AUTHOR_KEY,
+        ),
+    )
+    assert payload["Автор_Key"] == AUTHOR_KEY
+    assert "Редактирует_Key" not in payload
 
 
 def test_build_attached_file_payload_uses_explicit_processed_at():
@@ -455,6 +470,20 @@ def test_delete_attached_files_for_document():
     deleted = delete_attached_files_for_document(client, document_ref_key=DOC_KEY)
     assert deleted == ["f1", "f2"]
     assert client.delete_entity.call_count == 2
+
+
+def test_verify_attached_file_reference_fields_rejects_edit_lock():
+    with pytest.raises(AttachedFileError, match="Редактирует_Key"):
+        verify_attached_file_reference_fields(
+            {
+                "Ref_Key": DOC_KEY,
+                "Редактирует_Key": AUTHOR_KEY,
+                "ТипХраненияФайла": "ВИнформационнойБазе",
+                "Том_Key": "00000000-0000-0000-0000-000000000000",
+                "DeletionMark": False,
+            },
+            ref_key=DOC_KEY,
+        )
 
 
 def test_release_attached_file_edit_lock_verifies_cleared_lock():

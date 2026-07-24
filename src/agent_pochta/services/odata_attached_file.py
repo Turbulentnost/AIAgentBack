@@ -264,6 +264,33 @@ def read_attached_file_storage_bytes(
         raise AttachedFileError(f"Некорректный Base64 в {binary_field}: {exc}") from exc
 
 
+def verify_attached_file_reference_fields(
+    record: dict[str, Any],
+    *,
+    ref_key: str | None = None,
+) -> None:
+    """Проверяет ссылочные поля после POST/PATCH (1С падает при открытии иначе)."""
+    lock_field = "Редактирует_Key"
+    lock_value = str(record.get(lock_field) or "").strip()
+    if lock_value and lock_value != _EMPTY_GUID:
+        label = ref_key or record.get("Ref_Key") or "?"
+        raise AttachedFileError(
+            f"Блокировка {lock_field} не снята (Ref_Key={label}, значение={lock_value!r})"
+        )
+
+    storage_kind = str(record.get("ТипХраненияФайла") or "").strip()
+    volume_key = str(record.get("Том_Key") or "").strip()
+    if storage_kind == "ВИнформационнойБазе" and volume_key and volume_key != _EMPTY_GUID:
+        label = ref_key or record.get("Ref_Key") or "?"
+        raise AttachedFileError(
+            f"Том_Key заполнен при хранении в ИБ (Ref_Key={label}, Том_Key={volume_key!r})"
+        )
+
+    if record.get("DeletionMark") is True:
+        label = ref_key or record.get("Ref_Key") or "?"
+        raise AttachedFileError(f"Присоединённый файл помечен на удаление (Ref_Key={label})")
+
+
 def verify_attached_file_storage(
     client,
     *,
@@ -538,6 +565,9 @@ def attach_file_to_incoming_document(
         field_map=cfg,
         author_key=author_key,
     )
+
+    final_record = client.get_by_key(entity, ref_key) or {}
+    verify_attached_file_reference_fields(final_record, ref_key=ref_key)
 
     base_name, extension = split_filename(file_input.filename)
     return AttachedFileResult(
