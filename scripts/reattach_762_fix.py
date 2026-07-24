@@ -1,10 +1,10 @@
-"""Delete old attachments and re-upload АЛ00-000762.msg with fixed NFC/MIME conversion."""
+"""Delete old attachments and re-upload АЛ00-000762 with body-only MSG + separate PDF."""
 from __future__ import annotations
 
-import hashlib
 import json
 import sys
-import unicodedata
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from urllib.parse import quote
 
@@ -14,10 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from agent_pochta.config import get_settings  # noqa: E402
-from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes  # noqa: E402
+from agent_pochta.services.email_msg import (  # noqa: E402
+    eml_bytes_to_msg_bytes,
+    normalize_attachment_filename,
+)
 from agent_pochta.services.odata_attached_file import (  # noqa: E402
     AttachedFileInput,
-    attach_file_to_incoming_document,
+    attach_files_to_incoming_document,
     delete_attached_files_for_document,
     load_attached_file_field_map,
     now_attached_file_processed_at,
@@ -41,31 +44,38 @@ def newest_doc_ref(base: str, auth, number: str) -> str | None:
     return items[0].get("Ref_Key") if items else None
 
 
-def ole_attachment_meta(content: bytes, out_path: Path) -> dict:
+def extract_pdf_attachment(eml_bytes: bytes) -> tuple[str, bytes] | None:
+    msg = BytesParser(policy=policy.default).parsebytes(eml_bytes)
+    for part in msg.walk():
+        fn = part.get_filename()
+        if not fn:
+            continue
+        payload = part.get_payload(decode=True) or b""
+        if not payload:
+            continue
+        name = normalize_attachment_filename(fn) or fn
+        return name, payload
+    return None
+
+
+def msg_embedded_count(content: bytes) -> int:
     import olefile
 
-    out_path.write_bytes(content)
-    ole = olefile.OleFileIO(str(out_path))
-    if not ole.exists(("__attach_version1.0_#00000000", "__substg1.0_3707001F")):
+    import tempfile
+    import os
+
+    with tempfile.NamedTemporaryFile(suffix=".msg", delete=False) as tmp:
+        path = tmp.name
+    try:
+        Path(path).write_bytes(content)
+        ole = olefile.OleFileIO(path)
+        index = 0
+        while ole.exists(("__attach_version1.0_#%08X" % index, "__properties_version1.0")):
+            index += 1
         ole.close()
-        return {"attachments": 0}
-    name = ole.openstream(
-        ("__attach_version1.0_#00000000", "__substg1.0_3707001F")
-    ).read()
-    mime = ole.openstream(
-        ("__attach_version1.0_#00000000", "__substg1.0_370E001F")
-    ).read()
-    ole.close()
-    name_txt = name.decode("utf-16-le").split("\x00")[0]
-    mime_txt = mime.decode("utf-16-le").split("\x00")[0]
-    return {
-        "attachment_name": name_txt,
-        "has_combining": any(unicodedata.combining(c) for c in name_txt),
-        "attachment_mime": mime_txt,
-        "sha256": hashlib.sha256(content).hexdigest(),
-        "size": len(content),
-        "cfb": content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
-    }
+        return index
+    finally:
+        os.unlink(path)
 
 
 def main() -> None:
@@ -87,58 +97,75 @@ def main() -> None:
         print(json.dumps({"error": f"document {DOC_NUMBER} not found"}, ensure_ascii=False))
         raise SystemExit(1)
 
-    if not EML_FALLBACK.is_file():
-        print(json.dumps({"error": f"eml not found: {EML_FALLBACK}"}, ensure_ascii=False))
+    eml_path = EML_FALLBACK
+    if not eml_path.is_file():
+        eml_path = next(
+            (p for p in (ROOT / "data/temp/compare_762").glob("*000762.eml") if "PROBE" not in p.name),
+            None,
+        )
+    if eml_path is None or not eml_path.is_file():
+        print(json.dumps({"error": "762 EML not found"}, ensure_ascii=False))
         raise SystemExit(1)
 
     deleted = delete_attached_files_for_document(
         client, document_ref_key=doc_ref, field_map=fm
     )
-    eml_bytes = EML_FALLBACK.read_bytes()
-    msg_bytes = eml_bytes_to_msg_bytes(eml_bytes)
-    out_dir = ROOT / "data/temp/compare_762"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    local_meta = ole_attachment_meta(msg_bytes, out_dir / "_reattach762.msg")
+    eml_bytes = eml_path.read_bytes()
+    msg_bytes = eml_bytes_to_msg_bytes(eml_bytes, embed_attachments=False)
+    pdf = extract_pdf_attachment(eml_bytes)
+    if not pdf:
+        print(json.dumps({"error": "no attachment in EML"}, ensure_ascii=False))
+        raise SystemExit(1)
+    pdf_name, pdf_bytes = pdf
 
     author = resolve_attached_file_author_key(
         explicit_key=settings.odata_file_author_key or "",
         incoming_defaults_file=settings.odata_incoming_defaults_file,
     )
-    result = attach_file_to_incoming_document(
+    attach_time = now_attached_file_processed_at()
+    results = attach_files_to_incoming_document(
         client,
         document_ref_key=doc_ref,
-        file_input=AttachedFileInput(
-            filename=f"{DOC_NUMBER}.msg",
-            content=msg_bytes,
-            author_key=author or None,
-            processed_at=now_attached_file_processed_at(),
-        ),
+        files=[
+            AttachedFileInput(
+                filename=f"{DOC_NUMBER}.msg",
+                content=msg_bytes,
+                author_key=author or None,
+                processed_at=attach_time,
+            ),
+            AttachedFileInput(
+                filename=pdf_name,
+                content=pdf_bytes,
+                author_key=author or None,
+                processed_at=attach_time,
+            ),
+        ],
         field_map=fm,
     )
-    stored = read_attached_file_storage_bytes(
-        client,
-        entity=result.entity,
-        ref_key=result.ref_key,
-        field_map=fm,
+    msg_result = results[0]
+    pdf_result = results[1]
+    stored_msg = read_attached_file_storage_bytes(
+        client, entity=msg_result.entity, ref_key=msg_result.ref_key, field_map=fm
+    )
+    stored_pdf = read_attached_file_storage_bytes(
+        client, entity=pdf_result.entity, ref_key=pdf_result.ref_key, field_map=fm
     )
     report = {
         "document": DOC_NUMBER,
         "doc_ref": doc_ref,
         "deleted_refs": deleted,
-        "new_ref_key": result.ref_key,
-        "local_msg": local_meta,
-        "stored_bytes": len(stored),
-        "stored_eq_local": stored == msg_bytes,
-        "odata_meta": {
-            k: (client.get_by_key(result.entity, result.ref_key) or {}).get(k)
-            for k in (
-                "ТипХраненияФайла",
-                "ФайлХранилище_Type",
-                "Размер",
-                "Редактирует_Key",
-                "DeletionMark",
-                "ДатаСоздания",
-            )
+        "strategy": "body-only-msg-plus-separate-pdf",
+        "msg_ref_key": msg_result.ref_key,
+        "pdf_ref_key": pdf_result.ref_key,
+        "pdf_filename": pdf_name,
+        "msg_embedded_attachments": msg_embedded_count(msg_bytes),
+        "msg_size": len(msg_bytes),
+        "pdf_size": len(pdf_bytes),
+        "stored_msg_eq_local": stored_msg == msg_bytes,
+        "stored_pdf_eq_local": stored_pdf == pdf_bytes,
+        "odata_meta_msg": {
+            k: (client.get_by_key(msg_result.entity, msg_result.ref_key) or {}).get(k)
+            for k in ("ТипХраненияФайла", "Размер", "Редактирует_Key", "DeletionMark")
         },
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))

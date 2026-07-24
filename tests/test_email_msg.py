@@ -80,6 +80,28 @@ def test_eml_bytes_to_msg_bytes_normalizes_nfd_attachment_names():
         os.unlink(path)
 
 
+def test_eml_bytes_to_msg_bytes_body_only_has_no_attachments():
+    import olefile
+    from email.message import EmailMessage
+
+    eml = EmailMessage()
+    eml["From"] = "a@b.com"
+    eml["To"] = "c@d.com"
+    eml["Subject"] = "Body only"
+    eml.set_content("hello")
+    eml.add_attachment(b"%PDF-1.4", maintype="application", subtype="pdf", filename="x.pdf")
+    msg_bytes = eml_bytes_to_msg_bytes(eml.as_bytes(), embed_attachments=False)
+    with tempfile.NamedTemporaryFile(suffix=".msg", delete=False) as tmp:
+        path = tmp.name
+    try:
+        Path(path).write_bytes(msg_bytes)
+        ole = olefile.OleFileIO(path)
+        assert not ole.exists(("__attach_version1.0_#00000000", "__properties_version1.0"))
+        ole.close()
+    finally:
+        os.unlink(path)
+
+
 def test_eml_bytes_to_msg_bytes_roundtrip_subject():
     from aspose.email_foss import msg as msgmod
 

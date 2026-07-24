@@ -69,27 +69,65 @@ def _normalize_eml_attachment_headers(email_message) -> None:
 def _fix_mapi_attachments(message) -> None:
     """Доп. нормализация MAPI после from_email_message (дублирует EML-правки)."""
     for att in message.attachments or []:
-        raw_name = getattr(att, "long_file_name", None) or getattr(att, "display_name", None)
+        raw_name = (
+            getattr(att, "filename", None)
+            or getattr(att, "long_file_name", None)
+            or getattr(att, "display_name", None)
+        )
         name = normalize_attachment_filename(raw_name)
-        if name:
-            if hasattr(att, "display_name"):
-                att.display_name = name
-            if hasattr(att, "long_file_name"):
-                att.long_file_name = name
-            if "." in name and hasattr(att, "extension"):
-                att.extension = name.rsplit(".", 1)[-1].lower()
-            mime = _guess_mime_from_filename(name)
-            if mime and hasattr(att, "mime_tag"):
+        if not name:
+            continue
+        if hasattr(att, "filename"):
+            att.filename = name
+        if hasattr(att, "display_name"):
+            att.display_name = name
+        if hasattr(att, "long_file_name"):
+            att.long_file_name = name
+        if "." in name and hasattr(att, "extension"):
+            att.extension = name.rsplit(".", 1)[-1].lower()
+        mime = _guess_mime_from_filename(name)
+        if mime:
+            if hasattr(att, "mime_type"):
+                att.mime_type = mime
+            if hasattr(att, "mime_tag"):
                 att.mime_tag = mime
 
 
-def eml_bytes_to_msg_bytes(eml_bytes: bytes) -> bytes:
-    """Конвертирует RFC822 в Outlook .msg (pure Python, Linux/Docker)."""
+def eml_body_only_bytes(eml_bytes: bytes) -> bytes:
+    """RFC822 без частей-вложений (только заголовки и тело письма)."""
+    from email.message import EmailMessage
+
+    msg = BytesParser(policy=policy.default).parsebytes(eml_bytes)
+    out = EmailMessage()
+    for header in ("From", "To", "Cc", "Subject", "Date", "Message-ID", "Reply-To"):
+        value = msg.get(header)
+        if value:
+            out[header] = value
+    body = msg.get_body(preferencelist=("plain", "html"))
+    if body is None:
+        out.set_content("")
+        return out.as_bytes()
+    content = body.get_content()
+    subtype = body.get_content_subtype()
+    charset = body.get_content_charset() or "utf-8"
+    if subtype == "html":
+        out.set_content(content, subtype="html", charset=charset)
+    else:
+        out.set_content(content, charset=charset)
+    return out.as_bytes()
+
+
+def eml_bytes_to_msg_bytes(eml_bytes: bytes, *, embed_attachments: bool = True) -> bytes:
+    """Конвертирует RFC822 в Outlook .msg (pure Python, Linux/Docker).
+
+    embed_attachments=False — только тело письма (1С/Outlook ломаются на некоторых PDF).
+    """
     if not eml_bytes:
         raise ValueError("empty eml_bytes")
     from aspose.email_foss import msg as msgmod
 
-    email_message = BytesParser(policy=policy.default).parsebytes(eml_bytes)
+    source = eml_bytes if embed_attachments else eml_body_only_bytes(eml_bytes)
+    email_message = BytesParser(policy=policy.default).parsebytes(source)
     _normalize_eml_attachment_headers(email_message)
     message = msgmod.MapiMessage.from_email_message(email_message)
     _fix_mapi_attachments(message)
