@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import httpx
 
@@ -28,6 +28,40 @@ class ODataClient:
         """Читает все страницы сущности OData ($top / @odata.nextLink)."""
         entity = entity.strip("/")
         url: str | None = f"{self._base_url}{entity}?$format=json&$top={page_size}"
+        rows: list[dict[str, Any]] = []
+
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            while url:
+                response = client.get(url)
+                response.raise_for_status()
+                payload = response.json()
+                batch = payload.get("value")
+                if batch is None and isinstance(payload, list):
+                    batch = payload
+                if not isinstance(batch, list):
+                    break
+                rows.extend(item for item in batch if isinstance(item, dict))
+                next_link = payload.get("@odata.nextLink") or payload.get("odata.nextLink")
+                url = urljoin(self._base_url, next_link) if next_link else None
+        return rows
+
+    def fetch_filtered(
+        self,
+        entity: str,
+        *,
+        filter_expr: str,
+        page_size: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Читает записи сущности OData с $filter."""
+        entity = entity.strip("/")
+        filter_expr = (filter_expr or "").strip()
+        if not filter_expr:
+            return self.fetch_all(entity, page_size=page_size)
+        url: str | None = (
+            f"{self._base_url}{entity}?$format=json"
+            f"&$filter={quote(filter_expr, safe='')}"
+            f"&$top={page_size}"
+        )
         rows: list[dict[str, Any]] = []
 
         with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
@@ -126,6 +160,32 @@ class ODataClient:
                         if msg:
                             raise ValueError(
                                 f"OData PATCH {entity}(guid'{key}') failed ({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()
+
+    def delete_entity(self, entity: str, ref_key: str) -> None:
+        """Удаляет запись OData (DELETE). Для документов 1С — If-Match: *."""
+        entity = entity.strip("/")
+        key = (ref_key or "").strip()
+        if not key:
+            raise ValueError("ref_key is required for OData DELETE")
+        url = f"{self._base_url}{entity}(guid'{key}')"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.delete(url, headers={"If-Match": "*"})
+            if response.status_code == 404:
+                return
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData DELETE {entity}(guid'{key}') failed "
+                                f"({response.status_code}): {msg}"
                             )
                 except json.JSONDecodeError:
                     pass

@@ -317,28 +317,121 @@ def verify_attached_file_storage(
     return stored_size
 
 
+def list_attached_files_for_document(
+    client,
+    *,
+    document_ref_key: str,
+    field_map: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Все присоединённые файлы документа (включая помеченные на удаление)."""
+    cfg = field_map or load_attached_file_field_map()
+    entity = str(cfg.get("entity") or "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы").strip()
+    owner_key = normalize_document_ref_key(document_ref_key)
+    owner_field = str((cfg.get("fields") or {}).get("owner_key") or "ВладелецФайла_Key")
+    filter_expr = f"{owner_field} eq guid'{owner_key}'"
+    fetch_filtered = getattr(client, "fetch_filtered", None)
+    if callable(fetch_filtered):
+        return fetch_filtered(entity, filter_expr=filter_expr)
+    fetch_all = getattr(client, "fetch_all", None)
+    if not callable(fetch_all):
+        raise AttachedFileError("OData client does not support listing attached files")
+    rows = fetch_all(entity)
+    return [row for row in rows if str(row.get(owner_field) or "").strip().casefold() == owner_key.casefold()]
+
+
+def delete_attached_files_for_document(
+    client,
+    *,
+    document_ref_key: str,
+    field_map: dict[str, Any] | None = None,
+) -> list[str]:
+    """DELETE всех присоединённых файлов документа. Возвращает удалённые Ref_Key."""
+    cfg = field_map or load_attached_file_field_map()
+    entity = str(cfg.get("entity") or "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы").strip()
+    delete_entity = getattr(client, "delete_entity", None)
+    if not callable(delete_entity):
+        raise AttachedFileError("OData client does not support DELETE")
+    deleted: list[str] = []
+    for item in list_attached_files_for_document(
+        client,
+        document_ref_key=document_ref_key,
+        field_map=cfg,
+    ):
+        ref_key = str(item.get("Ref_Key") or "").strip()
+        if not ref_key:
+            continue
+        try:
+            delete_entity(entity, ref_key)
+        except Exception as exc:
+            raise AttachedFileError(
+                f"Не удалось удалить присоединённый файл Ref_Key={ref_key}: {exc}"
+            ) from exc
+        deleted.append(ref_key)
+    return deleted
+
+
+def patch_attached_file_metadata(
+    client,
+    *,
+    entity: str,
+    ref_key: str,
+    payload: dict[str, Any],
+    field_map: dict[str, Any] | None = None,
+) -> None:
+    """PATCH метаданных файла с проверкой записи (If-Match: * в клиенте)."""
+    if not payload:
+        return
+    patch_entity = getattr(client, "patch_entity", None)
+    if not callable(patch_entity):
+        return
+    try:
+        patch_entity(entity, ref_key, payload)
+    except Exception as exc:
+        fields = ", ".join(sorted(payload))
+        raise AttachedFileError(
+            f"Не удалось обновить поля ({fields}) Ref_Key={ref_key}: {exc}"
+        ) from exc
+
+
 def release_attached_file_edit_lock(
     client,
     *,
     entity: str,
     ref_key: str,
     field_map: dict[str, Any] | None = None,
+    author_key: str | None = None,
 ) -> None:
-    """Снимает блокировку Редактирует_Key после OData POST (иначе файл «недоступен» в 1С)."""
+    """Снимает блокировку Редактирует_Key после OData POST (иначе файл «недоступен» в 1С).
+
+    Редактирует_Key — флаг «файл занят», не «кто редактировал»; целевое значение — пустой GUID.
+    Поле Редактировал_Key в OData этой сущности отсутствует.
+    """
     cfg = field_map or load_attached_file_field_map()
     fields = cfg.get("fields") or {}
     lock_field = str(fields.get("edit_lock_key") or "Редактирует_Key").strip()
+    patch_payload: dict[str, Any] = {}
+    if lock_field:
+        patch_payload[lock_field] = _EMPTY_GUID
+    if author_key and (author_field := fields.get("author_key")):
+        patch_payload[str(author_field)] = author_key
+    if not patch_payload:
+        return
+    patch_attached_file_metadata(
+        client,
+        entity=entity,
+        ref_key=ref_key,
+        payload=patch_payload,
+        field_map=cfg,
+    )
     if not lock_field:
         return
-    patch_entity = getattr(client, "patch_entity", None)
-    if not callable(patch_entity):
-        return
-    try:
-        patch_entity(entity, ref_key, {lock_field: _EMPTY_GUID})
-    except Exception as exc:
+    record = client.get_by_key(entity, ref_key) or {}
+    current_lock = str(record.get(lock_field) or "").strip()
+    if current_lock and current_lock != _EMPTY_GUID:
         raise AttachedFileError(
-            f"Не удалось снять блокировку {lock_field} после POST: {exc}"
-        ) from exc
+            f"Блокировка {lock_field} не снята после PATCH "
+            f"(Ref_Key={ref_key}, значение={current_lock!r})"
+        )
 
 
 def upload_attached_file_binary(
@@ -418,18 +511,6 @@ def attach_file_to_incoming_document(
         )
 
     author_key = file_input.author_key
-    patch_payload: dict[str, Any] = {}
-    if author_key and (author_field := fields.get("author_key")):
-        patch_payload[str(author_field)] = author_key
-    if patch_payload:
-        patch_entity = getattr(client, "patch_entity", None)
-        if callable(patch_entity):
-            try:
-                patch_entity(entity, ref_key, patch_payload)
-            except Exception as exc:
-                raise AttachedFileError(
-                    f"Не удалось установить автора после POST: {exc}"
-                ) from exc
 
     defaults = cfg.get("defaults") or {}
     if defaults.get("upload_binary_via_stream", False):
@@ -455,6 +536,7 @@ def attach_file_to_incoming_document(
         entity=entity,
         ref_key=ref_key,
         field_map=cfg,
+        author_key=author_key,
     )
 
     base_name, extension = split_filename(file_input.filename)

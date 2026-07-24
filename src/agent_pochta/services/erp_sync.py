@@ -12,6 +12,7 @@ from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.schemas import EmailMessage, RoutingResult
 from agent_pochta.services.erp_attachments import (
     attach_missing_email_files_to_document,
+    clear_all_erp_attachments,
     clear_erp_attachment_entries,
     existing_erp_document_ref_key,
     merge_erp_attachment_lists,
@@ -19,6 +20,7 @@ from agent_pochta.services.erp_attachments import (
     uploaded_erp_attachment_filenames,
 )
 from agent_pochta.services.integration_service import IntegrationService
+from agent_pochta.services.odata_integration import ODataIntegrationService
 
 logger = structlog.get_logger(__name__)
 
@@ -113,14 +115,29 @@ def sync_existing_erp_document(
         force_reattach_filenames=force_reattach_filenames,
     )
     payload_modified = False
+    deleted_attachment_refs: list[str] = []
     if force_reattach_filenames:
-        cleared = clear_erp_attachment_entries(
-            row.raw_payload_json,
-            filenames=force_reattach_filenames,
-        )
+        if isinstance(integration, ODataIntegrationService):
+            try:
+                deleted_attachment_refs = integration.delete_attached_files_for_document(doc_ref)
+                logger.info(
+                    "erp_attachments_deleted_before_reattach",
+                    message_id=message_id,
+                    document_ref_key=doc_ref,
+                    deleted=len(deleted_attachment_refs),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "erp_attachments_delete_failed",
+                    message_id=message_id,
+                    document_ref_key=doc_ref,
+                )
+                sync_errors.append(f"cleanup: {exc}")
+        cleared = clear_all_erp_attachments(row.raw_payload_json)
         if cleared is not None and cleared != row.raw_payload_json:
             row.raw_payload_json = cleared
             payload_modified = True
+            skip_filenames = set()
     try:
         attached = attach_missing_email_files_to_document(
             integration,
@@ -141,6 +158,8 @@ def sync_existing_erp_document(
     sync_meta: dict[str, Any] = {
         "erp_last_sync_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
     }
+    if deleted_attachment_refs:
+        sync_meta["erp_attachments_deleted"] = deleted_attachment_refs
     if sync_errors:
         sync_meta["erp_sync_errors"] = sync_errors
     else:

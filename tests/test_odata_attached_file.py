@@ -15,10 +15,13 @@ from agent_pochta.services.odata_attached_file import (
     AttachedFileInput,
     attach_file_to_incoming_document,
     build_attached_file_payload,
+    delete_attached_files_for_document,
     format_attached_file_created_at,
     format_attached_file_modified_universal,
+    list_attached_files_for_document,
     now_attached_file_processed_at,
     read_attached_file_storage_bytes,
+    release_attached_file_edit_lock,
     resolve_stream_content_type,
     split_filename,
     verify_attached_file_storage,
@@ -361,7 +364,14 @@ def test_odata_integration_attach_files_delegates_to_client():
         file_author_key=AUTHOR_KEY,
         entity="Document_ТД_ВходящаяКорреспонденция",
     )
-    service._client.get_by_key = MagicMock(return_value={"Ref_Key": DOC_KEY, "Размер": 3})
+    service._client.get_by_key = MagicMock(
+        return_value={
+            "Ref_Key": DOC_KEY,
+            "Размер": 3,
+            "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
+            "Автор_Key": AUTHOR_KEY,
+        }
+    )
     service._client.get_entity_stream = MagicMock(return_value=b"123")
     service._client.create_entity = MagicMock(
         return_value={"Ref_Key": "cccccccc-cccc-cccc-cccc-cccccccccccc"}
@@ -426,3 +436,54 @@ def test_read_attached_file_storage_bytes_falls_back_to_base64():
     )
 
     assert content == b"hello"
+
+
+def test_list_attached_files_for_document_uses_fetch_filtered():
+    client = MagicMock()
+    client.fetch_filtered.return_value = [{"Ref_Key": "f1", "ВладелецФайла_Key": DOC_KEY}]
+    rows = list_attached_files_for_document(client, document_ref_key=DOC_KEY)
+    assert rows == [{"Ref_Key": "f1", "ВладелецФайла_Key": DOC_KEY}]
+    client.fetch_filtered.assert_called_once()
+
+
+def test_delete_attached_files_for_document():
+    client = MagicMock()
+    client.fetch_filtered.return_value = [
+        {"Ref_Key": "f1", "ВладелецФайла_Key": DOC_KEY},
+        {"Ref_Key": "f2", "ВладелецФайла_Key": DOC_KEY},
+    ]
+    deleted = delete_attached_files_for_document(client, document_ref_key=DOC_KEY)
+    assert deleted == ["f1", "f2"]
+    assert client.delete_entity.call_count == 2
+
+
+def test_release_attached_file_edit_lock_verifies_cleared_lock():
+    client = MagicMock()
+    client.get_by_key.return_value = {
+        "Ref_Key": DOC_KEY,
+        "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
+    }
+    release_attached_file_edit_lock(
+        client,
+        entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        ref_key=DOC_KEY,
+        author_key=AUTHOR_KEY,
+    )
+    client.patch_entity.assert_called_once()
+    payload = client.patch_entity.call_args[0][2]
+    assert payload["Автор_Key"] == AUTHOR_KEY
+    assert payload["Редактирует_Key"] == "00000000-0000-0000-0000-000000000000"
+
+
+def test_release_attached_file_edit_lock_raises_if_still_locked():
+    client = MagicMock()
+    client.get_by_key.return_value = {
+        "Ref_Key": DOC_KEY,
+        "Редактирует_Key": AUTHOR_KEY,
+    }
+    with pytest.raises(AttachedFileError, match="Блокировка"):
+        release_attached_file_edit_lock(
+            client,
+            entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            ref_key=DOC_KEY,
+        )

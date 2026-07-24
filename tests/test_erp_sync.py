@@ -215,9 +215,41 @@ def test_sync_existing_force_reattach_eml() -> None:
     files = integration.attach_files_to_incoming_correspondence.call_args.kwargs["files"]
     assert any(item.filename == "ВК-000050.msg" for item in files)
     payload = json.loads(result["raw_payload_json"] or row.raw_payload_json or "{}")
-    assert ERP_FULL_EMAIL_FILENAME not in {
-        item.get("filename") for item in payload.get("erp_attachments", [])
+    assert payload.get("erp_attachments") == []
+
+
+def test_sync_existing_force_reattach_deletes_odata_attachments() -> None:
+    row = _done_row(
+        erp_attachments=[
+            {"filename": ERP_FULL_EMAIL_FILENAME, "ref_key": "eml-broken", "size_bytes": 32815},
+        ]
+    )
+    integration = MagicMock(spec=ODataIntegrationService)
+    integration.update_incoming_correspondence.return_value = {
+        "updated": True,
+        "erp_document_id": row.erp_task_id,
+        "fields": {},
     }
+    integration.delete_attached_files_for_document.return_value = ["old-1", "old-2"]
+    integration.attach_files_to_incoming_correspondence.return_value = [
+        {"ref_key": "eml-new", "filename": "ВК-000050.msg", "size_bytes": 1000},
+    ]
+
+    result = sync_existing_erp_document(
+        message_id=row.message_id,
+        row=row,
+        email=_email(),
+        routing=_routing(),
+        summary_ru=row.summary_ru or "",
+        integration=integration,
+        vault=None,
+        xml_document=ERROR_CASE_XML,
+        force_reattach_filenames=erp_email_upload_marker_names(row.erp_document_number),
+    )
+
+    assert result["ok"] is True
+    integration.delete_attached_files_for_document.assert_called_once_with(row.erp_task_id)
+    assert result["erp_sync_meta"]["erp_attachments_deleted"] == ["old-1", "old-2"]
 
 
 def test_odata_integration_update_calls_patch() -> None:

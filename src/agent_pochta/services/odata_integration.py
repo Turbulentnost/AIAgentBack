@@ -22,6 +22,7 @@ from agent_pochta.services.odata_attached_file import (
     AttachedFileError,
     AttachedFileInput,
     attach_files_to_incoming_document,
+    delete_attached_files_for_document,
     load_attached_file_field_map,
     now_attached_file_processed_at,
 )
@@ -251,3 +252,13 @@ class ODataIntegrationService(IntegrationService):
             }
             for item in results
         ]
+
+    def delete_attached_files_for_document(self, document_ref_key: str) -> list[str]:
+        """DELETE всех присоединённых файлов документа (перед force reattach)."""
+        if not self._attach_files_enabled:
+            return []
+        return delete_attached_files_for_document(
+            self._client,
+            document_ref_key=document_ref_key,
+            field_map=self._attached_file_field_map,
+        )

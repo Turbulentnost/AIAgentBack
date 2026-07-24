@@ -101,6 +101,23 @@ def merge_erp_attachment_lists(existing: list | None, new_items: list) -> list:
     return list(by_name.values())
 
 
+def clear_all_erp_attachments(raw_payload_json: str | None) -> str | None:
+    """Очищает erp_attachments в payload (перед force reattach с удалением в 1С)."""
+    if not raw_payload_json:
+        return raw_payload_json
+    try:
+        payload = json.loads(raw_payload_json)
+    except json.JSONDecodeError:
+        return raw_payload_json
+    if not isinstance(payload, dict):
+        return raw_payload_json
+    uploaded = payload.get("erp_attachments")
+    if not isinstance(uploaded, list) or not uploaded:
+        return raw_payload_json
+    payload["erp_attachments"] = []
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def clear_erp_attachment_entries(
     raw_payload_json: str | None,
     *,
