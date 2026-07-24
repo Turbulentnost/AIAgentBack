@@ -489,38 +489,26 @@ def _collect_erp_upload_files(
     skip_filenames: set[str] | None = None,
     processed_at: datetime | None = None,
 ) -> list[AttachedFileInput]:
-    """Полное письмо .msg + отдельные MIME-вложения (PDF и др.) для открытия в 1С."""
+    """Один файл {номер_документа}.msg: RFC822→MSG, вложения письма внутри MSG."""
     skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
     attach_time = processed_at or now_attached_file_processed_at()
-    files: list[AttachedFileInput] = []
 
-    if not erp_email_already_uploaded(erp_document_number, skip):
-        msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
-        if not full_email_bytes:
-            return files
-        if not msg_name.lower().endswith(".msg"):
-            raise ValueError(f"ERP upload expects .msg filename, got {msg_name!r}")
-        msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes)
-        files.append(
-            AttachedFileInput(
-                filename=msg_name,
-                content=msg_bytes,
-                processed_at=attach_time,
-            )
-        )
+    if erp_email_already_uploaded(erp_document_number, skip):
+        return []
 
-    for att in attachments_with_content(email):
-        fname = erp_attachment_filename(att)
-        if fname in skip:
-            continue
-        files.append(
-            AttachedFileInput(
-                filename=fname,
-                content=bytes(att.content),
-                processed_at=attach_time,
-            )
+    msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
+    if not full_email_bytes:
+        return []
+    if not msg_name.lower().endswith(".msg"):
+        raise ValueError(f"ERP upload expects .msg filename, got {msg_name!r}")
+    msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes)
+    return [
+        AttachedFileInput(
+            filename=msg_name,
+            content=msg_bytes,
+            processed_at=attach_time,
         )
-    return files
+    ]
 
 
 def _supports_attachment_upload(integration: IntegrationService) -> bool:
@@ -541,7 +529,7 @@ def attach_email_files_to_document(
     vault: VaultClient | None = None,
     erp_document_number: str | None = None,
 ) -> list[dict]:
-    """Прикрепляет полное письмо (.msg) и MIME-вложения к документу 1С."""
+    """Прикрепляет одно письмо (.msg по номеру документа) к документу 1С."""
     if not _supports_attachment_upload(integration):
         logger.info(
             "erp_attach_files_skipped",
@@ -602,7 +590,7 @@ def attach_missing_email_files_to_document(
     skip_filenames: set[str] | None = None,
     erp_document_number: str | None = None,
 ) -> list[dict]:
-    """Прикрепляет недостающее полное письмо (.msg) и MIME-вложения к документу 1С."""
+    """Прикрепляет недостающее письмо (.msg по номеру документа) к документу 1С."""
     if not _supports_attachment_upload(integration):
         logger.info(
             "erp_attach_files_skipped",

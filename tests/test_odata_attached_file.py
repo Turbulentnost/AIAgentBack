@@ -382,6 +382,9 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert payload["Редактирует_Key"] == AUTHOR_KEY
     assert payload["Description"] == "НП00-003877"
     service._client.patch_entity.assert_called_once()
+    patch_payload = service._client.patch_entity.call_args[0][2]
+    assert patch_payload["Автор_Key"] == AUTHOR_KEY
+    assert patch_payload["Редактирует_Key"] == AUTHOR_KEY
     service._client.put_entity_stream.assert_not_called()
 
 

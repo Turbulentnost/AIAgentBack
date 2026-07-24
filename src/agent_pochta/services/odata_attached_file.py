@@ -395,16 +395,21 @@ def attach_file_to_incoming_document(
             f"OData создал запись {entity}, но Ref_Key отсутствует в ответе"
         )
 
-    edited_by = file_input.edited_by_key or file_input.author_key
+    author_key = file_input.author_key
+    edited_by = file_input.edited_by_key or author_key
+    patch_payload: dict[str, Any] = {}
+    if author_key and (author_field := fields.get("author_key")):
+        patch_payload[str(author_field)] = author_key
     if edited_by and (edited_by_field := fields.get("edited_by_key")):
-        patch_payload = {str(edited_by_field): edited_by}
+        patch_payload[str(edited_by_field)] = edited_by
+    if patch_payload:
         patch_entity = getattr(client, "patch_entity", None)
         if callable(patch_entity):
             try:
                 patch_entity(entity, ref_key, patch_payload)
             except Exception as exc:
                 raise AttachedFileError(
-                    f"Не удалось установить {edited_by_field} после POST: {exc}"
+                    f"Не удалось установить автора/редактора после POST: {exc}"
                 ) from exc
 
     defaults = cfg.get("defaults") or {}
