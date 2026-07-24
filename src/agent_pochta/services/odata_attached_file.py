@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,10 @@ from agent_pochta.config import PROJECT_ROOT
 _DEFAULT_MAP_PATH = PROJECT_ROOT / "data" / "odata_attached_file_field_map.json"
 _EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 _MSK = ZoneInfo("Europe/Moscow")
+_VOLUME_STORAGE_KIND = "ВТомахНаДиске"
+_DATABASE_STORAGE_KIND = "ВИнформационнойБазе"
+_DEFAULT_VOLUME_KEY = "21886495-364e-11ea-82f2-ac1f6b05524c"
+_VOLUME_BINARY_TYPE = "application/xml+xdto"
 _GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -61,6 +66,7 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 # 1С OData: ссылка на документ — *_Key, не ВладелецФайла.
                 "owner_key": "ВладелецФайла_Key",
                 "volume_key": "Том_Key",
+                "file_path": "ПутьКФайлу",
                 "storage_binary": "ФайлХранилище_Base64Data",
                 "storage_binary_type": "ФайлХранилище_Type",
                 "storage_stream": "ФайлХранилище",
@@ -72,10 +78,12 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "edit_lock_key": "Редактирует_Key",
             },
             "defaults": {
+                "storage_mode": "volume",
+                "storage_kind": _VOLUME_STORAGE_KIND,
+                "volume_key": _DEFAULT_VOLUME_KEY,
+                "volume_binary_type": _VOLUME_BINARY_TYPE,
                 # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
                 "storage_binary_type": "application/octet-stream",
-                # Base64 в POST надёжнее PUT Edm.Stream (PUT даёт 200, но 0 байт в ИБ).
-                "storage_kind": "ВИнформационнойБазе",
                 "upload_binary_via_stream": False,
             },
         }
@@ -161,6 +169,75 @@ def format_attached_file_modified_universal(value: datetime) -> str:
     return ts.replace(microsecond=0, tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def format_attached_file_modified_universal(value: datetime) -> str:
+    """ДатаМодификацииУниверсальная: UTC без tz."""
+    ts = _coerce_processing_timestamp(value).astimezone(timezone.utc)
+    return ts.replace(microsecond=0, tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def resolve_attached_file_storage_mode(defaults: dict[str, Any] | None = None) -> str:
+    """Режим хранения: volume (том на диске) или database (ИБ + Base64/stream)."""
+    cfg = defaults or {}
+    mode = str(cfg.get("storage_mode") or "").strip().casefold()
+    if mode in {"volume", "tom", "disk", "volumes", "втomахнадиске", "втомахнадиске"}:
+        return "volume"
+    if mode in {"database", "db", "ib", "info_base", "информационнойбазе"}:
+        return "database"
+    kind = str(cfg.get("storage_kind") or "").strip()
+    if kind == _VOLUME_STORAGE_KIND:
+        return "volume"
+    if kind == _DATABASE_STORAGE_KIND:
+        return "database"
+    return "volume"
+
+
+def is_volume_storage_kind(storage_kind: str | None) -> bool:
+    return str(storage_kind or "").strip() == _VOLUME_STORAGE_KIND
+
+
+def format_volume_file_path(
+    processed_at: datetime,
+    base_name: str,
+    extension: str,
+) -> str:
+    """Относительный путь на томе: YYYYMMDD\\ИМЯ.расш (MSK, как в ручных загрузках 1С)."""
+    ts = _coerce_processing_timestamp(processed_at).astimezone(_MSK)
+    date_part = ts.strftime("%Y%m%d")
+    filename = f"{base_name}.{extension}" if extension else base_name
+    return f"{date_part}\\{filename}"
+
+
+def resolve_attached_file_upload_plan(
+    defaults: dict[str, Any] | None = None,
+    *,
+    include_binary: bool | None = None,
+) -> dict[str, Any]:
+    """План POST/PUT для режима volume vs database."""
+    cfg = defaults or {}
+    mode = resolve_attached_file_storage_mode(cfg)
+    if mode == "volume":
+        upload_via_stream = True
+        storage_kind = _VOLUME_STORAGE_KIND
+        if include_binary is None:
+            include_binary = False
+        binary_type = str(cfg.get("volume_binary_type") or _VOLUME_BINARY_TYPE)
+    else:
+        upload_via_stream = bool(cfg.get("upload_binary_via_stream", False))
+        storage_kind = _DATABASE_STORAGE_KIND if upload_via_stream else str(
+            cfg.get("storage_kind") or _DATABASE_STORAGE_KIND
+        )
+        if include_binary is None:
+            include_binary = not upload_via_stream
+        binary_type = str(cfg.get("storage_binary_type") or "application/octet-stream")
+    return {
+        "mode": mode,
+        "storage_kind": storage_kind,
+        "include_binary": include_binary,
+        "upload_via_stream": upload_via_stream,
+        "binary_type": binary_type,
+    }
+
+
 def build_attached_file_payload(
     *,
     document_ref_key: str,
@@ -177,13 +254,13 @@ def build_attached_file_payload(
     owner_key = normalize_document_ref_key(document_ref_key)
     content = validate_file_content(file_input.content)
     base_name, extension = split_filename(file_input.filename)
-    upload_via_stream = bool(defaults.get("upload_binary_via_stream", False))
+    processed_at = _coerce_processing_timestamp(file_input.processed_at)
+    plan = resolve_attached_file_upload_plan(defaults, include_binary=include_binary)
+    storage_kind = plan["storage_kind"]
     if include_binary is None:
-        include_binary = not upload_via_stream
-    if upload_via_stream:
-        storage_kind = "ВИнформационнойБазе"
+        include_binary = plan["include_binary"]
     else:
-        storage_kind = str(defaults.get("storage_kind") or "ВТомахНаДиске")
+        include_binary = bool(include_binary)
 
     payload: dict[str, Any] = {}
 
@@ -199,27 +276,38 @@ def build_attached_file_payload(
         owner_type_value = defaults.get("owner_type")
         if owner_type_value and not owner_field_name.endswith("_Key"):
             payload[str(owner_type_field)] = owner_type_value
-    if volume_field := fields.get("volume_key"):
+    if plan["mode"] == "volume":
+        volume_value = (defaults.get("volume_key") or _DEFAULT_VOLUME_KEY).strip()
+        if volume_field := fields.get("volume_key"):
+            if volume_value and volume_value != _EMPTY_GUID:
+                payload[str(volume_field)] = volume_value
+        if path_field := fields.get("file_path"):
+            payload[str(path_field)] = format_volume_file_path(
+                processed_at,
+                base_name,
+                extension,
+            )
+        if storage_type_field := fields.get("storage_binary_type"):
+            payload[str(storage_type_field)] = plan["binary_type"]
+    elif volume_field := fields.get("volume_key"):
         volume_value = (defaults.get("volume_key") or "").strip()
         if (
             volume_value
             and volume_value != _EMPTY_GUID
-            and storage_kind == "ВТомахНаДиске"
+            and storage_kind == _VOLUME_STORAGE_KIND
         ):
             payload[str(volume_field)] = volume_value
     if include_binary:
         if storage_field := fields.get("storage_binary"):
             payload[str(storage_field)] = base64.b64encode(content).decode("ascii")
         if storage_type_field := fields.get("storage_binary_type"):
-            # Base64 POST: 1С падает с 500 на application/vnd.ms-outlook / message/rfc822.
-            payload[str(storage_type_field)] = str(
-                defaults.get("storage_binary_type") or "application/octet-stream"
-            )
+            if plan["mode"] != "volume":
+                # Base64 POST: 1С падает с 500 на application/vnd.ms-outlook / message/rfc822.
+                payload[str(storage_type_field)] = plan["binary_type"]
     if kind_field := fields.get("storage_kind"):
         payload[str(kind_field)] = storage_kind
     if size_field := fields.get("size"):
         payload[str(size_field)] = len(content)
-    processed_at = _coerce_processing_timestamp(file_input.processed_at)
     if created_field := fields.get("created_at"):
         payload[str(created_field)] = format_attached_file_created_at(processed_at)
     if modified_field := fields.get("modified_at"):
@@ -280,11 +368,22 @@ def verify_attached_file_reference_fields(
 
     storage_kind = str(record.get("ТипХраненияФайла") or "").strip()
     volume_key = str(record.get("Том_Key") or "").strip()
-    if storage_kind == "ВИнформационнойБазе" and volume_key and volume_key != _EMPTY_GUID:
+    file_path = str(record.get("ПутьКФайлу") or "").strip()
+    if storage_kind == _DATABASE_STORAGE_KIND and volume_key and volume_key != _EMPTY_GUID:
         label = ref_key or record.get("Ref_Key") or "?"
         raise AttachedFileError(
             f"Том_Key заполнен при хранении в ИБ (Ref_Key={label}, Том_Key={volume_key!r})"
         )
+    if is_volume_storage_kind(storage_kind):
+        label = ref_key or record.get("Ref_Key") or "?"
+        if not volume_key or volume_key == _EMPTY_GUID:
+            raise AttachedFileError(
+                f"Том_Key не задан при хранении в томе (Ref_Key={label})"
+            )
+        if not file_path:
+            raise AttachedFileError(
+                f"ПутьКФайлу пуст при хранении в томе (Ref_Key={label})"
+            )
 
     if record.get("DeletionMark") is True:
         label = ref_key or record.get("Ref_Key") or "?"
@@ -299,7 +398,7 @@ def verify_attached_file_storage(
     expected_size: int,
     field_map: dict[str, Any] | None = None,
 ) -> int:
-    """Проверяет, что после POST в хранилище записаны ненулевые байты."""
+    """Проверяет, что после POST в хранилище записаны ненулевые байты или метаданные тома."""
     cfg = field_map or load_attached_file_field_map()
     fields = cfg.get("fields") or {}
     record = client.get_by_key(entity, ref_key)
@@ -307,6 +406,51 @@ def verify_attached_file_storage(
         raise AttachedFileError(
             f"OData GET {entity} с Ref_Key={ref_key} не вернул запись после POST"
         )
+
+    kind_field = str(fields.get("storage_kind") or "ТипХраненияФайла")
+    size_field = str(fields.get("size") or "Размер")
+    path_field = str(fields.get("file_path") or "ПутьКФайлу")
+    storage_kind = str(record.get(kind_field) or "").strip()
+    meta_size_raw = record.get(size_field)
+    try:
+        meta_size = int(meta_size_raw) if meta_size_raw is not None else 0
+    except (TypeError, ValueError):
+        meta_size = 0
+
+    if is_volume_storage_kind(storage_kind):
+        file_path = str(record.get(path_field) or "").strip()
+        volume_key = str(record.get(fields.get("volume_key") or "Том_Key") or "").strip()
+        if not file_path:
+            raise AttachedFileError(
+                f"ПутьКФайлу пуст после POST (Ref_Key={ref_key}, ТипХранения={storage_kind!r})"
+            )
+        if not volume_key or volume_key == _EMPTY_GUID:
+            raise AttachedFileError(
+                f"Том_Key не задан после POST (Ref_Key={ref_key}, ТипХранения={storage_kind!r})"
+            )
+        if expected_size > 0 and meta_size != expected_size:
+            raise AttachedFileError(
+                f"Размер в метаданных ({meta_size}) не совпадает с отправленным ({expected_size})"
+            )
+        stored_bytes = read_attached_file_storage_bytes(
+            client,
+            entity=entity,
+            ref_key=ref_key,
+            field_map=cfg,
+        )
+        stored_size = len(stored_bytes)
+        # На томе stream GET часто 0 байт — это норма для ручных загрузок 1С.
+        if stored_size > 0:
+            if expected_size > 0 and stored_size != expected_size:
+                raise AttachedFileError(
+                    f"Размер в stream ({stored_size}) не совпадает с отправленным ({expected_size})"
+                )
+            if meta_size > 0 and meta_size != stored_size:
+                raise AttachedFileError(
+                    f"Размер в метаданных ({meta_size}) не совпадает с хранилищем ({stored_size})"
+                )
+            return stored_size
+        return meta_size or expected_size
 
     stored_bytes = read_attached_file_storage_bytes(
         client,
@@ -316,10 +460,6 @@ def verify_attached_file_storage(
     )
     stored_size = len(stored_bytes)
     if stored_size == 0:
-        kind_field = str(fields.get("storage_kind") or "ТипХраненияФайла")
-        size_field = str(fields.get("size") or "Размер")
-        storage_kind = record.get(kind_field) or ""
-        meta_size = record.get(size_field) or 0
         raise AttachedFileError(
             "Пустое хранилище файла после POST "
             f"(Ref_Key={ref_key}, ТипХранения={storage_kind!r}, Размер={meta_size})"
@@ -330,12 +470,6 @@ def verify_attached_file_storage(
             f"Размер в хранилище ({stored_size}) не совпадает с отправленным ({expected_size})"
         )
 
-    size_field = str(fields.get("size") or "Размер")
-    meta_size_raw = record.get(size_field)
-    try:
-        meta_size = int(meta_size_raw) if meta_size_raw is not None else 0
-    except (TypeError, ValueError):
-        meta_size = 0
     if meta_size > 0 and meta_size != stored_size:
         raise AttachedFileError(
             f"Размер в метаданных ({meta_size}) не совпадает с хранилищем ({stored_size})"
@@ -470,6 +604,8 @@ def upload_attached_file_binary(
     field_map: dict[str, Any] | None = None,
     filename: str | None = None,
     content_type: str | None = None,
+    retries: int = 1,
+    retry_delay_sec: float = 0.5,
 ) -> None:
     """PUT двоичных данных в Edm.Stream-свойство ФайлХранилище после POST метаданных."""
     cfg = field_map or load_attached_file_field_map()
@@ -480,20 +616,35 @@ def upload_attached_file_binary(
     put_stream = getattr(client, "put_entity_stream", None)
     if not callable(put_stream):
         raise AttachedFileError("OData client does not support stream upload")
-    put_stream(
-        entity,
-        ref_key,
-        stream_property,
-        binary,
-        content_type=content_type
+    resolved_type = (
+        content_type
         or (
             resolve_stream_content_type(filename, defaults=defaults)
             if filename
             else None
         )
         or defaults.get("storage_binary_type")
-        or "application/octet-stream",
+        or "application/octet-stream"
     )
+    last_exc: Exception | None = None
+    for attempt in range(max(retries, 0) + 1):
+        try:
+            put_stream(
+                entity,
+                ref_key,
+                stream_property,
+                binary,
+                content_type=resolved_type,
+            )
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= retries:
+                break
+            time.sleep(retry_delay_sec)
+    raise AttachedFileError(
+        f"Не удалось записать stream {stream_property} Ref_Key={ref_key}: {last_exc}"
+    ) from last_exc
 
 
 def attach_file_to_incoming_document(
@@ -530,6 +681,8 @@ def attach_file_to_incoming_document(
         field_map=cfg,
     )
     fields = cfg.get("fields") or {}
+    defaults = cfg.get("defaults") or {}
+    plan = resolve_attached_file_upload_plan(defaults)
     data = client.create_entity(entity, payload)
     ref_key = str(data.get("Ref_Key") or "").strip()
     if not ref_key:
@@ -537,18 +690,58 @@ def attach_file_to_incoming_document(
             f"OData создал запись {entity}, но Ref_Key отсутствует в ответе"
         )
 
+    if plan["mode"] == "volume":
+        path_field = str(fields.get("file_path") or "ПутьКФайлу")
+        expected_path = str(payload.get(path_field) or "").strip()
+        if expected_path:
+            record = client.get_by_key(entity, ref_key) or {}
+            current_path = str(record.get(path_field) or "").strip()
+            if not current_path:
+                # PATCH ПутьКФайлу через OData не поддерживается 1С — только POST.
+                raise AttachedFileError(
+                    f"OData POST не заполнил {path_field} (Ref_Key={ref_key}); "
+                    f"ожидался путь {expected_path!r}"
+                )
+
     author_key = file_input.author_key
 
-    defaults = cfg.get("defaults") or {}
-    if defaults.get("upload_binary_via_stream", False):
-        upload_attached_file_binary(
-            client,
-            entity=entity,
-            ref_key=ref_key,
-            content=file_input.content,
-            field_map=cfg,
-            filename=file_input.filename,
-        )
+    if plan["upload_via_stream"]:
+        try:
+            upload_attached_file_binary(
+                client,
+                entity=entity,
+                ref_key=ref_key,
+                content=file_input.content,
+                field_map=cfg,
+                filename=file_input.filename,
+            )
+        except AttachedFileError:
+            if plan["mode"] != "volume":
+                raise
+            delete_entity = getattr(client, "delete_entity", None)
+            if not callable(delete_entity):
+                raise
+            delete_entity(entity, ref_key)
+            entity, payload = build_attached_file_payload(
+                document_ref_key=owner_key,
+                file_input=file_input,
+                field_map=cfg,
+                include_binary=True,
+            )
+            data = client.create_entity(entity, payload)
+            ref_key = str(data.get("Ref_Key") or "").strip()
+            if not ref_key:
+                raise AttachedFileError(
+                    f"OData fallback POST {entity} не вернул Ref_Key после ошибки stream PUT"
+                )
+            path_field = str(fields.get("file_path") or "ПутьКФайлу")
+            expected_path = str(payload.get(path_field) or "").strip()
+            if expected_path:
+                record = client.get_by_key(entity, ref_key) or {}
+                if not str(record.get(path_field) or "").strip():
+                    raise AttachedFileError(
+                        f"Fallback POST не заполнил {path_field} (Ref_Key={ref_key})"
+                    )
 
     verify_attached_file_storage(
         client,

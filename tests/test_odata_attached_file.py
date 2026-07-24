@@ -18,15 +18,42 @@ from agent_pochta.services.odata_attached_file import (
     delete_attached_files_for_document,
     format_attached_file_created_at,
     format_attached_file_modified_universal,
+    format_volume_file_path,
     list_attached_files_for_document,
     now_attached_file_processed_at,
     read_attached_file_storage_bytes,
     release_attached_file_edit_lock,
+    resolve_attached_file_storage_mode,
     resolve_stream_content_type,
     split_filename,
     verify_attached_file_reference_fields,
     verify_attached_file_storage,
 )
+
+_DATABASE_FIELD_MAP = {
+    "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+    "owner_document_entity": "Document_ТД_ВходящаяКорреспонденция",
+    "fields": {
+        "name": "Description",
+        "extension": "Расширение",
+        "owner_key": "ВладелецФайла_Key",
+        "storage_binary": "ФайлХранилище_Base64Data",
+        "storage_binary_type": "ФайлХранилище_Type",
+        "storage_stream": "ФайлХранилище",
+        "storage_kind": "ТипХраненияФайла",
+        "size": "Размер",
+        "created_at": "ДатаСоздания",
+        "modified_at": "ДатаМодификацииУниверсальная",
+        "author_key": "Автор_Key",
+        "edit_lock_key": "Редактирует_Key",
+    },
+    "defaults": {
+        "storage_mode": "database",
+        "storage_kind": "ВИнформационнойБазе",
+        "storage_binary_type": "application/octet-stream",
+        "upload_binary_via_stream": False,
+    },
+}
 from agent_pochta.services.odata_integration import (
     ODataIntegrationService,
     resolve_attached_file_author_key,
@@ -48,10 +75,33 @@ def test_split_filename_rejects_empty():
         split_filename(".pdf")
 
 
+def test_build_attached_file_payload_volume_mode_by_default():
+    ts = datetime(2026, 7, 24, 10, 30, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+    entity, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="АЛ00-000762.msg",
+            content=b"\xd0\xcf\x11\xe0" + b"\x00" * 64,
+            processed_at=ts,
+        ),
+    )
+    assert entity == "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
+    assert payload["Description"] == "АЛ00-000762"
+    assert payload["Расширение"] == "msg"
+    assert payload["ВладелецФайла_Key"] == DOC_KEY
+    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+    assert payload["Том_Key"] == "21886495-364e-11ea-82f2-ac1f6b05524c"
+    assert payload["ПутьКФайлу"] == "20260724\\АЛ00-000762.msg"
+    assert payload["ФайлХранилище_Type"] == "application/xml+xdto"
+    assert "ФайлХранилище_Base64Data" not in payload
+    assert payload["Размер"] == 68
+
+
 def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
     entity, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="scan.pdf", content=b"%PDF-1.4"),
+        field_map=_DATABASE_FIELD_MAP,
     )
     assert entity == "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
     assert payload["Description"] == "scan"
@@ -67,6 +117,17 @@ def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
     assert not str(payload["ДатаСоздания"]).startswith("0001")
 
 
+def test_format_volume_file_path_uses_msk_date():
+    ts = datetime(2026, 7, 24, 1, 0, 0, tzinfo=timezone.utc)
+    assert format_volume_file_path(ts, "АЛ00-000762", "msg") == "20260724\\АЛ00-000762.msg"
+
+
+def test_resolve_attached_file_storage_mode():
+    assert resolve_attached_file_storage_mode({"storage_mode": "volume"}) == "volume"
+    assert resolve_attached_file_storage_mode({"storage_mode": "database"}) == "database"
+    assert resolve_attached_file_storage_mode({"storage_kind": "ВИнформационнойБазе"}) == "database"
+
+
 def test_build_attached_file_payload_ignores_edited_by_key():
     _, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
@@ -76,6 +137,7 @@ def test_build_attached_file_payload_ignores_edited_by_key():
             author_key=AUTHOR_KEY,
             edited_by_key=AUTHOR_KEY,
         ),
+        field_map=_DATABASE_FIELD_MAP,
     )
     assert payload["Автор_Key"] == AUTHOR_KEY
     assert "Редактирует_Key" not in payload
@@ -91,6 +153,7 @@ def test_build_attached_file_payload_uses_explicit_processed_at():
             processed_at=ts,
             author_key=AUTHOR_KEY,
         ),
+        field_map=_DATABASE_FIELD_MAP,
     )
     assert payload["Description"] == "НП00-003877"
     assert payload["ДатаСоздания"] == format_attached_file_created_at(ts)
@@ -111,6 +174,7 @@ def test_build_attached_file_payload_defaults_to_msk_now(monkeypatch):
     _, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="НП00-003877.eml", content=b"eml"),
+        field_map=_DATABASE_FIELD_MAP,
     )
     assert payload["ДатаСоздания"] == "2026-07-23T10:27:00"
 
@@ -156,18 +220,9 @@ def test_build_attached_file_payload_stream_mode_excludes_binary():
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="scan.pdf", content=b"%PDF-1.4"),
         field_map={
-            "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
-            "fields": {
-                "name": "Description",
-                "extension": "Расширение",
-                "owner_key": "ВладелецФайла_Key",
-                "storage_binary": "ФайлХранилище_Base64Data",
-                "storage_binary_type": "ФайлХранилище_Type",
-                "storage_kind": "ТипХраненияФайла",
-                "size": "Размер",
-            },
+            **_DATABASE_FIELD_MAP,
             "defaults": {
-                "storage_kind": "ВИнформационнойБазе",
+                **_DATABASE_FIELD_MAP["defaults"],
                 "upload_binary_via_stream": True,
             },
         },
@@ -183,6 +238,7 @@ def test_build_attached_file_payload_can_include_inline_binary():
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="scan.pdf", content=b"%PDF-1.4"),
         include_binary=True,
+        field_map=_DATABASE_FIELD_MAP,
     )
     assert payload["ФайлХранилище_Base64Data"]
     assert payload["ФайлХранилище_Type"] == "application/octet-stream"
@@ -194,19 +250,16 @@ def test_build_attached_file_payload_sets_volume_key_from_defaults():
         file_input=AttachedFileInput(filename="scan.pdf", content=b"data"),
         include_binary=True,
         field_map={
-            "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            **_DATABASE_FIELD_MAP,
             "fields": {
-                "name": "Description",
-                "extension": "Расширение",
-                "owner_key": "ВладелецФайла_Key",
+                **_DATABASE_FIELD_MAP["fields"],
                 "volume_key": "Том_Key",
-                "size": "Размер",
-                "storage_kind": "ТипХраненияФайла",
             },
             "defaults": {
+                **_DATABASE_FIELD_MAP["defaults"],
                 "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
                 "storage_kind": "ВТомахНаДиске",
-                "upload_binary_via_stream": False,
+                "storage_mode": "volume",
             },
         },
     )
@@ -219,16 +272,13 @@ def test_stream_mode_skips_volume_key_even_if_configured():
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="scan.pdf", content=b"data"),
         field_map={
-            "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            **_DATABASE_FIELD_MAP,
             "fields": {
-                "name": "Description",
-                "extension": "Расширение",
-                "owner_key": "ВладелецФайла_Key",
+                **_DATABASE_FIELD_MAP["fields"],
                 "volume_key": "Том_Key",
-                "storage_kind": "ТипХраненияФайла",
-                "size": "Размер",
             },
             "defaults": {
+                **_DATABASE_FIELD_MAP["defaults"],
                 "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
                 "storage_kind": "ВТомахНаДиске",
                 "upload_binary_via_stream": True,
@@ -245,6 +295,20 @@ def test_resolve_stream_content_type_for_eml_and_msg():
     assert resolve_stream_content_type("scan.pdf") == "application/octet-stream"
 
 
+def test_build_attached_file_payload_msg_volume_uses_xdto_type():
+    _, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="НП00-003877.msg",
+            content=b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64,
+        ),
+    )
+    assert payload["Description"] == "НП00-003877"
+    assert payload["Расширение"] == "msg"
+    assert payload["ФайлХранилище_Type"] == "application/xml+xdto"
+    assert "ФайлХранилище_Base64Data" not in payload
+
+
 def test_build_attached_file_payload_msg_uses_octet_stream_for_base64_post():
     _, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
@@ -252,6 +316,7 @@ def test_build_attached_file_payload_msg_uses_octet_stream_for_base64_post():
             filename="НП00-003877.msg",
             content=b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64,
         ),
+        field_map=_DATABASE_FIELD_MAP,
     )
     assert payload["Description"] == "НП00-003877"
     assert payload["Расширение"] == "msg"
@@ -290,10 +355,17 @@ def test_attach_file_checks_owner_exists():
     client.create_entity.assert_not_called()
 
 
-def test_attach_file_posts_to_catalog():
+def test_attach_file_posts_to_catalog_volume_mode():
     client = MagicMock()
-    client.get_by_key.return_value = {"Ref_Key": DOC_KEY, "Размер": 4}
-    client.get_entity_stream.return_value = b"data"
+    client.get_by_key.return_value = {
+        "Ref_Key": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "Размер": 4,
+        "ТипХраненияФайла": "ВТомахНаДиске",
+        "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+        "ПутьКФайлу": "20260724\\a.pdf",
+        "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
+    }
+    client.get_entity_stream.return_value = b""
     client.create_entity.return_value = {"Ref_Key": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
 
     result = attach_file_to_incoming_document(
@@ -307,9 +379,30 @@ def test_attach_file_posts_to_catalog():
     assert result.extension == "pdf"
     client.create_entity.assert_called_once()
     _entity, payload = client.create_entity.call_args[0]
+    assert "ФайлХранилище_Base64Data" not in payload
+    assert payload["ПутьКФайлу"]
+    client.put_entity_stream.assert_called_once()
+    client.get_entity_stream.assert_called_once()
+
+
+def test_attach_file_posts_to_catalog_database_mode():
+    client = MagicMock()
+    client.get_by_key.return_value = {"Ref_Key": DOC_KEY, "Размер": 4}
+    client.get_entity_stream.return_value = b"data"
+    client.create_entity.return_value = {"Ref_Key": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+
+    result = attach_file_to_incoming_document(
+        client,
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(filename="a.pdf", content=b"data"),
+        field_map=_DATABASE_FIELD_MAP,
+    )
+
+    assert result.ref_key == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    client.create_entity.assert_called_once()
+    _entity, payload = client.create_entity.call_args[0]
     assert payload["ФайлХранилище_Base64Data"]
     client.put_entity_stream.assert_not_called()
-    client.get_entity_stream.assert_called_once()
 
 
 def test_attach_file_stream_mode_uses_put():
@@ -323,20 +416,9 @@ def test_attach_file_stream_mode_uses_put():
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="a.pdf", content=b"data"),
         field_map={
-            "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
-            "owner_document_entity": "Document_ТД_ВходящаяКорреспонденция",
-            "fields": {
-                "name": "Description",
-                "extension": "Расширение",
-                "owner_key": "ВладелецФайла_Key",
-                "storage_binary": "ФайлХранилище_Base64Data",
-                "storage_binary_type": "ФайлХранилище_Type",
-                "storage_stream": "ФайлХранилище",
-                "storage_kind": "ТипХраненияФайла",
-                "size": "Размер",
-            },
+            **_DATABASE_FIELD_MAP,
             "defaults": {
-                "storage_kind": "ВИнформационнойБазе",
+                **_DATABASE_FIELD_MAP["defaults"],
                 "upload_binary_via_stream": True,
             },
         },
@@ -366,6 +448,7 @@ def test_attach_file_uploads_eml_with_octet_stream_content_type():
             filename="Входящее_письмо.eml",
             content=b"From: a@b.com\r\nTo: c@d.com\r\nSubject: test\r\n\r\nbody\r\n",
         ),
+        field_map=_DATABASE_FIELD_MAP,
     )
 
     _entity, payload = client.create_entity.call_args[0]
@@ -383,11 +466,14 @@ def test_odata_integration_attach_files_delegates_to_client():
         return_value={
             "Ref_Key": DOC_KEY,
             "Размер": 3,
+            "ТипХраненияФайла": "ВТомахНаДиске",
+            "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+            "ПутьКФайлу": "20260724\\НП00-003877.msg",
             "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
             "Автор_Key": AUTHOR_KEY,
         }
     )
-    service._client.get_entity_stream = MagicMock(return_value=b"123")
+    service._client.get_entity_stream = MagicMock(return_value=b"")
     service._client.create_entity = MagicMock(
         return_value={"Ref_Key": "cccccccc-cccc-cccc-cccc-cccccccccccc"}
     )
@@ -415,15 +501,56 @@ def test_odata_integration_attach_files_delegates_to_client():
         call.args[2].get("Редактирует_Key") == "00000000-0000-0000-0000-000000000000"
         for call in patch_calls
     )
-    service._client.put_entity_stream.assert_not_called()
+    service._client.put_entity_stream.assert_called_once()
 
 
-def test_verify_attached_file_storage_rejects_empty_stream():
+def test_verify_attached_file_storage_accepts_volume_with_zero_stream():
     client = MagicMock()
     client.get_by_key.return_value = {
         "Ref_Key": DOC_KEY,
         "Размер": 100,
         "ТипХраненияФайла": "ВТомахНаДиске",
+        "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+        "ПутьКФайлу": "20260724\\АЛ00-000762.msg",
+        "ФайлХранилище_Base64Data": "",
+    }
+    client.get_entity_stream.return_value = b""
+
+    size = verify_attached_file_storage(
+        client,
+        entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        ref_key=DOC_KEY,
+        expected_size=100,
+    )
+    assert size == 100
+
+
+def test_verify_attached_file_storage_rejects_volume_without_path():
+    client = MagicMock()
+    client.get_by_key.return_value = {
+        "Ref_Key": DOC_KEY,
+        "Размер": 100,
+        "ТипХраненияФайла": "ВТомахНаДиске",
+        "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+        "ПутьКФайлу": "",
+    }
+    client.get_entity_stream.return_value = b""
+
+    with pytest.raises(AttachedFileError, match="ПутьКФайлу"):
+        verify_attached_file_storage(
+            client,
+            entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            ref_key=DOC_KEY,
+            expected_size=100,
+        )
+
+
+def test_verify_attached_file_storage_rejects_empty_stream_in_database_mode():
+    client = MagicMock()
+    client.get_by_key.return_value = {
+        "Ref_Key": DOC_KEY,
+        "Размер": 100,
+        "ТипХраненияФайла": "ВИнформационнойБазе",
         "ФайлХранилище_Base64Data": "",
     }
     client.get_entity_stream.return_value = b""
@@ -434,6 +561,7 @@ def test_verify_attached_file_storage_rejects_empty_stream():
             entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
             ref_key=DOC_KEY,
             expected_size=100,
+            field_map=_DATABASE_FIELD_MAP,
         )
 
 

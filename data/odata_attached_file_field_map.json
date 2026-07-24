@@ -6,6 +6,7 @@
     "extension": "Расширение",
     "owner_key": "ВладелецФайла_Key",
     "volume_key": "Том_Key",
+    "file_path": "ПутьКФайлу",
     "storage_binary": "ФайлХранилище_Base64Data",
     "storage_binary_type": "ФайлХранилище_Type",
     "storage_stream": "ФайлХранилище",
@@ -17,8 +18,11 @@
     "edit_lock_key": "Редактирует_Key"
   },
   "defaults": {
+    "storage_mode": "volume",
+    "storage_kind": "ВТомахНаДиске",
+    "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+    "volume_binary_type": "application/xml+xdto",
     "storage_binary_type": "application/octet-stream",
-    "storage_kind": "ВИнформационнойБазе",
     "upload_binary_via_stream": false
   }
 }
