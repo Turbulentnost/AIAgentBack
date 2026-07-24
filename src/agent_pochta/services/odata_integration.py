@@ -226,12 +226,13 @@ class ODataIntegrationService(IntegrationService):
         enriched: list[AttachedFileInput] = []
         for item in files:
             author = item.author_key or author_key
+            edited_by = item.edited_by_key or author
             enriched.append(
                 AttachedFileInput(
                     filename=item.filename,
                     content=item.content,
                     author_key=author,
-                    edited_by_key=item.edited_by_key,
+                    edited_by_key=edited_by,
                     comment=item.comment,
                     processed_at=item.processed_at or processed_at,
                 )

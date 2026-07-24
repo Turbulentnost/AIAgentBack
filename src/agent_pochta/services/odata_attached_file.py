@@ -206,7 +206,6 @@ def _apply_static_attached_file_fields(
         ("comment", "Описание", defaults.get("comment", "")),
         ("image_index", "ИндексКартинки", defaults.get("image_index", "0")),
         ("loan_date", "ДатаЗаема", defaults.get("loan_date", "0001-01-01T00:00:00")),
-        ("modified_by_key", "Изменил_Key", _EMPTY_GUID),
         (
             "text_extraction_status",
             "СтатусИзвлеченияТекста",
@@ -372,6 +371,11 @@ def build_attached_file_payload(
         payload[str(modified_field)] = format_attached_file_modified_universal(processed_at)
     if file_input.author_key and (author_field := fields.get("author_key")):
         payload[str(author_field)] = file_input.author_key
+    modified_by = (file_input.edited_by_key or file_input.author_key or "").strip()
+    if modified_by and modified_by != _EMPTY_GUID and (
+        modified_field := fields.get("modified_by_key")
+    ):
+        payload[str(modified_field)] = modified_by
     # Редактирует_Key — блокировка «файл занят» в БСП; не заполняем на POST.
     if file_input.comment and (comment_field := fields.get("comment")):
         payload[str(comment_field)] = file_input.comment.strip()
@@ -625,7 +629,7 @@ def release_attached_file_edit_lock(
     """Снимает блокировку Редактирует_Key после OData POST (иначе файл «недоступен» в 1С).
 
     Редактирует_Key — флаг «файл занят», не «кто редактировал»; целевое значение — пустой GUID.
-    Поле Редактировал_Key в OData этой сущности отсутствует.
+    Колонка «Отредактировал» в форме 1С берётся из Изменил_Key (не из Автор_Key).
     """
     cfg = field_map or load_attached_file_field_map()
     fields = cfg.get("fields") or {}
@@ -634,10 +638,11 @@ def release_attached_file_edit_lock(
     patch_payload: dict[str, Any] = {}
     if lock_field:
         patch_payload[lock_field] = _EMPTY_GUID
-    if modified_by_field:
-        patch_payload[modified_by_field] = _EMPTY_GUID
-    if author_key and (author_field := fields.get("author_key")):
-        patch_payload[str(author_field)] = author_key
+    if author_key and author_key != _EMPTY_GUID:
+        if author_field := fields.get("author_key"):
+            patch_payload[str(author_field)] = author_key
+        if modified_by_field:
+            patch_payload[modified_by_field] = author_key
     if not patch_payload:
         return
     patch_attached_file_metadata(

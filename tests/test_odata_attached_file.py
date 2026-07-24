@@ -175,7 +175,7 @@ def test_build_attached_file_payload_database_mode_by_default():
     assert payload["ФайлХранилище_Base64Data"]
     assert payload["Размер"] == 68
     assert payload["ДатаЗаема"] == "0001-01-01T00:00:00"
-    assert payload["Изменил_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert "Изменил_Key" not in payload
     assert payload["ИндексКартинки"] == "0"
     assert payload["DeletionMark"] is False
     assert payload["ХранитьВерсии"] is False
@@ -234,7 +234,7 @@ def test_resolve_attached_file_storage_mode():
     assert resolve_attached_file_storage_mode({"storage_kind": "ВИнформационнойБазе"}) == "database"
 
 
-def test_build_attached_file_payload_ignores_edited_by_key():
+def test_build_attached_file_payload_sets_modified_by_key_from_author():
     _, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(
@@ -246,6 +246,7 @@ def test_build_attached_file_payload_ignores_edited_by_key():
         field_map=_DATABASE_FIELD_MAP,
     )
     assert payload["Автор_Key"] == AUTHOR_KEY
+    assert payload["Изменил_Key"] == AUTHOR_KEY
     assert "Редактирует_Key" not in payload
 
 
@@ -613,7 +614,7 @@ def test_odata_integration_attach_files_delegates_to_client():
         for call in patch_calls
     )
     assert any(
-        call.args[2].get("Изменил_Key") == "00000000-0000-0000-0000-000000000000"
+        call.args[2].get("Изменил_Key") == AUTHOR_KEY
         for call in patch_calls
     )
     service._client.put_entity_stream.assert_not_called()
@@ -745,7 +746,7 @@ def test_release_attached_file_edit_lock_verifies_cleared_lock():
     payload = client.patch_entity.call_args[0][2]
     assert payload["Автор_Key"] == AUTHOR_KEY
     assert payload["Редактирует_Key"] == "00000000-0000-0000-0000-000000000000"
-    assert payload["Изменил_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert payload["Изменил_Key"] == AUTHOR_KEY
 
 
 def test_release_attached_file_edit_lock_raises_if_still_locked():
