@@ -78,7 +78,7 @@ def test_build_attached_file_payload_uses_explicit_processed_at():
     assert payload["ДатаСоздания"] == format_attached_file_created_at(ts)
     assert payload["ДатаМодификацииУниверсальная"] == format_attached_file_modified_universal(ts)
     assert payload["Автор_Key"] == AUTHOR_KEY
-    assert payload["Редактировал_Key"] == AUTHOR_KEY
+    assert payload["Редактирует_Key"] == AUTHOR_KEY
 
 
 def test_build_attached_file_payload_defaults_to_msk_now(monkeypatch):
@@ -367,19 +367,21 @@ def test_odata_integration_attach_files_delegates_to_client():
         return_value={"Ref_Key": "cccccccc-cccc-cccc-cccc-cccccccccccc"}
     )
     service._client.put_entity_stream = MagicMock()
+    service._client.patch_entity = MagicMock()
 
     out = service.attach_files_to_incoming_correspondence(
         document_ref_key=DOC_KEY,
-        files=[AttachedFileInput(filename="НП00-003877.eml", content=b"123")],
+        files=[AttachedFileInput(filename="НП00-003877.msg", content=b"123")],
     )
 
     assert len(out) == 1
     assert out[0]["ref_key"] == "cccccccc-cccc-cccc-cccc-cccccccccccc"
-    assert out[0]["filename"] == "НП00-003877.eml"
+    assert out[0]["filename"] == "НП00-003877.msg"
     _entity, payload = service._client.create_entity.call_args[0]
     assert payload["Автор_Key"] == AUTHOR_KEY
-    assert payload["Редактировал_Key"] == AUTHOR_KEY
+    assert payload["Редактирует_Key"] == AUTHOR_KEY
     assert payload["Description"] == "НП00-003877"
+    service._client.patch_entity.assert_called_once()
     service._client.put_entity_stream.assert_not_called()
 
 

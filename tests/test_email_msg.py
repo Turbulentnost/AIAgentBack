@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
-from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes, is_msg_bytes
+from agent_pochta.services.email_msg import (
+    eml_bytes_to_msg_bytes,
+    is_msg_bytes,
+    normalize_attachment_filename,
+)
 
 
 def _sample_eml() -> bytes:
@@ -27,11 +34,15 @@ def test_eml_bytes_to_msg_bytes_produces_ole_compound_file():
     assert len(msg) > 512
 
 
-def test_eml_bytes_to_msg_bytes_roundtrip_subject():
-    import os
-    import tempfile
-    from pathlib import Path
+def test_normalize_attachment_filename_nfc():
+    nfd = "2. Реквизиты СК НСК Раи\u0306йффаи\u0306йзен.pdf"
+    nfc = normalize_attachment_filename(nfd)
+    assert nfc is not None
+    assert "\u0306" not in nfc
+    assert nfc.endswith(".pdf")
 
+
+def test_eml_bytes_to_msg_bytes_roundtrip_subject():
     from aspose.email_foss import msg as msgmod
 
     msg_bytes = eml_bytes_to_msg_bytes(_sample_eml())

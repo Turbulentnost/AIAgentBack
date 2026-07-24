@@ -18,6 +18,7 @@ from agent_pochta.config import get_settings
 from agent_pochta.imap.client import ImapMailboxClient, resolve_imap_credentials
 from agent_pochta.schemas import Attachment, EmailMessage
 from agent_pochta.services.integration_service import IntegrationService
+from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes
 from agent_pochta.services.odata_attached_file import AttachedFileInput, now_attached_file_processed_at
 from agent_pochta.services.odata_integration import ODataIntegrationService
 from agent_pochta.services.vault import VaultClient
@@ -324,15 +325,15 @@ def erp_full_email_filename(
     _email: EmailMessage | None = None,
     erp_document_number: str | None = None,
 ) -> str:
-    """Имя .eml для OData: номер документа 1С (НП00-003877.eml).
+    """Имя .msg для OData: номер документа 1С (АЛ00-000762.msg).
 
-    Прикрепляем исходный RFC822 без конвертации в MSG: Aspose MSG с PDF-вложениями
-    не открывается в толстом клиенте 1С («данные файла недоступны»).
+    Толстый клиент 1С открывает письма как Outlook MSG, не RFC822/.eml.
+    RFC822 конвертируется в MSG с нормализацией имён вложений (NFC, MIME).
     """
     number = (erp_document_number or "").strip()
     if number and number not in _SKIP_ERP_DOCUMENT_NUMBERS:
-        return f"{number}.eml"
-    return ERP_FULL_EMAIL_FILENAME
+        return f"{number}.msg"
+    return "Входящее_письмо.msg"
 
 
 def erp_email_upload_marker_names(erp_document_number: str | None) -> set[str]:
@@ -488,24 +489,38 @@ def _collect_erp_upload_files(
     skip_filenames: set[str] | None = None,
     processed_at: datetime | None = None,
 ) -> list[AttachedFileInput]:
-    """Только полное письмо .eml (RFC822); MIME-вложения отдельно не отправляются."""
-    if erp_email_already_uploaded(erp_document_number, skip_filenames):
-        return []
-
-    eml_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
-    if not full_email_bytes:
-        return []
-
+    """Полное письмо .msg + отдельные MIME-вложения (PDF и др.) для открытия в 1С."""
+    skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
     attach_time = processed_at or now_attached_file_processed_at()
-    if not eml_name.lower().endswith(".eml"):
-        raise ValueError(f"ERP upload expects .eml filename, got {eml_name!r}")
-    return [
-        AttachedFileInput(
-            filename=eml_name,
-            content=full_email_bytes,
-            processed_at=attach_time,
+    files: list[AttachedFileInput] = []
+
+    if not erp_email_already_uploaded(erp_document_number, skip):
+        msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
+        if not full_email_bytes:
+            return files
+        if not msg_name.lower().endswith(".msg"):
+            raise ValueError(f"ERP upload expects .msg filename, got {msg_name!r}")
+        msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes)
+        files.append(
+            AttachedFileInput(
+                filename=msg_name,
+                content=msg_bytes,
+                processed_at=attach_time,
+            )
         )
-    ]
+
+    for att in attachments_with_content(email):
+        fname = erp_attachment_filename(att)
+        if fname in skip:
+            continue
+        files.append(
+            AttachedFileInput(
+                filename=fname,
+                content=bytes(att.content),
+                processed_at=attach_time,
+            )
+        )
+    return files
 
 
 def _supports_attachment_upload(integration: IntegrationService) -> bool:
@@ -526,7 +541,7 @@ def attach_email_files_to_document(
     vault: VaultClient | None = None,
     erp_document_number: str | None = None,
 ) -> list[dict]:
-    """Прикрепляет только полное письмо (.eml) к документу 1С."""
+    """Прикрепляет полное письмо (.msg) и MIME-вложения к документу 1С."""
     if not _supports_attachment_upload(integration):
         logger.info(
             "erp_attach_files_skipped",
@@ -587,7 +602,7 @@ def attach_missing_email_files_to_document(
     skip_filenames: set[str] | None = None,
     erp_document_number: str | None = None,
 ) -> list[dict]:
-    """Прикрепляет недостающее полное письмо (.eml) к документу 1С."""
+    """Прикрепляет недостающее полное письмо (.msg) и MIME-вложения к документу 1С."""
     if not _supports_attachment_upload(integration):
         logger.info(
             "erp_attach_files_skipped",

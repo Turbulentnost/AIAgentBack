@@ -69,7 +69,7 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "created_at": "ДатаСоздания",
                 "modified_at": "ДатаМодификацииУниверсальная",
                 "author_key": "Автор_Key",
-                "edited_by_key": "Редактировал_Key",
+                "edited_by_key": "Редактирует_Key",
             },
             "defaults": {
                 # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
@@ -387,12 +387,25 @@ def attach_file_to_incoming_document(
         file_input=file_input,
         field_map=cfg,
     )
+    fields = cfg.get("fields") or {}
     data = client.create_entity(entity, payload)
     ref_key = str(data.get("Ref_Key") or "").strip()
     if not ref_key:
         raise AttachedFileError(
             f"OData создал запись {entity}, но Ref_Key отсутствует в ответе"
         )
+
+    edited_by = file_input.edited_by_key or file_input.author_key
+    if edited_by and (edited_by_field := fields.get("edited_by_key")):
+        patch_payload = {str(edited_by_field): edited_by}
+        patch_entity = getattr(client, "patch_entity", None)
+        if callable(patch_entity):
+            try:
+                patch_entity(entity, ref_key, patch_payload)
+            except Exception as exc:
+                raise AttachedFileError(
+                    f"Не удалось установить {edited_by_field} после POST: {exc}"
+                ) from exc
 
     defaults = cfg.get("defaults") or {}
     if defaults.get("upload_binary_via_stream", False):
