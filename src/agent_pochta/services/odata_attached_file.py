@@ -69,7 +69,7 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "created_at": "ДатаСоздания",
                 "modified_at": "ДатаМодификацииУниверсальная",
                 "author_key": "Автор_Key",
-                "edited_by_key": "Редактирует_Key",
+                "edit_lock_key": "Редактирует_Key",
             },
             "defaults": {
                 # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
@@ -226,9 +226,7 @@ def build_attached_file_payload(
         payload[str(modified_field)] = format_attached_file_modified_universal(processed_at)
     if file_input.author_key and (author_field := fields.get("author_key")):
         payload[str(author_field)] = file_input.author_key
-    edited_by = file_input.edited_by_key or file_input.author_key
-    if edited_by and (edited_by_field := fields.get("edited_by_key")):
-        payload[str(edited_by_field)] = edited_by
+    # Редактирует_Key — блокировка «файл занят» в БСП, не «кто редактировал»; не заполняем.
     if file_input.comment and (comment_field := fields.get("comment")):
         payload[str(comment_field)] = file_input.comment.strip()
 
@@ -319,6 +317,30 @@ def verify_attached_file_storage(
     return stored_size
 
 
+def release_attached_file_edit_lock(
+    client,
+    *,
+    entity: str,
+    ref_key: str,
+    field_map: dict[str, Any] | None = None,
+) -> None:
+    """Снимает блокировку Редактирует_Key после OData POST (иначе файл «недоступен» в 1С)."""
+    cfg = field_map or load_attached_file_field_map()
+    fields = cfg.get("fields") or {}
+    lock_field = str(fields.get("edit_lock_key") or "Редактирует_Key").strip()
+    if not lock_field:
+        return
+    patch_entity = getattr(client, "patch_entity", None)
+    if not callable(patch_entity):
+        return
+    try:
+        patch_entity(entity, ref_key, {lock_field: _EMPTY_GUID})
+    except Exception as exc:
+        raise AttachedFileError(
+            f"Не удалось снять блокировку {lock_field} после POST: {exc}"
+        ) from exc
+
+
 def upload_attached_file_binary(
     client,
     *,
@@ -396,12 +418,9 @@ def attach_file_to_incoming_document(
         )
 
     author_key = file_input.author_key
-    edited_by = file_input.edited_by_key or author_key
     patch_payload: dict[str, Any] = {}
     if author_key and (author_field := fields.get("author_key")):
         patch_payload[str(author_field)] = author_key
-    if edited_by and (edited_by_field := fields.get("edited_by_key")):
-        patch_payload[str(edited_by_field)] = edited_by
     if patch_payload:
         patch_entity = getattr(client, "patch_entity", None)
         if callable(patch_entity):
@@ -409,7 +428,7 @@ def attach_file_to_incoming_document(
                 patch_entity(entity, ref_key, patch_payload)
             except Exception as exc:
                 raise AttachedFileError(
-                    f"Не удалось установить автора/редактора после POST: {exc}"
+                    f"Не удалось установить автора после POST: {exc}"
                 ) from exc
 
     defaults = cfg.get("defaults") or {}
@@ -428,6 +447,13 @@ def attach_file_to_incoming_document(
         entity=entity,
         ref_key=ref_key,
         expected_size=len(file_input.content),
+        field_map=cfg,
+    )
+
+    release_attached_file_edit_lock(
+        client,
+        entity=entity,
+        ref_key=ref_key,
         field_map=cfg,
     )
 

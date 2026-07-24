@@ -14,7 +14,7 @@
     "created_at": "ДатаСоздания",
     "modified_at": "ДатаМодификацииУниверсальная",
     "author_key": "Автор_Key",
-    "edited_by_key": "Редактирует_Key"
+    "edit_lock_key": "Редактирует_Key"
   },
   "defaults": {
     "storage_binary_type": "application/octet-stream",

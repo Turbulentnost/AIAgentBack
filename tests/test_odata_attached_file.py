@@ -78,7 +78,7 @@ def test_build_attached_file_payload_uses_explicit_processed_at():
     assert payload["ДатаСоздания"] == format_attached_file_created_at(ts)
     assert payload["ДатаМодификацииУниверсальная"] == format_attached_file_modified_universal(ts)
     assert payload["Автор_Key"] == AUTHOR_KEY
-    assert payload["Редактирует_Key"] == AUTHOR_KEY
+    assert "Редактирует_Key" not in payload
 
 
 def test_build_attached_file_payload_defaults_to_msk_now(monkeypatch):
@@ -379,12 +379,17 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert out[0]["filename"] == "НП00-003877.msg"
     _entity, payload = service._client.create_entity.call_args[0]
     assert payload["Автор_Key"] == AUTHOR_KEY
-    assert payload["Редактирует_Key"] == AUTHOR_KEY
+    assert "Редактирует_Key" not in payload
     assert payload["Description"] == "НП00-003877"
-    service._client.patch_entity.assert_called_once()
-    patch_payload = service._client.patch_entity.call_args[0][2]
-    assert patch_payload["Автор_Key"] == AUTHOR_KEY
-    assert patch_payload["Редактирует_Key"] == AUTHOR_KEY
+    service._client.patch_entity.assert_called()
+    patch_calls = service._client.patch_entity.call_args_list
+    assert any(
+        call.args[2].get("Автор_Key") == AUTHOR_KEY for call in patch_calls
+    )
+    assert any(
+        call.args[2].get("Редактирует_Key") == "00000000-0000-0000-0000-000000000000"
+        for call in patch_calls
+    )
     service._client.put_entity_stream.assert_not_called()
 
 

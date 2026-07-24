@@ -35,7 +35,7 @@ def resolve_attached_file_author_key(
     explicit_key: str = "",
     incoming_defaults_file: str | Path | None = None,
 ) -> str:
-    """GUID пользователя 1С для Автор_Key / Редактировал_Key присоединённого файла."""
+    """GUID пользователя 1С для Автор_Key присоединённого файла."""
     key = (explicit_key or "").strip()
     if key and key != _EMPTY_GUID:
         return key
@@ -225,7 +225,7 @@ class ODataIntegrationService(IntegrationService):
                     filename=item.filename,
                     content=item.content,
                     author_key=author,
-                    edited_by_key=item.edited_by_key or author,
+                    edited_by_key=item.edited_by_key,
                     comment=item.comment,
                     processed_at=item.processed_at or processed_at,
                 )
