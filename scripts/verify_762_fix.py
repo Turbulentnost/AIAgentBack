@@ -20,7 +20,7 @@ from agent_pochta.services.odata_client import ODataClient  # noqa: E402
 
 ENTITY = "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
 REF_OK = "27997dc5-8689-11f1-984a-6cb31113810e"
-REF_NEW = "b664d818-8729-11f1-984b-6cb31113810e"
+REF_NEW = "c18a2339-872c-11f1-984b-6cb31113810e"
 CHECK = [
     "DeletionMark", "ТипХраненияФайла", "ФайлХранилище_Type", "Том_Key",
     "ПутьКФайлу", "Автор_Key", "Редактирует_Key", "Изменил_Key", "ИндексКартинки",

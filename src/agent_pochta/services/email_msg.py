@@ -47,8 +47,27 @@ def _guess_mime_from_filename(filename: str) -> str | None:
     return _MIME_BY_EXT.get(ext)
 
 
+def _normalize_eml_attachment_headers(email_message) -> None:
+    """NFC-имена и MIME по расширению в RFC822 до Aspose (иначе NFD остаётся в OLE)."""
+    for part in email_message.walk():
+        raw_name = part.get_filename()
+        if not raw_name:
+            continue
+        name = normalize_attachment_filename(raw_name)
+        if not name:
+            continue
+        if part.get("Content-Type"):
+            part.set_param("name", name, header="Content-Type")
+        if part.get("Content-Disposition"):
+            part.set_param("filename", name, header="Content-Disposition")
+        guessed = _guess_mime_from_filename(name)
+        if guessed and part.get_content_type() == "application/octet-stream":
+            part.set_type(guessed)
+            part.set_param("name", name, header="Content-Type")
+
+
 def _fix_mapi_attachments(message) -> None:
-    """Нормализует имена и MIME вложений после from_email_message (Aspose)."""
+    """Доп. нормализация MAPI после from_email_message (дублирует EML-правки)."""
     for att in message.attachments or []:
         raw_name = getattr(att, "long_file_name", None) or getattr(att, "display_name", None)
         name = normalize_attachment_filename(raw_name)
@@ -71,6 +90,7 @@ def eml_bytes_to_msg_bytes(eml_bytes: bytes) -> bytes:
     from aspose.email_foss import msg as msgmod
 
     email_message = BytesParser(policy=policy.default).parsebytes(eml_bytes)
+    _normalize_eml_attachment_headers(email_message)
     message = msgmod.MapiMessage.from_email_message(email_message)
     _fix_mapi_attachments(message)
     with tempfile.NamedTemporaryFile(suffix=".msg", delete=False) as tmp:

@@ -42,6 +42,44 @@ def test_normalize_attachment_filename_nfc():
     assert nfc.endswith(".pdf")
 
 
+def test_eml_bytes_to_msg_bytes_normalizes_nfd_attachment_names():
+    import olefile
+    from email.message import EmailMessage
+
+    nfd_name = "2. Реквизиты СК НСК Раи\u0306йффаи\u0306йзен.pdf"
+    eml = EmailMessage()
+    eml["From"] = "a@b.com"
+    eml["To"] = "c@d.com"
+    eml["Subject"] = "NFD test"
+    eml.set_content("body")
+    eml.add_attachment(
+        b"%PDF-1.4 test",
+        maintype="application",
+        subtype="octet-stream",
+        filename=nfd_name,
+    )
+    msg_bytes = eml_bytes_to_msg_bytes(eml.as_bytes())
+    with tempfile.NamedTemporaryFile(suffix=".msg", delete=False) as tmp:
+        path = tmp.name
+    try:
+        Path(path).write_bytes(msg_bytes)
+        ole = olefile.OleFileIO(path)
+        name = ole.openstream(
+            ("__attach_version1.0_#00000000", "__substg1.0_3707001F")
+        ).read()
+        mime = ole.openstream(
+            ("__attach_version1.0_#00000000", "__substg1.0_370E001F")
+        ).read()
+        ole.close()
+        name_txt = name.decode("utf-16-le").split("\x00")[0]
+        mime_txt = mime.decode("utf-16-le").split("\x00")[0]
+        assert "\u0306" not in name_txt
+        assert name_txt.endswith(".pdf")
+        assert mime_txt == "application/pdf"
+    finally:
+        os.unlink(path)
+
+
 def test_eml_bytes_to_msg_bytes_roundtrip_subject():
     from aspose.email_foss import msg as msgmod
 
