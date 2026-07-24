@@ -22,7 +22,11 @@ SEED_WORKERS: list[dict[str, Any]] = [
     {"id": "otk-w-3", "name": "Сидорова М.В.", "position": "Инженер ОТК"},
 ]
 
-SEED_PRESENTATIONS: list[dict[str, Any]] = [
+# Production seed is empty: OTK cards come from orchestrator cases after TMC journal handoff.
+SEED_PRESENTATIONS: list[dict[str, Any]] = []
+
+# Used only by unit tests via reset_otk_store_for_tests(..., seed_test_cards=True).
+TEST_SEED_PRESENTATIONS: list[dict[str, Any]] = [
     {
         "id": "pres-001",
         "organization": "ООО НПО «Турбулентность-Дон»",
@@ -223,11 +227,29 @@ def get_otk_store(path: Path | None = None) -> OtkPresentationStore:
     return _STORE
 
 
-def reset_otk_store_for_tests(path: Path) -> OtkPresentationStore:
+def reset_otk_store_for_tests(
+    path: Path,
+    *,
+    seed_test_cards: bool = True,
+) -> OtkPresentationStore:
     """Replace default singleton with a fresh store at `path` (tests)."""
     global _STORE
     if path.exists():
         path.unlink()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "workers": deepcopy(SEED_WORKERS),
+                "presentations": deepcopy(TEST_SEED_PRESENTATIONS)
+                if seed_test_cards
+                else [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     _STORE = OtkPresentationStore(path)
     return _STORE
 
@@ -236,6 +258,7 @@ __all__ = [
     "OtkPresentationStore",
     "SEED_PRESENTATIONS",
     "SEED_WORKERS",
+    "TEST_SEED_PRESENTATIONS",
     "get_otk_store",
     "reset_otk_store_for_tests",
 ]

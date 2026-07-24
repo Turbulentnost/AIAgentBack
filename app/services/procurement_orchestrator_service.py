@@ -26,6 +26,7 @@ from app.agents.procurement_role_agents.config import (
     PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     PURCHASE_MANAGER_AGENT_ID,
+    QUALITY_ENGINEER_AGENT_ID,
     QUALITY_ROLE_AGENT_IDS,
     WAREHOUSE_PICKER_AGENT_ID,
     agent_id_for_quality_status,
@@ -131,9 +132,10 @@ DEFAULT_ROUTE_STAGES = [
     {"stage_id": "data", "label": "Данные", "order": 2},
     {"stage_id": "coverage", "label": "Обеспечение", "order": 3},
     {"stage_id": "purchase", "label": "Закупка", "order": 4},
-    {"stage_id": "payment", "label": "Оплата", "order": 5},
-    {"stage_id": "delivery", "label": "Поставка", "order": 6},
-    {"stage_id": "receipt", "label": "Оприходование", "order": 7},
+    {"stage_id": "quality", "label": "ОТК", "order": 5},
+    {"stage_id": "payment", "label": "Оплата", "order": 6},
+    {"stage_id": "delivery", "label": "Поставка", "order": 7},
+    {"stage_id": "receipt", "label": "Оприходование", "order": 8},
 ]
 
 
@@ -3155,7 +3157,20 @@ class ProcurementOrchestratorService:
         return payload
 
     def _serialize_route_stages(self, case: ProcurementCase) -> list[dict[str, Any]]:
-        configured = (case.case_metadata or {}).get("route_stages") or DEFAULT_ROUTE_STAGES
+        configured = list(
+            (case.case_metadata or {}).get("route_stages") or DEFAULT_ROUTE_STAGES
+        )
+        # Старые кейсы могли сохранить маршрут без этапа ОТК — дополняем из DEFAULT.
+        configured_ids = {
+            str(item.get("stage_id") or "")
+            for item in configured
+            if isinstance(item, dict)
+        }
+        for item in DEFAULT_ROUTE_STAGES:
+            stage_id = str(item.get("stage_id") or "")
+            if stage_id and stage_id not in configured_ids:
+                configured.append(dict(item))
+                configured_ids.add(stage_id)
         status_map = {
             ProcurementCaseStatus.NEW.value: "basis",
             ProcurementCaseStatus.AGENT_WAITING.value: "basis",
@@ -3164,6 +3179,12 @@ class ProcurementOrchestratorService:
             ProcurementCaseStatus.HUMAN_REQUIRED.value: "coverage",
             ProcurementCaseStatus.BLOCKED.value: "coverage",
             ProcurementCaseStatus.ORDERED.value: "purchase",
+            ProcurementCaseStatus.QUALITY_QUEUED.value: "quality",
+            ProcurementCaseStatus.QUALITY_ASSIGNED.value: "quality",
+            ProcurementCaseStatus.QUALITY_DOC_CHECK.value: "quality",
+            ProcurementCaseStatus.QUALITY_INSPECTION.value: "quality",
+            ProcurementCaseStatus.QUALITY_DECISION.value: "quality",
+            ProcurementCaseStatus.QUALITY_RELEASED.value: "quality",
             ProcurementCaseStatus.CLOSED.value: "receipt",
             ProcurementCaseStatus.FAILED.value: "data",
         }
@@ -3186,8 +3207,23 @@ class ProcurementOrchestratorService:
                 and not metadata.get("purchase_manager_workspace_archived_at")
             )
         )
+        otk_active = (
+            case.current_agent_id == QUALITY_ENGINEER_AGENT_ID
+            or bool(metadata.get("otk_handed_off_at"))
+            or bool(metadata.get("otk_started_at"))
+            or case.status.startswith("quality_")
+            or (
+                isinstance(metadata.get("tmc_presentation_coverage"), dict)
+                and str(
+                    (metadata.get("tmc_presentation_coverage") or {}).get("status") or ""
+                )
+                in {"partial", "full"}
+            )
+        )
         # Ролевой агент важнее пустого/устаревшего control_point: иначе маршрут
         # залипает на «Основание», хотя уже работает комплектовщик/менеджер.
+        # ОТК в параллели с PM/picker: ствол остаётся на coverage/purchase,
+        # этап quality рисуется отдельной веткой на фронте.
         if picker_active and current_stage in {"basis", "data", "KT1", None, ""}:
             current_stage = "coverage"
         elif (
@@ -3196,6 +3232,22 @@ class ProcurementOrchestratorService:
             and current_stage in {"basis", "data", "coverage", "KT1", None, ""}
         ):
             current_stage = "purchase"
+        elif (
+            otk_active
+            and not picker_active
+            and not purchase_manager_active
+            and current_stage
+            in {
+                "basis",
+                "data",
+                "coverage",
+                "purchase",
+                "KT1",
+                None,
+                "",
+            }
+        ):
+            current_stage = "quality"
         if current_stage == "KT1":
             current_stage = "basis"
         stages: list[dict[str, Any]] = []

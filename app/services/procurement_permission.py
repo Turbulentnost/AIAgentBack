@@ -45,6 +45,8 @@ _OTK_HEAD_MARKERS = (
 _QUALITY_ENGINEER_MARKERS = (
     "инженер по качеству",
     "инженер отк",
+    "сотрудник отк",
+    "работник отк",
 )
 _QUALITY_DEPUTY_MARKERS = (
     "заместитель директора по качеству",

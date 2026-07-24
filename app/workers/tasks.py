@@ -1087,9 +1087,14 @@ def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
         }
 
     async def _run() -> dict[str, Any]:
+        from app.services.tmc_presentation_reconciliation_service import (
+            TmcPresentationReconciliationService,
+        )
+
         async with AsyncSessionLocal() as db:
             try:
                 summary = await SupplierOrderReconciliationService(db).reconcile()
+                tmc_summary = await TmcPresentationReconciliationService(db).reconcile()
                 await db.commit()
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
@@ -1100,6 +1105,7 @@ def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
+        summary["tmc_presentation"] = tmc_summary
         summary["celery_task_id"] = self.request.id
         summary["task_name"] = "reconcile_procurement_supplier_orders"
         summary["finished_at"] = datetime.now(timezone.utc).isoformat()

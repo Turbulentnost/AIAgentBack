@@ -21,9 +21,10 @@ from app.api.v1.endpoints import otk as otk_endpoints
 
 
 @pytest.fixture()
-def otk_service(tmp_path: Path) -> OtkPresentationService:
+def otk_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> OtkPresentationService:
+    monkeypatch.setenv("OTK_USE_MOCK_STORE", "1")
     store = reset_otk_store_for_tests(tmp_path / "otk_presentations.json")
-    return OtkPresentationService(store)
+    return OtkPresentationService(store=store)
 
 
 def test_sample_rule_depends_on_category(otk_service: OtkPresentationService) -> None:
@@ -55,14 +56,15 @@ def test_sample_rule_depends_on_category(otk_service: OtkPresentationService) ->
     assert rated["sample_size"] == 2
 
 
-def test_list_and_get_seeded(otk_service: OtkPresentationService) -> None:
-    listing = otk_service.list_presentations()
+@pytest.mark.asyncio
+async def test_list_and_get_seeded(otk_service: OtkPresentationService) -> None:
+    listing = await otk_service.list_presentations()
     assert len(listing.items) == 3
     assert listing.pending_count == 3
     assert listing.earliest_due_at is not None
     assert len(listing.workers) == 3
 
-    card = otk_service.get_presentation("pres-001")
+    card = await otk_service.get_presentation("pres-001")
     assert card is not None
     assert len(card.lines) == 2
     assert card.lines[0].sample_rule is not None
@@ -70,16 +72,17 @@ def test_list_and_get_seeded(otk_service: OtkPresentationService) -> None:
     assert card.lines[0].sample_rule.sample_pct == 10.0
 
 
-def test_update_line_category_recomputes_sample(
+@pytest.mark.asyncio
+async def test_update_line_category_recomputes_sample(
     otk_service: OtkPresentationService,
 ) -> None:
-    before = otk_service.get_presentation("pres-001")
+    before = await otk_service.get_presentation("pres-001")
     assert before is not None
     line_id = before.lines[0].id
     assert before.lines[0].sample_rule is not None
     assert before.lines[0].sample_rule.sample_basis == "10pct"
 
-    updated = otk_service.update_line(
+    updated = await otk_service.update_line(
         "pres-001",
         line_id,
         OtkShipmentLineUpdate(category="fasteners"),
@@ -92,8 +95,9 @@ def test_update_line_category_recomputes_sample(
     assert line.sample_rule.sample_pct is None
 
 
-def test_add_and_delete_line(otk_service: OtkPresentationService) -> None:
-    added = otk_service.add_line(
+@pytest.mark.asyncio
+async def test_add_and_delete_line(otk_service: OtkPresentationService) -> None:
+    added = await otk_service.add_line(
         "pres-003",
         OtkShipmentLineCreate(
             code="99",
@@ -110,13 +114,14 @@ def test_add_and_delete_line(otk_service: OtkPresentationService) -> None:
     assert added.lines[-1].sample_rule is not None
     assert added.lines[-1].sample_rule.sample_size == 5
 
-    deleted = otk_service.delete_line("pres-003", new_id)
+    deleted = await otk_service.delete_line("pres-003", new_id)
     assert deleted is not None
     assert len(deleted.lines) == 1
 
 
-def test_patch_presentation_header(otk_service: OtkPresentationService) -> None:
-    updated = otk_service.update_presentation(
+@pytest.mark.asyncio
+async def test_patch_presentation_header(otk_service: OtkPresentationService) -> None:
+    updated = await otk_service.update_presentation(
         "pres-001",
         OtkPresentationUpdate(status="in_progress", storage_zone="Зона X"),
     )
@@ -125,8 +130,9 @@ def test_patch_presentation_header(otk_service: OtkPresentationService) -> None:
     assert updated.storage_zone == "Зона X"
 
 
-def test_write_to_1c_stub(otk_service: OtkPresentationService) -> None:
-    result = otk_service.write_check_to_1c("pres-001")
+@pytest.mark.asyncio
+async def test_write_to_1c_stub(otk_service: OtkPresentationService) -> None:
+    result = await otk_service.write_check_to_1c("pres-001")
     assert result is not None
     assert result.ok is True
     assert result.stub is True

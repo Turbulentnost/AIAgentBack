@@ -56,6 +56,10 @@ async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessR
         data["name"] = "ИИ-агент по закупке"
     if agent.slug == "purchase_manager_agent":
         data["name"] = "ИИ-агент менеджера по закупкам"
+    if agent.slug == "quality_engineer_agent":
+        data["name"] = "ИИ-агент работника ОТК"
+    if agent.slug == "otk_head_agent":
+        data["name"] = "ИИ-агент начальника ОТК"
     data.update(
         {
             "access_level": "full" if current_user.is_superuser else "granted",
