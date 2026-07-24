@@ -30,13 +30,15 @@ from agent_pochta.services.odata_attached_file import (
     verify_attached_file_storage,
 )
 
-_DATABASE_FIELD_MAP = {
+_VOLUME_FIELD_MAP = {
     "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
     "owner_document_entity": "Document_ТД_ВходящаяКорреспонденция",
     "fields": {
         "name": "Description",
         "extension": "Расширение",
         "owner_key": "ВладелецФайла_Key",
+        "volume_key": "Том_Key",
+        "file_path": "ПутьКФайлу",
         "storage_binary": "ФайлХранилище_Base64Data",
         "storage_binary_type": "ФайлХранилище_Type",
         "storage_stream": "ФайлХранилище",
@@ -44,14 +46,91 @@ _DATABASE_FIELD_MAP = {
         "size": "Размер",
         "created_at": "ДатаСоздания",
         "modified_at": "ДатаМодификацииУниверсальная",
+        "loan_date": "ДатаЗаема",
         "author_key": "Автор_Key",
+        "modified_by_key": "Изменил_Key",
         "edit_lock_key": "Редактирует_Key",
+        "comment": "Описание",
+        "deletion_mark": "DeletionMark",
+        "is_folder": "IsFolder",
+        "parent_key": "Parent_Key",
+        "image_index": "ИндексКартинки",
+        "store_versions": "ХранитьВерсии",
+        "signed_ep": "ПодписанЭП",
+        "encrypted": "Зашифрован",
+        "text_extraction_status": "СтатусИзвлеченияТекста",
+        "text_storage_type": "ТекстХранилище_Type",
+        "text_storage_binary": "ТекстХранилище_Base64Data",
+    },
+    "defaults": {
+        "storage_mode": "volume",
+        "storage_kind": "ВТомахНаДиске",
+        "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+        "volume_binary_type": "application/xml+xdto",
+        "storage_binary_type": "application/octet-stream",
+        "text_storage_type": "application/xml+xdto",
+        "upload_binary_via_stream": False,
+        "loan_date": "0001-01-01T00:00:00",
+        "image_index": "0",
+        "comment": "",
+        "text_extraction_status": "",
+        "text_storage_binary": "",
+        "deletion_mark": False,
+        "is_folder": False,
+        "store_versions": False,
+        "signed_ep": False,
+        "encrypted": False,
+    },
+}
+
+_DATABASE_FIELD_MAP = {
+    "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+    "owner_document_entity": "Document_ТД_ВходящаяКорреспонденция",
+    "fields": {
+        "name": "Description",
+        "extension": "Расширение",
+        "owner_key": "ВладелецФайла_Key",
+        "volume_key": "Том_Key",
+        "file_path": "ПутьКФайлу",
+        "storage_binary": "ФайлХранилище_Base64Data",
+        "storage_binary_type": "ФайлХранилище_Type",
+        "storage_stream": "ФайлХранилище",
+        "storage_kind": "ТипХраненияФайла",
+        "size": "Размер",
+        "created_at": "ДатаСоздания",
+        "modified_at": "ДатаМодификацииУниверсальная",
+        "loan_date": "ДатаЗаема",
+        "author_key": "Автор_Key",
+        "modified_by_key": "Изменил_Key",
+        "edit_lock_key": "Редактирует_Key",
+        "comment": "Описание",
+        "deletion_mark": "DeletionMark",
+        "is_folder": "IsFolder",
+        "parent_key": "Parent_Key",
+        "image_index": "ИндексКартинки",
+        "store_versions": "ХранитьВерсии",
+        "signed_ep": "ПодписанЭП",
+        "encrypted": "Зашифрован",
+        "text_extraction_status": "СтатусИзвлеченияТекста",
+        "text_storage_type": "ТекстХранилище_Type",
+        "text_storage_binary": "ТекстХранилище_Base64Data",
     },
     "defaults": {
         "storage_mode": "database",
         "storage_kind": "ВИнформационнойБазе",
         "storage_binary_type": "application/octet-stream",
+        "text_storage_type": "application/xml+xdto",
         "upload_binary_via_stream": False,
+        "loan_date": "0001-01-01T00:00:00",
+        "image_index": "0",
+        "comment": "",
+        "text_extraction_status": "",
+        "text_storage_binary": "",
+        "deletion_mark": False,
+        "is_folder": False,
+        "store_versions": False,
+        "signed_ep": False,
+        "encrypted": False,
     },
 }
 from agent_pochta.services.odata_integration import (
@@ -75,7 +154,7 @@ def test_split_filename_rejects_empty():
         split_filename(".pdf")
 
 
-def test_build_attached_file_payload_volume_mode_by_default():
+def test_build_attached_file_payload_database_mode_by_default():
     ts = datetime(2026, 7, 24, 10, 30, 0, tzinfo=ZoneInfo("Europe/Moscow"))
     entity, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
@@ -89,12 +168,38 @@ def test_build_attached_file_payload_volume_mode_by_default():
     assert payload["Description"] == "АЛ00-000762"
     assert payload["Расширение"] == "msg"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert payload["ПутьКФайлу"] == ""
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
+    assert payload["ФайлХранилище_Base64Data"]
+    assert payload["Размер"] == 68
+    assert payload["ДатаЗаема"] == "0001-01-01T00:00:00"
+    assert payload["Изменил_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert payload["ИндексКартинки"] == "0"
+    assert payload["DeletionMark"] is False
+    assert payload["ХранитьВерсии"] is False
+    assert payload["ТекстХранилище_Type"] == "application/xml+xdto"
+    assert "Редактирует_Key" not in payload
+
+
+def test_build_attached_file_payload_volume_mode_explicit():
+    ts = datetime(2026, 7, 24, 10, 30, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+    entity, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="АЛ00-000762.msg",
+            content=b"\xd0\xcf\x11\xe0" + b"\x00" * 64,
+            processed_at=ts,
+        ),
+        field_map=_VOLUME_FIELD_MAP,
+    )
+    assert entity == "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
     assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
     assert payload["Том_Key"] == "21886495-364e-11ea-82f2-ac1f6b05524c"
     assert payload["ПутьКФайлу"] == "20260724\\АЛ00-000762.msg"
     assert payload["ФайлХранилище_Type"] == "application/xml+xdto"
     assert "ФайлХранилище_Base64Data" not in payload
-    assert payload["Размер"] == 68
 
 
 def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
@@ -108,7 +213,8 @@ def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
     assert payload["Расширение"] == "pdf"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
     assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert "Том_Key" not in payload
+    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert payload["ПутьКФайлу"] == ""
     assert payload["ФайлХранилище_Base64Data"]
     assert payload["ФайлХранилище_Type"] == "application/octet-stream"
     assert payload["Размер"] == 8
@@ -286,7 +392,7 @@ def test_stream_mode_skips_volume_key_even_if_configured():
         },
     )
     assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert "Том_Key" not in payload
+    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
 
 
 def test_resolve_stream_content_type_for_eml_and_msg():
@@ -302,6 +408,7 @@ def test_build_attached_file_payload_msg_volume_uses_xdto_type():
             filename="НП00-003877.msg",
             content=b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64,
         ),
+        field_map=_VOLUME_FIELD_MAP,
     )
     assert payload["Description"] == "НП00-003877"
     assert payload["Расширение"] == "msg"
@@ -372,6 +479,7 @@ def test_attach_file_posts_to_catalog_volume_mode():
         client,
         document_ref_key=DOC_KEY,
         file_input=AttachedFileInput(filename="a.pdf", content=b"data"),
+        field_map=_VOLUME_FIELD_MAP,
     )
 
     assert result.ref_key == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -466,14 +574,15 @@ def test_odata_integration_attach_files_delegates_to_client():
         return_value={
             "Ref_Key": DOC_KEY,
             "Размер": 3,
-            "ТипХраненияФайла": "ВТомахНаДиске",
-            "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
-            "ПутьКФайлу": "20260724\\НП00-003877.msg",
+            "ТипХраненияФайла": "ВИнформационнойБазе",
+            "Том_Key": "00000000-0000-0000-0000-000000000000",
+            "ПутьКФайлу": "",
             "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
+            "Изменил_Key": "00000000-0000-0000-0000-000000000000",
             "Автор_Key": AUTHOR_KEY,
         }
     )
-    service._client.get_entity_stream = MagicMock(return_value=b"")
+    service._client.get_entity_stream = MagicMock(return_value=b"123")
     service._client.create_entity = MagicMock(
         return_value={"Ref_Key": "cccccccc-cccc-cccc-cccc-cccccccccccc"}
     )
@@ -492,6 +601,8 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert payload["Автор_Key"] == AUTHOR_KEY
     assert "Редактирует_Key" not in payload
     assert payload["Description"] == "НП00-003877"
+    assert payload["ФайлХранилище_Base64Data"]
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
     service._client.patch_entity.assert_called()
     patch_calls = service._client.patch_entity.call_args_list
     assert any(
@@ -501,7 +612,11 @@ def test_odata_integration_attach_files_delegates_to_client():
         call.args[2].get("Редактирует_Key") == "00000000-0000-0000-0000-000000000000"
         for call in patch_calls
     )
-    service._client.put_entity_stream.assert_called_once()
+    assert any(
+        call.args[2].get("Изменил_Key") == "00000000-0000-0000-0000-000000000000"
+        for call in patch_calls
+    )
+    service._client.put_entity_stream.assert_not_called()
 
 
 def test_verify_attached_file_storage_accepts_volume_with_zero_stream():
@@ -630,6 +745,7 @@ def test_release_attached_file_edit_lock_verifies_cleared_lock():
     payload = client.patch_entity.call_args[0][2]
     assert payload["Автор_Key"] == AUTHOR_KEY
     assert payload["Редактирует_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert payload["Изменил_Key"] == "00000000-0000-0000-0000-000000000000"
 
 
 def test_release_attached_file_edit_lock_raises_if_still_locked():

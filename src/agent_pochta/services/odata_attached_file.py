@@ -78,13 +78,23 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "edit_lock_key": "Редактирует_Key",
             },
             "defaults": {
-                "storage_mode": "volume",
-                "storage_kind": _VOLUME_STORAGE_KIND,
+                "storage_mode": "database",
+                "storage_kind": _DATABASE_STORAGE_KIND,
                 "volume_key": _DEFAULT_VOLUME_KEY,
                 "volume_binary_type": _VOLUME_BINARY_TYPE,
-                # Двоичное содержимое вложения (не XDTO-обёртка пустого хранилища).
                 "storage_binary_type": "application/octet-stream",
+                "text_storage_type": _VOLUME_BINARY_TYPE,
                 "upload_binary_via_stream": False,
+                "loan_date": "0001-01-01T00:00:00",
+                "image_index": "0",
+                "comment": "",
+                "text_extraction_status": "",
+                "text_storage_binary": "",
+                "deletion_mark": False,
+                "is_folder": False,
+                "store_versions": False,
+                "signed_ep": False,
+                "encrypted": False,
             },
         }
     data = json.loads(file_path.read_text(encoding="utf-8"))
@@ -169,10 +179,53 @@ def format_attached_file_modified_universal(value: datetime) -> str:
     return ts.replace(microsecond=0, tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def format_attached_file_modified_universal(value: datetime) -> str:
-    """ДатаМодификацииУниверсальная: UTC без tz."""
-    ts = _coerce_processing_timestamp(value).astimezone(timezone.utc)
-    return ts.replace(microsecond=0, tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
+def _field_name(fields: dict[str, Any], key: str, fallback: str = "") -> str:
+    return str(fields.get(key) or fallback).strip()
+
+
+def _apply_static_attached_file_fields(
+    payload: dict[str, Any],
+    *,
+    fields: dict[str, Any],
+    defaults: dict[str, Any],
+) -> None:
+    """Заполняет булевы/строковые поля по шаблону рабочей записи АЛ00-000760."""
+    static_bool = (
+        ("deletion_mark", "DeletionMark", "deletion_mark"),
+        ("is_folder", "IsFolder", "is_folder"),
+        ("store_versions", "ХранитьВерсии", "store_versions"),
+        ("signed_ep", "ПодписанЭП", "signed_ep"),
+        ("encrypted", "Зашифрован", "encrypted"),
+    )
+    for map_key, fallback_name, default_key in static_bool:
+        if name := _field_name(fields, map_key, fallback_name):
+            payload[name] = bool(defaults.get(default_key, False))
+
+    static_values: tuple[tuple[str, str, Any], ...] = (
+        ("parent_key", "Parent_Key", _EMPTY_GUID),
+        ("comment", "Описание", defaults.get("comment", "")),
+        ("image_index", "ИндексКартинки", defaults.get("image_index", "0")),
+        ("loan_date", "ДатаЗаема", defaults.get("loan_date", "0001-01-01T00:00:00")),
+        ("modified_by_key", "Изменил_Key", _EMPTY_GUID),
+        (
+            "text_extraction_status",
+            "СтатусИзвлеченияТекста",
+            defaults.get("text_extraction_status", ""),
+        ),
+        (
+            "text_storage_type",
+            "ТекстХранилище_Type",
+            defaults.get("text_storage_type", _VOLUME_BINARY_TYPE),
+        ),
+        (
+            "text_storage_binary",
+            "ТекстХранилище_Base64Data",
+            defaults.get("text_storage_binary", ""),
+        ),
+    )
+    for map_key, fallback_name, value in static_values:
+        if name := _field_name(fields, map_key, fallback_name):
+            payload[name] = value
 
 
 def resolve_attached_file_storage_mode(defaults: dict[str, Any] | None = None) -> str:
@@ -289,14 +342,19 @@ def build_attached_file_payload(
             )
         if storage_type_field := fields.get("storage_binary_type"):
             payload[str(storage_type_field)] = plan["binary_type"]
-    elif volume_field := fields.get("volume_key"):
-        volume_value = (defaults.get("volume_key") or "").strip()
-        if (
-            volume_value
-            and volume_value != _EMPTY_GUID
-            and storage_kind == _VOLUME_STORAGE_KIND
-        ):
-            payload[str(volume_field)] = volume_value
+    else:
+        if volume_field := fields.get("volume_key"):
+            payload[str(volume_field)] = _EMPTY_GUID
+        if path_field := fields.get("file_path"):
+            payload[str(path_field)] = ""
+        if volume_value := (defaults.get("volume_key") or "").strip():
+            if (
+                volume_value
+                and volume_value != _EMPTY_GUID
+                and storage_kind == _VOLUME_STORAGE_KIND
+            ):
+                if volume_field := fields.get("volume_key"):
+                    payload[str(volume_field)] = volume_value
     if include_binary:
         if storage_field := fields.get("storage_binary"):
             payload[str(storage_field)] = base64.b64encode(content).decode("ascii")
@@ -314,9 +372,11 @@ def build_attached_file_payload(
         payload[str(modified_field)] = format_attached_file_modified_universal(processed_at)
     if file_input.author_key and (author_field := fields.get("author_key")):
         payload[str(author_field)] = file_input.author_key
-    # Редактирует_Key — блокировка «файл занят» в БСП, не «кто редактировал»; не заполняем.
+    # Редактирует_Key — блокировка «файл занят» в БСП; не заполняем на POST.
     if file_input.comment and (comment_field := fields.get("comment")):
         payload[str(comment_field)] = file_input.comment.strip()
+
+    _apply_static_attached_file_fields(payload, fields=fields, defaults=defaults)
 
     if not payload:
         raise AttachedFileError("Маппинг полей присоединённого файла пуст — проверьте field_map")
@@ -570,9 +630,12 @@ def release_attached_file_edit_lock(
     cfg = field_map or load_attached_file_field_map()
     fields = cfg.get("fields") or {}
     lock_field = str(fields.get("edit_lock_key") or "Редактирует_Key").strip()
+    modified_by_field = str(fields.get("modified_by_key") or "Изменил_Key").strip()
     patch_payload: dict[str, Any] = {}
     if lock_field:
         patch_payload[lock_field] = _EMPTY_GUID
+    if modified_by_field:
+        patch_payload[modified_by_field] = _EMPTY_GUID
     if author_key and (author_field := fields.get("author_key")):
         patch_payload[str(author_field)] = author_key
     if not patch_payload:

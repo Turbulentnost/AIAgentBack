@@ -14,15 +14,39 @@
     "size": "Размер",
     "created_at": "ДатаСоздания",
     "modified_at": "ДатаМодификацииУниверсальная",
+    "loan_date": "ДатаЗаема",
     "author_key": "Автор_Key",
-    "edit_lock_key": "Редактирует_Key"
+    "modified_by_key": "Изменил_Key",
+    "edit_lock_key": "Редактирует_Key",
+    "comment": "Описание",
+    "deletion_mark": "DeletionMark",
+    "is_folder": "IsFolder",
+    "parent_key": "Parent_Key",
+    "image_index": "ИндексКартинки",
+    "store_versions": "ХранитьВерсии",
+    "signed_ep": "ПодписанЭП",
+    "encrypted": "Зашифрован",
+    "text_extraction_status": "СтатусИзвлеченияТекста",
+    "text_storage_type": "ТекстХранилище_Type",
+    "text_storage_binary": "ТекстХранилище_Base64Data"
   },
   "defaults": {
-    "storage_mode": "volume",
-    "storage_kind": "ВТомахНаДиске",
+    "storage_mode": "database",
+    "storage_kind": "ВИнформационнойБазе",
     "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
     "volume_binary_type": "application/xml+xdto",
     "storage_binary_type": "application/octet-stream",
-    "upload_binary_via_stream": false
+    "text_storage_type": "application/xml+xdto",
+    "upload_binary_via_stream": false,
+    "loan_date": "0001-01-01T00:00:00",
+    "image_index": "0",
+    "comment": "",
+    "text_extraction_status": "",
+    "text_storage_binary": "",
+    "deletion_mark": false,
+    "is_folder": false,
+    "store_versions": false,
+    "signed_ep": false,
+    "encrypted": false
   }
 }
