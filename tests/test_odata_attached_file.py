@@ -154,7 +154,7 @@ def test_split_filename_rejects_empty():
         split_filename(".pdf")
 
 
-def test_build_attached_file_payload_database_mode_by_default():
+def test_build_attached_file_payload_volume_mode_by_default():
     ts = datetime(2026, 7, 24, 10, 30, 0, tzinfo=ZoneInfo("Europe/Moscow"))
     entity, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
@@ -168,11 +168,11 @@ def test_build_attached_file_payload_database_mode_by_default():
     assert payload["Description"] == "АЛ00-000762"
     assert payload["Расширение"] == "msg"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
-    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
-    assert payload["ПутьКФайлу"] == ""
-    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
-    assert payload["ФайлХранилище_Base64Data"]
+    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+    assert payload["Том_Key"] == "21886495-364e-11ea-82f2-ac1f6b05524c"
+    assert payload["ПутьКФайлу"] == "20260724\\АЛ00-000762.msg"
+    assert payload["ФайлХранилище_Type"] == "application/xml+xdto"
+    assert "ФайлХранилище_Base64Data" not in payload
     assert payload["Размер"] == 68
     assert payload["ДатаЗаема"] == "0001-01-01T00:00:00"
     assert "Изменил_Key" not in payload
@@ -181,6 +181,25 @@ def test_build_attached_file_payload_database_mode_by_default():
     assert payload["ХранитьВерсии"] is False
     assert payload["ТекстХранилище_Type"] == "application/xml+xdto"
     assert "Редактирует_Key" not in payload
+
+
+def test_build_attached_file_payload_database_mode_explicit():
+    ts = datetime(2026, 7, 24, 10, 30, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+    entity, payload = build_attached_file_payload(
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename="АЛ00-000762.msg",
+            content=b"\xd0\xcf\x11\xe0" + b"\x00" * 64,
+            processed_at=ts,
+        ),
+        field_map=_DATABASE_FIELD_MAP,
+    )
+    assert entity == "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert payload["ПутьКФайлу"] == ""
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
+    assert payload["ФайлХранилище_Base64Data"]
 
 
 def test_build_attached_file_payload_volume_mode_explicit():
@@ -397,9 +416,39 @@ def test_stream_mode_skips_volume_key_even_if_configured():
 
 
 def test_resolve_stream_content_type_for_eml_and_msg():
-    assert resolve_stream_content_type("Входящее_письмо.eml") == "message/rfc822"
-    assert resolve_stream_content_type("НП00-003877.msg") == "application/vnd.ms-outlook"
-    assert resolve_stream_content_type("scan.pdf") == "application/octet-stream"
+    db_defaults = _DATABASE_FIELD_MAP["defaults"]
+    assert (
+        resolve_stream_content_type(
+            "Входящее_письмо.eml",
+            defaults=db_defaults,
+            storage_mode="database",
+        )
+        == "message/rfc822"
+    )
+    assert (
+        resolve_stream_content_type(
+            "НП00-003877.msg",
+            defaults=db_defaults,
+            storage_mode="database",
+        )
+        == "application/vnd.ms-outlook"
+    )
+    assert (
+        resolve_stream_content_type(
+            "scan.pdf",
+            defaults=db_defaults,
+            storage_mode="database",
+        )
+        == "application/octet-stream"
+    )
+    assert (
+        resolve_stream_content_type(
+            "scan.pdf",
+            defaults=_VOLUME_FIELD_MAP["defaults"],
+            storage_mode="volume",
+        )
+        == "application/xml+xdto"
+    )
 
 
 def test_build_attached_file_payload_msg_volume_uses_xdto_type():
@@ -490,7 +539,13 @@ def test_attach_file_posts_to_catalog_volume_mode():
     _entity, payload = client.create_entity.call_args[0]
     assert "ФайлХранилище_Base64Data" not in payload
     assert payload["ПутьКФайлу"]
-    client.put_entity_stream.assert_called_once()
+    client.put_entity_stream.assert_called_once_with(
+        "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "ФайлХранилище",
+        b"data",
+        content_type="application/xml+xdto",
+    )
     client.get_entity_stream.assert_called_once()
 
 
@@ -575,11 +630,11 @@ def test_odata_integration_attach_files_delegates_to_client():
         return_value={
             "Ref_Key": DOC_KEY,
             "Размер": 3,
-            "ТипХраненияФайла": "ВИнформационнойБазе",
-            "Том_Key": "00000000-0000-0000-0000-000000000000",
-            "ПутьКФайлу": "",
+            "ТипХраненияФайла": "ВТомахНаДиске",
+            "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+            "ПутьКФайлу": "20260724\\НП00-003877.msg",
             "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
-            "Изменил_Key": "00000000-0000-0000-0000-000000000000",
+            "Изменил_Key": AUTHOR_KEY,
             "Автор_Key": AUTHOR_KEY,
         }
     )
@@ -602,8 +657,9 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert payload["Автор_Key"] == AUTHOR_KEY
     assert "Редактирует_Key" not in payload
     assert payload["Description"] == "НП00-003877"
-    assert payload["ФайлХранилище_Base64Data"]
-    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert "ФайлХранилище_Base64Data" not in payload
+    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+    assert payload["ПутьКФайлу"]
     service._client.patch_entity.assert_called()
     patch_calls = service._client.patch_entity.call_args_list
     assert any(
@@ -617,7 +673,7 @@ def test_odata_integration_attach_files_delegates_to_client():
         call.args[2].get("Изменил_Key") == AUTHOR_KEY
         for call in patch_calls
     )
-    service._client.put_entity_stream.assert_not_called()
+    service._client.put_entity_stream.assert_called_once()
 
 
 def test_verify_attached_file_storage_accepts_volume_with_zero_stream():

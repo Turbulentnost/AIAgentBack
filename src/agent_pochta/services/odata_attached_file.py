@@ -78,8 +78,8 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "edit_lock_key": "Редактирует_Key",
             },
             "defaults": {
-                "storage_mode": "database",
-                "storage_kind": _DATABASE_STORAGE_KIND,
+                "storage_mode": "volume",
+                "storage_kind": _VOLUME_STORAGE_KIND,
                 "volume_key": _DEFAULT_VOLUME_KEY,
                 "volume_binary_type": _VOLUME_BINARY_TYPE,
                 "storage_binary_type": "application/octet-stream",
@@ -140,9 +140,17 @@ def resolve_stream_content_type(
     filename: str,
     *,
     defaults: dict[str, Any] | None = None,
+    storage_mode: str | None = None,
 ) -> str:
-    """Content-Type для PUT в Edm.Stream (Outlook/1С открывают .eml как message/rfc822)."""
+    """Content-Type для PUT в Edm.Stream.
+
+    На томе 1С ожидает application/xml+xdto (как ФайлХранилище_Type у ручных загрузок).
+    В ИБ — message/rfc822 / application/vnd.ms-outlook / octet-stream по расширению.
+    """
     cfg_defaults = defaults or {}
+    mode = storage_mode or resolve_attached_file_storage_mode(cfg_defaults)
+    if mode == "volume":
+        return str(cfg_defaults.get("volume_binary_type") or _VOLUME_BINARY_TYPE)
     try:
         _, extension = split_filename(filename)
     except AttachedFileError:
@@ -684,14 +692,23 @@ def upload_attached_file_binary(
     put_stream = getattr(client, "put_entity_stream", None)
     if not callable(put_stream):
         raise AttachedFileError("OData client does not support stream upload")
+    storage_mode = resolve_attached_file_storage_mode(defaults)
     resolved_type = (
         content_type
         or (
-            resolve_stream_content_type(filename, defaults=defaults)
+            resolve_stream_content_type(
+                filename,
+                defaults=defaults,
+                storage_mode=storage_mode,
+            )
             if filename
             else None
         )
-        or defaults.get("storage_binary_type")
+        or (
+            defaults.get("volume_binary_type")
+            if storage_mode == "volume"
+            else defaults.get("storage_binary_type")
+        )
         or "application/octet-stream"
     )
     last_exc: Exception | None = None
@@ -774,42 +791,14 @@ def attach_file_to_incoming_document(
     author_key = file_input.author_key
 
     if plan["upload_via_stream"]:
-        try:
-            upload_attached_file_binary(
-                client,
-                entity=entity,
-                ref_key=ref_key,
-                content=file_input.content,
-                field_map=cfg,
-                filename=file_input.filename,
-            )
-        except AttachedFileError:
-            if plan["mode"] != "volume":
-                raise
-            delete_entity = getattr(client, "delete_entity", None)
-            if not callable(delete_entity):
-                raise
-            delete_entity(entity, ref_key)
-            entity, payload = build_attached_file_payload(
-                document_ref_key=owner_key,
-                file_input=file_input,
-                field_map=cfg,
-                include_binary=True,
-            )
-            data = client.create_entity(entity, payload)
-            ref_key = str(data.get("Ref_Key") or "").strip()
-            if not ref_key:
-                raise AttachedFileError(
-                    f"OData fallback POST {entity} не вернул Ref_Key после ошибки stream PUT"
-                )
-            path_field = str(fields.get("file_path") or "ПутьКФайлу")
-            expected_path = str(payload.get(path_field) or "").strip()
-            if expected_path:
-                record = client.get_by_key(entity, ref_key) or {}
-                if not str(record.get(path_field) or "").strip():
-                    raise AttachedFileError(
-                        f"Fallback POST не заполнил {path_field} (Ref_Key={ref_key})"
-                    )
+        upload_attached_file_binary(
+            client,
+            entity=entity,
+            ref_key=ref_key,
+            content=file_input.content,
+            field_map=cfg,
+            filename=file_input.filename,
+        )
 
     verify_attached_file_storage(
         client,

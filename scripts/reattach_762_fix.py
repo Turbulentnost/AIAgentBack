@@ -1,4 +1,4 @@
-"""Delete old attachments and re-upload АЛ00-000762 with body-only MSG + separate PDF."""
+"""Delete old attachments and re-upload АЛ00-000762 (volume mode, manual Outlook pattern)."""
 from __future__ import annotations
 
 import json
@@ -32,11 +32,30 @@ from agent_pochta.services.odata_integration import resolve_attached_file_author
 DOC_NUMBER = "АЛ00-000762"
 DOC_ENTITY = "Document_ТД_ВходящаяКорреспонденция"
 EML_FALLBACK = ROOT / "data/temp/compare_762/АЛ00-000762_2026-07-24T07-17-23_АЛ00-000762.eml"
+META_KEYS = (
+    "ТипХраненияФайла",
+    "Том_Key",
+    "ПутьКФайлу",
+    "ФайлХранилище_Type",
+    "Размер",
+    "Редактирует_Key",
+    "Изменил_Key",
+    "Автор_Key",
+    "DeletionMark",
+    "ДатаСоздания",
+)
 
 
-def newest_doc_ref(base: str, auth, number: str) -> str | None:
+def volume_field_map(base: dict) -> dict:
+    defaults = dict(base.get("defaults") or {})
+    defaults["storage_mode"] = "volume"
+    defaults["storage_kind"] = "ВТомахНаДиске"
+    return {**base, "defaults": defaults}
+
+
+def newest_doc_ref(base: str, auth, number: str, doc_entity: str) -> str | None:
     url = (
-        f"{base}{quote(DOC_ENTITY)}?$format=json"
+        f"{base}{quote(doc_entity)}?$format=json"
         f"&$filter={quote(f'Number eq {chr(39)}{number}{chr(39)}')}"
         f"&$orderby=Date desc&$top=1"
     )
@@ -60,9 +79,8 @@ def extract_pdf_attachment(eml_bytes: bytes) -> tuple[str, bytes] | None:
 
 def msg_embedded_count(content: bytes) -> int:
     import olefile
-
-    import tempfile
     import os
+    import tempfile
 
     with tempfile.NamedTemporaryFile(suffix=".msg", delete=False) as tmp:
         path = tmp.name
@@ -85,14 +103,14 @@ def main() -> None:
     settings = get_settings()
     base = settings.odata_base_url.rstrip("/") + "/"
     auth = (settings.odata_username, settings.odata_password)
-    fm = load_attached_file_field_map()
+    fm = volume_field_map(load_attached_file_field_map())
     client = ODataClient(
         settings.odata_base_url,
         username=settings.odata_username,
         password=settings.odata_password,
         timeout_sec=120,
     )
-    doc_ref = newest_doc_ref(base, auth, DOC_NUMBER)
+    doc_ref = newest_doc_ref(base, auth, DOC_NUMBER, settings.odata_incoming_doc_entity)
     if not doc_ref:
         print(json.dumps({"error": f"document {DOC_NUMBER} not found"}, ensure_ascii=False))
         raise SystemExit(1)
@@ -151,11 +169,14 @@ def main() -> None:
     stored_pdf = read_attached_file_storage_bytes(
         client, entity=pdf_result.entity, ref_key=pdf_result.ref_key, field_map=fm
     )
+    msg_meta = client.get_by_key(msg_result.entity, msg_result.ref_key) or {}
+    pdf_meta = client.get_by_key(pdf_result.entity, pdf_result.ref_key) or {}
     report = {
         "document": DOC_NUMBER,
         "doc_ref": doc_ref,
         "deleted_refs": deleted,
-        "strategy": "body-only-msg-plus-separate-pdf",
+        "strategy": "volume-body-only-msg-plus-separate-pdf",
+        "storage_mode": "volume",
         "msg_ref_key": msg_result.ref_key,
         "pdf_ref_key": pdf_result.ref_key,
         "pdf_filename": pdf_name,
@@ -164,10 +185,10 @@ def main() -> None:
         "pdf_size": len(pdf_bytes),
         "stored_msg_eq_local": stored_msg == msg_bytes,
         "stored_pdf_eq_local": stored_pdf == pdf_bytes,
-        "odata_meta_msg": {
-            k: (client.get_by_key(msg_result.entity, msg_result.ref_key) or {}).get(k)
-            for k in ("ТипХраненияФайла", "Размер", "Редактирует_Key", "DeletionMark")
-        },
+        "msg_stream_len": len(stored_msg),
+        "pdf_stream_len": len(stored_pdf),
+        "odata_meta_msg": {k: msg_meta.get(k) for k in META_KEYS},
+        "odata_meta_pdf": {k: pdf_meta.get(k) for k in META_KEYS},
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
