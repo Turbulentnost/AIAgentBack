@@ -7,7 +7,6 @@ from typing import Any, Protocol, TypedDict
 from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
@@ -17,10 +16,13 @@ from app.agents.procurement_manager_agent.documents import (
     render_rfq_draft,
 )
 from app.agents.procurement_manager_agent.evaluate import (
+    build_trusted_cost_estimate,
     evaluate_case_positions,
     evaluate_quotes,
 )
 from app.agents.procurement_manager_agent.schemas import (
+    NomenclatureSearchItem,
+    NomenclatureSupplierResult,
     PurchaseOrderLine,
     QuoteLine,
     RFQDraftRequest,
@@ -30,7 +32,12 @@ from app.agents.procurement_manager_agent.schemas import (
     SupplierSearchRequest,
     SupplierSearchResult,
 )
-from app.agents.procurement_manager_agent.suppliers import HybridSupplierSearchService
+from app.agents.procurement_manager_agent.suppliers import (
+    MIN_SUPPLIERS_BEFORE_SKIP,
+    WEB_LIMIT_PER_NOMENCLATURE,
+    HybridSupplierSearchService,
+    qualifying_suppliers_for_skip,
+)
 
 
 class ProcurementManagerGraphRuntime(Protocol):
@@ -51,9 +58,11 @@ class ProcurementManagerGraphState(TypedDict, total=False):
     internal_candidates: list[dict[str, Any]]
     web_candidates: list[dict[str, Any]]
     candidates: list[dict[str, Any]]
+    nomenclature_results: list[dict[str, Any]]
     sources_used: list[str]
     web_fallback_used: bool
     evaluation: dict[str, Any] | None
+    cost_estimate: dict[str, Any] | None
     recommendation: dict[str, Any] | None
     rfq_request: dict[str, Any] | None
     rfq_draft: dict[str, Any] | None
@@ -118,6 +127,36 @@ def allocate_bank(state: ProcurementManagerGraphState) -> dict[str, Any]:
     }
 
 
+def _is_fixture_row(item: dict[str, Any]) -> bool:
+    if str(item.get("supplier_id") or "").startswith("fixture-"):
+        return True
+    return any(
+        evidence in {"internal_fixture"} or str(evidence).startswith("fixture:")
+        for evidence in (item.get("evidence") or [])
+    )
+
+
+def _row_suppliers_as_models(rows: list[dict[str, Any]]) -> list[Supplier]:
+    out: list[Supplier] = []
+    for item in rows:
+        if not isinstance(item, dict) or _is_fixture_row(item):
+            continue
+        try:
+            out.append(Supplier.model_validate(item))
+        except Exception:
+            continue
+    return out
+
+
+def _nom_key(row: dict[str, Any]) -> str:
+    return str(
+        row.get("nomenclature_id")
+        or row.get("nomenclature_name")
+        or row.get("query")
+        or ""
+    ).strip().casefold()
+
+
 async def search_internal(
     state: ProcurementManagerGraphState,
     config: RunnableConfig,
@@ -128,6 +167,9 @@ async def search_internal(
     return {
         "internal_candidates": [
             item.model_dump(mode="json") for item in result.suppliers
+        ],
+        "nomenclature_results": [
+            item.model_dump(mode="json") for item in result.nomenclature_results
         ],
         "sources_used": result.sources_used,
         "stage": "search_internal",
@@ -149,7 +191,28 @@ def decide_sufficiency(
         ),
     )
     request = SupplierSearchRequest.model_validate(state["request"])
-    sufficient = len(state.get("internal_candidates") or []) >= threshold
+    force_web = request.is_manual_web
+    nom_rows = state.get("nomenclature_results") or []
+    if nom_rows:
+        needs_web = False
+        for row in nom_rows:
+            qualifying = qualifying_suppliers_for_skip(
+                _row_suppliers_as_models(list(row.get("suppliers") or [])),
+                force_web=force_web,
+            )
+            # Bank seeds without links do not make web unnecessary.
+            if len(qualifying) >= MIN_SUPPLIERS_BEFORE_SKIP:
+                continue
+            if len(qualifying) < threshold:
+                needs_web = True
+                break
+        sufficient = not needs_web
+    else:
+        qualifying = qualifying_suppliers_for_skip(
+            _row_suppliers_as_models(list(state.get("internal_candidates") or [])),
+            force_web=force_web,
+        )
+        sufficient = len(qualifying) >= threshold
     return {
         "web_fallback_used": bool(request.allow_web_fallback and not sufficient),
         "status": "internal_sufficient" if sufficient else "web_required",
@@ -165,11 +228,66 @@ async def search_web(
     state: ProcurementManagerGraphState,
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    result = await _runtime(config).search_web(
-        SupplierSearchRequest.model_validate(state["request"])
+    request = SupplierSearchRequest.model_validate(state["request"])
+    threshold = max(
+        1,
+        int(
+            getattr(
+                _runtime(config),
+                "internal_threshold",
+                os.environ.get("PROCUREMENT_MANAGER_INTERNAL_SUPPLIER_THRESHOLD", "1"),
+            )
+        ),
     )
+    force_web = request.is_manual_web
+    # Web only for nomenclatures still below threshold / under 3 qualifying suppliers.
+    need_web: list[NomenclatureSearchItem] = []
+    for row in state.get("nomenclature_results") or []:
+        if not isinstance(row, dict):
+            continue
+        qualifying = qualifying_suppliers_for_skip(
+            _row_suppliers_as_models(list(row.get("suppliers") or [])),
+            force_web=force_web,
+        )
+        if len(qualifying) >= MIN_SUPPLIERS_BEFORE_SKIP:
+            continue
+        if len(qualifying) >= threshold:
+            continue
+        query = str(row.get("query") or row.get("nomenclature_name") or "").strip()
+        if len(query) < 2:
+            continue
+        need_web.append(
+            NomenclatureSearchItem(
+                nomenclature_id=row.get("nomenclature_id"),
+                nomenclature_name=row.get("nomenclature_name"),
+                query=query,
+            )
+        )
+    if not need_web and request.nomenclatures:
+        need_web = [
+            item
+            for item in request.nomenclatures
+            if len(
+                qualifying_suppliers_for_skip(
+                    list(item.existing_suppliers or []),
+                    force_web=force_web,
+                )
+            )
+            < MIN_SUPPLIERS_BEFORE_SKIP
+        ]
+    web_request = request.model_copy(
+        update={
+            "nomenclatures": need_web,
+            "limit": min(request.limit, WEB_LIMIT_PER_NOMENCLATURE),
+        }
+    )
+    result = await _runtime(config).search_web(web_request)
     return {
         "web_candidates": [item.model_dump(mode="json") for item in result.suppliers],
+        "nomenclature_results": _merge_web_into_nomenclature_results(
+            state.get("nomenclature_results") or [],
+            [item.model_dump(mode="json") for item in result.nomenclature_results],
+        ),
         "sources_used": list(
             dict.fromkeys([*(state.get("sources_used") or []), *result.sources_used])
         ),
@@ -177,8 +295,84 @@ async def search_web(
     }
 
 
+def _merge_web_into_nomenclature_results(
+    internal_rows: list[dict[str, Any]],
+    web_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_key = {_nom_key(row): dict(row) for row in internal_rows if _nom_key(row)}
+    for row in web_rows:
+        key = _nom_key(row)
+        if not key:
+            continue
+        current = by_key.get(key)
+        if current is None:
+            by_key[key] = dict(row)
+            continue
+        seen = {
+            str(item.get("tax_id") or item.get("supplier_id"))
+            for item in (current.get("suppliers") or [])
+            if isinstance(item, dict)
+        }
+        merged = list(current.get("suppliers") or [])
+        for item in row.get("suppliers") or []:
+            if not isinstance(item, dict):
+                continue
+            sid = str(item.get("tax_id") or item.get("supplier_id") or "")
+            if sid and sid in seen:
+                continue
+            if sid:
+                seen.add(sid)
+            merged.append(item)
+        sources = list(
+            dict.fromkeys(
+                [*(current.get("sources_used") or []), *(row.get("sources_used") or [])]
+            )
+        )
+        by_key[key] = {
+            **current,
+            "suppliers": merged,
+            "sources_used": sources,
+            "web_fallback_used": True,
+        }
+    return list(by_key.values()) if by_key else list(web_rows)
+
+
 def normalize_dedupe(state: ProcurementManagerGraphState) -> dict[str, Any]:
     request = SupplierSearchRequest.model_validate(state["request"])
+    nom_rows = state.get("nomenclature_results") or []
+    if nom_rows:
+        normalized: list[dict[str, Any]] = []
+        flat: list[Supplier] = []
+        for row in nom_rows:
+            unique: dict[str, Supplier] = {}
+            for item in row.get("suppliers") or []:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    supplier = Supplier.model_validate(item)
+                except Exception:
+                    continue
+                unique.setdefault(supplier.tax_id or supplier.supplier_id, supplier)
+            suppliers = list(unique.values())[: max(request.limit, WEB_LIMIT_PER_NOMENCLATURE)]
+            flat.extend(suppliers)
+            normalized.append(
+                {
+                    **row,
+                    "suppliers": [item.model_dump(mode="json") for item in suppliers],
+                }
+            )
+        flat_unique: dict[str, Supplier] = {}
+        for supplier in flat:
+            flat_unique.setdefault(supplier.tax_id or supplier.supplier_id, supplier)
+        return {
+            "nomenclature_results": normalized,
+            "candidates": [
+                item.model_dump(mode="json") for item in flat_unique.values()
+            ],
+            "status": "candidates_normalized",
+            "stage": "normalize_dedupe",
+        }
+
     rows = [
         Supplier.model_validate(item)
         for item in [
@@ -192,13 +386,31 @@ def normalize_dedupe(state: ProcurementManagerGraphState) -> dict[str, Any]:
     candidates = list(unique.values())[: request.limit]
     return {
         "candidates": [item.model_dump(mode="json") for item in candidates],
+        "nomenclature_results": [
+            NomenclatureSupplierResult(
+                nomenclature_id=None,
+                nomenclature_name=request.query,
+                query=request.query or "поставщик",
+                suppliers=candidates,
+                sources_used=list(state.get("sources_used") or []),
+                web_fallback_used=bool(state.get("web_fallback_used")),
+            ).model_dump(mode="json")
+        ]
+        if candidates
+        else [],
         "status": "candidates_normalized",
         "stage": "normalize_dedupe",
     }
 
 
 def rank_offers(state: ProcurementManagerGraphState) -> dict[str, Any]:
-    evaluation = evaluate_case_positions(_positions(state), top_n=3)
+    case_required = (state.get("case_context") or {}).get("required_date")
+    evaluation = evaluate_case_positions(
+        _positions(state),
+        top_n=3,
+        case_required_date=case_required,
+        use_bank_first=True,
+    )
     primary = evaluation.get("primary_supplier_id")
     primary_name = None
     for line in evaluation.get("lines") or []:
@@ -336,7 +548,34 @@ def await_supplier_hitl(state: ProcurementManagerGraphState) -> dict[str, Any]:
 
 
 def _after_shortlist(state: ProcurementManagerGraphState) -> str:
-    return "ingest_quotes" if state.get("status") == "shortlist_approved" else END
+    return "compose_cost_estimate" if state.get("status") == "shortlist_approved" else END
+
+
+def compose_cost_estimate(state: ProcurementManagerGraphState) -> dict[str, Any]:
+    """After HITL: смета from 1C/internal trusted + approved web only."""
+    approved = state.get("status") == "shortlist_approved"
+    case_required = (state.get("case_context") or {}).get("required_date")
+    estimate = build_trusted_cost_estimate(
+        _positions(state),
+        candidates=list(state.get("candidates") or []),
+        web_candidates=list(state.get("web_candidates") or []),
+        web_approved=approved,
+        case_required_date=case_required,
+    )
+    evaluation = dict(state.get("evaluation") or {})
+    evaluation["cost_estimate"] = estimate
+    evaluation["lines"] = estimate.get("lines") or evaluation.get("lines")
+    evaluation["recommended_supplier_ids"] = estimate.get("recommended_supplier_ids")
+    evaluation["primary_supplier_id"] = estimate.get("primary_supplier_id")
+    flags = dict(state.get("kpi_flags") or {})
+    flags.update(dict(estimate.get("kpi_flags") or {}))
+    return {
+        "cost_estimate": estimate,
+        "evaluation": evaluation,
+        "kpi_flags": flags,
+        "stage": "compose_cost_estimate",
+        "status": "estimate_ready" if approved else state.get("status"),
+    }
 
 
 def ingest_quotes(state: ProcurementManagerGraphState) -> dict[str, Any]:
@@ -517,6 +756,7 @@ def build_graph(*, checkpointer: Any | None = None):
     graph.add_node("rank_offers", rank_offers)
     graph.add_node("compose_rfq", compose_rfq)
     graph.add_node("await_supplier_hitl", await_supplier_hitl)
+    graph.add_node("compose_cost_estimate", compose_cost_estimate)
     graph.add_node("ingest_quotes", ingest_quotes)
     graph.add_node("compare_quotes", compare_quote_nodes)
     graph.add_node("compose_purchase_order", compose_purchase_order)
@@ -533,15 +773,21 @@ def build_graph(*, checkpointer: Any | None = None):
     graph.add_edge("rank_offers", "compose_rfq")
     graph.add_edge("compose_rfq", "await_supplier_hitl")
     graph.add_conditional_edges("await_supplier_hitl", _after_shortlist)
+    graph.add_edge("compose_cost_estimate", "ingest_quotes")
     graph.add_edge("ingest_quotes", "compare_quotes")
     graph.add_edge("compare_quotes", "compose_purchase_order")
     graph.add_edge("compose_purchase_order", "await_order_hitl")
     graph.add_edge("await_order_hitl", "persist_artifacts")
     graph.add_edge("persist_artifacts", END)
-    return graph.compile(checkpointer=checkpointer)
+    # LangGraph API / Studio rejects custom checkpointers on the exported graph.
+    # Pass checkpointer only for in-app HITL (e.g. MemorySaver in the service).
+    if checkpointer is not None:
+        return graph.compile(checkpointer=checkpointer)
+    return graph.compile()
 
 
-procurement_manager_graph = build_graph(checkpointer=MemorySaver())
+# Studio / langgraph.json entrypoint — no custom checkpointer.
+procurement_manager_graph = build_graph()
 
 
 def default_graph_runtime() -> HybridSupplierSearchService:

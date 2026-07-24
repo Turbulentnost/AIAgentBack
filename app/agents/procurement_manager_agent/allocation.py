@@ -488,6 +488,33 @@ def _serialize_line(line: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _merge_supplier_parts(
+    target: dict[str, dict[str, Any]],
+    parts: list[dict[str, Any]] | None,
+) -> None:
+    """Accumulate allocation supplier_parts by supplier_id (qty sum)."""
+    for part in parts or []:
+        if not isinstance(part, dict):
+            continue
+        sid = str(part.get("supplier_id") or "").strip()
+        if not sid:
+            continue
+        qty = _dec(part.get("quantity") or 0)
+        if qty <= 0:
+            continue
+        existing = target.get(sid)
+        if existing is None:
+            target[sid] = {
+                "supplier_id": sid,
+                "supplier_name": str(part.get("supplier_name") or sid),
+                "quantity": qty,
+            }
+            continue
+        existing["quantity"] += qty
+        if not existing.get("supplier_name") and part.get("supplier_name"):
+            existing["supplier_name"] = str(part["supplier_name"])
+
+
 def _aggregate_positions(
     lines: list[dict[str, Any]],
     *,
@@ -503,6 +530,8 @@ def _aggregate_positions(
         ]
         bucket = buckets.get(key)
         if bucket is None:
+            supplier_map: dict[str, dict[str, Any]] = {}
+            _merge_supplier_parts(supplier_map, line.get("supplier_parts"))
             buckets[key] = {
                 "nomenclature_id": line.get("nomenclature_id"),
                 "nomenclature_name": line.get("nomenclature_name"),
@@ -514,6 +543,7 @@ def _aggregate_positions(
                 "from_supplier": _dec(line["from_supplier"]),
                 "positions_count": 1,
                 "sources": {line["coverage_source"]},
+                "supplier_parts_map": supplier_map,
             }
             continue
         bucket["needed_quantity"] += _dec(line["needed_quantity"])
@@ -523,10 +553,12 @@ def _aggregate_positions(
         bucket["from_supplier"] += _dec(line["from_supplier"])
         bucket["positions_count"] += 1
         bucket["sources"].add(line["coverage_source"])
+        _merge_supplier_parts(bucket["supplier_parts_map"], line.get("supplier_parts"))
 
     rows = []
     for key, bucket in buckets.items():
         sources = bucket.pop("sources")
+        supplier_map = bucket.pop("supplier_parts_map", {}) or {}
         sources.discard("none")
         if len(sources) == 0:
             source: CoverageSource = "none"
@@ -534,6 +566,21 @@ def _aggregate_positions(
             source = next(iter(sources))  # type: ignore[assignment]
         else:
             source = "mixed"
+        # Warehouse-only coverage: no suppliers in the plan.
+        if source == "warehouse" or bucket["from_supplier"] <= 0:
+            used_parts: list[dict[str, Any]] = []
+        else:
+            used_parts = [
+                {
+                    "supplier_id": part["supplier_id"],
+                    "supplier_name": part["supplier_name"],
+                    "quantity": str(part["quantity"]),
+                }
+                for part in sorted(
+                    supplier_map.values(),
+                    key=lambda item: (-_dec(item["quantity"]), str(item["supplier_name"])),
+                )
+            ]
         bound = bounds.get(key) or bounds.get(str(bucket.get("nomenclature_id") or "").casefold())
         price_min = bound["price_min"] if bound else None
         price_max = bound["price_max"] if bound else None
@@ -561,6 +608,8 @@ def _aggregate_positions(
                     "mixed": "смешанный",
                     "none": "нет",
                 }[source],
+                "supplier_parts": used_parts,
+                "used_suppliers": used_parts,
                 "price_min": str(price_min) if price_min is not None else None,
                 "price_max": str(price_max) if price_max is not None else None,
                 "avg_unit_price": (

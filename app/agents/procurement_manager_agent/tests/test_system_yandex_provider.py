@@ -66,8 +66,25 @@ def test_parse_yandex_results() -> None:
     ]
 
 
+def test_browser_command_is_isolated_headless_background(tmp_path: Path) -> None:
+    executable = tmp_path / "browser.exe"
+    executable.write_bytes(b"fake")
+    provider = SystemYandexBrowserProvider(executable=executable)
+    profile = str(tmp_path / "procurement-yandex-profile")
+    command = provider._browser_command(profile=profile, port=9333)
+
+    assert command[0] == str(executable)
+    assert "--headless=new" in command
+    assert "--dump-dom" not in command
+    assert "--remote-debugging-port=9333" in command
+    assert "--remote-debugging-address=127.0.0.1" in command
+    assert f"--user-data-dir={profile}" in command
+    assert command[-1] == "about:blank"
+    assert not any("User Data" in argument for argument in command)
+
+
 @pytest.mark.asyncio
-async def test_search_uses_yandex_and_isolated_confirmed_executable(
+async def test_search_uses_cdp_and_isolated_confirmed_executable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     confirmed = Path(
@@ -77,17 +94,26 @@ async def test_search_uses_yandex_and_isolated_confirmed_executable(
 
     class Process:
         returncode = 0
+        pid = 4242
 
-        async def communicate(self) -> tuple[bytes, bytes]:
-            return (
-                b'<li class="serp-item"><a href="https://supplier.example/">'
-                b"Supplier</a></li>",
-                b"",
-            )
+        async def wait(self) -> int:
+            return 0
 
     async def create(*command: str, **_kwargs: object) -> Process:
         commands.append(command)
         return Process()
+
+    async def fake_dom(self: object, *, port: int, url: str) -> str:
+        _ = self
+        assert port > 0
+        assert url.startswith("https://yandex.ru/search/?text=")
+        return (
+            '<li class="serp-item"><a href="https://supplier.example/">'
+            "Supplier</a></li>"
+        )
+
+    async def no_terminate(_process: object) -> None:
+        return None
 
     original_is_file = Path.is_file
     monkeypatch.setattr(
@@ -96,6 +122,12 @@ async def test_search_uses_yandex_and_isolated_confirmed_executable(
         lambda self: True if self == confirmed else original_is_file(self),
     )
     monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(providers, "_terminate_process_tree", no_terminate)
+    monkeypatch.setattr(
+        SystemYandexBrowserProvider,
+        "_fetch_dom_via_cdp",
+        fake_dom,
+    )
     provider = SystemYandexBrowserProvider(executable=confirmed, timeout_seconds=1)
 
     result = await provider.search("редкий подшипник", 5)
@@ -104,11 +136,18 @@ async def test_search_uses_yandex_and_isolated_confirmed_executable(
     assert result["provider"] == "system_yandex"
     assert result["live_data"] is True
     assert commands[0][0] == str(confirmed)
-    assert "--headless" in commands[0]
-    assert "--dump-dom" in commands[0]
+    assert "--headless=new" in commands[0]
+    assert "--dump-dom" not in commands[0]
     assert any(argument.startswith("--user-data-dir=") for argument in commands[0])
-    assert commands[0][-1].startswith("https://yandex.ru/search/?text=")
-    assert "duckduckgo" not in commands[0][-1].casefold()
+    assert any(
+        argument.startswith("--remote-debugging-port=") for argument in commands[0]
+    )
+    user_data = next(
+        argument for argument in commands[0] if argument.startswith("--user-data-dir=")
+    )
+    assert "procurement-yandex-" in user_data
+    assert "YandexBrowser\\User Data" not in user_data
+    assert commands[0][-1] == "about:blank"
 
 
 @pytest.mark.asyncio
@@ -128,38 +167,44 @@ async def test_captcha_and_timeout_statuses(
     executable = tmp_path / "browser.exe"
     executable.write_bytes(b"fake")
 
-    class CaptchaProcess:
+    class Process:
         returncode = 0
+        pid = 1001
 
-        async def communicate(self) -> tuple[bytes, bytes]:
-            return (b"<html>showcaptcha robot check</html>", b"")
+        async def wait(self) -> int:
+            return 0
 
-    async def create_captcha(*_command: str, **_kwargs: object) -> CaptchaProcess:
-        return CaptchaProcess()
+    async def create(*_command: str, **_kwargs: object) -> Process:
+        return Process()
 
-    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", create_captcha)
+    async def no_terminate(_process: object) -> None:
+        return None
+
+    async def captcha_dom(self: object, *, port: int, url: str) -> str:
+        _ = (self, port, url)
+        return "<html>smartcaptcha checkbox-captcha Вы не робот?</html>"
+
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(providers, "_terminate_process_tree", no_terminate)
+    monkeypatch.setattr(SystemYandexBrowserProvider, "_fetch_dom_via_cdp", captcha_dom)
     captcha = await SystemYandexBrowserProvider(executable=executable).search("q", 3)
     assert captcha["status"] == "captcha"
     assert captcha["live_data"] is False
     assert captcha["items"] == []
+    assert "SmartCaptcha" in captcha["message"]
 
-    class HangingProcess:
-        returncode = None
+    async def hanging_dom(self: object, *, port: int, url: str) -> str:
+        _ = (self, port, url)
+        await providers.asyncio.sleep(10)
+        return ""
 
-        async def communicate(self) -> tuple[bytes, bytes]:
-            await providers.asyncio.sleep(10)
-            return (b"", b"")
+    terminated: list[object] = []
 
-        def kill(self) -> None:
-            self.returncode = -9
+    async def track_terminate(process: object) -> None:
+        terminated.append(process)
 
-        async def wait(self) -> int:
-            return -9
-
-    async def create_hang(*_command: str, **_kwargs: object) -> HangingProcess:
-        return HangingProcess()
-
-    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", create_hang)
+    monkeypatch.setattr(SystemYandexBrowserProvider, "_fetch_dom_via_cdp", hanging_dom)
+    monkeypatch.setattr(providers, "_terminate_process_tree", track_terminate)
     timed_out = await SystemYandexBrowserProvider(
         executable=executable,
         timeout_seconds=0.01,
@@ -167,6 +212,7 @@ async def test_captcha_and_timeout_statuses(
     assert timed_out["status"] == "timeout"
     assert timed_out["live_data"] is False
     assert timed_out["items"] == []
+    assert terminated  # zombie browser process tree must be killed
 
 
 @pytest.mark.asyncio
@@ -188,3 +234,44 @@ async def test_fetch_rejects_ssrf_before_subprocess(
     result = await provider.fetch("http://127.0.0.1/secret")
     assert result["status"] == "unavailable"
     assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_terminate_process_tree_uses_taskkill_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if providers.os.name != "nt":
+        pytest.skip("Windows taskkill path")
+
+    class Process:
+        returncode = None
+        pid = 7777
+
+        def __init__(self) -> None:
+            self.killed = False
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            self.returncode = -9
+            return -9
+
+    calls: list[tuple[str, ...]] = []
+
+    class Killer:
+        returncode = 0
+
+        async def wait(self) -> int:
+            return 0
+
+    async def create(*command: str, **_kwargs: object) -> Killer:
+        calls.append(command)
+        return Killer()
+
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", create)
+    process = Process()
+    await providers._terminate_process_tree(process)
+    assert calls
+    assert calls[0][:4] == ("taskkill", "/PID", "7777", "/T")

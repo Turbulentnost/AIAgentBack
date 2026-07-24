@@ -31,6 +31,9 @@ from app.agents.procurement_manager_agent.schemas import (
     RFQDraft,
     RFQDraftRequest,
     ShipmentEventRequest,
+    StrategyResumeRequest,
+    StrategyRunRequest,
+    StrategyStatus,
     Supplier,
     SupplierOffersResponse,
     SupplierQuote,
@@ -288,6 +291,89 @@ async def supplier_search(
     return result
 
 
+@router.post(
+    "/cases/{case_id}/supplier-search/enrich",
+    response_model=SupplierSearchResult,
+)
+async def supplier_search_enrich(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> SupplierSearchResult:
+    """Re-enrich stored web supplier cards by fetching product pages."""
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).enrich_web_supplier_cards(case_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.post("/strategy/run", response_model=StrategyStatus)
+async def strategy_run(
+    db: DbSession,
+    current_user: CurrentUser,
+    data: Annotated[StrategyRunRequest | None, Body()] = None,
+) -> StrategyStatus:
+    """Queue-level supply strategy: waves → bank → optimize → HITL → multi-PO drafts."""
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).strategy_run(data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except Exception as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось запустить стратегию поставок: {detail}",
+        ) from exc
+    await _commit(db)
+    return result
+
+
+@router.post("/strategy/resume", response_model=StrategyStatus)
+async def strategy_resume(
+    data: StrategyResumeRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> StrategyStatus:
+    """HITL resume for supply policy / shortlist or multi-PO order drafts."""
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).strategy_resume(data)
+    except KeyError as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось продолжить стратегию: {detail}",
+        ) from exc
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except Exception as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось продолжить стратегию: {detail}",
+        ) from exc
+    await _commit(db)
+    return result
+
+
+@router.get("/strategy/status", response_model=StrategyStatus)
+async def strategy_status(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> StrategyStatus:
+    """Waves, supply_policy, estimates and multi-PO drafts for the manager queue."""
+    await _require_access(db, current_user)
+    return await ProcurementManagerService(db).strategy_status()
+
+
 @router.post("/cases/{case_id}/agent/run", response_model=AgentStatus)
 async def agent_run(
     case_id: uuid.UUID,
@@ -324,6 +410,13 @@ async def agent_resume(
     await _require_access(db, current_user)
     try:
         result = await ProcurementManagerService(db).agent_resume(case_id, data)
+    except KeyError as exc:
+        # KeyError is a LookupError; must not be mapped to bare 404 "'request'".
+        detail = str(exc).strip() or repr(exc)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось продолжить агента: {detail}",
+        ) from exc
     except LookupError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except ValueError as exc:
@@ -370,8 +463,16 @@ async def resume_supplier_graph(
         ) from exc
     try:
         result = await ProcurementManagerService(db).agent_resume(case_id, resume)
+    except KeyError as exc:
+        detail = str(exc).strip() or repr(exc)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось продолжить агента: {detail}",
+        ) from exc
     except LookupError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     await _commit(db)
     return result
 

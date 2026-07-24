@@ -19,7 +19,7 @@ from app.agents.procurement_manager_agent.supplier_mcp_server.providers import (
     EnvironmentApprovalProvider,
     FixtureSupplierProvider,
     SupplierProvider,
-    SystemYandexBrowserProvider,
+    build_default_browser_search_provider,
 )
 
 
@@ -72,7 +72,10 @@ TOOL_DEFINITIONS = [
     ],
     {
         "name": "supplier_search_web",
-        "description": "Search Yandex using an isolated system Yandex Browser process.",
+        "description": (
+            "Search the open web via an isolated headless system browser "
+            "(Edge/Chrome+DuckDuckGo preferred; Yandex kept as fallback)."
+        ),
         "inputSchema": _object_schema(
             {
                 "query": {"type": "string", "minLength": 1},
@@ -83,7 +86,10 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "supplier_fetch_page",
-        "description": "Fetch a public http/https page in isolated system Yandex Browser.",
+        "description": (
+            "Fetch a public http/https page in an isolated headless system browser "
+            "(never the user's main profile)."
+        ),
         "inputSchema": _object_schema(
             {"url": {"type": "string", "minLength": 1}},
             ["url"],
@@ -170,7 +176,7 @@ class SupplierToolDispatcher:
         approval_provider: ApprovalProvider | None = None,
     ) -> None:
         self.supplier_provider = supplier_provider or FixtureSupplierProvider()
-        self.browser_provider = browser_provider or SystemYandexBrowserProvider()
+        self.browser_provider = browser_provider or build_default_browser_search_provider()
         self.approval_provider = approval_provider or EnvironmentApprovalProvider()
 
     @staticmethod

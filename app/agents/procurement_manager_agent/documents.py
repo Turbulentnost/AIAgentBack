@@ -42,7 +42,7 @@ def render_rfq_draft(
         rfq_id=str(uuid4()),
         supplier_ids=request.supplier_ids,
         lines=request.lines,
-        subject=f"Запрос котировок по кейсу {case_number}",
+        subject=f"Запрос коммерческого предложения по кейсу {case_number}",
         body=body,
         created_at=datetime.now(UTC),
     )

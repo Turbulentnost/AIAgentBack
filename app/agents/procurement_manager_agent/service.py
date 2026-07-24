@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from io import BytesIO
 from typing import Any, Literal
 
 from fastapi.encoders import jsonable_encoder
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +20,7 @@ from app.agents.procurement_manager_agent.documents import (
     render_purchase_order_draft,
     render_rfq_draft,
 )
-from app.agents.procurement_manager_agent.graph import procurement_manager_graph
+from app.agents.procurement_manager_agent.graph import build_graph
 from app.agents.procurement_manager_agent.material_bank import get_material_bank
 from app.agents.procurement_manager_agent.operations import MutationGate
 from app.agents.procurement_manager_agent.pricing import (
@@ -39,6 +40,8 @@ from app.agents.procurement_manager_agent.schemas import (
     LineAmountEntry,
     LineAmountsUpdateRequest,
     MaterialBankResponse,
+    NomenclatureSearchItem,
+    NomenclatureSupplierResult,
     NonconformityRequest,
     OperationStatus,
     PurchaseOrderDraft,
@@ -51,14 +54,19 @@ from app.agents.procurement_manager_agent.schemas import (
     RFQDraftRequest,
     RFQLine,
     ShipmentEventRequest,
+    StrategyResumeRequest,
+    StrategyRunRequest,
+    StrategyStatus,
     Supplier,
     SupplierOffersResponse,
     SupplierQuote,
     SupplierSearchRequest,
     SupplierSearchResult,
     TopSupplierOffer,
+    UsedSupplierPart,
     WorkspaceSummary,
 )
+from app.agents.procurement_manager_agent.strategy_graph import build_strategy_graph
 from app.agents.procurement_manager_agent.supplier_ranking import (
     SCORE_FORMULA,
     collect_supplier_offers,
@@ -66,7 +74,13 @@ from app.agents.procurement_manager_agent.supplier_ranking import (
     rank_supplier_offers,
 )
 from app.agents.procurement_manager_agent.scoring import compare_quotes
-from app.agents.procurement_manager_agent.suppliers import HybridSupplierSearchService
+from app.agents.procurement_manager_agent.suppliers import (
+    MIN_SUPPLIERS_BEFORE_SKIP,
+    WEB_LIMIT_PER_NOMENCLATURE,
+    HybridSupplierSearchService,
+    qualifying_suppliers_for_skip,
+)
+from app.agents.procurement_manager_agent.web_page_enrichment import enrich_web_suppliers
 from app.agents.procurement_role_agents.schemas import (
     ProcurementRoleAgentRequest,
     ProcurementRoleAgentResult,
@@ -109,6 +123,16 @@ def case_in_manager_queue(
     if current_agent_id == AGENT_ID:
         return True
     return (status or "") in MANAGER_QUEUE_STATUSES
+
+
+# In-app graph with MemorySaver for HITL interrupt/resume (not used by Studio).
+_runtime_graph = build_graph(checkpointer=MemorySaver())
+_strategy_graph = build_strategy_graph(checkpointer=MemorySaver())
+
+# Process-local last strategy artifact (also persisted onto each case workspace).
+_STRATEGY_ARTIFACT: dict[str, Any] = {}
+STRATEGY_METADATA_KEY = "supply_policy"
+STRATEGY_GRAPH_KEY = "strategy_graph"
 
 
 class ProcurementManagerService:
@@ -207,14 +231,57 @@ class ProcurementManagerService:
     ) -> SupplierSearchResult:
         case = await self.require_case(case_id)
         metadata = self._workspace(case)
+        targets = request.nomenclatures or self._nomenclature_targets_from_case(
+            case, metadata
+        )
         query = request.query or self._supplier_query_from_case(case)
+        if targets:
+            query = ", ".join(
+                dict.fromkeys(
+                    (item.query or item.nomenclature_name or item.nomenclature_id or "")
+                    for item in targets
+                    if (item.query or item.nomenclature_name or item.nomenclature_id)
+                )
+            )[:500] or query
         category = request.category or self._supplier_category_from_case(case)
+        force_web = request.is_manual_web
+        # Skip only when ≥3 qualifying suppliers exist (manual: 1c/web+URL;
+        # bank seeds without links never block «Найти поставщиков»).
+        # force_web always searches (web-only enriched cards).
+        to_search: list[NomenclatureSearchItem] = []
+        skipped: list[NomenclatureSupplierResult] = []
+        for item in targets:
+            if force_web:
+                to_search.append(item)
+                continue
+            qualifying = qualifying_suppliers_for_skip(
+                list(item.existing_suppliers or []),
+                force_web=force_web,
+            )
+            if len(qualifying) >= MIN_SUPPLIERS_BEFORE_SKIP:
+                skipped.append(
+                    NomenclatureSupplierResult(
+                        nomenclature_id=item.nomenclature_id,
+                        nomenclature_name=item.nomenclature_name,
+                        query=(item.query or item.nomenclature_name or "поставщик"),
+                        suppliers=item.existing_suppliers[: request.limit],
+                        sources_used=["existing"],
+                        web_fallback_used=False,
+                    )
+                )
+            else:
+                to_search.append(item)
+        idem_prefix = "supplier-search-manual" if force_web else "supplier-search"
         effective_request = request.model_copy(
             update={
                 "query": query,
                 "category": category,
+                "nomenclatures": to_search,
+                "force_web": force_web,
+                "mode": "manual_web" if force_web else request.mode,
+                "allow_web_fallback": True if force_web else request.allow_web_fallback,
                 "idempotency_key": request.idempotency_key
-                or f"supplier-search:{case.id}:{query.casefold()}"[:255],
+                or f"{idem_prefix}:{case.id}:{query.casefold()}"[:255],
             }
         )
         operation_id = str(effective_request.idempotency_key)
@@ -236,14 +303,31 @@ class ProcurementManagerService:
             operation="supplier_search",
             status="running",
         )
+        # Enrichment fetches product pages; allow more time for manual web search.
+        default_timeout = "180" if force_web else "90"
         timeout_seconds = float(
-            os.environ.get("PROCUREMENT_MANAGER_SEARCH_TIMEOUT_SECONDS", "30")
+            os.environ.get("PROCUREMENT_MANAGER_SEARCH_TIMEOUT_SECONDS", default_timeout)
         )
         try:
             # Manual supplier search stays outside the full HITL agent graph.
-            result = await asyncio.wait_for(
-                self.supplier_search.search(effective_request),
-                timeout=timeout_seconds,
+            if to_search:
+                result = await asyncio.wait_for(
+                    self.supplier_search.search(effective_request),
+                    timeout=timeout_seconds,
+                )
+            else:
+                result = SupplierSearchResult(
+                    query=query,
+                    suppliers=[],
+                    sources_used=["existing"] if skipped else [],
+                    web_fallback_used=False,
+                    nomenclature_results=[],
+                )
+            result = self._merge_nomenclature_search_results(
+                result,
+                skipped=skipped,
+                targets=targets,
+                query=query,
             )
             result = result.model_copy(
                 update={
@@ -277,6 +361,7 @@ class ProcurementManagerService:
                 suppliers=[],
                 sources_used=[],
                 web_fallback_used=False,
+                nomenclature_results=[],
                 operation_id=operation_id,
                 pending=False,
                 status="failed",
@@ -300,6 +385,9 @@ class ProcurementManagerService:
         )
         metadata = self._workspace(case)
         metadata["supplier_searches"] = previous
+        metadata["nomenclature_results"] = [
+            item.model_dump(mode="json") for item in result.nomenclature_results
+        ]
         metadata["suppliers"] = [item.model_dump(mode="json") for item in result.suppliers]
         metadata["lifecycle_state"] = "suppliers_identified"
         self._save_workspace(case, metadata)
@@ -315,10 +403,72 @@ class ProcurementManagerService:
             str(effective_request.idempotency_key),
             {
                 "count": len(result.suppliers),
+                "nomenclature_count": len(result.nomenclature_results),
+                "searched_count": len(to_search),
+                "skipped_count": len(skipped),
+                "web_limit_per_nomenclature": WEB_LIMIT_PER_NOMENCLATURE,
                 "sources": result.sources_used,
                 "operation_id": operation_id,
             },
         )
+        return result
+
+    async def enrich_web_supplier_cards(
+        self,
+        case_id: uuid.UUID,
+    ) -> SupplierSearchResult:
+        """Re-fetch product pages for web suppliers already stored in nomenclature_results."""
+        case = await self.require_case(case_id)
+        metadata = self._workspace(case)
+        rows_raw = list(metadata.get("nomenclature_results") or [])
+        if not rows_raw:
+            latest = (metadata.get("supplier_searches") or [{}])[-1]
+            rows_raw = list((latest.get("result") or {}).get("nomenclature_results") or [])
+        provider = getattr(self.supplier_search, "_fetch_provider", lambda: None)()
+        enriched_rows: list[NomenclatureSupplierResult] = []
+        flat: list[Supplier] = []
+        for row in rows_raw:
+            if not isinstance(row, dict):
+                continue
+            suppliers = [
+                Supplier.model_validate(item)
+                for item in (row.get("suppliers") or [])
+                if isinstance(item, dict)
+            ]
+            web_only = [item for item in suppliers if item.source == "web"]
+            row_query = str(row.get("query") or row.get("nomenclature_name") or "поставщик")
+            if provider is not None and web_only:
+                web_only = await enrich_web_suppliers(
+                    web_only,
+                    provider,
+                    product_query=row_query,
+                )
+            result_row = NomenclatureSupplierResult(
+                nomenclature_id=row.get("nomenclature_id"),
+                nomenclature_name=row.get("nomenclature_name"),
+                query=row_query,
+                suppliers=web_only,
+                sources_used=["web"] if web_only else list(row.get("sources_used") or []),
+                web_fallback_used=True,
+            )
+            enriched_rows.append(result_row)
+            flat.extend(web_only)
+        result = SupplierSearchResult(
+            query=", ".join(
+                dict.fromkeys(row.query for row in enriched_rows if row.query)
+            )[:500]
+            or "поставщик",
+            suppliers=flat,
+            sources_used=["web"] if flat else [],
+            web_fallback_used=True,
+            nomenclature_results=enriched_rows,
+            status="completed",
+        )
+        metadata["nomenclature_results"] = [
+            item.model_dump(mode="json") for item in enriched_rows
+        ]
+        metadata["suppliers"] = [item.model_dump(mode="json") for item in flat]
+        self._save_workspace(case, metadata)
         return result
 
     async def agent_run(
@@ -338,12 +488,23 @@ class ProcurementManagerService:
         ):
             return await self.agent_status(case_id)
 
+        targets = self._nomenclature_targets_from_case(case, workspace)
         query = payload.query or self._supplier_query_from_case(case)
+        if targets:
+            query = ", ".join(
+                dict.fromkeys(
+                    (item.query or item.nomenclature_name or item.nomenclature_id or "")
+                    for item in targets
+                    if (item.query or item.nomenclature_name or item.nomenclature_id)
+                )
+            )[:500] or query
+        # Pass all targets; HybridSupplierSearchService skips items with ≥3 existing.
         search_request = SupplierSearchRequest(
             query=query,
             category=self._supplier_category_from_case(case),
             allow_web_fallback=payload.allow_web_fallback,
             idempotency_key=f"agent-search:{idempotency_key}"[:255],
+            nomenclatures=targets,
         )
         positions = [
             {
@@ -372,7 +533,7 @@ class ProcurementManagerService:
             "lines": positions,
             "required_date": case.required_date.isoformat() if case.required_date else None,
         }
-        result = await procurement_manager_graph.ainvoke(
+        result = await _runtime_graph.ainvoke(
             {
                 "case_id": str(case.id),
                 "case_number": case.source_number or str(case.id),
@@ -418,10 +579,7 @@ class ProcurementManagerService:
                 "runtime": self.supplier_search,
             }
         }
-        result = await procurement_manager_graph.ainvoke(
-            Command(resume=decision),
-            config=config,
-        )
+        result = await self._invoke_agent_resume(case, decision, config)
         workspace = self._workspace(case)
         prior = list(workspace.get("agent_resume_keys") or [])
         prior.append(resume_key)
@@ -429,6 +587,120 @@ class ProcurementManagerService:
         self._save_workspace(case, workspace)
         await self._persist_graph_state(case, result, "agent_resumed")
         return await self.agent_status(case_id)
+
+    async def _invoke_agent_resume(
+        self,
+        case: ProcurementCase,
+        decision: dict[str, Any],
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resume HITL via live MemorySaver checkpoint, or rehydrate from workspace.
+
+        MemorySaver is process-local: after a backend restart the UI still shows the
+        persisted interrupt, but Command(resume=...) hits an empty thread and the graph
+        restarts from entry → KeyError('request'). Rehydrate from supplier_graph.
+        """
+        live = await _runtime_graph.aget_state(config)
+        if live.values and live.next:
+            try:
+                return await _runtime_graph.ainvoke(Command(resume=decision), config=config)
+            except KeyError as exc:
+                if exc.args != ("request",):
+                    raise
+                logger.warning(
+                    "procurement_manager agent_resume live checkpoint missing request; "
+                    "rehydrating from workspace case_id=%s",
+                    case.id,
+                )
+        else:
+            workspace = self._workspace(case)
+            if not workspace.get("paused_for_human") and not (
+                workspace.get("agent_interrupt") or {}
+            ):
+                raise ValueError("Нет активного HITL-прерывания для возобновления агента")
+            logger.info(
+                "procurement_manager agent_resume rehydrate after lost checkpoint "
+                "case_id=%s thread_id=%s",
+                case.id,
+                (config.get("configurable") or {}).get("thread_id"),
+            )
+        return await self._resume_rehydrated(case, decision, config)
+
+    async def _resume_rehydrated(
+        self,
+        case: ProcurementCase,
+        decision: dict[str, Any],
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Apply HITL decision using persisted supplier_graph, then continue the graph."""
+        workspace = self._workspace(case)
+        interrupt_payload = workspace.get("agent_interrupt") or {}
+        interrupt_type = str(
+            interrupt_payload.get("type")
+            if isinstance(interrupt_payload, dict)
+            else ""
+        )
+        action = str(decision.get("action") or "")
+        graph_state = {
+            key: value
+            for key, value in dict(workspace.get("supplier_graph") or {}).items()
+            if key not in {"paused_for_human", "runtime", "__interrupt__"}
+        }
+        if not graph_state.get("case_id"):
+            graph_state["case_id"] = str(case.id)
+        if not graph_state.get("case_number"):
+            graph_state["case_number"] = case.source_number or str(case.id)
+        if not graph_state.get("request"):
+            raise ValueError(
+                "Состояние агента потеряно после перезапуска сервера "
+                "(нет checkpoint и нет request в workspace). Запустите агента заново."
+            )
+
+        is_order = (
+            interrupt_type == "procurement_order_approval" or "order" in interrupt_type
+        )
+        is_shortlist = (
+            interrupt_type == "procurement_shortlist_approval"
+            or "shortlist" in interrupt_type
+            or "rfq" in interrupt_type
+        )
+        if is_order:
+            if action not in {"approve_order_draft", "reject"}:
+                raise ValueError(
+                    "Для подтверждения заказа нужно approve_order_draft или reject"
+                )
+            approved = action == "approve_order_draft"
+            patch = {
+                **graph_state,
+                "order_approval": dict(decision),
+                "status": "order_draft_approved" if approved else "order_rejected",
+                "stage": "await_order_hitl",
+            }
+            as_node = "await_order_hitl"
+        elif is_shortlist:
+            if action not in {"approve_shortlist", "approve_rfq_draft", "reject"}:
+                raise ValueError(
+                    "Для shortlist нужно approve_shortlist, approve_rfq_draft или reject"
+                )
+            approved = action in {"approve_shortlist", "approve_rfq_draft"}
+            flags = dict(graph_state.get("kpi_flags") or {})
+            if approved:
+                flags["supplier_confirmed"] = True
+            patch = {
+                **graph_state,
+                "shortlist_approval": dict(decision),
+                "kpi_flags": flags,
+                "status": "shortlist_approved" if approved else "rejected",
+                "stage": "await_supplier_hitl",
+            }
+            as_node = "await_supplier_hitl"
+        else:
+            raise ValueError(
+                f"Неизвестный тип HITL для восстановления: {interrupt_type or '—'}"
+            )
+
+        await _runtime_graph.aupdate_state(config, patch, as_node=as_node)
+        return await _runtime_graph.ainvoke(None, config=config)
 
     async def resume_supplier_graph(
         self,
@@ -473,6 +745,7 @@ class ProcurementManagerService:
             ),
             recommendation=graph.get("recommendation") or workspace.get("recommendation"),
             evaluation=workspace.get("evaluation") or graph.get("evaluation"),
+            cost_estimate=workspace.get("cost_estimate") or graph.get("cost_estimate"),
             rfq_draft=latest_rfq,
             purchase_order_draft=latest_po,
             comparison=workspace.get("comparison") or graph.get("comparison"),
@@ -480,6 +753,459 @@ class ProcurementManagerService:
             candidates_count=len(graph.get("candidates") or workspace.get("suppliers") or []),
             payment_execution_allowed=False,
         )
+
+    @staticmethod
+    def _case_to_strategy_payload(case: ProcurementCase) -> dict[str, Any]:
+        positions = []
+        for position in case.positions or []:
+            if position.cancelled:
+                continue
+            positions.append(
+                {
+                    "line_id": position.line_id,
+                    "id": position.line_id,
+                    "nomenclature_id": position.nomenclature_id,
+                    "nomenclature_name": position.nomenclature_name,
+                    "quantity": str(position.quantity),
+                    "unit": position.unit or "шт",
+                    "required_date": (
+                        position.required_date.isoformat()
+                        if position.required_date
+                        else None
+                    ),
+                    "cancelled": False,
+                }
+            )
+        return {
+            "id": str(case.id),
+            "case_id": str(case.id),
+            "source_number": case.source_number,
+            "required_date": (
+                case.required_date.isoformat() if case.required_date else None
+            ),
+            "positions": positions,
+        }
+
+    async def strategy_run(
+        self,
+        request: StrategyRunRequest | None = None,
+    ) -> StrategyStatus:
+        """Idempotent queue-level supply strategy (waves → optimize → HITL → multi-PO)."""
+        payload = request or StrategyRunRequest()
+        cases = await self._manager_cases()
+        if payload.case_ids:
+            wanted = {str(cid).strip().casefold() for cid in payload.case_ids if cid}
+            cases = [case for case in cases if str(case.id).casefold() in wanted]
+        if not cases:
+            raise LookupError("Очередь менеджера пуста — нет кейсов для стратегии")
+
+        idempotency_key = (
+            payload.idempotency_key
+            or f"strategy-run:{AGENT_ID}:{datetime.now(UTC).date()}"
+        )[:255]
+        existing = dict(_STRATEGY_ARTIFACT)
+        if (
+            existing.get("strategy_run_idempotency_key") == idempotency_key
+            and existing.get("stage")
+        ):
+            return await self.strategy_status()
+
+        case_payloads = [self._case_to_strategy_payload(case) for case in cases]
+        case_ids = [str(case.id) for case in cases]
+        thread_id = f"procurement-strategy:{AGENT_ID}:{idempotency_key}"
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "runtime": self.supplier_search,
+            }
+        }
+        search_request = SupplierSearchRequest(
+            query=payload.query or "поставщик",
+            allow_web_fallback=payload.allow_web_fallback,
+            idempotency_key=f"strategy-search:{idempotency_key}"[:255],
+        )
+        result = await _strategy_graph.ainvoke(
+            {
+                "manager_id": AGENT_ID,
+                "cases": case_payloads,
+                "case_ids": case_ids,
+                "request": search_request.model_dump(mode="json"),
+                "today": date.today().isoformat(),
+            },
+            config=config,
+        )
+        await self._persist_strategy_state(
+            cases,
+            result,
+            thread_id=thread_id,
+            idempotency_key=idempotency_key,
+            event_type="strategy_run_paused",
+        )
+        return await self.strategy_status()
+
+    async def strategy_resume(
+        self,
+        request: StrategyResumeRequest | dict[str, Any],
+    ) -> StrategyStatus:
+        """HITL resume for policy/shortlist or multi-PO order drafts."""
+        if isinstance(request, StrategyResumeRequest):
+            decision = request.model_dump(mode="json")
+        else:
+            decision = dict(request)
+            StrategyResumeRequest.model_validate(decision)
+        action = str(decision.get("action") or "")
+        artifact = dict(_STRATEGY_ARTIFACT)
+        if not artifact.get("thread_id") and not artifact.get("stage"):
+            # Try rehydrate from any manager case workspace.
+            artifact = await self._load_strategy_artifact_from_cases()
+        if not artifact.get("thread_id"):
+            raise ValueError("Нет активного прогона стратегии для resume")
+
+        resume_key = decision.get("idempotency_key") or (
+            f"strategy-resume:{artifact.get('run_id')}:{action}:{artifact.get('stage')}"
+        )
+        resume_key = str(resume_key)[:255]
+        prior = list(artifact.get("resume_keys") or [])
+        if resume_key in prior:
+            return await self.strategy_status()
+
+        thread_id = str(artifact.get("thread_id"))
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "runtime": self.supplier_search,
+            }
+        }
+        result = await self._invoke_strategy_resume(decision, config, artifact)
+        prior.append(resume_key)
+        artifact["resume_keys"] = prior[-50:]
+        _STRATEGY_ARTIFACT.update(artifact)
+        cases = await self._strategy_cases_from_ids(list(artifact.get("case_ids") or []))
+        await self._persist_strategy_state(
+            cases,
+            result,
+            thread_id=thread_id,
+            idempotency_key=str(artifact.get("strategy_run_idempotency_key") or ""),
+            event_type="strategy_resumed",
+            resume_keys=prior[-50:],
+        )
+        return await self.strategy_status()
+
+    async def _invoke_strategy_resume(
+        self,
+        decision: dict[str, Any],
+        config: dict[str, Any],
+        artifact: dict[str, Any],
+    ) -> dict[str, Any]:
+        live = await _strategy_graph.aget_state(config)
+        if live.values and live.next:
+            try:
+                return await _strategy_graph.ainvoke(Command(resume=decision), config=config)
+            except Exception as exc:
+                logger.warning(
+                    "strategy_resume live checkpoint failed (%s); rehydrating",
+                    exc,
+                )
+        if not artifact.get("paused_for_human") and not artifact.get("interrupt"):
+            raise ValueError("Нет активного HITL-прерывания стратегии")
+        return await self._resume_strategy_rehydrated(decision, config, artifact)
+
+    async def _resume_strategy_rehydrated(
+        self,
+        decision: dict[str, Any],
+        config: dict[str, Any],
+        artifact: dict[str, Any],
+    ) -> dict[str, Any]:
+        interrupt_payload = artifact.get("interrupt") or {}
+        interrupt_type = str(
+            interrupt_payload.get("type") if isinstance(interrupt_payload, dict) else ""
+        )
+        action = str(decision.get("action") or "")
+        graph_state = {
+            key: value
+            for key, value in dict(artifact.get("graph") or {}).items()
+            if key not in {"runtime", "__interrupt__", "paused_for_human"}
+        }
+        if not graph_state.get("cases"):
+            raise ValueError(
+                "Состояние стратегии потеряно после перезапуска. Запустите strategy/run заново."
+            )
+
+        is_order = (
+            interrupt_type == "procurement_order_approval" or "order" in interrupt_type
+        )
+        is_policy = (
+            interrupt_type == "procurement_policy_approval"
+            or "policy" in interrupt_type
+            or "shortlist" in interrupt_type
+        )
+        if is_order:
+            if action not in {"approve_order_draft", "reject"}:
+                raise ValueError(
+                    "Для подтверждения заказов нужно approve_order_draft или reject"
+                )
+            approved = action == "approve_order_draft"
+            drafts = list(graph_state.get("purchase_order_drafts") or [])
+            if approved:
+                for draft in drafts:
+                    if isinstance(draft, dict):
+                        draft["status"] = "approved_draft"
+                        draft["payment_execution_allowed"] = False
+                        draft["executed"] = False
+            patch = {
+                **graph_state,
+                "order_approval": dict(decision),
+                "purchase_order_drafts": drafts,
+                "status": "order_draft_approved" if approved else "order_rejected",
+                "stage": "await_order_hitl",
+            }
+            as_node = "await_order_hitl"
+        elif is_policy:
+            if action not in {
+                "approve_shortlist",
+                "approve_policy",
+                "approve_rfq_draft",
+                "reject",
+            }:
+                raise ValueError(
+                    "Для политики нужно approve_shortlist / approve_policy / reject"
+                )
+            approved = action in {
+                "approve_shortlist",
+                "approve_policy",
+                "approve_rfq_draft",
+            }
+            flags = dict(graph_state.get("kpi_flags") or {})
+            if approved:
+                flags["supplier_confirmed"] = True
+            patch = {
+                **graph_state,
+                "policy_approval": dict(decision),
+                "kpi_flags": flags,
+                "status": "policy_approved" if approved else "rejected",
+                "stage": "await_policy_hitl",
+            }
+            as_node = "await_policy_hitl"
+        else:
+            raise ValueError(
+                f"Неизвестный тип HITL стратегии: {interrupt_type or '—'}"
+            )
+
+        await _strategy_graph.aupdate_state(config, patch, as_node=as_node)
+        return await _strategy_graph.ainvoke(None, config=config)
+
+    async def strategy_status(self) -> StrategyStatus:
+        artifact = dict(_STRATEGY_ARTIFACT)
+        if not artifact.get("stage"):
+            artifact = await self._load_strategy_artifact_from_cases()
+        graph = dict(artifact.get("graph") or {})
+        interrupt_payload = artifact.get("interrupt") or {}
+        supply_policy = (
+            artifact.get("supply_policy")
+            or graph.get("supply_policy")
+            or {}
+        )
+        drafts = (
+            artifact.get("purchase_order_drafts")
+            or graph.get("purchase_order_drafts")
+            or supply_policy.get("purchase_order_drafts")
+            or []
+        )
+        queue_plan = graph.get("queue_plan") or {}
+        return StrategyStatus(
+            run_id=artifact.get("run_id"),
+            stage=artifact.get("stage") or graph.get("stage"),
+            status=artifact.get("status") or graph.get("status"),
+            paused_for_human=bool(artifact.get("paused_for_human")),
+            interrupt_type=(
+                interrupt_payload.get("type")
+                if isinstance(interrupt_payload, dict)
+                else None
+            ),
+            case_ids=list(artifact.get("case_ids") or graph.get("case_ids") or []),
+            waves=artifact.get("waves") or graph.get("waves") or supply_policy.get("waves"),
+            supply_policy=supply_policy or None,
+            explanation=artifact.get("explanation")
+            or graph.get("explanation")
+            or (supply_policy.get("explanation") if isinstance(supply_policy, dict) else None),
+            cost_estimate=artifact.get("cost_estimate")
+            or graph.get("cost_estimate")
+            or (supply_policy.get("cost_estimate") if isinstance(supply_policy, dict) else None),
+            purchase_order_drafts=[
+                item if isinstance(item, dict) else {} for item in drafts
+            ],
+            queue_plan_summary=(
+                queue_plan.get("summary")
+                if isinstance(queue_plan, dict)
+                else None
+            )
+            or (
+                supply_policy.get("queue_summary")
+                if isinstance(supply_policy, dict)
+                else None
+            ),
+            supplier_diversity=list(
+                (queue_plan.get("supplier_diversity") if isinstance(queue_plan, dict) else None)
+                or (supply_policy.get("supplier_diversity") if isinstance(supply_policy, dict) else None)
+                or []
+            ),
+            kpi_flags=dict(artifact.get("kpi_flags") or graph.get("kpi_flags") or {}),
+            candidates_count=len(graph.get("candidates") or []),
+            payment_execution_allowed=False,
+        )
+
+    async def _strategy_cases_from_ids(self, case_ids: list[str]) -> list[ProcurementCase]:
+        if not case_ids:
+            return await self._manager_cases()
+        out: list[ProcurementCase] = []
+        for raw in case_ids:
+            try:
+                case = await self._case(uuid.UUID(str(raw)))
+            except Exception:
+                case = None
+            if case is not None:
+                out.append(case)
+        return out
+
+    async def _load_strategy_artifact_from_cases(self) -> dict[str, Any]:
+        cases = await self._manager_cases()
+        best: dict[str, Any] = {}
+        best_ts = ""
+        for case in cases:
+            workspace = self._workspace(case)
+            artifact = workspace.get("strategy_artifact")
+            if not isinstance(artifact, dict) or not artifact.get("stage"):
+                continue
+            ts = str(artifact.get("updated_at") or "")
+            if ts >= best_ts:
+                best_ts = ts
+                best = dict(artifact)
+        if best:
+            _STRATEGY_ARTIFACT.clear()
+            _STRATEGY_ARTIFACT.update(best)
+        return best
+
+    async def _persist_strategy_state(
+        self,
+        cases: list[ProcurementCase],
+        state: dict[str, Any],
+        *,
+        thread_id: str,
+        idempotency_key: str,
+        event_type: str,
+        resume_keys: list[str] | None = None,
+    ) -> None:
+        interrupt_raw = state.get("__interrupt__") or ()
+        interrupt_payload: dict[str, Any] | None = None
+        if interrupt_raw:
+            first = interrupt_raw[0]
+            value = getattr(first, "value", first)
+            interrupt_payload = dict(value) if isinstance(value, dict) else {"value": value}
+
+        snapshot = {
+            key: value
+            for key, value in state.items()
+            if key not in {"runtime", "__interrupt__"}
+        }
+        paused = bool(interrupt_raw)
+        snapshot["paused_for_human"] = paused
+        supply_policy = snapshot.get("supply_policy") or {}
+        if isinstance(supply_policy, dict):
+            supply_policy = dict(supply_policy)
+            supply_policy["payment_execution_allowed"] = False
+
+        case_ids = list(snapshot.get("case_ids") or [str(case.id) for case in cases])
+        artifact = {
+            "run_id": idempotency_key or thread_id,
+            "strategy_run_idempotency_key": idempotency_key,
+            "thread_id": thread_id,
+            "case_ids": case_ids,
+            "stage": snapshot.get("stage"),
+            "status": snapshot.get("status"),
+            "paused_for_human": paused,
+            "interrupt": interrupt_payload,
+            "graph": snapshot,
+            "waves": snapshot.get("waves"),
+            "supply_policy": supply_policy,
+            "explanation": snapshot.get("explanation"),
+            "cost_estimate": snapshot.get("cost_estimate"),
+            "purchase_order_drafts": list(snapshot.get("purchase_order_drafts") or []),
+            "kpi_flags": dict(snapshot.get("kpi_flags") or {}),
+            "resume_keys": list(
+                resume_keys
+                if resume_keys is not None
+                else (_STRATEGY_ARTIFACT.get("resume_keys") or [])
+            ),
+            "updated_at": datetime.now(UTC).isoformat(),
+            "payment_execution_allowed": False,
+        }
+        _STRATEGY_ARTIFACT.clear()
+        _STRATEGY_ARTIFACT.update(artifact)
+
+        drafts = list(artifact.get("purchase_order_drafts") or [])
+        for case in cases:
+            workspace = self._workspace(case)
+            workspace[STRATEGY_METADATA_KEY] = supply_policy
+            workspace[STRATEGY_GRAPH_KEY] = {
+                "stage": artifact.get("stage"),
+                "status": artifact.get("status"),
+                "waves": artifact.get("waves"),
+                "case_ids": case_ids,
+            }
+            workspace["strategy_artifact"] = artifact
+            workspace["strategy_stage"] = artifact.get("stage")
+            workspace["strategy_paused_for_human"] = paused
+            if drafts:
+                po_entries = list(workspace.get("purchase_order_drafts") or [])
+                for draft in drafts:
+                    if not isinstance(draft, dict) or not draft.get("po_id"):
+                        continue
+                    existing = next(
+                        (
+                            item
+                            for item in po_entries
+                            if (item.get("draft") or {}).get("po_id") == draft.get("po_id")
+                        ),
+                        None,
+                    )
+                    entry = {
+                        "idempotency_key": f"strategy-po:{draft.get('po_id')}",
+                        "draft": {
+                            **draft,
+                            "payment_execution_allowed": False,
+                            "executed": False,
+                        },
+                        "executed": False,
+                    }
+                    if existing is None:
+                        po_entries.append(entry)
+                    else:
+                        existing.update(entry)
+                workspace["purchase_order_drafts"] = po_entries
+                self._sync_line_amounts_from_po_drafts(workspace)
+            if snapshot.get("cost_estimate") is not None:
+                workspace["cost_estimate"] = snapshot.get("cost_estimate")
+            if paused:
+                workspace["lifecycle_state"] = "approval_required"
+            self._save_workspace(case, workspace)
+            if case.status not in {
+                ProcurementCaseStatus.ORDERED.value,
+                ProcurementCaseStatus.IN_TRANSIT.value,
+                ProcurementCaseStatus.RECEIVING.value,
+            }:
+                case.status = ProcurementCaseStatus.PURCHASE_DRAFT.value
+                case.control_point = "purchase"
+            await self._event(
+                case,
+                event_type,
+                f"{event_type}:{case.id}:{artifact.get('stage')}:{paused}",
+                {
+                    "status": artifact.get("status"),
+                    "stage": artifact.get("stage"),
+                    "run_id": artifact.get("run_id"),
+                    "case_ids": case_ids,
+                },
+            )
 
     async def create_purchase_order_draft(
         self,
@@ -538,6 +1264,7 @@ class ProcurementManagerService:
         )
         metadata["purchase_order_drafts"] = drafts
         metadata["lifecycle_state"] = "purchase_order_draft"
+        self._sync_line_amounts_from_po_drafts(metadata)
         self._save_workspace(case, metadata)
         case.status = ProcurementCaseStatus.PURCHASE_DRAFT.value
         case.control_point = "purchase"
@@ -605,12 +1332,16 @@ class ProcurementManagerService:
         workspace["kpi_flags"] = dict(state.get("kpi_flags") or workspace.get("kpi_flags") or {})
         if state.get("evaluation") is not None:
             workspace["evaluation"] = state.get("evaluation")
+        if state.get("cost_estimate") is not None:
+            workspace["cost_estimate"] = state.get("cost_estimate")
         if state.get("comparison") is not None:
             workspace["comparison"] = state.get("comparison")
         if state.get("recommendation") is not None:
             workspace["recommendation"] = state.get("recommendation")
         if state.get("candidates"):
             workspace["suppliers"] = list(state.get("candidates") or [])
+        if state.get("nomenclature_results"):
+            workspace["nomenclature_results"] = list(state.get("nomenclature_results") or [])
         if state.get("quotes"):
             workspace["quotes"] = [
                 {"idempotency_key": f"graph-quote:{item.get('quote_id')}", "quote": item}
@@ -667,6 +1398,7 @@ class ProcurementManagerService:
             else:
                 existing.update(entry)
             workspace["purchase_order_drafts"] = drafts
+            self._sync_line_amounts_from_po_drafts(workspace)
 
         if paused:
             workspace["lifecycle_state"] = "approval_required"
@@ -1138,7 +1870,12 @@ class ProcurementManagerService:
 
     async def workspace_payload(self, case_id: uuid.UUID) -> dict[str, Any]:
         case = await self.require_case(case_id)
-        payload = self._public_workspace(self._workspace(case))
+        workspace = self._workspace(case)
+        # Heal older agent runs: PO draft prices were not mapped into line_amounts.
+        if self._sync_line_amounts_from_po_drafts(workspace):
+            self._save_workspace(case, workspace)
+            await self.db.flush()
+        payload = self._public_workspace(workspace)
         meta = dict(case.case_metadata or {})
         # Surface project/demo titles for the manager workspace header.
         if meta.get("need_title"):
@@ -1221,6 +1958,9 @@ class ProcurementManagerService:
                 elif override is not None:
                     override = Decimal(str(override))
                 currency = str(manual.get("currency") or "RUB").upper()
+                line_required = getattr(position, "required_date", None) or getattr(
+                    case, "required_date", None
+                )
                 bucket = buckets.get(key)
                 if bucket is None:
                     buckets[key] = {
@@ -1232,6 +1972,7 @@ class ProcurementManagerService:
                         "currency": currency,
                         "has_manual_override": override is not None,
                         "positions_count": 1,
+                        "required_date": line_required,
                     }
                     continue
                 bucket["quantity"] += qty
@@ -1241,6 +1982,10 @@ class ProcurementManagerService:
                     bucket["has_manual_override"] = True
                 if not bucket.get("nomenclature_name") and nom_name:
                     bucket["nomenclature_name"] = nom_name
+                if line_required is not None:
+                    current_req = bucket.get("required_date")
+                    if current_req is None or line_required < current_req:
+                        bucket["required_date"] = line_required
 
         rows: list[AllPositionsRow] = []
         total = Decimal("0")
@@ -1256,6 +2001,10 @@ class ProcurementManagerService:
             raw_from_supplier = cov.get("from_supplier")
             if raw_from_supplier is not None and raw_from_supplier != "":
                 from_supplier = Decimal(str(raw_from_supplier))
+            from_warehouse = None
+            raw_from_warehouse = cov.get("from_warehouse")
+            if raw_from_warehouse is not None and raw_from_warehouse != "":
+                from_warehouse = Decimal(str(raw_from_warehouse))
             nom_id = bucket.get("nomenclature_id")
             offers = (
                 collect_supplier_offers(str(nom_id), bank=bank) if nom_id else []
@@ -1271,15 +2020,35 @@ class ProcurementManagerService:
             if estimate.amount is not None:
                 total += estimate.amount
                 any_total = True
-            top_suppliers: list[TopSupplierOffer] = []
-            if nom_id:
-                ranked = rank_supplier_offers(
-                    str(nom_id),
-                    bucket["quantity"],
-                    bank=bank,
-                    top_n=3,
-                )
-                top_suppliers = [TopSupplierOffer.model_validate(item) for item in ranked]
+            # Only suppliers that allocation actually used (not bank top-N ranking).
+            coverage_source = cov.get("coverage_source")
+            used_suppliers: list[UsedSupplierPart] = []
+            if coverage_source != "warehouse" and Decimal(str(cov.get("from_supplier") or 0)) > 0:
+                raw_used = cov.get("used_suppliers") or cov.get("supplier_parts") or []
+                for part in raw_used:
+                    if not isinstance(part, dict):
+                        continue
+                    sid = str(part.get("supplier_id") or "").strip()
+                    if not sid:
+                        continue
+                    try:
+                        qty = Decimal(str(part.get("quantity") or 0))
+                    except Exception:
+                        qty = Decimal("0")
+                    if qty <= 0:
+                        continue
+                    used_suppliers.append(
+                        UsedSupplierPart(
+                            supplier_id=sid,
+                            supplier_name=str(part.get("supplier_name") or sid),
+                            quantity=qty,
+                        )
+                    )
+            req = bucket.get("required_date")
+            if isinstance(req, datetime):
+                req_out: date | datetime | str | None = req.date()
+            else:
+                req_out = req
             rows.append(
                 AllPositionsRow(
                     nomenclature_id=bucket.get("nomenclature_id"),
@@ -1295,11 +2064,15 @@ class ProcurementManagerService:
                     amount_source=estimate.source,
                     amount_formula=AMOUNT_FORMULA,
                     currency=bucket.get("currency") or "RUB",
-                    coverage_source=cov.get("coverage_source"),
+                    coverage_source=coverage_source,
                     coverage_source_label=cov.get("coverage_source_label"),
+                    from_warehouse=from_warehouse,
+                    from_supplier=from_supplier,
                     positions_count=int(bucket.get("positions_count") or 0),
                     has_manual_override=bool(bucket.get("has_manual_override")),
-                    top_suppliers=top_suppliers,
+                    top_suppliers=[],
+                    used_suppliers=used_suppliers,
+                    required_date=req_out,
                 )
             )
         rows.sort(
@@ -1357,12 +2130,46 @@ class ProcurementManagerService:
             price_min = bounds["price_min"]
             price_max = bounds["price_max"]
 
-        ranked = rank_supplier_offers(
-            nom,
-            resolved_need or Decimal("0"),
-            bank=bank,
-            top_n=top_n,
-        )
+        earliest_required = None
+        for position in case.positions or []:
+            if position.cancelled:
+                continue
+            pid = str(position.nomenclature_id or "").strip()
+            if pid.casefold() != nom.casefold():
+                continue
+            req = position.required_date or case.required_date
+            if req is None:
+                continue
+            if earliest_required is None or req < earliest_required:
+                earliest_required = req
+        # Prefer agent-selected suppliers from evaluation / cost estimate when present.
+        workspace = self._workspace(case)
+        evaluation = workspace.get("evaluation") or {}
+        cost_estimate = workspace.get("cost_estimate") or evaluation.get("cost_estimate") or {}
+        agent_tops: list[dict[str, Any]] = []
+        for line in [
+            *(cost_estimate.get("lines") or []),
+            *(evaluation.get("lines") or []),
+        ]:
+            if not isinstance(line, dict):
+                continue
+            line_nom = str(line.get("nomenclature_id") or "").strip()
+            if line_nom.casefold() != nom.casefold():
+                continue
+            tops = line.get("top_suppliers") or []
+            if tops:
+                agent_tops = [item for item in tops if isinstance(item, dict)]
+                break
+        if agent_tops:
+            ranked = agent_tops[: max(1, top_n)]
+        else:
+            ranked = rank_supplier_offers(
+                nom,
+                resolved_need or Decimal("0"),
+                bank=bank,
+                top_n=top_n,
+                required_date=earliest_required,
+            )
         return SupplierOffersResponse(
             nomenclature_id=nom,
             nomenclature_name=nomenclature_name,
@@ -1470,10 +2277,28 @@ class ProcurementManagerService:
                     }
                 item["order_coverage"] = order_coverage
                 item["coverage"] = order_coverage
+                # Surface earliest line deadline when case-level required_date is empty.
+                if not item.get("required_date"):
+                    line_dates = [
+                        line.get("required_date")
+                        for line in order_coverage.get("lines") or []
+                        if line.get("required_date")
+                    ]
+                    if line_dates:
+                        item["required_date"] = min(str(value) for value in line_dates)
                 # Nested copy so clients reading procurement_manager.* still see bank tone.
                 pm = dict(item.get("procurement_manager") or {})
                 pm["order_coverage"] = order_coverage
                 item["procurement_manager"] = pm
+            # Urgency order within each dashboard group: earlier required_date first.
+            group_cases = list(group.get("cases") or [])
+            group_cases.sort(
+                key=lambda case: (
+                    1 if not case.get("required_date") else 0,
+                    str(case.get("required_date") or ""),
+                )
+            )
+            group["cases"] = group_cases
         payload["material_allocation_summary"] = allocation.get("summary")
         return payload
 
@@ -1667,7 +2492,10 @@ class ProcurementManagerService:
         for quote in workspace.get("quotes") or []:
             if not isinstance(quote, dict):
                 continue
-            for line in quote.get("lines") or []:
+            body = quote.get("quote") if isinstance(quote.get("quote"), dict) else quote
+            if not isinstance(body, dict):
+                continue
+            for line in body.get("lines") or []:
                 if not isinstance(line, dict):
                     continue
                 line_id = str(line.get("line_id") or "").strip()
@@ -1676,6 +2504,63 @@ class ProcurementManagerService:
                     continue
                 prices.setdefault(line_id, Decimal(str(unit_price)))
         return prices
+
+    @staticmethod
+    def _iter_po_draft_payloads(workspace: dict[str, Any]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for item in workspace.get("purchase_order_drafts") or []:
+            if not isinstance(item, dict):
+                continue
+            draft = item.get("draft") if isinstance(item.get("draft"), dict) else item
+            if isinstance(draft, dict) and draft.get("po_id"):
+                out.append(draft)
+        return out
+
+    @classmethod
+    def _sync_line_amounts_from_po_drafts(cls, workspace: dict[str, Any]) -> bool:
+        """Copy positive PO draft prices into line_amounts for position-row UI.
+
+        Does not overwrite an existing positive manual unit_price. Returns whether
+        ``workspace['line_amounts']`` changed.
+        """
+        current = dict(workspace.get("line_amounts") or {})
+        changed = False
+        for draft in cls._iter_po_draft_payloads(workspace):
+            currency = str(draft.get("currency") or "RUB").upper() or "RUB"
+            for line in draft.get("lines") or []:
+                if not isinstance(line, dict):
+                    continue
+                line_id = str(line.get("line_id") or "").strip()
+                if not line_id:
+                    continue
+                try:
+                    unit_price = Decimal(str(line.get("unit_price")))
+                    quantity = Decimal(str(line.get("quantity") or 0))
+                except Exception:
+                    continue
+                if unit_price <= 0 or quantity <= 0:
+                    continue
+                existing = current.get(line_id) or {}
+                existing_price = existing.get("unit_price")
+                if existing_price is not None:
+                    try:
+                        if Decimal(str(existing_price)) > 0:
+                            continue
+                    except Exception:
+                        pass
+                amount = (unit_price * quantity).quantize(Decimal("0.01"))
+                entry = LineAmountEntry(
+                    line_id=line_id,
+                    unit_price=unit_price,
+                    amount=amount,
+                    currency=currency,
+                ).model_dump(mode="json")
+                if current.get(line_id) != entry:
+                    current[line_id] = entry
+                    changed = True
+        if changed:
+            workspace["line_amounts"] = current
+        return changed
 
     @staticmethod
     def _public_workspace(workspace: dict[str, Any]) -> dict[str, Any]:
@@ -1688,6 +2573,7 @@ class ProcurementManagerService:
             "evaluation",
             "suppliers",
             "supplier_searches",
+            "nomenclature_results",
             "quotes",
             "comparison",
             "rfq_drafts",
@@ -1700,11 +2586,18 @@ class ProcurementManagerService:
             "operations",
             "nonconformities",
             "supplier_graph",
+            "supply_policy",
+            "strategy_graph",
+            "strategy_artifact",
+            "strategy_stage",
+            "strategy_paused_for_human",
+            "cost_estimate",
             "line_amounts",
         )
         list_keys = {
             "suppliers",
             "supplier_searches",
+            "nomenclature_results",
             "quotes",
             "rfq_drafts",
             "purchase_order_drafts",
@@ -1714,7 +2607,16 @@ class ProcurementManagerService:
             "operations",
             "nonconformities",
         }
-        dict_keys = {"line_amounts", "kpi_flags", "evaluation", "agent_interrupt"}
+        dict_keys = {
+            "line_amounts",
+            "kpi_flags",
+            "evaluation",
+            "agent_interrupt",
+            "supply_policy",
+            "strategy_graph",
+            "strategy_artifact",
+            "cost_estimate",
+        }
         payload = {
             key: workspace.get(
                 key,
@@ -1748,6 +2650,199 @@ class ProcurementManagerService:
             if category:
                 return str(category)[:255]
         return None
+
+    def _nomenclature_targets_from_case(
+        self,
+        case: ProcurementCase,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[NomenclatureSearchItem]:
+        """One search target per unique nomenclature, with existing bank/prior matches."""
+        workspace = metadata or {}
+        prior_by_key = self._prior_nomenclature_suppliers(workspace)
+        seen: set[str] = set()
+        targets: list[NomenclatureSearchItem] = []
+        for position in case.positions or []:
+            if position.cancelled:
+                continue
+            nom_id = str(position.nomenclature_id or "").strip()
+            nom_name = str(position.nomenclature_name or nom_id or "").strip()
+            query = nom_name or nom_id
+            if len(query) < 2:
+                continue
+            key = (nom_id or nom_name).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            existing = self._existing_suppliers_for_nomenclature(
+                nomenclature_id=nom_id or None,
+                nomenclature_name=nom_name or None,
+                prior_by_key=prior_by_key,
+            )
+            targets.append(
+                NomenclatureSearchItem(
+                    nomenclature_id=nom_id or None,
+                    nomenclature_name=nom_name or query,
+                    query=query[:500],
+                    existing_suppliers=existing,
+                )
+            )
+        return targets
+
+    def _prior_nomenclature_suppliers(
+        self, workspace: dict[str, Any]
+    ) -> dict[str, list[Supplier]]:
+        prior: dict[str, list[Supplier]] = {}
+        for row in workspace.get("nomenclature_results") or []:
+            if not isinstance(row, dict):
+                continue
+            key = str(
+                row.get("nomenclature_id") or row.get("nomenclature_name") or row.get("query") or ""
+            ).strip().casefold()
+            if not key:
+                continue
+            suppliers: list[Supplier] = []
+            for item in row.get("suppliers") or []:
+                if isinstance(item, dict):
+                    try:
+                        suppliers.append(Supplier.model_validate(item))
+                    except Exception:
+                        continue
+            if suppliers:
+                prior[key] = suppliers
+        # Also fold latest supplier_searches payload if present.
+        for search in reversed(workspace.get("supplier_searches") or []):
+            result = (search or {}).get("result") or {}
+            for row in result.get("nomenclature_results") or []:
+                if not isinstance(row, dict):
+                    continue
+                key = str(
+                    row.get("nomenclature_id")
+                    or row.get("nomenclature_name")
+                    or row.get("query")
+                    or ""
+                ).strip().casefold()
+                if not key or key in prior:
+                    continue
+                suppliers = []
+                for item in row.get("suppliers") or []:
+                    if isinstance(item, dict):
+                        try:
+                            suppliers.append(Supplier.model_validate(item))
+                        except Exception:
+                            continue
+                if suppliers:
+                    prior[key] = suppliers
+            break
+        return prior
+
+    def _existing_suppliers_for_nomenclature(
+        self,
+        *,
+        nomenclature_id: str | None,
+        nomenclature_name: str | None,
+        prior_by_key: dict[str, list[Supplier]],
+    ) -> list[Supplier]:
+        """Bank matches + prior search results for skip-if-≥3 logic."""
+        by_id: dict[str, Supplier] = {}
+        for key in filter(
+            None,
+            [
+                (nomenclature_id or "").strip().casefold(),
+                (nomenclature_name or "").strip().casefold(),
+            ],
+        ):
+            for supplier in prior_by_key.get(key) or []:
+                by_id.setdefault(supplier.tax_id or supplier.supplier_id, supplier)
+
+        nom_key = (nomenclature_id or "").strip()
+        if nom_key:
+            try:
+                ranked = rank_supplier_offers(
+                    nom_key,
+                    Decimal("1"),
+                    bank=get_material_bank(),
+                    top_n=MIN_SUPPLIERS_BEFORE_SKIP,
+                )
+            except Exception:
+                ranked = []
+            for offer in ranked:
+                sid = str(offer.get("supplier_id") or "")
+                if not sid:
+                    continue
+                unit_price = offer.get("unit_price")
+                score = offer.get("score")
+                rating = None
+                if score is not None:
+                    try:
+                        # Bank score is 0..1; surface as 0..100 for UI.
+                        rating = (Decimal(str(score)) * Decimal("100")).quantize(
+                            Decimal("0.01")
+                        )
+                    except Exception:
+                        rating = None
+                price = None
+                try:
+                    price = Decimal(str(unit_price)) if unit_price is not None else None
+                except Exception:
+                    price = None
+                by_id.setdefault(
+                    sid,
+                    Supplier(
+                        supplier_id=sid,
+                        name=str(offer.get("supplier_name") or sid),
+                        source="internal",
+                        evidence=[f"bank:{sid}"],
+                        unit_price=price,
+                        approx_cost=price,
+                        rating=rating,
+                        quality_rating=rating or Decimal("0"),
+                        commercial_rating=rating or Decimal("0"),
+                    ),
+                )
+        return list(by_id.values())
+
+    @staticmethod
+    def _merge_nomenclature_search_results(
+        result: SupplierSearchResult,
+        *,
+        skipped: list[NomenclatureSupplierResult],
+        targets: list[NomenclatureSearchItem],
+        query: str,
+    ) -> SupplierSearchResult:
+        by_key: dict[str, NomenclatureSupplierResult] = {}
+        for row in [*result.nomenclature_results, *skipped]:
+            key = str(
+                row.nomenclature_id or row.nomenclature_name or row.query or ""
+            ).strip().casefold()
+            if key:
+                by_key[key] = row
+        ordered: list[NomenclatureSupplierResult] = []
+        for item in targets:
+            key = str(
+                item.nomenclature_id or item.nomenclature_name or item.query or ""
+            ).strip().casefold()
+            if key and key in by_key:
+                ordered.append(by_key.pop(key))
+        ordered.extend(by_key.values())
+        flat: list[Supplier] = []
+        sources: list[str] = []
+        web_used = False
+        for row in ordered:
+            flat.extend(row.suppliers)
+            sources.extend(row.sources_used)
+            web_used = web_used or row.web_fallback_used
+        unique: dict[str, Supplier] = {}
+        for supplier in flat:
+            unique.setdefault(supplier.tax_id or supplier.supplier_id, supplier)
+        return result.model_copy(
+            update={
+                "query": query,
+                "suppliers": list(unique.values()),
+                "sources_used": list(dict.fromkeys(sources)),
+                "web_fallback_used": web_used,
+                "nomenclature_results": ordered,
+            }
+        )
 
     async def _event(
         self,

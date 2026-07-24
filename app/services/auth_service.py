@@ -73,6 +73,21 @@ class AuthService:
                 user_agent=user_agent,
             )
 
+        return user, await self.issue_session(
+            user,
+            action="auth.login",
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def issue_session(
+        self,
+        user: User,
+        *,
+        action: str = "auth.login",
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> Token:
         expires_at = datetime.now(timezone.utc) + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
@@ -87,14 +102,14 @@ class AuthService:
         )
         self.db.add(session)
         await AuditService(self.db).log(
-            action="auth.login",
+            action=action,
             actor_id=user.id,
             resource_type="user_session",
             resource_id=token_id,
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        return user, Token(
+        return Token(
             access_token=create_access_token(user.id, token_id=token_id),
             expires_at=expires_at,
         )

@@ -5,7 +5,10 @@ from decimal import Decimal
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
-from app.agents.procurement_manager_agent.evaluate import evaluate_case_positions
+from app.agents.procurement_manager_agent.evaluate import (
+    build_trusted_cost_estimate,
+    evaluate_case_positions,
+)
 from app.agents.procurement_manager_agent.graph import build_graph
 from app.agents.procurement_manager_agent.material_bank import reset_material_bank_for_tests
 from app.agents.procurement_manager_agent.schemas import (
@@ -158,6 +161,8 @@ async def test_graph_search_rank_interrupt_resume_to_po_draft() -> None:
         config=config,
     )
     assert after_shortlist["__interrupt__"]
+    assert after_shortlist.get("cost_estimate")
+    assert after_shortlist["cost_estimate"]["web_approved"] is True
     assert after_shortlist.get("purchase_order_draft")
     assert after_shortlist["purchase_order_draft"]["payment_execution_allowed"] is False
     assert after_shortlist["purchase_order_draft"]["status"] == "draft"
@@ -183,9 +188,61 @@ async def test_ranking_consistent_with_all_positions_top_suppliers() -> None:
     bank = reset_material_bank_for_tests()
     need = Decimal("10")
     direct = rank_supplier_offers("steel", need, bank=bank, top_n=3)
-    evaluation = evaluate_case_positions(POSITIONS, bank=bank, top_n=3)
+    # Same optimizer without bank remainder adjustment (full need).
+    evaluation = evaluate_case_positions(
+        POSITIONS, bank=bank, top_n=3, use_bank_first=False
+    )
     line = evaluation["lines"][0]
     assert [row["supplier_id"] for row in line["top_suppliers"]] == [
         row["supplier_id"] for row in direct
     ]
     assert [row["score"] for row in line["top_suppliers"]] == [row["score"] for row in direct]
+
+
+def test_agent_estimate_excludes_unapproved_web_suppliers() -> None:
+    reset_material_bank_for_tests()
+    web_candidate = {
+        "supplier_id": "web-unapproved",
+        "name": "Web Unapproved",
+        "source": "web",
+        "url": "https://example.com/web",
+        "unit_price": "1.00",
+    }
+    trusted = {
+        "supplier_id": "internal-1",
+        "name": "Trusted Internal",
+        "source": "internal",
+        "evidence": ["bank:internal-1"],
+    }
+    before = build_trusted_cost_estimate(
+        POSITIONS,
+        candidates=[trusted, web_candidate],
+        web_candidates=[web_candidate],
+        web_approved=False,
+    )
+    assert before["web_approved"] is False
+    assert before["excluded_unapproved_web"] is True
+    assert before["approved_web_supplier_ids"] == []
+    for line in before["lines"]:
+        assert all(
+            str(offer.get("supplier_id")) != "web-unapproved"
+            for offer in (line.get("top_suppliers") or [])
+        )
+        assert all(
+            str(offer.get("source") or "").casefold() != "web"
+            for offer in (line.get("top_suppliers") or [])
+        )
+
+    after = build_trusted_cost_estimate(
+        POSITIONS,
+        candidates=[trusted, web_candidate],
+        web_candidates=[web_candidate],
+        web_approved=True,
+    )
+    assert after["web_approved"] is True
+    assert "web-unapproved" in after["approved_web_supplier_ids"]
+    assert any(
+        str(offer.get("supplier_id")) == "web-unapproved"
+        for line in after["lines"]
+        for offer in (line.get("top_suppliers") or [])
+    )

@@ -135,6 +135,98 @@ async def test_agent_run_resume_creates_po_draft_without_payment() -> None:
     stored = meta["purchase_order_drafts"][-1]
     assert stored["executed"] is False
     assert stored["draft"]["payment_execution_allowed"] is False
+    # PO draft lines must map into position-row line_amounts (price + sum).
+    line_amounts = meta.get("line_amounts") or {}
+    assert "line-steel" in line_amounts
+    assert Decimal(str(line_amounts["line-steel"]["unit_price"])) > 0
+    assert Decimal(str(line_amounts["line-steel"]["amount"])) > 0
+
+
+def test_sync_line_amounts_from_po_drafts_heals_missing_prices() -> None:
+    workspace = {
+        "purchase_order_drafts": [
+            {
+                "draft": {
+                    "po_id": "po-1",
+                    "supplier_id": "sup-1",
+                    "supplier_name": "ООО Тест",
+                    "currency": "RUB",
+                    "lines": [
+                        {
+                            "line_id": "pm-25-L2",
+                            "nomenclature_id": "missing-seal-kit",
+                            "quantity": "22",
+                            "unit_price": "15.44",
+                        }
+                    ],
+                }
+            }
+        ],
+        "line_amounts": {},
+    }
+    changed = ProcurementManagerService._sync_line_amounts_from_po_drafts(workspace)
+    assert changed is True
+    entry = workspace["line_amounts"]["pm-25-L2"]
+    assert Decimal(str(entry["unit_price"])) == Decimal("15.44")
+    assert Decimal(str(entry["amount"])) == Decimal("339.68")
+    # Positive manual price must not be overwritten.
+    workspace["line_amounts"]["pm-25-L2"] = {
+        "line_id": "pm-25-L2",
+        "unit_price": "20",
+        "amount": "440",
+        "currency": "RUB",
+    }
+    assert ProcurementManagerService._sync_line_amounts_from_po_drafts(workspace) is False
+    assert workspace["line_amounts"]["pm-25-L2"]["unit_price"] == "20"
+
+
+@pytest.mark.asyncio
+async def test_agent_resume_rehydrates_after_memory_saver_loss() -> None:
+    """Backend restart drops MemorySaver; HITL must resume from workspace snapshot."""
+    reset_material_bank_for_tests()
+    case = _case()
+    service = ProcurementManagerService(FakeDb(), supplier_search=FakeSearch())  # type: ignore[arg-type]
+    service.require_case = lambda _case_id: _async_value(case)  # type: ignore[method-assign]
+    service._case = lambda _case_id: _async_value(case)  # type: ignore[method-assign]
+
+    status = await service.agent_run(
+        case.id,
+        AgentRunRequest(idempotency_key="run-lost-ckpt", allow_web_fallback=False),
+    )
+    assert status.paused_for_human is True
+    assert status.interrupt_type == "procurement_shortlist_approval"
+
+    import app.agents.procurement_manager_agent.service as service_module
+    from app.agents.procurement_manager_agent.graph import build_graph
+    from langgraph.checkpoint.memory import MemorySaver
+
+    previous = service_module._runtime_graph
+    service_module._runtime_graph = build_graph(checkpointer=MemorySaver())
+    try:
+        status = await service.agent_resume(
+            case.id,
+            AgentResumeRequest(
+                action="approve_shortlist",
+                idempotency_key="resume-shortlist-after-restart",
+            ),
+        )
+        assert status.paused_for_human is True
+        assert status.interrupt_type == "procurement_order_approval"
+        assert status.purchase_order_draft is not None
+
+        # Simulate another restart while paused on order approval.
+        service_module._runtime_graph = build_graph(checkpointer=MemorySaver())
+        status = await service.agent_resume(
+            case.id,
+            AgentResumeRequest(
+                action="approve_order_draft",
+                idempotency_key="resume-order-after-restart",
+            ),
+        )
+        assert status.paused_for_human is False
+        assert status.status == "order_draft_approved"
+    finally:
+        service_module._runtime_graph = previous
 
 
 @pytest.mark.asyncio

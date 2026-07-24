@@ -178,6 +178,15 @@ def test_mixed_source_when_warehouse_and_supplier_used() -> None:
     assert Decimal(line["from_warehouse"]) > 0
     assert Decimal(line["from_supplier"]) > 0
     assert line["coverage_source"] == "mixed"
+    assert line["supplier_parts"]
+    assert all(Decimal(str(part["quantity"])) > 0 for part in line["supplier_parts"])
+    by_nom = next(
+        row
+        for row in result["by_nomenclature"]
+        if str(row.get("nomenclature_id") or "") == "30.02.00015"
+    )
+    assert by_nom["used_suppliers"]
+    assert by_nom["coverage_source"] == "mixed"
 
 
 def test_partial_coverage_case_tone_is_attention() -> None:
@@ -227,4 +236,13 @@ def test_name_fallback_matches_bank_when_id_is_guid() -> None:
     assert Decimal(line["covered_quantity"]) == Decimal("10")
     assert line["tone"] == "ready"
     assert line["coverage_source"] == "warehouse"
+    assert line["supplier_parts"] == []
     assert result["case_index"]["guid-nom"]["tone"] == "ready"
+    by_nom = next(
+        row
+        for row in result["by_nomenclature"]
+        if row.get("nomenclature_name") == "Сталь 20 лист 5 мм"
+        or "a1b2c3d4" in str(row.get("nomenclature_id") or "")
+    )
+    assert by_nom["used_suppliers"] == []
+    assert by_nom["coverage_source"] == "warehouse"

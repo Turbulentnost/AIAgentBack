@@ -19,6 +19,21 @@ class Supplier(BaseModel):
     is_active: bool = True
     contacts: dict[str, str] = Field(default_factory=dict)
     evidence: list[str] = Field(default_factory=list)
+    url: str | None = None
+    city: str | None = None
+    unit_price: Decimal | None = Field(default=None, ge=0)
+    approx_cost: Decimal | None = Field(default=None, ge=0)
+    rating: Decimal | None = Field(default=None, ge=0, le=100)
+
+
+class NomenclatureSearchItem(BaseModel):
+    """One case position / nomenclature to search suppliers for."""
+
+    nomenclature_id: str | None = None
+    nomenclature_name: str | None = None
+    query: str | None = Field(default=None, min_length=1, max_length=500)
+    # Pre-matched bank / prior-search suppliers (service fills; clients may omit).
+    existing_suppliers: list[Supplier] = Field(default_factory=list)
 
 
 class SupplierSearchRequest(BaseModel):
@@ -26,7 +41,26 @@ class SupplierSearchRequest(BaseModel):
     category: str | None = Field(default=None, max_length=255)
     limit: int = Field(default=10, ge=1, le=50)
     allow_web_fallback: bool = True
+    # Manual Find-suppliers button: bank-only seeds must not block Edge/Bing web search.
+    force_web: bool = False
+    mode: Literal["auto", "manual_web"] | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
+    nomenclatures: list[NomenclatureSearchItem] = Field(default_factory=list)
+
+    @property
+    def is_manual_web(self) -> bool:
+        return bool(self.force_web or self.mode == "manual_web")
+
+
+class NomenclatureSupplierResult(BaseModel):
+    """Supplier search results scoped to a single nomenclature."""
+
+    nomenclature_id: str | None = None
+    nomenclature_name: str | None = None
+    query: str
+    suppliers: list[Supplier] = Field(default_factory=list)
+    sources_used: list[str] = Field(default_factory=list)
+    web_fallback_used: bool = False
 
 
 class SupplierSearchResult(BaseModel):
@@ -34,6 +68,7 @@ class SupplierSearchResult(BaseModel):
     suppliers: list[Supplier]
     sources_used: list[str]
     web_fallback_used: bool = False
+    nomenclature_results: list[NomenclatureSupplierResult] = Field(default_factory=list)
     operation_id: str | None = None
     pending: bool = False
     status: Literal["completed", "running", "failed"] = "completed"
@@ -324,12 +359,28 @@ class TopSupplierOffer(BaseModel):
     coverable_qty: Decimal
     coverage_ratio: Decimal
     coverage_cost: Decimal
+    total_cost: Decimal | None = None
+    overpay: Decimal | None = None
     price_score: Decimal | None = None
     coverage_score: Decimal | None = None
     score: Decimal
     reason: str = ""
     unit: str = "шт"
     lead_time_days: int | None = None
+    meets_deadline: bool | None = None
+    deadline_status: Literal["ok", "miss", "unknown"] | None = None
+    deadline_risk: bool = False
+    optimization_rank: int | None = None
+    optimization_reason: str | None = None
+    source: str | None = None
+
+
+class UsedSupplierPart(BaseModel):
+    """Supplier actually used by allocation for a line / nomenclature remainder."""
+
+    supplier_id: str
+    supplier_name: str
+    quantity: Decimal = Decimal("0")
 
 
 class SupplierOffersResponse(BaseModel):
@@ -361,9 +412,13 @@ class AllPositionsRow(BaseModel):
     currency: str = "RUB"
     coverage_source: Literal["warehouse", "supplier", "mixed", "none"] | None = None
     coverage_source_label: str | None = None
+    from_warehouse: Decimal | None = None
+    from_supplier: Decimal | None = None
     positions_count: int = 0
     has_manual_override: bool = False
     top_suppliers: list[TopSupplierOffer] = Field(default_factory=list)
+    used_suppliers: list[UsedSupplierPart] = Field(default_factory=list)
+    required_date: date | datetime | str | None = None
 
 
 class AllPositionsResponse(BaseModel):
@@ -467,9 +522,52 @@ class AgentStatus(BaseModel):
     interrupt_type: str | None = None
     recommendation: dict[str, Any] | None = None
     evaluation: dict[str, Any] | None = None
+    cost_estimate: dict[str, Any] | None = None
     rfq_draft: dict[str, Any] | None = None
     purchase_order_draft: dict[str, Any] | None = None
     comparison: dict[str, Any] | None = None
+    kpi_flags: dict[str, Any] = Field(default_factory=dict)
+    candidates_count: int = 0
+    payment_execution_allowed: bool = False
+
+
+class StrategyRunRequest(BaseModel):
+    """Queue-level supply strategy run (multi-case)."""
+
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
+    allow_web_fallback: bool = True
+    query: str | None = None
+    case_ids: list[str] = Field(default_factory=list)
+
+
+class StrategyResumeRequest(BaseModel):
+    action: Literal[
+        "approve_shortlist",
+        "approve_policy",
+        "approve_rfq_draft",
+        "approve_order_draft",
+        "reject",
+    ]
+    comment: str | None = Field(default=None, max_length=2000)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class StrategyStatus(BaseModel):
+    """Queue strategy status: waves, supply_policy, multi-PO drafts."""
+
+    run_id: str | None = None
+    stage: str | None = None
+    status: str | None = None
+    paused_for_human: bool = False
+    interrupt_type: str | None = None
+    case_ids: list[str] = Field(default_factory=list)
+    waves: dict[str, Any] | None = None
+    supply_policy: dict[str, Any] | None = None
+    explanation: dict[str, Any] | None = None
+    cost_estimate: dict[str, Any] | None = None
+    purchase_order_drafts: list[dict[str, Any]] = Field(default_factory=list)
+    queue_plan_summary: dict[str, Any] | None = None
+    supplier_diversity: list[dict[str, Any]] = Field(default_factory=list)
     kpi_flags: dict[str, Any] = Field(default_factory=dict)
     candidates_count: int = 0
     payment_execution_allowed: bool = False
@@ -479,6 +577,9 @@ __all__ = [
     "AgentResumeRequest",
     "AgentRunRequest",
     "AgentStatus",
+    "StrategyResumeRequest",
+    "StrategyRunRequest",
+    "StrategyStatus",
     "AllocationResult",
     "AllocationSummary",
     "AllPositionsResponse",
@@ -493,6 +594,8 @@ __all__ = [
     "NomenclaturePriceBound",
     "Nonconformity",
     "NonconformityRequest",
+    "NomenclatureSearchItem",
+    "NomenclatureSupplierResult",
     "OperationStatus",
     "OrderCoverageStatus",
     "PurchaseOrderDraft",
@@ -514,5 +617,6 @@ __all__ = [
     "SupplierSearchRequest",
     "SupplierSearchResult",
     "TopSupplierOffer",
+    "UsedSupplierPart",
     "WorkspaceSummary",
 ]

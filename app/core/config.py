@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     AUTH_DISABLED: bool = False
     # Optional email of the user to impersonate when AUTH_DISABLED (else first active superuser).
     AUTH_DISABLED_USER_EMAIL: str = ""
+    # Local/dev only: POST /auth/dev-auto-login issues a real JWT for the bypass user.
+    # Ignored unless ENVIRONMENT is "dev" or "test" (never enable in ope/prod).
+    DEV_AUTO_LOGIN: bool = False
     SQLALCHEMY_ECHO: bool = False
     SECRET_KEY: str = "change_me"
     ALGORITHM: str = "HS256"
@@ -107,14 +110,20 @@ class Settings(BaseSettings):
         "image/webp"
     )
 
-    # Общий LLM-шлюз (прочие задачи платформы).
+    # Общий LLM-шлюз (прочие задачи платформы / LM Studio OpenAI-compatible).
+    # LLM_GATEWAY_URL из .env тоже читается (alias) через env — см. web_qwen.resolve_qwen_gateway_url.
     LLM_GATEWAY_BASE_URL: str = ""
     LLM_GATEWAY_API_KEY: str | None = None
     CLAUDE_API_KEY: str | None = None
     OPENAI_API_KEY_CLAUDE: str | None = None
     OPENAI_API_KEY: str | None = None
-    LLM_DEFAULT_MODEL: str = ""
+    LLM_DEFAULT_MODEL: str = "qwen/qwen3.5-9b"
     LLM_EMBEDDING_MODEL: str = ""
+    # Procurement manager: Qwen extracts price/city from real fetched product pages.
+    PROCUREMENT_WEB_USE_QWEN: bool = True
+    PROCUREMENT_WEB_QWEN_REFINE_QUERY: bool = False
+    PROCUREMENT_WEB_QWEN_TIMEOUT_SECONDS: float = 25.0
+    PROCUREMENT_WEB_QWEN_MODEL: str = ""
     # Конструктор агентов: Claude → fallback в LM Studio (отдельно от OCR).
     AGENT_BUILDER_CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
     AGENT_BUILDER_FALLBACK_BASE_URL: str = ""
