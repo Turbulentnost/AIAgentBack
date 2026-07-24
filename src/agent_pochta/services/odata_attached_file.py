@@ -95,6 +95,7 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "store_versions": False,
                 "signed_ep": False,
                 "encrypted": False,
+                "include_static_fields": False,
             },
         }
     data = json.loads(file_path.read_text(encoding="utf-8"))
@@ -363,10 +364,7 @@ def build_attached_file_payload(
         if storage_type_field := fields.get("storage_binary_type"):
             payload[str(storage_type_field)] = plan["binary_type"]
     else:
-        if volume_field := fields.get("volume_key"):
-            payload[str(volume_field)] = _EMPTY_GUID
-        if path_field := fields.get("file_path"):
-            payload[str(path_field)] = ""
+        # Database mode: omit Том_Key/ПутьКФайлу (1С defaults; шаблон АЛ00-000760 / commit 406461f).
         if volume_value := (defaults.get("volume_key") or "").strip():
             if (
                 volume_value
@@ -402,7 +400,8 @@ def build_attached_file_payload(
     if file_input.comment and (comment_field := fields.get("comment")):
         payload[str(comment_field)] = file_input.comment.strip()
 
-    _apply_static_attached_file_fields(payload, fields=fields, defaults=defaults)
+    if defaults.get("include_static_fields"):
+        _apply_static_attached_file_fields(payload, fields=fields, defaults=defaults)
 
     if not payload:
         raise AttachedFileError("Маппинг полей присоединённого файла пуст — проверьте field_map")
@@ -659,9 +658,6 @@ def release_attached_file_edit_lock(
     patch_payload: dict[str, Any] = {}
     if lock_field:
         patch_payload[lock_field] = _EMPTY_GUID
-    if author_key and author_key != _EMPTY_GUID:
-        if author_field := fields.get("author_key"):
-            patch_payload[str(author_field)] = author_key
     if not patch_payload:
         return
     patch_attached_file_metadata(

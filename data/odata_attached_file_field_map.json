@@ -47,6 +47,7 @@
     "is_folder": false,
     "store_versions": false,
     "signed_ep": false,
-    "encrypted": false
+    "encrypted": false,
+    "include_static_fields": false
   }
 }

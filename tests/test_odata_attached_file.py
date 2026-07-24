@@ -169,17 +169,13 @@ def test_build_attached_file_payload_database_mode_by_default():
     assert payload["Расширение"] == "msg"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
     assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
-    assert payload["ПутьКФайлу"] == ""
     assert payload["ФайлХранилище_Type"] == "application/octet-stream"
     assert payload["ФайлХранилище_Base64Data"]
     assert payload["Размер"] == 68
-    assert payload["ДатаЗаема"] == "0001-01-01T00:00:00"
     assert "Изменил_Key" not in payload
-    assert payload["ИндексКартинки"] == "0"
-    assert payload["DeletionMark"] is False
-    assert payload["ХранитьВерсии"] is False
-    assert payload["ТекстХранилище_Type"] == "application/xml+xdto"
+    assert "Том_Key" not in payload
+    assert "ПутьКФайлу" not in payload
+    assert "DeletionMark" not in payload
     assert "Редактирует_Key" not in payload
 
 
@@ -196,8 +192,8 @@ def test_build_attached_file_payload_database_mode_explicit():
     )
     assert entity == "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
     assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
-    assert payload["ПутьКФайлу"] == ""
+    assert "Том_Key" not in payload
+    assert "ПутьКФайлу" not in payload
     assert payload["ФайлХранилище_Type"] == "application/octet-stream"
     assert payload["ФайлХранилище_Base64Data"]
 
@@ -232,8 +228,8 @@ def test_build_attached_file_payload_base64_mode_includes_binary_by_default():
     assert payload["Расширение"] == "pdf"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
     assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
-    assert payload["ПутьКФайлу"] == ""
+    assert "Том_Key" not in payload
+    assert "ПутьКФайлу" not in payload
     assert payload["ФайлХранилище_Base64Data"]
     assert payload["ФайлХранилище_Type"] == "application/octet-stream"
     assert payload["Размер"] == 8
@@ -427,7 +423,7 @@ def test_stream_mode_skips_volume_key_even_if_configured():
         },
     )
     assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert "Том_Key" not in payload
 
 
 def test_resolve_stream_content_type_for_eml_and_msg():
@@ -674,12 +670,10 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert payload["Description"] == "НП00-003877"
     assert payload["ФайлХранилище_Base64Data"]
     assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert payload["ПутьКФайлу"] == ""
+    assert "ПутьКФайлу" not in payload
     service._client.patch_entity.assert_called()
     patch_calls = service._client.patch_entity.call_args_list
-    assert any(
-        call.args[2].get("Автор_Key") == AUTHOR_KEY for call in patch_calls
-    )
+    assert not any("Автор_Key" in call.args[2] for call in patch_calls)
     assert any(
         call.args[2].get("Редактирует_Key") == "00000000-0000-0000-0000-000000000000"
         for call in patch_calls
@@ -812,8 +806,8 @@ def test_release_attached_file_edit_lock_verifies_cleared_lock():
     )
     client.patch_entity.assert_called_once()
     payload = client.patch_entity.call_args[0][2]
-    assert payload["Автор_Key"] == AUTHOR_KEY
     assert payload["Редактирует_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert "Автор_Key" not in payload
     assert "Изменил_Key" not in payload
 
 
