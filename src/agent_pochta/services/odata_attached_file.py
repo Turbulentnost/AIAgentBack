@@ -78,8 +78,8 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "edit_lock_key": "Редактирует_Key",
             },
             "defaults": {
-                "storage_mode": "volume",
-                "storage_kind": _VOLUME_STORAGE_KIND,
+                "storage_mode": "database",
+                "storage_kind": _DATABASE_STORAGE_KIND,
                 "volume_key": _DEFAULT_VOLUME_KEY,
                 "volume_binary_type": _VOLUME_BINARY_TYPE,
                 "storage_binary_type": "application/octet-stream",
@@ -248,7 +248,7 @@ def resolve_attached_file_storage_mode(defaults: dict[str, Any] | None = None) -
         return "volume"
     if kind == _DATABASE_STORAGE_KIND:
         return "database"
-    return "volume"
+    return "database"
 
 
 def is_volume_storage_kind(storage_kind: str | None) -> bool:
@@ -706,7 +706,7 @@ def upload_attached_file_binary(
     if not callable(put_stream):
         raise AttachedFileError("OData client does not support stream upload")
     storage_mode = resolve_attached_file_storage_mode(defaults)
-    resolved_type = (
+    primary_type = (
         content_type
         or (
             resolve_stream_content_type(
@@ -724,22 +724,33 @@ def upload_attached_file_binary(
         )
         or "application/octet-stream"
     )
+    fallback_types: list[str] = []
+    for candidate in (
+        primary_type,
+        "application/octet-stream",
+        str(defaults.get("volume_binary_type") or _VOLUME_BINARY_TYPE),
+    ):
+        value = str(candidate or "").strip()
+        if value and value not in fallback_types:
+            fallback_types.append(value)
+
     last_exc: Exception | None = None
-    for attempt in range(max(retries, 0) + 1):
-        try:
-            put_stream(
-                entity,
-                ref_key,
-                stream_property,
-                binary,
-                content_type=resolved_type,
-            )
-            return
-        except Exception as exc:
-            last_exc = exc
-            if attempt >= retries:
-                break
-            time.sleep(retry_delay_sec)
+    for content_type_value in fallback_types:
+        for attempt in range(max(retries, 0) + 1):
+            try:
+                put_stream(
+                    entity,
+                    ref_key,
+                    stream_property,
+                    binary,
+                    content_type=content_type_value,
+                )
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= retries:
+                    break
+                time.sleep(retry_delay_sec)
     raise AttachedFileError(
         f"Не удалось записать stream {stream_property} Ref_Key={ref_key}: {last_exc}"
     ) from last_exc

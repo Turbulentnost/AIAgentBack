@@ -515,10 +515,9 @@ def _collect_erp_upload_files(
     skip_filenames: set[str] | None = None,
     processed_at: datetime | None = None,
 ) -> list[AttachedFileInput]:
-    """Письмо .msg (только тело) + отдельные файлы вложений.
+    """Один полный .msg с вложениями (шаблон АЛ00-000760 / НП00-003877).
 
-    Встроенные PDF в MSG ломают открытие в толстом клиенте 1С (762, 884);
-    тело письма — в MSG, бинарные вложения — отдельными файлами OData.
+    RFC822 конвертируется в MSG с NFC-именами вложений; отдельные PDF не грузим.
     """
     skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
     attach_time = processed_at or now_attached_file_processed_at()
@@ -539,30 +538,17 @@ def _collect_erp_upload_files(
         return []
     if not msg_name.lower().endswith(".msg"):
         raise ValueError(f"ERP upload expects .msg filename, got {msg_name!r}")
+    if erp_email_already_uploaded(erp_document_number, skip):
+        return []
 
-    files: list[AttachedFileInput] = []
-    if not erp_email_already_uploaded(erp_document_number, skip):
-        msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes, embed_attachments=False)
-        files.append(
-            AttachedFileInput(
-                filename=msg_name,
-                content=msg_bytes,
-                processed_at=attach_time,
-            )
+    msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes, embed_attachments=True)
+    return [
+        AttachedFileInput(
+            filename=msg_name,
+            content=msg_bytes,
+            processed_at=attach_time,
         )
-
-    for att in attachments_with_content(email):
-        filename = erp_attachment_filename(att)
-        if filename in skip:
-            continue
-        files.append(
-            AttachedFileInput(
-                filename=filename,
-                content=bytes(att.content),
-                processed_at=attach_time,
-            )
-        )
-    return files
+    ]
 
 
 def _supports_attachment_upload(integration: IntegrationService) -> bool:

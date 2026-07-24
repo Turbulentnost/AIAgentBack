@@ -31,8 +31,8 @@
     "text_storage_binary": "ТекстХранилище_Base64Data"
   },
   "defaults": {
-    "storage_mode": "volume",
-    "storage_kind": "ВТомахНаДиске",
+    "storage_mode": "database",
+    "storage_kind": "ВИнформационнойБазе",
     "volume_key": "21886495-364e-11ea-82f2-ac1f6b05524c",
     "volume_binary_type": "application/xml+xdto",
     "storage_binary_type": "application/octet-stream",

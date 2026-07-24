@@ -68,10 +68,8 @@ def test_attach_email_files_to_document_uses_integration():
         erp_document_number=DOC_NUMBER,
     )
 
-    assert len(result) == 2
-    names = {item["filename"] for item in result}
-    assert "Скан.msg" in names
-    assert "scan.pdf" in names
+    assert len(result) == 1
+    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
 
 
 def test_attach_email_files_to_document_fetches_missing_content():
@@ -95,10 +93,8 @@ def test_attach_email_files_to_document_fetches_missing_content():
         )
 
     ensure_mock.assert_called_once_with(email, vault)
-    assert len(result) == 2
-    names = {item["filename"] for item in result}
-    assert "Скан.msg" in names
-    assert "scan.pdf" in names
+    assert len(result) == 1
+    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
 
 
 def test_attach_email_files_attaches_full_email_without_file_attachments():
@@ -113,7 +109,7 @@ def test_attach_email_files_attaches_full_email_without_file_attachments():
     )
 
     assert len(result) == 1
-    assert result[0]["filename"] == "Только текст.msg"
+    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
     assert result[0]["size_bytes"] > 0
 
 
@@ -135,7 +131,7 @@ def test_attach_email_files_still_attaches_eml_when_file_fetch_fails():
         )
 
     assert len(result) == 1
-    assert result[0]["filename"] == "Скан.msg"
+    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
 
 
 def test_ensure_full_email_bytes_prefers_imap_rfc822():
@@ -220,7 +216,7 @@ def test_erp_email_upload_marker_names_includes_legacy_and_msg():
     assert ERP_FULL_EMAIL_FILENAME in names
 
 
-def test_collect_erp_upload_files_attaches_only_msg():
+def test_collect_erp_upload_files_attaches_only_full_msg():
     from agent_pochta.services.erp_attachments import _collect_erp_upload_files
 
     email = _email_with_attachment()
@@ -230,10 +226,10 @@ def test_collect_erp_upload_files_attaches_only_msg():
         full_email_bytes=eml,
         erp_document_number=DOC_NUMBER,
     )
-    assert len(files) == 2
-    assert files[0].filename == "Скан.msg"
+    assert len(files) == 1
+    assert files[0].filename == f"{DOC_NUMBER}.msg"
     assert is_msg_bytes(files[0].content)
-    assert files[1].filename == "scan.pdf"
+    assert len(files[0].content) > 0
 
 
 def test_attach_email_files_skips_when_odata_attach_disabled():

@@ -154,7 +154,7 @@ def test_split_filename_rejects_empty():
         split_filename(".pdf")
 
 
-def test_build_attached_file_payload_volume_mode_by_default():
+def test_build_attached_file_payload_database_mode_by_default():
     ts = datetime(2026, 7, 24, 10, 30, 0, tzinfo=ZoneInfo("Europe/Moscow"))
     entity, payload = build_attached_file_payload(
         document_ref_key=DOC_KEY,
@@ -168,11 +168,11 @@ def test_build_attached_file_payload_volume_mode_by_default():
     assert payload["Description"] == "АЛ00-000762"
     assert payload["Расширение"] == "msg"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
-    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
-    assert payload["Том_Key"] == "21886495-364e-11ea-82f2-ac1f6b05524c"
-    assert payload["ПутьКФайлу"] == "20260724\\АЛ00-000762.msg"
-    assert payload["ФайлХранилище_Type"] == "application/xml+xdto"
-    assert "ФайлХранилище_Base64Data" not in payload
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert payload["Том_Key"] == "00000000-0000-0000-0000-000000000000"
+    assert payload["ПутьКФайлу"] == ""
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
+    assert payload["ФайлХранилище_Base64Data"]
     assert payload["Размер"] == 68
     assert payload["ДатаЗаема"] == "0001-01-01T00:00:00"
     assert "Изменил_Key" not in payload
@@ -645,9 +645,9 @@ def test_odata_integration_attach_files_delegates_to_client():
         return_value={
             "Ref_Key": DOC_KEY,
             "Размер": 3,
-            "ТипХраненияФайла": "ВТомахНаДиске",
-            "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
-            "ПутьКФайлу": "20260724\\НП00-003877.msg",
+            "ТипХраненияФайла": "ВИнформационнойБазе",
+            "Том_Key": "00000000-0000-0000-0000-000000000000",
+            "ПутьКФайлу": "",
             "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
             "Изменил_Key": AUTHOR_KEY,
             "Автор_Key": AUTHOR_KEY,
@@ -672,9 +672,9 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert payload["Автор_Key"] == AUTHOR_KEY
     assert "Редактирует_Key" not in payload
     assert payload["Description"] == "НП00-003877"
-    assert "ФайлХранилище_Base64Data" not in payload
-    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
-    assert payload["ПутьКФайлу"]
+    assert payload["ФайлХранилище_Base64Data"]
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert payload["ПутьКФайлу"] == ""
     service._client.patch_entity.assert_called()
     patch_calls = service._client.patch_entity.call_args_list
     assert any(
@@ -688,7 +688,7 @@ def test_odata_integration_attach_files_delegates_to_client():
         call.args[2].get("Изменил_Key") == AUTHOR_KEY
         for call in patch_calls
     )
-    service._client.put_entity_stream.assert_called_once()
+    service._client.put_entity_stream.assert_not_called()
 
 
 def test_verify_attached_file_storage_accepts_volume_with_zero_stream():

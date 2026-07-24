@@ -1,4 +1,4 @@
-"""Verify newest attachment on doc matches working 760 metadata."""
+"""Verify newest attachment on АЛ00-000762 matches working 760 metadata."""
 from __future__ import annotations
 
 import json
@@ -19,19 +19,41 @@ from agent_pochta.services.odata_attached_file import (  # noqa: E402
 from agent_pochta.services.odata_client import ODataClient  # noqa: E402
 
 ENTITY = "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы"
-REF_OK = "27997dc5-8689-11f1-984a-6cb31113810e"
-REF_NEW = "c18a2339-872c-11f1-984b-6cb31113810e"
+DOC762 = "18516943-871f-11f1-984b-6cb31113810e"
+REF_760 = "27997dc5-8689-11f1-984a-6cb31113810e"
 CHECK = [
-    "DeletionMark", "ТипХраненияФайла", "ФайлХранилище_Type", "Том_Key",
-    "ПутьКФайлу", "Автор_Key", "Редактирует_Key", "Изменил_Key", "ИндексКартинки",
-    "Размер", "Расширение", "Description",
+    "DeletionMark",
+    "ТипХраненияФайла",
+    "ФайлХранилище_Type",
+    "Том_Key",
+    "ПутьКФайлу",
+    "Автор_Key",
+    "Редактирует_Key",
+    "Изменил_Key",
+    "ИндексКартинки",
+    "Размер",
+    "Расширение",
+    "Description",
 ]
 EMPTY = "00000000-0000-0000-0000-000000000000"
+OUT_DIR = ROOT / "data" / "temp" / "verify_762"
 
 
 def fetch(base, auth, ref):
     url = f"{base}{quote(ENTITY)}(guid'{ref}')?$format=json"
     return httpx.get(url, auth=auth, timeout=60).json()
+
+
+def newest_attachment_ref(base, auth, owner: str) -> str | None:
+    flt = f"ВладелецФайла_Key eq guid'{owner}'"
+    url = (
+        f"{base}{quote(ENTITY)}?$format=json"
+        f"&$filter={quote(flt)}&$orderby=ДатаСоздания desc&$top=1"
+    )
+    items = httpx.get(url, auth=auth, timeout=60).json().get("value", [])
+    if not items:
+        return None
+    return str(items[0].get("Ref_Key") or "").strip() or None
 
 
 def main() -> None:
@@ -48,10 +70,15 @@ def main() -> None:
         password=settings.odata_password,
         timeout_sec=120,
     )
-    ok = fetch(base, auth, REF_OK)
-    new = fetch(base, auth, REF_NEW)
+    ref_new = newest_attachment_ref(base, auth, DOC762)
+    if not ref_new:
+        print(json.dumps({"error": "no attachments on 762"}, ensure_ascii=False))
+        raise SystemExit(1)
+
+    ok = fetch(base, auth, REF_760)
+    new = fetch(base, auth, ref_new)
     content = read_attached_file_storage_bytes(
-        client, entity=ENTITY, ref_key=REF_NEW, field_map=fm
+        client, entity=ENTITY, ref_key=ref_new, field_map=fm
     )
     diff = {
         k: {"760-ok": ok.get(k), "762-new": new.get(k)}
@@ -59,20 +86,29 @@ def main() -> None:
         if ok.get(k) != new.get(k) and k not in {"Description", "Размер"}
     }
     report = {
+        "762-new-ref": ref_new,
         "762-new": {k: new.get(k) for k in CHECK},
         "storage_bytes": len(content),
         "cfb_magic": content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
         "editor_is_empty": (new.get("Редактирует_Key") or EMPTY) == EMPTY,
         "deletion_mark_false": new.get("DeletionMark") is False,
+        "storage_kind_matches_760": new.get("ТипХраненияФайла") == ok.get("ТипХраненияФайла"),
         "metadata_diff_vs_760": diff,
         "pass": (
             (new.get("Редактирует_Key") or EMPTY) == EMPTY
             and new.get("DeletionMark") is False
             and new.get("ТипХраненияФайла") == ok.get("ТипХраненияФайла")
-            and len(content) > 0
+            and len(content) > 50_000
             and content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
         ),
     }
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUT_DIR / "verify_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    if content:
+        (OUT_DIR / "762_attachment.msg").write_bytes(content)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

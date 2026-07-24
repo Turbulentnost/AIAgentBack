@@ -232,6 +232,7 @@ class ODataClient:
         content: bytes,
         *,
         content_type: str = "application/octet-stream",
+        if_match: str | None = "*",
     ) -> None:
         """Записывает двоичные данные в Edm.Stream-свойство сущности OData (PUT)."""
         entity = entity.strip("/")
@@ -242,11 +243,14 @@ class ODataClient:
         if not content:
             raise ValueError("stream content is empty")
         url = f"{self._base_url}{entity}(guid'{key}')/{stream_property}"
+        headers: dict[str, str] = {"Content-Type": content_type}
+        if if_match:
+            headers["If-Match"] = if_match
         with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
             response = client.put(
                 url,
                 content=content,
-                headers={"Content-Type": content_type},
+                headers=headers,
             )
             if response.status_code >= 400:
                 try:

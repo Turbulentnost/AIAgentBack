@@ -124,8 +124,8 @@ class Settings(BaseSettings):
         alias="ODATA_ATTACHED_FILE_FIELD_MAP_FILE",
     )
     odata_attach_files_enabled: bool = Field(default=True, alias="ODATA_ATTACH_FILES_ENABLED")
-    # volume — ВТомахНаДиске + ПутьКФайлу (как ручная загрузка в 1С); database — ВИнформационнойБазе + Base64
-    odata_file_storage_mode: str = Field(default="volume", alias="ODATA_FILE_STORAGE_MODE")
+    # database — ВИнформационнойБазе + Base64 (шаблон АЛ00-000760); volume — ВТомахНаДиске + stream PUT
+    odata_file_storage_mode: str = Field(default="database", alias="ODATA_FILE_STORAGE_MODE")
     odata_file_volume_key: str = Field(
         default="21886495-364e-11ea-82f2-ac1f6b05524c",
         alias="ODATA_FILE_VOLUME_KEY",
