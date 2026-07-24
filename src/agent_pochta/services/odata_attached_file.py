@@ -226,8 +226,9 @@ def build_attached_file_payload(
         payload[str(modified_field)] = format_attached_file_modified_universal(processed_at)
     if file_input.author_key and (author_field := fields.get("author_key")):
         payload[str(author_field)] = file_input.author_key
-    if file_input.edited_by_key and (edited_by_field := fields.get("edited_by_key")):
-        payload[str(edited_by_field)] = file_input.edited_by_key
+    edited_by = file_input.edited_by_key or file_input.author_key
+    if edited_by and (edited_by_field := fields.get("edited_by_key")):
+        payload[str(edited_by_field)] = edited_by
     if file_input.comment and (comment_field := fields.get("comment")):
         payload[str(comment_field)] = file_input.comment.strip()
 

@@ -78,7 +78,7 @@ def test_build_attached_file_payload_uses_explicit_processed_at():
     assert payload["ДатаСоздания"] == format_attached_file_created_at(ts)
     assert payload["ДатаМодификацииУниверсальная"] == format_attached_file_modified_universal(ts)
     assert payload["Автор_Key"] == AUTHOR_KEY
-    assert "Редактировал_Key" not in payload
+    assert payload["Редактировал_Key"] == AUTHOR_KEY
 
 
 def test_build_attached_file_payload_defaults_to_msk_now(monkeypatch):

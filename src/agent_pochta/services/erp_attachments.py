@@ -324,11 +324,15 @@ def erp_full_email_filename(
     _email: EmailMessage | None = None,
     erp_document_number: str | None = None,
 ) -> str:
-    """Имя .msg для OData: номер документа 1С (НП00-003877.msg)."""
+    """Имя .eml для OData: номер документа 1С (НП00-003877.eml).
+
+    Прикрепляем исходный RFC822 без конвертации в MSG: Aspose MSG с PDF-вложениями
+    не открывается в толстом клиенте 1С («данные файла недоступны»).
+    """
     number = (erp_document_number or "").strip()
     if number and number not in _SKIP_ERP_DOCUMENT_NUMBERS:
-        return f"{number}.msg"
-    return "Входящее_письмо.msg"
+        return f"{number}.eml"
+    return ERP_FULL_EMAIL_FILENAME
 
 
 def erp_email_upload_marker_names(erp_document_number: str | None) -> set[str]:
@@ -484,26 +488,21 @@ def _collect_erp_upload_files(
     skip_filenames: set[str] | None = None,
     processed_at: datetime | None = None,
 ) -> list[AttachedFileInput]:
-    """Только полное письмо .msg; MIME-вложения отдельно не отправляются."""
+    """Только полное письмо .eml (RFC822); MIME-вложения отдельно не отправляются."""
     if erp_email_already_uploaded(erp_document_number, skip_filenames):
         return []
 
-    msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
+    eml_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
     if not full_email_bytes:
         return []
 
-    from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes
-
-    msg_bytes = eml_bytes_to_msg_bytes(full_email_bytes)
-    if not msg_bytes:
-        return []
     attach_time = processed_at or now_attached_file_processed_at()
-    if not msg_name.lower().endswith(".msg"):
-        raise ValueError(f"ERP upload expects .msg filename, got {msg_name!r}")
+    if not eml_name.lower().endswith(".eml"):
+        raise ValueError(f"ERP upload expects .eml filename, got {eml_name!r}")
     return [
         AttachedFileInput(
-            filename=msg_name,
-            content=msg_bytes,
+            filename=eml_name,
+            content=full_email_bytes,
             processed_at=attach_time,
         )
     ]

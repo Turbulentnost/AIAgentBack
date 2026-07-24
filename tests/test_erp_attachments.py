@@ -18,7 +18,6 @@ from agent_pochta.services.erp_attachments import (
     erp_email_upload_marker_names,
     erp_full_email_filename,
 )
-from agent_pochta.services.email_msg import is_msg_bytes
 from agent_pochta.services.integration_service import StubIntegrationService
 from agent_pochta.services.odata_integration import ODataIntegrationService
 
@@ -69,7 +68,7 @@ def test_attach_email_files_to_document_uses_integration():
     )
 
     assert len(result) == 1
-    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
+    assert result[0]["filename"] == f"{DOC_NUMBER}.eml"
     assert "scan.pdf" not in {item["filename"] for item in result}
 
 
@@ -95,7 +94,7 @@ def test_attach_email_files_to_document_fetches_missing_content():
 
     ensure_mock.assert_called_once_with(email, vault)
     assert len(result) == 1
-    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
+    assert result[0]["filename"] == f"{DOC_NUMBER}.eml"
 
 
 def test_attach_email_files_attaches_full_email_without_file_attachments():
@@ -110,7 +109,7 @@ def test_attach_email_files_attaches_full_email_without_file_attachments():
     )
 
     assert len(result) == 1
-    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
+    assert result[0]["filename"] == f"{DOC_NUMBER}.eml"
     assert result[0]["size_bytes"] > 0
 
 
@@ -132,7 +131,7 @@ def test_attach_email_files_still_attaches_eml_when_file_fetch_fails():
         )
 
     assert len(result) == 1
-    assert result[0]["filename"] == f"{DOC_NUMBER}.msg"
+    assert result[0]["filename"] == f"{DOC_NUMBER}.eml"
 
 
 def test_ensure_full_email_bytes_prefers_imap_rfc822():
@@ -207,7 +206,7 @@ def test_synthetic_eml_includes_headers_for_outlook():
 
 
 def test_erp_full_email_filename_uses_document_number():
-    assert erp_full_email_filename(erp_document_number=DOC_NUMBER) == f"{DOC_NUMBER}.msg"
+    assert erp_full_email_filename(erp_document_number=DOC_NUMBER) == f"{DOC_NUMBER}.eml"
 
 
 def test_erp_email_upload_marker_names_includes_legacy_and_msg():
@@ -217,7 +216,7 @@ def test_erp_email_upload_marker_names_includes_legacy_and_msg():
     assert ERP_FULL_EMAIL_FILENAME in names
 
 
-def test_collect_erp_upload_files_converts_to_msg():
+def test_collect_erp_upload_files_attaches_raw_eml():
     from agent_pochta.services.erp_attachments import _collect_erp_upload_files
 
     email = _email_without_attachments()
@@ -228,8 +227,8 @@ def test_collect_erp_upload_files_converts_to_msg():
         erp_document_number=DOC_NUMBER,
     )
     assert len(files) == 1
-    assert files[0].filename == f"{DOC_NUMBER}.msg"
-    assert is_msg_bytes(files[0].content)
+    assert files[0].filename == f"{DOC_NUMBER}.eml"
+    assert b"Message-ID" in files[0].content or b"From:" in files[0].content
 
 
 def test_attach_email_files_skips_when_odata_attach_disabled():
