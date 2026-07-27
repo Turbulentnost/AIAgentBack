@@ -26,13 +26,9 @@ from app.services.nd_control_permission import append_nd_control_agent_for_quali
 from app.services.permission_service import PermissionService
 from app.services.procurement_permission import (
     append_omto_support_manager_agent,
-    append_otk_head_agent,
     append_production_dispatcher_agent,
-    append_production_preparation_engineer_agent,
     append_purchase_manager_agent,
-    append_quality_deputy_director_agent,
     append_quality_engineer_agent,
-    append_quality_kpi_agent,
     append_warehouse_picker_agent,
 )
 from app.services.profile_image_service import AvatarValidationError
@@ -48,8 +44,6 @@ async def _agent_read(db: DbSession, agent) -> AgentRead:
 
 async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessRead:
     data = (await _agent_read(db, agent)).model_dump()
-    if agent.slug == "production_preparation_engineer_agent":
-        data["name"] = "Агент закупок и логистики"
     if agent.slug == "production_dispatcher_agent":
         data["name"] = "Агент диспетчера производства"
     if agent.slug == "warehouse_picker_agent":
@@ -58,8 +52,6 @@ async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessR
         data["name"] = "ИИ-агент менеджера по закупкам"
     if agent.slug == "quality_engineer_agent":
         data["name"] = "ИИ-агент работника ОТК"
-    if agent.slug == "otk_head_agent":
-        data["name"] = "ИИ-агент начальника ОТК"
     data.update(
         {
             "access_level": "full" if current_user.is_superuser else "granted",
@@ -77,15 +69,11 @@ async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await PermissionService(db).list_available_agents(current_user)
     agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
     agents = await append_meeting_agent_for_office_management(db, current_user, agents)
-    agents = await append_production_preparation_engineer_agent(db, current_user, agents)
     agents = await append_production_dispatcher_agent(db, current_user, agents)
     agents = await append_warehouse_picker_agent(db, current_user, agents)
     agents = await append_purchase_manager_agent(db, current_user, agents)
     agents = await append_omto_support_manager_agent(db, current_user, agents)
-    agents = await append_otk_head_agent(db, current_user, agents)
     agents = await append_quality_engineer_agent(db, current_user, agents)
-    agents = await append_quality_deputy_director_agent(db, current_user, agents)
-    agents = await append_quality_kpi_agent(db, current_user, agents)
     return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 
