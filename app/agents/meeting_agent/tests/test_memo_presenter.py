@@ -86,6 +86,28 @@ def test_build_queue_item_from_row_includes_series_planning_fields() -> None:
     assert "ежедневно" in item["series_recurrence_label"]
 
 
+def test_build_queue_item_from_row_keeps_schedule_payload_for_cache_refresh() -> None:
+    schedule_b64 = "PHNjaGVkdWxlLz4="
+    row = {
+        "Ref_Key": "37da8ed8-6b19-11f1-9825-6cb31113810e",
+        "Number": "000011991",
+        "Date": "2026-07-27T10:02:00",
+        "Статус": "НеСогласована",
+        "ТемаСовещания": "ДПИ ИИ",
+        "ЖелаемаяДатаПроведенияСовещания": "2026-07-30T00:00:00",
+        "ВремяНачалаСовещания": "0001-01-01T12:00:00",
+        "ВремяОкончанияСовещания": "0001-01-01T12:20:00",
+        "Расписание_Base64Data": schedule_b64,
+        "Расписание_Type": "application/xml+xdto",
+        "ТекстСлужебнойЗаписки": "",
+    }
+
+    item = build_queue_item_from_row(row)
+
+    assert item["Расписание_Base64Data"] == schedule_b64
+    assert item["Расписание_Type"] == "application/xml+xdto"
+
+
 def test_header_with_people_keys_fetches_full_header_when_date_missing() -> None:
     row = {
         "Ref_Key": "37da8ed8-6b19-11f1-9825-6cb31113810e",

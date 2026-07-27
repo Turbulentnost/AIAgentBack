@@ -815,6 +815,8 @@ def build_queue_item_from_row(
         "meeting_type_label": _meeting_type_label(_clean_text(header.get("ВидСовещания"))),
         "document_date": document_date_label or raw_document_date,
         "document_date_label": document_date_label or raw_document_date,
+        # Сырая дата документа для пересчёта series_start из кэша.
+        "Date": raw_document_date or header.get("Date"),
         "scheduled_label": _slot_label(start, end, fallback=doc_dt),
         "meeting_date": _clean_text(header.get("ДатаПроведенияСовещания")),
         "desired_meeting_date": _clean_text(header.get("ЖелаемаяДатаПроведенияСовещания")),
@@ -840,6 +842,9 @@ def build_queue_item_from_row(
         "Приоритет_Key": header.get("Приоритет_Key"),
         "Приоритет": header.get("Приоритет"),
         "СписокУчастников": header.get("СписокУчастников"),
+        # Нужно для пересчёта series_planning из кэша (JobSchedule XDTO из 1С).
+        "Расписание_Base64Data": header.get("Расписание_Base64Data"),
+        "Расписание_Type": header.get("Расписание_Type"),
     }
     _apply_series_fields_to_queue(queue_item, series_planning)
     return queue_item
