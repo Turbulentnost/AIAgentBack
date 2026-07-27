@@ -116,23 +116,10 @@ def sync_existing_erp_document(
     )
     payload_modified = False
     deleted_attachment_refs: list[str] = []
+    old_attachment_refs: list[str] = []
     if force_reattach_filenames:
         if isinstance(integration, ODataIntegrationService):
-            try:
-                deleted_attachment_refs = integration.delete_attached_files_for_document(doc_ref)
-                logger.info(
-                    "erp_attachments_deleted_before_reattach",
-                    message_id=message_id,
-                    document_ref_key=doc_ref,
-                    deleted=len(deleted_attachment_refs),
-                )
-            except Exception as exc:
-                logger.exception(
-                    "erp_attachments_delete_failed",
-                    message_id=message_id,
-                    document_ref_key=doc_ref,
-                )
-                sync_errors.append(f"cleanup: {exc}")
+            old_attachment_refs = integration.list_attached_file_refs_for_document(doc_ref)
         cleared = clear_all_erp_attachments(row.raw_payload_json)
         if cleared is not None and cleared != row.raw_payload_json:
             row.raw_payload_json = cleared
@@ -154,6 +141,26 @@ def sync_existing_erp_document(
             document_ref_key=doc_ref,
         )
         sync_errors.append(f"attach: {exc}")
+    else:
+        if force_reattach_filenames and old_attachment_refs and attached:
+            if isinstance(integration, ODataIntegrationService):
+                try:
+                    deleted_attachment_refs = integration.delete_attached_file_refs(
+                        old_attachment_refs
+                    )
+                    logger.info(
+                        "erp_attachments_deleted_after_reattach",
+                        message_id=message_id,
+                        document_ref_key=doc_ref,
+                        deleted=len(deleted_attachment_refs),
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "erp_attachments_delete_failed",
+                        message_id=message_id,
+                        document_ref_key=doc_ref,
+                    )
+                    sync_errors.append(f"cleanup: {exc}")
 
     sync_meta: dict[str, Any] = {
         "erp_last_sync_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),

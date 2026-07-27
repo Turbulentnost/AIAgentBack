@@ -25,6 +25,7 @@ from agent_pochta.services.odata_attached_file import (
     preupload_volume_file,
     read_attached_file_storage_bytes,
     release_attached_file_edit_lock,
+    replace_attached_files_for_document,
     resolve_attached_file_storage_mode,
     resolve_attached_file_upload_plan,
     resolve_stream_content_type,
@@ -896,6 +897,107 @@ def test_release_attached_file_edit_lock_verifies_cleared_lock():
     assert payload["Редактирует_Key"] == "00000000-0000-0000-0000-000000000000"
     assert "Автор_Key" not in payload
     assert "Изменил_Key" not in payload
+
+
+def test_replace_attached_files_keeps_old_on_preupload_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("ODATA_ATTACH_STAGING_ENABLED", "false")
+    volume_map = {
+        **_VOLUME_FIELD_MAP,
+        "defaults": {
+            **_VOLUME_FIELD_MAP["defaults"],
+            "volume_preupload": True,
+            "volume_root": str(tmp_path),
+        },
+    }
+    client = MagicMock()
+    client.fetch_filtered.return_value = [{"Ref_Key": "old-ref", "ВладелецФайла_Key": DOC_KEY}]
+    client.get_by_key.return_value = {"Ref_Key": DOC_KEY}
+
+    def _fail_preupload(*_args, **_kwargs):
+        raise AttachedFileError("Нет прав записи на том 1С")
+
+    monkeypatch.setattr(
+        "agent_pochta.services.odata_attached_file.preupload_volume_file",
+        _fail_preupload,
+    )
+
+    with pytest.raises(AttachedFileError, match="Нет прав записи"):
+        replace_attached_files_for_document(
+            client,
+            document_ref_key=DOC_KEY,
+            files=[AttachedFileInput(filename="a.pdf", content=b"data")],
+            field_map=volume_map,
+        )
+
+    client.create_entity.assert_not_called()
+    client.delete_entity.assert_not_called()
+
+
+def test_replace_attached_files_deletes_old_only_after_success(monkeypatch):
+    monkeypatch.setenv("ODATA_ATTACH_STAGING_ENABLED", "false")
+    client = MagicMock()
+    client.fetch_filtered.return_value = [{"Ref_Key": "old-ref", "ВладелецФайла_Key": DOC_KEY}]
+    client.get_by_key.return_value = {
+        "Ref_Key": "new-ref",
+        "Размер": 4,
+        "ТипХраненияФайла": "ВИнформационнойБазе",
+        "Том_Key": "00000000-0000-0000-0000-000000000000",
+        "ПутьКФайлу": "",
+        "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
+    }
+    client.get_entity_stream.return_value = b"data"
+    client.create_entity.return_value = {"Ref_Key": "new-ref"}
+
+    result = replace_attached_files_for_document(
+        client,
+        document_ref_key=DOC_KEY,
+        files=[AttachedFileInput(filename="a.pdf", content=b"data")],
+        field_map=_DATABASE_FIELD_MAP,
+    )
+
+    assert result.attached[0].ref_key == "new-ref"
+    assert result.deleted_old_refs == ("old-ref",)
+    client.create_entity.assert_called_once()
+    client.delete_entity.assert_called_once_with(
+        "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        "old-ref",
+    )
+
+
+def test_attach_file_rolls_back_post_on_verify_failure(monkeypatch):
+    monkeypatch.setenv("ODATA_ATTACH_STAGING_ENABLED", "false")
+    client = MagicMock()
+
+    def _get_by_key(entity, ref_key):
+        if ref_key == DOC_KEY:
+            return {"Ref_Key": DOC_KEY}
+        if ref_key == "new-ref":
+            return {
+                "Ref_Key": "new-ref",
+                "Размер": 4,
+                "ТипХраненияФайла": "ВИнформационнойБазе",
+                "ФайлХранилище_Base64Data": "",
+                "Том_Key": "00000000-0000-0000-0000-000000000000",
+                "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
+            }
+        return {}
+
+    client.get_by_key.side_effect = _get_by_key
+    client.get_entity_stream.return_value = b""
+    client.create_entity.return_value = {"Ref_Key": "new-ref"}
+
+    with pytest.raises(AttachedFileError, match="Пустое хранилище"):
+        attach_file_to_incoming_document(
+            client,
+            document_ref_key=DOC_KEY,
+            file_input=AttachedFileInput(filename="a.pdf", content=b"data"),
+            field_map=_DATABASE_FIELD_MAP,
+        )
+
+    client.delete_entity.assert_called_once_with(
+        "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        "new-ref",
+    )
 
 
 def test_release_attached_file_edit_lock_raises_if_still_locked():

@@ -58,6 +58,14 @@ class AttachedFileResult:
     roundtrip_ok: bool | None = None
 
 
+@dataclass(frozen=True)
+class ReplaceAttachedFilesResult:
+    """Замена вложений: новые записаны, старые удалены только после полного успеха."""
+
+    attached: tuple[AttachedFileResult, ...]
+    deleted_old_refs: tuple[str, ...]
+
+
 def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, Any]:
     file_path = Path(path) if path else _DEFAULT_MAP_PATH
     if not file_path.is_file():
@@ -352,6 +360,17 @@ def resolve_volume_root(
         return explicit.rstrip("\\/")
     key = (volume_key or cfg.get("volume_key") or _DEFAULT_VOLUME_KEY).strip()
     return fetch_volume_root_from_odata(client, volume_key=key)
+
+
+def cleanup_preuploaded_volume_file(preuploaded_path: Path | None) -> None:
+    """Удаляет файл с тома при откате неудачного attach (pre-upload + POST)."""
+    if preuploaded_path is None:
+        return
+    try:
+        if preuploaded_path.is_file():
+            preuploaded_path.unlink()
+    except OSError:
+        pass
 
 
 def preupload_volume_file(
@@ -705,6 +724,33 @@ def list_attached_files_for_document(
     return [row for row in rows if str(row.get(owner_field) or "").strip().casefold() == owner_key.casefold()]
 
 
+def delete_attached_file_refs(
+    client,
+    *,
+    ref_keys: list[str],
+    field_map: dict[str, Any] | None = None,
+) -> list[str]:
+    """DELETE указанных присоединённых файлов по Ref_Key."""
+    cfg = field_map or load_attached_file_field_map()
+    entity = str(cfg.get("entity") or "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы").strip()
+    delete_entity = getattr(client, "delete_entity", None)
+    if not callable(delete_entity):
+        raise AttachedFileError("OData client does not support DELETE")
+    deleted: list[str] = []
+    for ref_key in ref_keys:
+        key = str(ref_key or "").strip()
+        if not key:
+            continue
+        try:
+            delete_entity(entity, key)
+        except Exception as exc:
+            raise AttachedFileError(
+                f"Не удалось удалить присоединённый файл Ref_Key={key}: {exc}"
+            ) from exc
+        deleted.append(key)
+    return deleted
+
+
 def delete_attached_files_for_document(
     client,
     *,
@@ -713,27 +759,16 @@ def delete_attached_files_for_document(
 ) -> list[str]:
     """DELETE всех присоединённых файлов документа. Возвращает удалённые Ref_Key."""
     cfg = field_map or load_attached_file_field_map()
-    entity = str(cfg.get("entity") or "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы").strip()
-    delete_entity = getattr(client, "delete_entity", None)
-    if not callable(delete_entity):
-        raise AttachedFileError("OData client does not support DELETE")
-    deleted: list[str] = []
-    for item in list_attached_files_for_document(
-        client,
-        document_ref_key=document_ref_key,
-        field_map=cfg,
-    ):
-        ref_key = str(item.get("Ref_Key") or "").strip()
-        if not ref_key:
-            continue
-        try:
-            delete_entity(entity, ref_key)
-        except Exception as exc:
-            raise AttachedFileError(
-                f"Не удалось удалить присоединённый файл Ref_Key={ref_key}: {exc}"
-            ) from exc
-        deleted.append(ref_key)
-    return deleted
+    ref_keys = [
+        str(item.get("Ref_Key") or "").strip()
+        for item in list_attached_files_for_document(
+            client,
+            document_ref_key=document_ref_key,
+            field_map=cfg,
+        )
+        if str(item.get("Ref_Key") or "").strip()
+    ]
+    return delete_attached_file_refs(client, ref_keys=ref_keys, field_map=cfg)
 
 
 def patch_attached_file_metadata(
@@ -940,27 +975,33 @@ def attach_file_to_incoming_document(
     plan = resolve_attached_file_upload_plan(defaults)
     volume_root: str | None = None
     volume_relative_path: str | None = None
-    if plan.get("volume_preupload"):
-        path_field = str(fields.get("file_path") or "ПутьКФайлу")
-        volume_relative_path = str(payload.get(path_field) or "").strip()
-        if not volume_relative_path:
-            raise AttachedFileError(
-                "volume pre-upload: ПутьКФайлу не сформирован в payload"
-            )
-        volume_root = resolve_volume_root(client, defaults=defaults)
-        preupload_volume_file(volume_root, volume_relative_path, upload_content)
-
-    data = client.create_entity(entity, payload)
-    ref_key = str(data.get("Ref_Key") or "").strip()
-    if not ref_key:
-        raise AttachedFileError(
-            f"OData создал запись {entity}, но Ref_Key отсутствует в ответе"
-        )
-
-    roundtrip_ok: bool | None = None
-    staging_path = str(staged.path) if staged else None
+    preuploaded_path: Path | None = None
+    ref_key: str | None = None
 
     try:
+        if plan.get("volume_preupload"):
+            path_field = str(fields.get("file_path") or "ПутьКФайлу")
+            volume_relative_path = str(payload.get(path_field) or "").strip()
+            if not volume_relative_path:
+                raise AttachedFileError(
+                    "volume pre-upload: ПутьКФайлу не сформирован в payload"
+                )
+            volume_root = resolve_volume_root(client, defaults=defaults)
+            preuploaded_path = preupload_volume_file(
+                volume_root,
+                volume_relative_path,
+                upload_content,
+            )
+
+        data = client.create_entity(entity, payload)
+        ref_key = str(data.get("Ref_Key") or "").strip()
+        if not ref_key:
+            raise AttachedFileError(
+                f"OData создал запись {entity}, но Ref_Key отсутствует в ответе"
+            )
+
+        roundtrip_ok: bool | None = None
+        staging_path = str(staged.path) if staged else None
         if plan["mode"] == "volume":
             path_field = str(fields.get("file_path") or "ПутьКФайлу")
             expected_path = str(payload.get(path_field) or "").strip()
@@ -1042,22 +1083,30 @@ def attach_file_to_incoming_document(
             ):
                 cleanup_staged_attachment(staged)
                 staging_path = None
+
+        base_name, extension = split_filename(file_input.filename)
+        return AttachedFileResult(
+            ref_key=ref_key,
+            filename=base_name,
+            extension=extension,
+            size_bytes=len(upload_content),
+            entity=entity,
+            odata_response=data,
+            staging_path=staging_path,
+            roundtrip_ok=roundtrip_ok,
+        )
     except Exception:
+        if ref_key:
+            delete_entity = getattr(client, "delete_entity", None)
+            if callable(delete_entity):
+                try:
+                    delete_entity(entity, ref_key)
+                except Exception:
+                    pass
+        cleanup_preuploaded_volume_file(preuploaded_path)
         if staged is not None and not settings.odata_attach_staging_keep_on_failure:
             cleanup_staged_attachment(staged)
         raise
-
-    base_name, extension = split_filename(file_input.filename)
-    return AttachedFileResult(
-        ref_key=ref_key,
-        filename=base_name,
-        extension=extension,
-        size_bytes=len(upload_content),
-        entity=entity,
-        odata_response=data,
-        staging_path=staging_path,
-        roundtrip_ok=roundtrip_ok,
-    )
 
 
 def attach_files_to_incoming_document(
@@ -1085,3 +1134,60 @@ def attach_files_to_incoming_document(
             )
         )
     return results
+
+
+def replace_attached_files_for_document(
+    client,
+    *,
+    document_ref_key: str,
+    files: list[AttachedFileInput],
+    field_map: dict[str, Any] | None = None,
+    verify_owner_exists: bool = True,
+    document_number: str | None = None,
+    message_id: str | None = None,
+) -> ReplaceAttachedFilesResult:
+    """Прикрепляет новые файлы, затем удаляет старые — только после полного успеха.
+
+    При ошибке до завершения всех upload/pre-upload/verify откатывает частично
+    созданные записи; существующие вложения документа не трогает.
+    """
+    if not files:
+        raise AttachedFileError("replace_attached_files: список файлов пуст")
+
+    cfg = field_map or load_attached_file_field_map()
+    old_refs = [
+        str(item.get("Ref_Key") or "").strip()
+        for item in list_attached_files_for_document(
+            client,
+            document_ref_key=document_ref_key,
+            field_map=cfg,
+        )
+        if str(item.get("Ref_Key") or "").strip()
+    ]
+
+    new_refs: list[str] = []
+    results: list[AttachedFileResult] = []
+    try:
+        for index, item in enumerate(files):
+            result = attach_file_to_incoming_document(
+                client,
+                document_ref_key=document_ref_key,
+                file_input=item,
+                field_map=cfg,
+                verify_owner_exists=verify_owner_exists and index == 0,
+                document_number=document_number,
+                message_id=message_id,
+            )
+            results.append(result)
+            new_refs.append(result.ref_key)
+    except Exception:
+        if new_refs:
+            delete_attached_file_refs(client, ref_keys=new_refs, field_map=cfg)
+        raise
+
+    refs_to_delete = [ref for ref in old_refs if ref not in new_refs]
+    deleted = delete_attached_file_refs(client, ref_keys=refs_to_delete, field_map=cfg)
+    return ReplaceAttachedFilesResult(
+        attached=tuple(results),
+        deleted_old_refs=tuple(deleted),
+    )

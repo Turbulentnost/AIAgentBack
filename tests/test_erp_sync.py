@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 
@@ -213,7 +213,7 @@ def test_sync_existing_force_reattach_eml() -> None:
     assert result["attached_count"] == 1
     integration.attach_files_to_incoming_correspondence.assert_called_once()
     files = integration.attach_files_to_incoming_correspondence.call_args.kwargs["files"]
-    assert any(item.filename == "Счёт.msg" for item in files)
+    assert any(item.filename == "ВК-000050.msg" for item in files)
     payload = json.loads(result["raw_payload_json"] or row.raw_payload_json or "{}")
     assert payload.get("erp_attachments") == []
 
@@ -230,7 +230,8 @@ def test_sync_existing_force_reattach_deletes_odata_attachments() -> None:
         "erp_document_id": row.erp_task_id,
         "fields": {},
     }
-    integration.delete_attached_files_for_document.return_value = ["old-1", "old-2"]
+    integration.list_attached_file_refs_for_document.return_value = ["old-1", "old-2"]
+    integration.delete_attached_file_refs.return_value = ["old-1", "old-2"]
     integration.attach_files_to_incoming_correspondence.return_value = [
         {"ref_key": "eml-new", "filename": "Счёт.msg", "size_bytes": 1000},
     ]
@@ -248,7 +249,19 @@ def test_sync_existing_force_reattach_deletes_odata_attachments() -> None:
     )
 
     assert result["ok"] is True
-    integration.delete_attached_files_for_document.assert_called_once_with(row.erp_task_id)
+    integration.list_attached_file_refs_for_document.assert_called_once_with(row.erp_task_id)
+    integration.attach_files_to_incoming_correspondence.assert_called_once()
+    integration.delete_attached_file_refs.assert_called_once_with(["old-1", "old-2"])
+    assert integration.method_calls.index(
+        call.delete_attached_file_refs(["old-1", "old-2"])
+    ) > integration.method_calls.index(
+        call.attach_files_to_incoming_correspondence(
+            document_ref_key=row.erp_task_id,
+            files=ANY,
+            document_number=row.erp_document_number,
+            message_id=row.message_id,
+        )
+    )
     assert result["erp_sync_meta"]["erp_attachments_deleted"] == ["old-1", "old-2"]
 
 

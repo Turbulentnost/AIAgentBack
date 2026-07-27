@@ -22,9 +22,12 @@ from agent_pochta.services.odata_attached_file import (
     AttachedFileError,
     AttachedFileInput,
     attach_files_to_incoming_document,
+    delete_attached_file_refs,
     delete_attached_files_for_document,
+    list_attached_files_for_document,
     load_attached_file_field_map,
     now_attached_file_processed_at,
+    replace_attached_files_for_document,
 )
 from agent_pochta.services.routing_departments import load_routing_rules
 
@@ -284,3 +287,87 @@ class ODataIntegrationService(IntegrationService):
             document_ref_key=document_ref_key,
             field_map=self._attached_file_field_map,
         )
+
+    def list_attached_file_refs_for_document(self, document_ref_key: str) -> list[str]:
+        """Ref_Key всех присоединённых файлов документа."""
+        if not self._attach_files_enabled:
+            return []
+        return [
+            str(item.get("Ref_Key") or "").strip()
+            for item in list_attached_files_for_document(
+                self._client,
+                document_ref_key=document_ref_key,
+                field_map=self._attached_file_field_map,
+            )
+            if str(item.get("Ref_Key") or "").strip()
+        ]
+
+    def delete_attached_file_refs(self, ref_keys: list[str]) -> list[str]:
+        """DELETE указанных присоединённых файлов по Ref_Key."""
+        if not self._attach_files_enabled or not ref_keys:
+            return []
+        return delete_attached_file_refs(
+            self._client,
+            ref_keys=ref_keys,
+            field_map=self._attached_file_field_map,
+        )
+
+    def replace_attached_files_for_document(
+        self,
+        *,
+        document_ref_key: str,
+        files: list[AttachedFileInput],
+        document_number: str | None = None,
+        message_id: str | None = None,
+    ) -> dict:
+        """Замена вложений: upload/pre-upload → POST → verify → delete old."""
+        if not self._attach_files_enabled:
+            return {"attached": [], "deleted_old_refs": []}
+        processed_at = now_attached_file_processed_at()
+        author_key = self._file_author_key
+        if not author_key or author_key == _EMPTY_GUID:
+            raise AttachedFileError(
+                "Автор_Key не задан: укажите ODATA_FILE_AUTHOR_KEY "
+                "или Пользователь_Key / Ответственный_Key в odata_incoming_defaults.json"
+            )
+        enriched: list[AttachedFileInput] = []
+        for item in files:
+            author = item.author_key or author_key
+            enriched.append(
+                AttachedFileInput(
+                    filename=item.filename,
+                    content=item.content,
+                    author_key=author,
+                    edited_by_key=item.edited_by_key,
+                    comment=item.comment,
+                    processed_at=item.processed_at or processed_at,
+                )
+            )
+        result = replace_attached_files_for_document(
+            self._client,
+            document_ref_key=document_ref_key,
+            files=enriched,
+            field_map=self._attached_file_field_map,
+            document_number=document_number,
+            message_id=message_id,
+        )
+        attached = [
+            {
+                "ref_key": item.ref_key,
+                "filename": (
+                    f"{item.filename}.{item.extension}"
+                    if item.extension
+                    else item.filename
+                ),
+                "extension": item.extension,
+                "size_bytes": item.size_bytes,
+                "entity": item.entity,
+                "staging_path": item.staging_path,
+                "roundtrip_ok": item.roundtrip_ok,
+            }
+            for item in result.attached
+        ]
+        return {
+            "attached": attached,
+            "deleted_old_refs": list(result.deleted_old_refs),
+        }
