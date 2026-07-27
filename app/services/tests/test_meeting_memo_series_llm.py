@@ -207,3 +207,50 @@ async def test_resolve_memo_recurrence_async_falls_back_to_rules_on_llm_error() 
     assert draft.is_series is True
     assert draft.recurrence is not None
     assert draft.recurrence.frequency == ScheduledMeetingFrequency.WEEKLY
+
+
+def test_extract_assistant_text_prefers_json_in_reasoning() -> None:
+    from app.services.meeting_memo_series_llm import _extract_assistant_text
+
+    message = {
+        "content": "Сначала подумаю без JSON.",
+        "reasoning_content": (
+            '<think>анализ</think>\n'
+            '{"is_series": true, "frequency": "weekly", "confidence": "high"}'
+        ),
+    }
+
+    text = _extract_assistant_text(message)
+    assert '"is_series": true' in text
+    assert "<think>" not in text
+
+
+@pytest.mark.asyncio
+async def test_call_memo_series_llm_retries_when_first_answer_not_json() -> None:
+    from app.services.meeting_memo_series_llm import call_memo_series_llm
+
+    good = {
+        "is_series": True,
+        "confidence": "high",
+        "frequency": "weekly",
+        "interval": 1,
+        "weekday": "wednesday",
+        "time_local": "09:00",
+        "duration_minutes": 60,
+        "series_start_date": "2026-05-27",
+        "series_end_date": "2026-12-31",
+        "source_quote": "еженедельно",
+        "ambiguities": [],
+    }
+    calls = {"n": 0}
+
+    async def flaky_chat(messages, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"choices": [{"message": {"content": "не JSON, а рассуждение"}}]}
+        return {"choices": [{"message": {"content": json.dumps(good, ensure_ascii=False)}}]}
+
+    response = await call_memo_series_llm(_header(), None, llm_chat=flaky_chat)
+    assert response.is_series is True
+    assert response.frequency == "weekly"
+    assert calls["n"] == 2

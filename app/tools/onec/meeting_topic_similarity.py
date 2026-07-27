@@ -2,10 +2,11 @@
 
 Правила отбора кандидатов:
 - только активные темы (дата закрытия не задана или строго позже сегодня);
-- только темы указанного руководителя (Руководитель_Key).
+- только темы указанного руководителя (Руководитель_Key);
+- сравнение пока только по названию темы (текст + embeddings названия).
 
 Вид совещания не исключает тему из сравнения.
-Участники и описание не штрафуют тему, если в 1С эти данные не заполнены.
+Участники и описание темы в скоринг не входят (меньше запросов в 1С).
 """
 
 from __future__ import annotations
@@ -63,11 +64,19 @@ def build_details_embedding_text(details: str | None) -> str:
 
 
 def topic_title_tokens(value: str | None) -> set[str]:
-    return {
-        token
-        for token in normalize_topic_title(value).split()
-        if len(token) >= 3
-    }
+    """Токены названия для сравнения.
+
+    Сохраняем 2+ буквенные аббревиатуры («ии», «ср»), иначе «ДПИ ИИ» и «ДПИ СР»
+    схлопываются до одного токена «дпи» и ложно дают 100%.
+    Числовые суффиксы («планерка 2») по-прежнему игнорируем.
+    """
+    tokens: set[str] = set()
+    for token in normalize_topic_title(value).split():
+        if token.isdigit():
+            continue
+        if len(token) >= 2 and any(ch.isalpha() for ch in token):
+            tokens.add(token)
+    return tokens
 
 
 def topic_title_similarity_score(left: str | None, right: str | None) -> float:
@@ -82,12 +91,22 @@ def topic_title_similarity_score(left: str | None, right: str | None) -> float:
     right_tokens = topic_title_tokens(right)
     if not left_tokens or not right_tokens:
         return sequence_score
-    jaccard = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+    intersection = left_tokens & right_tokens
+    jaccard = len(intersection) / len(left_tokens | right_tokens)
+    # Короткий запрос как аббревиатура темы в 1С: «дпи ии» ⊂ «дпи сектора внедрения ии».
+    # Только в сторону left→right (≥2 токена), иначе короткое название темы
+    # перебивает более точное полное совпадение.
+    scores = [sequence_score, jaccard]
+    if len(left_tokens) >= 2:
+        if left_tokens <= right_tokens:
+            scores.append(1.0)
+        else:
+            scores.append(len(intersection) / len(left_tokens))
     contains_bonus = 0.0
     if len(left_norm) >= 10 and len(right_norm) >= 10:
         if left_norm in right_norm or right_norm in left_norm:
             contains_bonus = 0.15
-    return min(max(sequence_score, jaccard) + contains_bonus, 1.0)
+    return min(max(scores) + contains_bonus, 1.0)
 
 
 def text_similarity_score(left: str | None, right: str | None) -> float:
@@ -252,53 +271,56 @@ async def _embed_text_scores(
     return scores
 
 
+async def score_topics_by_title(
+    candidate: TopicComparisonInput,
+    topics: list[dict[str, Any]],
+    *,
+    use_embeddings: bool,
+) -> list[float]:
+    """Скоринг только по названию: max(text, embedding) при включённых embeddings."""
+    if not topics:
+        return []
+
+    text_scores = [
+        topic_title_similarity_score(candidate.title, topic.get("description"))
+        for topic in topics
+    ]
+    if not use_embeddings:
+        return text_scores
+
+    try:
+        embedding_scores = await _embed_text_scores(candidate, topics, field="topic")
+    except Exception as exc:
+        logger.warning("meeting_topic_similarity.embedding_failed", error=str(exc))
+        return text_scores
+
+    return [
+        max(text_score, embedding_score)
+        for text_score, embedding_score in zip(text_scores, embedding_scores, strict=True)
+    ]
+
+
 async def score_topics_for_candidate(
     candidate: TopicComparisonInput,
     topics: list[dict[str, Any]],
     *,
-    participants_by_topic: dict[str, set[str]],
+    participants_by_topic: dict[str, set[str]] | None = None,
     use_embeddings: bool,
 ) -> list[dict[DimensionName, float]]:
-    if not topics:
-        return []
-
-    if use_embeddings:
-        try:
-            topic_scores = await _embed_text_scores(candidate, topics, field="topic")
-            details_scores = await _embed_text_scores(candidate, topics, field="details")
-            dimension_scores: list[dict[DimensionName, float]] = []
-            for index, topic in enumerate(topics):
-                ref_key = str(topic.get("ref_key") or "")
-                text_topic_score = topic_title_similarity_score(
-                    candidate.title,
-                    topic.get("description"),
-                )
-                dimension_scores.append(
-                    {
-                        "topic": max(topic_scores[index], text_topic_score),
-                        "participants": participant_similarity_score(
-                            candidate.participant_refs,
-                            participants_by_topic.get(ref_key, set()),
-                        ),
-                        "details": (
-                            details_scores[index]
-                            if build_details_embedding_text(candidate.details)
-                            and build_details_embedding_text(topic.get("details"))
-                            else text_similarity_score(candidate.details, topic.get("details"))
-                        ),
-                    }
-                )
-            return dimension_scores
-        except Exception as exc:
-            logger.warning("meeting_topic_similarity.embedding_failed", error=str(exc))
-
+    """Совместимость: возвращает breakdown, но participants/details всегда 0."""
+    del participants_by_topic
+    topic_scores = await score_topics_by_title(
+        candidate,
+        topics,
+        use_embeddings=use_embeddings,
+    )
     return [
-        _score_dimensions_by_text(
-            candidate,
-            topic,
-            participants_by_topic=participants_by_topic,
-        )
-        for topic in topics
+        {
+            "topic": score,
+            "participants": 0.0,
+            "details": 0.0,
+        }
+        for score in topic_scores
     ]
 
 
@@ -352,19 +374,18 @@ async def find_similar_topic_for_candidate(
     threshold: float | None = None,
     use_embeddings: bool | None = None,
 ) -> dict[str, Any] | None:
+    del session, config
     if not topics:
         return None
 
-    participants_by_topic = load_participants_by_topic(session, config, topics)
     use_embedding_similarity = (
         settings.MEETING_TOPIC_SIMILARITY_USE_EMBEDDINGS
         if use_embeddings is None
         else use_embeddings
     )
-    dimension_scores = await score_topics_for_candidate(
+    topic_scores = await score_topics_by_title(
         candidate,
         topics,
-        participants_by_topic=participants_by_topic,
         use_embeddings=use_embedding_similarity,
     )
 
@@ -375,21 +396,21 @@ async def find_similar_topic_for_candidate(
     method: SimilarityMethod = "embedding" if use_embedding_similarity else "text"
     candidates: list[tuple[float, dict[str, Any], dict[str, float]]] = []
 
-    for topic, breakdown in zip(topics, dimension_scores, strict=True):
-        if breakdown["topic"] < min_topic_score:
+    for topic, topic_score in zip(topics, topic_scores, strict=True):
+        if topic_score < min_topic_score:
             continue
-        active_scores = resolve_active_dimension_scores(
-            candidate,
-            topic,
-            breakdown,
-            participants_by_topic=participants_by_topic,
-        )
-        total_score = compute_weighted_similarity(active_scores)
-        # Сильное совпадение названия достаточно: участники серии часто
-        # отличаются от сохранённых в теме 1С и не должны блокировать подсказку.
-        qualifying_score = max(total_score, breakdown["topic"])
-        if qualifying_score >= resolved_threshold:
-            candidates.append((qualifying_score, topic, breakdown))
+        if topic_score >= resolved_threshold:
+            candidates.append(
+                (
+                    topic_score,
+                    topic,
+                    {
+                        "topic": topic_score,
+                        "participants": 0.0,
+                        "details": 0.0,
+                    },
+                )
+            )
 
     return _attach_best_match(candidates, similarity_method=method)
 
@@ -407,6 +428,8 @@ async def find_similar_topic_for_manager_async(
     threshold: float | None = None,
     use_embeddings: bool | None = None,
 ) -> dict[str, Any] | None:
+    # Участники и описание темы временно не участвуют в сравнении.
+    del topic_details, participant_fios
     topics = fetch_all_meeting_topics(
         session,
         config,
@@ -424,13 +447,6 @@ async def find_similar_topic_for_manager_async(
     candidate = TopicComparisonInput(
         title=description,
         meeting_type=meeting_type,
-        details=topic_details,
-        participant_refs=resolve_comparison_participants(
-            session,
-            config,
-            manager_ref_key=manager_ref_key,
-            participant_fios=participant_fios,
-        ),
     )
     return await find_similar_topic_for_candidate(
         session,

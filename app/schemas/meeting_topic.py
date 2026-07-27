@@ -72,6 +72,20 @@ class MeetingTopicCheckSimilarRead(BaseModel):
     similarity_score: float | None = None
     similarity_method: str | None = None
     similarity_breakdown: MeetingTopicSimilarityBreakdownRead | None = None
+    missing_participants: list[MeetingTopicParticipantRead] = Field(
+        default_factory=list,
+        description=(
+            "Участники из СЗ, которых ещё нет в похожей теме 1С (по ФИО). "
+            "При decision=use_existing они будут добавлены в тему, если найдены в 1С."
+        ),
+    )
+    unresolved_participants: list[MeetingTopicParticipantRead] = Field(
+        default_factory=list,
+        description=(
+            "Участники из СЗ, которых нет в теме и которых не удалось найти в 1С — "
+            "добавить автоматически нельзя."
+        ),
+    )
     required_fields: list[str] = Field(default_factory=list)
     message: str
 
@@ -144,6 +158,10 @@ class MeetingTopicResolveRead(BaseModel):
     dry_run: bool = False
     topic: MeetingTopicSummaryRead
     participants_count: int = 0
+    added_participants: list[MeetingTopicParticipantRead] = Field(
+        default_factory=list,
+        description="Участники из СЗ, добавленные в существующую тему 1С",
+    )
     message: str
 
 

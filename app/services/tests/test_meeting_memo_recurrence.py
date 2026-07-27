@@ -179,4 +179,12 @@ def test_build_memo_series_messages_prefills_no_think_for_qwen() -> None:
     from app.services.meeting_memo_series_llm import _build_memo_series_messages
 
     messages = _build_memo_series_messages({}, None, model="qwen/qwen3.5-9b")
-    assert messages[-1] == {"role": "assistant", "content": "/no_think\n"}
+    assert messages[-1]["role"] == "assistant"
+    assert messages[-1]["content"].startswith("/no_think")
+
+
+def test_build_memo_series_messages_prefills_no_think_for_gpt_oss() -> None:
+    from app.services.meeting_memo_series_llm import _build_memo_series_messages
+
+    messages = _build_memo_series_messages({}, None, model="openai/gpt-oss-120b")
+    assert messages[-1]["content"].startswith("/no_think")

@@ -55,16 +55,12 @@ def test_find_similar_topic_by_text_prefers_best_score() -> None:
         },
     ]
 
-    with patch(
-        "app.tools.onec.meeting_topic_similarity.load_participants_by_topic",
-        return_value={"a": set(), "b": set()},
-    ):
-        match = find_similar_topic_by_text(
-            topics,
-            description="Еженедельное совещание с главным метрологом",
-            meeting_type="Отчетное",
-            threshold=0.7,
-        )
+    match = find_similar_topic_by_text(
+        topics,
+        description="Еженедельное совещание с главным метрологом",
+        meeting_type="Отчетное",
+        threshold=0.7,
+    )
 
     assert match is not None
     assert match["ref_key"] == "b"
@@ -90,7 +86,7 @@ def test_text_similarity_score_empty_both() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_similar_topic_for_candidate_uses_participants_and_details() -> None:
+async def test_find_similar_topic_for_candidate_uses_title_embeddings() -> None:
     topics = [
         {
             "ref_key": "b",
@@ -103,8 +99,6 @@ async def test_find_similar_topic_for_candidate_uses_participants_and_details() 
     candidate = TopicComparisonInput(
         title="Еженедельное совещание с главным метрологом",
         meeting_type="Отчетное",
-        details="Обсуждение показателей метрологической службы",
-        participant_refs=frozenset({"user-1", "user-2"}),
     )
 
     async def fake_embed_texts(texts: list[str]) -> EmbeddingBatchResult:
@@ -133,26 +127,23 @@ async def test_find_similar_topic_for_candidate_uses_participants_and_details() 
         new=AsyncMock(side_effect=fake_embed_texts),
     ):
         with patch(
-            "app.tools.onec.meeting_topic_similarity.load_participants_by_topic",
-            return_value={"b": {"user-1", "user-2"}},
+            "app.tools.onec.meeting_topic_similarity.topic_title_similarity_score",
+            return_value=0.95,
         ):
-            with patch(
-                "app.tools.onec.meeting_topic_similarity.topic_title_similarity_score",
-                return_value=0.95,
-            ):
-                match = await find_similar_topic_for_candidate(
-                    session=AsyncMock(),
-                    config=AsyncMock(),
-                    candidate=candidate,
-                    topics=topics,
-                    threshold=0.85,
-                    use_embeddings=True,
-                )
+            match = await find_similar_topic_for_candidate(
+                session=AsyncMock(),
+                config=AsyncMock(),
+                candidate=candidate,
+                topics=topics,
+                threshold=0.85,
+                use_embeddings=True,
+            )
 
     assert match is not None
     assert match["ref_key"] == "b"
-    assert match["similarity_breakdown"]["participants"] == 1.0
-    assert match["similarity_breakdown"]["details"] == 1.0
+    assert match["similarity_breakdown"]["topic"] >= 0.95
+    assert match["similarity_breakdown"]["participants"] == 0.0
+    assert match["similarity_breakdown"]["details"] == 0.0
 
 
 def test_topic_title_similarity_score_planerka_partial_title() -> None:
@@ -160,7 +151,45 @@ def test_topic_title_similarity_score_planerka_partial_title() -> None:
     assert score >= 0.85
 
 
-def test_find_similar_topic_by_text_planerka_with_participant_penalty() -> None:
+def test_topic_title_similarity_score_dpi_ai_matches_full_title() -> None:
+    score = topic_title_similarity_score("ДПИ ИИ", "ДПИ сектора внедрения ИИ")
+    assert score >= 0.85
+
+
+def test_topic_title_similarity_score_dpi_ai_not_equal_dpi_sr() -> None:
+    score = topic_title_similarity_score("ДПИ ИИ", "ДПИ СР")
+    assert score < 0.85
+
+
+def test_find_similar_topic_by_text_prefers_dpi_ai_full_title() -> None:
+    topics = [
+        {
+            "ref_key": "dpi-sr",
+            "code": "000006773",
+            "description": "ДПИ СР",
+            "meeting_type": "Отчетное",
+        },
+        {
+            "ref_key": "dpi-ai",
+            "code": "000007712",
+            "description": "ДПИ сектора внедрения ИИ",
+            "meeting_type": "Внеплановое",
+        },
+    ]
+
+    match = find_similar_topic_by_text(
+        topics,
+        description="ДПИ ИИ",
+        meeting_type="Отчетное",
+        threshold=0.85,
+    )
+
+    assert match is not None
+    assert match["ref_key"] == "dpi-ai"
+    assert match["similarity_breakdown"]["topic"] >= 0.85
+
+
+def test_find_similar_topic_by_text_planerka_by_title() -> None:
     topics = [
         {
             "ref_key": "planerka",
@@ -170,16 +199,12 @@ def test_find_similar_topic_by_text_planerka_with_participant_penalty() -> None:
         }
     ]
 
-    with patch(
-        "app.tools.onec.meeting_topic_similarity.load_participants_by_topic",
-        return_value={"planerka": {"manager-ref", "other-ref"}},
-    ):
-        match = find_similar_topic_by_text(
-            topics,
-            description="планерка 2",
-            meeting_type="Отчетное",
-            threshold=0.85,
-        )
+    match = find_similar_topic_by_text(
+        topics,
+        description="планерка 2",
+        meeting_type="Отчетное",
+        threshold=0.85,
+    )
 
     assert match is not None
     assert match["ref_key"] == "planerka"
@@ -187,25 +212,26 @@ def test_find_similar_topic_by_text_planerka_with_participant_penalty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_similar_topic_title_match_not_blocked_by_participants() -> None:
+async def test_find_similar_topic_ignores_participants_and_details() -> None:
     topics = [
         {
             "ref_key": "planerka",
             "code": "000003945",
             "description": "Планерка СР",
+            "details": "Совершенно другое описание",
             "meeting_type": "Отчетное",
         }
     ]
     candidate = TopicComparisonInput(
         title="планерка 2",
         meeting_type="Отчетное",
+        details="Иное описание кандидата",
         participant_refs=frozenset({"manager-ref", "a-ref", "b-ref"}),
     )
 
     with patch(
-        "app.tools.onec.meeting_topic_similarity.load_participants_by_topic",
-        return_value={"planerka": {"manager-ref", "other-ref"}},
-    ):
+        "app.tools.onec.meeting_topic_similarity.load_participants_by_topic"
+    ) as load_participants:
         match = await find_similar_topic_for_candidate(
             session=AsyncMock(),
             config=AsyncMock(),
@@ -218,6 +244,7 @@ async def test_find_similar_topic_title_match_not_blocked_by_participants() -> N
     assert match is not None
     assert match["ref_key"] == "planerka"
     assert match["similarity_score"] >= 0.85
+    load_participants.assert_not_called()
 
 
 def test_topic_title_similarity_score_range() -> None:
@@ -243,18 +270,14 @@ async def test_find_similar_topic_matches_exact_title_across_meeting_types() -> 
         participant_refs=frozenset({"manager-ref"}),
     )
 
-    with patch(
-        "app.tools.onec.meeting_topic_similarity.load_participants_by_topic",
-        return_value={"selector": set()},
-    ):
-        match = await find_similar_topic_for_candidate(
-            session=AsyncMock(),
-            config=AsyncMock(),
-            candidate=candidate,
-            topics=topics,
-            threshold=0.85,
-            use_embeddings=False,
-        )
+    match = await find_similar_topic_for_candidate(
+        session=AsyncMock(),
+        config=AsyncMock(),
+        candidate=candidate,
+        topics=topics,
+        threshold=0.85,
+        use_embeddings=False,
+    )
 
     assert match is not None
     assert match["code"] == "000010332"

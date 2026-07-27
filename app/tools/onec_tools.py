@@ -893,6 +893,10 @@ class CheckMeetingTopicSimilarInput(BaseModel):
         default_factory=list,
         description="Участники темы по ФИО",
     )
+    initiator_fio: str | None = Field(
+        default=None,
+        description="ФИО инициатора СЗ — учитывается при сравнении и добавлении участников",
+    )
 
 
 class CheckMeetingTopicSimilarOutput(BaseModel):
@@ -902,6 +906,17 @@ class CheckMeetingTopicSimilarOutput(BaseModel):
     similarity_score: float | None = None
     similarity_method: str | None = None
     similarity_breakdown: CreateMeetingTopicSimilarityBreakdown | None = None
+    missing_participants: list[CreateMeetingTopicParticipantResult] = Field(
+        default_factory=list,
+        description=(
+            "Участники из СЗ, которых нет в похожей теме. "
+            "При use_existing будут добавлены в тему в 1С, если найдены в справочнике."
+        ),
+    )
+    unresolved_participants: list[CreateMeetingTopicParticipantResult] = Field(
+        default_factory=list,
+        description="Участники из СЗ, не найденные в 1С — добавить автоматически нельзя.",
+    )
     required_fields: list[str] = Field(default_factory=list)
     message: str
 
@@ -952,9 +967,11 @@ class CheckMeetingTopicSimilarTool(Tool):
         "Инструмент check_meeting_topic_similar запускается при постановке совещания, "
         "когда нужно создать или выбрать тему в 1С. Ищет только среди активных тем "
         "указанного руководителя (дата закрытия темы строго позже сегодня). "
-        "Сравнивает название (50%), участников (30%) и описание (20%) через embeddings. "
-        "Если похожая тема найдена — покажи пользователю карточку similar_topic и спроси: "
-        "использовать её или создать новую? Не создавай тему без явного решения пользователя."
+        "Сравнивает в первую очередь название темы. Если похожая тема найдена — покажи "
+        "пользователю карточку similar_topic и список missing_participants (участники из СЗ, "
+        "которых ещё нет в теме). Спроси: использовать её или создать новую? "
+        "При use_existing недостающие участники будут добавлены в тему в 1С. "
+        "Не создавай тему без явного решения пользователя."
     )
     input_model = CheckMeetingTopicSimilarInput
     output_model = CheckMeetingTopicSimilarOutput
@@ -999,6 +1016,10 @@ class ResolveMeetingTopicInput(BaseModel):
     is_management_circle_topic: bool | None = None
     topic_details: str | None = None
     participant_fios: list[str] = Field(default_factory=list)
+    initiator_fio: str | None = Field(
+        default=None,
+        description="ФИО инициатора СЗ — будет добавлен в тему при use_existing, если его там ещё нет",
+    )
     dry_run: bool = False
 
 
@@ -1009,6 +1030,10 @@ class ResolveMeetingTopicOutput(BaseModel):
     dry_run: bool = False
     topic: MeetingTopicSummaryRead
     participants_count: int = 0
+    added_participants: list[CreateMeetingTopicParticipantResult] = Field(
+        default_factory=list,
+        description="Участники из СЗ, добавленные в существующую тему 1С",
+    )
     message: str
 
 
@@ -1035,9 +1060,11 @@ class ResolveMeetingTopicTool(Tool):
     agent_description = (
         "Инструмент resolve_meeting_topic вызывается после check_meeting_topic_similar "
         "и явного ответа пользователя. decision=use_existing — берём existing_topic_ref_key "
-        "из similar_topic, новую тему не создаём; для совещания используем название и вид "
-        "совещания из выбранной темы 1С. decision=create_new — создаём тему в 1С "
-        "с полями description, manager_fio, meeting_type и остальными реквизитами; "
+        "из similar_topic, новую тему не создаём; обязательно передай participant_fios и "
+        "initiator_fio из СЗ — недостающие участники будут добавлены в тему в 1С "
+        "(см. added_participants). Для совещания используем название и вид совещания "
+        "из выбранной темы 1С. decision=create_new — создаём тему в 1С с полями "
+        "description, manager_fio, meeting_type и остальными реквизитами; "
         "проверка похожих тем при этом не повторяется."
     )
     input_model = ResolveMeetingTopicInput

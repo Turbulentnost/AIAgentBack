@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, time
 from typing import Any, Literal
@@ -20,12 +21,14 @@ from app.core.config import settings
 from app.llm.errors import format_llm_call_error
 from app.llm.gateway import llm_gateway
 from app.models.enums import ScheduledMeetingFrequency, ScheduledMeetingWeekday
+from app.services.meeting_duration import DEFAULT_MEETING_DURATION_MINUTES
 from app.services.meeting_memo_document import clean_text, parse_odata_date
 from app.services.meeting_memo_recurrence import (
     MemoRecurrenceDraft,
     _finalize_recurrence_draft,
     _find_source_quote,
     _resolve_from_schedule,
+    _time_from_header,
     build_series_planning_read,
     collect_recurrence_texts,
     has_recurrence_hints,
@@ -38,6 +41,11 @@ from app.services.scheduled_meeting_recurrence import (
     RecurrenceInput,
     default_series_end_date,
     validate_recurrence_input,
+)
+
+_THINK_BLOCK_RE = re.compile(
+    r"<think>.*?</think>|<thinking>.*?</thinking>",
+    flags=re.DOTALL | re.IGNORECASE,
 )
 
 logger = logging.getLogger(__name__)
@@ -195,10 +203,13 @@ def _llm_response_to_recurrence(
     )
 
     time_local = _parse_hh_mm(response.time_local)
+    header_time, header_duration = _time_from_header(header)
+    if time_local is None:
+        time_local = header_time
     if time_local is None:
         ambiguities.append("Не указано время начала серии")
 
-    duration_minutes = response.duration_minutes or 60
+    duration_minutes = response.duration_minutes or header_duration or DEFAULT_MEETING_DURATION_MINUTES
 
     weekday = _WEEKDAY_FROM_LLM.get(response.weekday or "") if response.weekday else None
     if frequency == ScheduledMeetingFrequency.WEEKLY and weekday is None and series_start:
@@ -319,15 +330,52 @@ def _series_llm_model() -> str:
 
 def _should_disable_thinking(model: str) -> bool:
     normalized = model.lower()
-    return "qwen" in normalized or "nemotron" in normalized
+    return any(token in normalized for token in ("qwen", "nemotron", "gpt-oss", "deepseek-r1"))
+
+
+def _coerce_message_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    cleaned = _THINK_BLOCK_RE.sub("", text)
+    # Незакрытый think-блок в начале ответа reasoning-моделей.
+    cleaned = re.sub(r"^<think>.*?(?:</think>|$)", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    return cleaned.strip()
 
 
 def _extract_assistant_text(message: dict[str, Any]) -> str:
+    """Собирает текст ответа; предпочитает фрагмент, где есть JSON-объект."""
+    candidates: list[str] = []
     for key in ("content", "reasoning_content", "reasoning"):
-        value = message.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
+        text = _strip_thinking_blocks(_coerce_message_text(message.get(key)))
+        if text:
+            candidates.append(text)
+
+    if not candidates:
+        return ""
+
+    for text in candidates:
+        if "{" in text and "}" in text:
+            return text
+    return "\n".join(candidates)
+
+
+def _parse_series_llm_content(content: str) -> MemoSeriesLLMResponse:
+    parsed = parse_json_content(content)
+    return MemoSeriesLLMResponse.model_validate(parsed)
 
 
 def _build_memo_series_messages(
@@ -341,8 +389,42 @@ def _build_memo_series_messages(
         {"role": "user", "content": _build_llm_user_prompt(header, document)},
     ]
     if _should_disable_thinking(model):
-        messages.append({"role": "assistant", "content": "/no_think\n"})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "/no_think\nОтвечу только валидным JSON без markdown.\n",
+            }
+        )
     return messages
+
+
+async def _chat_series_llm(
+    chat: LLMChatFn,
+    messages: list[dict[str, str]],
+    *,
+    model: str,
+) -> dict[str, Any]:
+    max_tokens = settings.MEETING_MEMO_SERIES_LLM_MAX_TOKENS
+    if _should_disable_thinking(model):
+        # Reasoning-модели часто сжигают бюджет на «мысли» — даём запас под JSON.
+        max_tokens = max(max_tokens, 2500)
+    try:
+        return await chat(
+            messages,
+            model=model,
+            temperature=0.1,
+            max_tokens=max_tokens,
+            timeout=120,
+        )
+    except Exception as exc:
+        raise RuntimeError(format_llm_call_error(exc)) from exc
+
+
+def _message_from_chat_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    message = payload.get("choices", [{}])[0].get("message", {})
+    if not isinstance(message, dict):
+        raise RuntimeError("LLM вернула некорректный ответ")
+    return message
 
 
 async def call_memo_series_llm(
@@ -354,30 +436,47 @@ async def call_memo_series_llm(
     chat = llm_chat or llm_gateway.chat
     model = _series_llm_model()
     messages = _build_memo_series_messages(header, document, model=model)
-    try:
-        payload = await chat(
-            messages,
-            model=model,
-            temperature=0.1,
-            max_tokens=settings.MEETING_MEMO_SERIES_LLM_MAX_TOKENS,
-            timeout=120,
-        )
-    except Exception as exc:
-        raise RuntimeError(format_llm_call_error(exc)) from exc
-
-    message = payload.get("choices", [{}])[0].get("message", {})
-    if not isinstance(message, dict):
-        raise RuntimeError("LLM вернула некорректный ответ")
+    payload = await _chat_series_llm(chat, messages, model=model)
+    message = _message_from_chat_payload(payload)
 
     content = _extract_assistant_text(message)
     if not content:
         raise RuntimeError("LLM вернула пустой ответ")
 
     try:
-        parsed = parse_json_content(content)
-        return MemoSeriesLLMResponse.model_validate(parsed)
-    except (json.JSONDecodeError, ValidationError) as exc:
-        raise RuntimeError(f"Не удалось разобрать JSON от LLM: {exc}") from exc
+        return _parse_series_llm_content(content)
+    except (json.JSONDecodeError, ValidationError) as first_exc:
+        logger.warning(
+            "meeting_memo_series_llm_json_retry: %s; preview=%r",
+            first_exc,
+            content[:300],
+        )
+        repair_messages = [
+            *messages,
+            {"role": "assistant", "content": content[:2000]},
+            {
+                "role": "user",
+                "content": (
+                    "Ответ выше нельзя разобрать как JSON. "
+                    "Верни ТОЛЬКО один JSON-объект по шаблону из system prompt, "
+                    "без markdown и без пояснений."
+                ),
+            },
+        ]
+        if _should_disable_thinking(model):
+            repair_messages.append(
+                {"role": "assistant", "content": "/no_think\n{\"is_series\":"}
+            )
+        try:
+            repair_payload = await _chat_series_llm(chat, repair_messages, model=model)
+            repair_content = _extract_assistant_text(_message_from_chat_payload(repair_payload))
+            if not repair_content:
+                raise RuntimeError("LLM вернула пустой ответ при повторе")
+            return _parse_series_llm_content(repair_content)
+        except (json.JSONDecodeError, ValidationError, RuntimeError) as retry_exc:
+            raise RuntimeError(
+                f"Не удалось разобрать JSON от LLM: {first_exc}"
+            ) from retry_exc
 
 
 async def resolve_memo_recurrence_async(

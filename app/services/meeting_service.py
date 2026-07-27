@@ -892,6 +892,7 @@ class MeetingService:
             result = await MeetingProtocolDraftService(self.db).create_protocol_draft_for_entry(
                 entry.id,
                 force=True,
+                actor_fio=_user_fio(current_user),
             )
         except Exception as exc:
             raise MeetingServiceError(

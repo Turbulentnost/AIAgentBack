@@ -8,12 +8,14 @@ import pytest
 from app.services.meeting_memo_cache import (
     MeetingMemoCacheService,
     MemoCacheMissError,
+    _apply_dashboard_item_to_cached_detail,
     _cache_key,
     build_detail_from_dashboard_item,
     collect_memo_ref_keys,
     detail_is_agent_ready,
     ensure_memo_text_in_detail,
     refresh_cached_detail_assessment,
+    warm_memo_details_from_dashboard,
 )
 
 
@@ -419,3 +421,102 @@ async def test_get_memo_detail_falls_back_to_dashboard_cache() -> None:
     assert payload["number"] == "0001"
     assert isinstance(payload.get("sto_checklist"), list)
     assert result_fetched_at == fetched_at
+
+
+def test_apply_dashboard_item_updates_stale_participants() -> None:
+    existing = {
+        "ref_key": "memo-1",
+        "number": "000011991",
+        "title": "ДПИ ИИ",
+        "queue": {
+            "participant_names": [
+                "Никитаев Алексей Вячеславович",
+                "Ясыров Богдан Джумазаевич",
+            ],
+            "ТекстСлужебнойЗаписки": "старый текст",
+        },
+        "application": {
+            "memo_text": "старый текст",
+            "participants": [
+                {"full_name": "Никитаев Алексей Вячеславович", "ref_key": None},
+                {"full_name": "Ясыров Богдан Джумазаевич", "ref_key": None},
+            ],
+            "participants_count": 2,
+            "manager": {"full_name": "Соломичева Светлана Викторовна"},
+        },
+        "validation_checks": [{"field": "keep"}],
+    }
+    item = {
+        "ref_key": "memo-1",
+        "number": "000011991",
+        "title": "ДПИ ИИ",
+        "subject": "ДПИ ИИ",
+        "participant_names": [
+            "Ясыров Богдан Джумазаевич",
+            "Лапина Арина Антоновна",
+        ],
+        "participants_count": 2,
+        "initiator": {"full_name": "Комарькова Анастасия Эдуардовна"},
+        "manager": {"full_name": "Соломичева Светлана Викторовна"},
+        "ТекстСлужебнойЗаписки": "старый текст",
+    }
+
+    patched = _apply_dashboard_item_to_cached_detail(existing, item)
+    names = [p["full_name"] for p in patched["application"]["participants"]]
+
+    assert names == [
+        "Ясыров Богдан Джумазаевич",
+        "Лапина Арина Антоновна",
+    ]
+    assert patched["queue"]["participant_names"] == [
+        "Ясыров Богдан Джумазаевич",
+        "Лапина Арина Антоновна",
+    ]
+    assert patched["validation_checks"] == [{"field": "keep"}]
+    assert patched["application"]["memo_text"] == "старый текст"
+
+
+@pytest.mark.asyncio
+async def test_warm_memo_details_overwrites_participants_on_existing_cache() -> None:
+    existing = {
+        "ref_key": "memo-1",
+        "application": {
+            "memo_text": "текст есть",
+            "participants": [{"full_name": "Старый Участник"}],
+            "participants_count": 1,
+        },
+        "queue": {"participant_names": ["Старый Участник"]},
+    }
+    item = {
+        "ref_key": "memo-1",
+        "participant_names": ["Новый Участник"],
+        "participants_count": 1,
+        "ТекстСлужебнойЗаписки": "текст есть",
+        "initiator": {"full_name": "Инициатор"},
+        "manager": {"full_name": "Руководитель"},
+    }
+    write_mock = AsyncMock()
+    service = MeetingMemoCacheService()
+
+    with (
+        patch(
+            "app.services.meeting_memo_cache.settings.MEETING_DASHBOARD_CACHE_ENABLED",
+            True,
+        ),
+        patch(
+            "app.services.meeting_memo_cache.MeetingMemoCacheService",
+            return_value=service,
+        ),
+        patch.object(
+            service,
+            "_read_cache",
+            AsyncMock(return_value={"payload": existing, "fetched_at": "old"}),
+        ),
+        patch.object(service, "_write_cache", write_mock),
+    ):
+        await warm_memo_details_from_dashboard({"items": [item]})
+
+    write_mock.assert_awaited_once()
+    written = write_mock.await_args.args[1]
+    names = [p["full_name"] for p in written["application"]["participants"]]
+    assert names == ["Новый Участник"]

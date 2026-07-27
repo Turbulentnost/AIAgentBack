@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 import requests
 
+from app.core.logging import get_logger
 from app.integrations.onec_odata import fetch_all
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import entity_url, odata_get_json
@@ -34,6 +35,8 @@ from app.tools.onec.lookup_user_ref import (
     resolve_user_by_fio,
     user_fio,
 )
+
+logger = get_logger(__name__)
 from app.tools.onec.meeting_topics_registry import (
     CATALOG_ENTITY,
     build_filter_parts,
@@ -98,14 +101,44 @@ def resolve_participant_refs_by_fio(
     session: requests.Session,
     config: ODataConfig,
     participant_fios: list[str],
+    *,
+    skip_missing: bool = False,
 ) -> list[dict[str, str]]:
+    resolved, _not_found = resolve_participant_refs_by_fio_with_missing(
+        session,
+        config,
+        participant_fios,
+        skip_missing=skip_missing,
+    )
+    return resolved
+
+
+def resolve_participant_refs_by_fio_with_missing(
+    session: requests.Session,
+    config: ODataConfig,
+    participant_fios: list[str],
+    *,
+    skip_missing: bool = False,
+) -> tuple[list[dict[str, str]], list[str]]:
+    """Резолв ФИО → person keys + список ФИО, не найденных в 1С."""
     user_items: list[dict[str, str]] = []
     seen_users: set[str] = set()
+    not_found: list[str] = []
     for raw_fio in participant_fios:
         fio = (raw_fio or "").strip()
         if not fio:
             continue
-        user_ref, resolved_fio, _ = resolve_user_by_fio(session, fio, config=config)
+        try:
+            user_ref, resolved_fio, _ = resolve_user_by_fio(session, fio, config=config)
+        except ValueError:
+            if skip_missing:
+                logger.warning(
+                    "meeting_topic_participants.fio_not_found_in_1c",
+                    fio=fio,
+                )
+                not_found.append(fio)
+                continue
+            raise
         normalized = user_ref.strip().lower()
         if normalized in seen_users:
             continue
@@ -113,7 +146,7 @@ def resolve_participant_refs_by_fio(
         user_items.append({"user_ref_key": user_ref, "fio": resolved_fio})
 
     if not user_items:
-        return []
+        return [], not_found
 
     person_keys = resolve_person_keys_by_refs(
         session,
@@ -129,7 +162,97 @@ def resolve_participant_refs_by_fio(
             continue
         seen_persons.add(normalized)
         resolved.append({"participant_ref_key": person_key, "fio": item["fio"]})
-    return resolved
+    return resolved, not_found
+
+
+def collect_existing_participant_keys(
+    session: requests.Session,
+    config: ODataConfig,
+    topic_ref_key: str,
+) -> set[str]:
+    """Ключи участников темы (person + legacy user), lower-case для сравнения."""
+    rows = fetch_participant_rows(session, config, topic_ref_key)
+    raw_keys = {
+        str(key).strip()
+        for key in extract_participant_keys(rows)
+        if not is_empty_key(key)
+    }
+    if not raw_keys:
+        return set()
+
+    persons = load_persons_for_keys(session, raw_keys, config=config)
+    unresolved = {key for key in raw_keys if key not in persons}
+    users = load_users_for_keys(session, unresolved, config=config) if unresolved else {}
+
+    existing: set[str] = set()
+    for key in raw_keys:
+        existing.add(key.casefold())
+        if key in persons:
+            continue
+        user = users.get(key) or {}
+        person_key = user.get("ФизическоеЛицо_Key")
+        if not is_empty_key(person_key):
+            existing.add(str(person_key).strip().casefold())
+    return existing
+
+
+def merge_participants_into_topic(
+    session: requests.Session,
+    config: ODataConfig,
+    *,
+    topic_ref_key: str,
+    participant_fios: list[str],
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Добавляет в тему участников из списка ФИО, которых ещё нет, но кто есть в 1С.
+
+    ФИО, не найденные в 1С, пропускаются (не ошибка) и возвращаются в not_found_in_1c.
+    """
+    existing_keys = collect_existing_participant_keys(session, config, topic_ref_key)
+    resolved, not_found = resolve_participant_refs_by_fio_with_missing(
+        session,
+        config,
+        participant_fios,
+        skip_missing=True,
+    )
+    to_add = [
+        item
+        for item in resolved
+        if item["participant_ref_key"].casefold() not in existing_keys
+    ]
+    added = (
+        add_meeting_topic_participants(
+            session,
+            config,
+            topic_ref_key=topic_ref_key,
+            participant_refs=to_add,
+            dry_run=dry_run,
+        )
+        if to_add
+        else []
+    )
+    return {
+        "topic_ref_key": topic_ref_key,
+        "resolved_count": len(resolved),
+        "existing_count": len(existing_keys),
+        "added_count": len(added),
+        "added": [
+            {
+                "participant_ref_key": item.get("participant_ref_key"),
+                "fio": item.get("fio"),
+            }
+            for item in added
+        ],
+        "skipped_already_in_topic": [
+            {
+                "participant_ref_key": item["participant_ref_key"],
+                "fio": item.get("fio"),
+            }
+            for item in resolved
+            if item["participant_ref_key"].casefold() in existing_keys
+        ],
+        "not_found_in_1c": [{"fio": fio} for fio in not_found],
+    }
 
 
 def add_meeting_topic_participants(

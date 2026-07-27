@@ -21,9 +21,15 @@ from app.tools.onec.create_meeting_topic import (
     normalize_participant_fios,
     require_topic_participant_fios,
 )
-from app.tools.onec.lookup_user_ref import resolve_user_by_fio
-from app.tools.onec.meeting_topic_participants import get_meeting_topic_participants
-from app.tools.onec.meeting_topic_similarity import find_similar_topic_for_manager_async
+from app.tools.onec.lookup_user_ref import normalize_name, resolve_user_by_fio
+from app.tools.onec.meeting_topic_participants import (
+    get_meeting_topic_participants,
+    merge_participants_into_topic,
+)
+from app.tools.onec.meeting_topic_similarity import (
+    find_similar_topic_for_manager_async,
+    participant_similarity_score,
+)
 from app.tools.onec.meeting_topics_registry import (
     fetch_topic_by_key,
     normalize_topic,
@@ -122,6 +128,119 @@ async def _load_topic_participants(topic_ref_key: str) -> list[MeetingTopicParti
     return _participants_from_raw(raw)
 
 
+def _participants_from_merge_items(
+    items: list[dict[str, Any]] | None,
+) -> list[MeetingTopicParticipantRead]:
+    return [
+        MeetingTopicParticipantRead(
+            participant_ref_key=item.get("participant_ref_key"),
+            fio=item.get("fio"),
+        )
+        for item in (items or [])
+        if isinstance(item, dict)
+    ]
+
+
+def _missing_participants_by_fio(
+    memo_fios: list[str],
+    topic_participants: list[MeetingTopicParticipantRead],
+) -> list[MeetingTopicParticipantRead]:
+    """Кого из СЗ нет в теме — сравнение по нормализованному ФИО (для UI)."""
+    topic_names = {
+        normalize_name(item.fio)
+        for item in topic_participants
+        if item.fio and normalize_name(item.fio)
+    }
+    missing: list[MeetingTopicParticipantRead] = []
+    seen: set[str] = set()
+    for fio in normalize_participant_fios(memo_fios):
+        key = normalize_name(fio)
+        if not key or key in topic_names or key in seen:
+            continue
+        seen.add(key)
+        missing.append(MeetingTopicParticipantRead(participant_ref_key=None, fio=fio))
+    return missing
+
+
+async def _preview_memo_participants_vs_topic(
+    *,
+    topic_ref_key: str,
+    topic_participants: list[MeetingTopicParticipantRead],
+    participant_fios: list[str],
+) -> tuple[
+    list[MeetingTopicParticipantRead],
+    list[MeetingTopicParticipantRead],
+    float | None,
+]:
+    """Превью: missing по ФИО, не найденные в 1С, Jaccard по резолвнутым ключам."""
+    memo_fios = normalize_participant_fios(participant_fios)
+    missing_by_fio = _missing_participants_by_fio(memo_fios, topic_participants)
+    if not memo_fios or not topic_ref_key:
+        return missing_by_fio, [], None
+
+    def _preview() -> dict[str, Any]:
+        session = create_session(CONFIG)
+        return merge_participants_into_topic(
+            session,
+            CONFIG,
+            topic_ref_key=topic_ref_key,
+            participant_fios=memo_fios,
+            dry_run=True,
+        )
+
+    merge_result = await asyncio.to_thread(_preview)
+    # Дополняем missing ref_key из dry-run, если участник резолвнулся в 1С.
+    added_by_name = {
+        normalize_name(item.get("fio")): item
+        for item in (merge_result.get("added") or [])
+        if isinstance(item, dict) and item.get("fio")
+    }
+    enriched_missing: list[MeetingTopicParticipantRead] = []
+    for item in missing_by_fio:
+        key = normalize_name(item.fio)
+        matched = added_by_name.get(key) if key else None
+        if matched:
+            enriched_missing.append(
+                MeetingTopicParticipantRead(
+                    participant_ref_key=matched.get("participant_ref_key"),
+                    fio=matched.get("fio") or item.fio,
+                )
+            )
+        else:
+            enriched_missing.append(item)
+
+    not_found_names = {
+        normalize_name(item.get("fio"))
+        for item in (merge_result.get("not_found_in_1c") or [])
+        if isinstance(item, dict) and item.get("fio")
+    }
+    unresolved = [
+        item
+        for item in enriched_missing
+        if item.fio and normalize_name(item.fio) in not_found_names
+    ]
+
+    resolved_refs = {
+        str(item.get("participant_ref_key") or "").strip().casefold()
+        for item in (
+            (merge_result.get("added") or [])
+            + (merge_result.get("skipped_already_in_topic") or [])
+        )
+        if isinstance(item, dict) and item.get("participant_ref_key")
+    }
+    topic_refs = {
+        str(item.participant_ref_key).strip().casefold()
+        for item in topic_participants
+        if item.participant_ref_key
+    }
+    score = (
+        participant_similarity_score(resolved_refs, topic_refs)
+        if resolved_refs
+        else None
+    )
+    return enriched_missing, unresolved, score
+
+
 async def _load_topic_detail(topic_ref_key: str) -> MeetingTopicSummaryRead:
     def _fetch() -> dict[str, Any]:
         session = create_session(CONFIG)
@@ -160,18 +279,13 @@ class MeetingTopicService:
 
         session, manager_ref, _resolved_manager_fio = await asyncio.to_thread(_resolve_manager)
 
+        # Поиск похожей темы — по названию; участников сравниваем отдельно для превью.
         similar_topic = await find_similar_topic_for_manager_async(
             session,
             CONFIG,
             manager_ref_key=manager_ref,
             description=payload.description,
             meeting_type=payload.meeting_type,
-            topic_details=payload.topic_details,
-            participant_fios=merge_topic_participant_fios(
-                payload.participant_fios,
-                manager_fio=payload.manager_fio,
-                initiator_fio=payload.initiator_fio,
-            ),
         )
 
         if not similar_topic:
@@ -187,8 +301,49 @@ class MeetingTopicService:
 
         ref_key = str(similar_topic.get("ref_key") or "")
         participants = await _load_topic_participants(ref_key) if ref_key else []
+        memo_fios = merge_topic_participant_fios(
+            payload.participant_fios,
+            manager_fio=payload.manager_fio,
+            initiator_fio=payload.initiator_fio,
+        )
+        (
+            missing_participants,
+            unresolved_participants,
+            participants_score,
+        ) = await _preview_memo_participants_vs_topic(
+            topic_ref_key=ref_key,
+            topic_participants=participants,
+            participant_fios=memo_fios,
+        )
+        if participants_score is not None:
+            breakdown = dict(similar_topic.get("similarity_breakdown") or {})
+            breakdown["participants"] = round(participants_score, 4)
+            similar_topic = {**similar_topic, "similarity_breakdown": breakdown}
         summary = _summary_from_topic(similar_topic, participants=participants)
         code = summary.code or "?"
+        message = (
+            f"У руководителя уже есть похожая тема №{code}: {summary.description}"
+            f"{f' ({summary.meeting_type})' if summary.meeting_type else ''}. "
+            "Использовать её или создать новую? При использовании существующей темы "
+            "совещание оформляется с тем же названием и видом совещания из 1С."
+        )
+        if missing_participants:
+            missing_names = ", ".join(
+                item.fio for item in missing_participants if item.fio
+            )
+            if missing_names:
+                message += (
+                    f" В теме нет участников из СЗ: {missing_names}. "
+                    "При выборе «Использовать эту тему» найденные в 1С будут добавлены в тему."
+                )
+        if unresolved_participants:
+            unresolved_names = ", ".join(
+                item.fio for item in unresolved_participants if item.fio
+            )
+            if unresolved_names:
+                message += (
+                    f" Не найдены в 1С (добавить автоматически нельзя): {unresolved_names}."
+                )
         return MeetingTopicCheckSimilarRead(
             similar_found=True,
             requires_user_decision=True,
@@ -196,13 +351,10 @@ class MeetingTopicService:
             similarity_score=summary.similarity_score,
             similarity_method=summary.similarity_method,
             similarity_breakdown=summary.similarity_breakdown,
+            missing_participants=missing_participants,
+            unresolved_participants=unresolved_participants,
             required_fields=list(CREATE_TOPIC_REQUIRED_FIELDS),
-            message=(
-                f"У руководителя уже есть похожая тема №{code}: {summary.description}"
-                f"{f' ({summary.meeting_type})' if summary.meeting_type else ''}. "
-                "Использовать её или создать новую? При использовании существующей темы "
-                "совещание оформляется с тем же названием и видом совещания из 1С."
-            ),
+            message=message,
         )
 
     async def resolve(
@@ -211,24 +363,60 @@ class MeetingTopicService:
     ) -> MeetingTopicResolveRead:
         if payload.decision == "use_existing":
             ref_key = str(payload.existing_topic_ref_key or "").strip()
+            memo_fios = merge_topic_participant_fios(
+                payload.participant_fios,
+                manager_fio=payload.manager_fio,
+                initiator_fio=payload.initiator_fio,
+            )
+
+            added_participants: list[MeetingTopicParticipantRead] = []
+            if memo_fios:
+
+                def _merge() -> dict[str, Any]:
+                    session = create_session(CONFIG)
+                    return merge_participants_into_topic(
+                        session,
+                        CONFIG,
+                        topic_ref_key=ref_key,
+                        participant_fios=memo_fios,
+                        dry_run=payload.dry_run,
+                    )
+
+                merge_result = await asyncio.to_thread(_merge)
+                added_participants = _participants_from_merge_items(
+                    merge_result.get("added")
+                )
+
             topic = await _load_topic_detail(ref_key)
             if not topic.participants:
                 raise MeetingTopicServiceError(
                     "У выбранной темы совещания не указаны участники. "
-                    "Создайте новую тему с участниками или дополните тему в 1С.",
+                    "Добавьте участников из СЗ (они должны быть в 1С) "
+                    "или создайте новую тему.",
                     status_code=400,
                 )
+
+            added_names = ", ".join(
+                item.fio for item in added_participants if item.fio
+            )
+            added_note = (
+                f" В тему добавлены участники из СЗ: {added_names}."
+                if added_names
+                else ""
+            )
             return MeetingTopicResolveRead(
                 decision="use_existing",
                 used_existing=True,
                 created=False,
-                dry_run=False,
+                dry_run=bool(payload.dry_run),
                 topic=topic,
                 participants_count=len(topic.participants),
+                added_participants=added_participants,
                 message=(
                     f"Используется существующая тема №{topic.code or '?'}: "
                     f"{topic.description}"
-                    f"{f' ({topic.meeting_type})' if topic.meeting_type else ''}. "
+                    f"{f' ({topic.meeting_type})' if topic.meeting_type else ''}."
+                    f"{added_note} "
                     "Совещание оформляется с тем же названием и видом совещания из 1С."
                 ),
             )

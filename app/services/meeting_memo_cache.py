@@ -936,8 +936,75 @@ class MeetingMemoCacheService:
         return True
 
 
+def _apply_dashboard_item_to_cached_detail(
+    existing: dict[str, Any],
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    """Обновляет кэш детали СЗ свежими полями из dashboard (участники, текст и т.п.)."""
+    fresh = build_detail_from_dashboard_item(item)
+    patched = dict(existing)
+    fresh_app = dict(fresh.get("application") or {})
+    app = dict(patched.get("application") or {})
+    queue = dict(patched.get("queue") or {})
+
+    app["participants"] = list(fresh_app.get("participants") or [])
+    app["participants_count"] = int(
+        fresh_app.get("participants_count")
+        or item.get("participants_count")
+        or len(app["participants"])
+    )
+    queue["participant_names"] = list(item.get("participant_names") or [])
+    queue["participants_count"] = app["participants_count"]
+    queue["СписокУчастников"] = [
+        {"Участник": name}
+        for name in queue["participant_names"]
+        if isinstance(name, str) and name.strip()
+    ]
+
+    memo_text = extract_memo_text(item) or extract_memo_text(
+        queue=queue,
+        application=app,
+    )
+    if memo_text:
+        app["memo_text"] = memo_text
+        queue["ТекстСлужебнойЗаписки"] = memo_text
+        app.pop("memo_text_unavailable", None)
+        queue.pop("memo_text_unavailable", None)
+
+    for field in (
+        "initiator",
+        "manager",
+        "agenda",
+        "scheduled_label",
+        "meeting_start",
+        "meeting_end",
+        "duration_minutes",
+        "location",
+        "meeting_type",
+        "meeting_type_label",
+        "priority",
+        "psd_level",
+        "document_date",
+        "document_date_label",
+    ):
+        if fresh_app.get(field) is not None:
+            app[field] = fresh_app[field]
+
+    patched["application"] = app
+    patched["queue"] = queue
+    if item.get("number") is not None:
+        patched["number"] = item.get("number")
+    if item.get("title") or item.get("subject"):
+        patched["title"] = item.get("title") or item.get("subject")
+    if item.get("status") is not None:
+        patched["status"] = item.get("status")
+    if item.get("status_label") is not None:
+        patched["status_label"] = item.get("status_label")
+    return patched
+
+
 async def warm_memo_details_from_dashboard(payload: dict[str, Any]) -> None:
-    """Прогревает per-memo кэш текстом СЗ из dashboard (после refresh/warmup)."""
+    """Прогревает per-memo кэш из dashboard (текст СЗ + актуальные участники)."""
     if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
         return
 
@@ -950,35 +1017,21 @@ async def warm_memo_details_from_dashboard(payload: dict[str, Any]) -> None:
         ref_key = (item.get("ref_key") or "").strip().lower()
         if not ref_key:
             continue
-        memo_text = extract_memo_text(item)
-        if not memo_text:
-            continue
 
         cached = await service._read_cache(ref_key)
         if cached is not None:
             existing = cached["payload"]
-            if extract_memo_text(
-                queue=existing.get("queue") if isinstance(existing.get("queue"), dict) else None,
-                application=(
-                    existing.get("application")
-                    if isinstance(existing.get("application"), dict)
-                    else None
-                ),
-            ):
+            if not isinstance(existing, dict):
                 continue
-            app = dict(existing.get("application") or {})
-            queue = dict(existing.get("queue") or {})
-            app["memo_text"] = memo_text
-            queue["ТекстСлужебнойЗаписки"] = memo_text
-            app.pop("memo_text_unavailable", None)
-            queue.pop("memo_text_unavailable", None)
-            existing["application"] = app
-            existing["queue"] = queue
-            await service._write_cache(ref_key, existing, fetched_at=cached["fetched_at"])
+            patched = _apply_dashboard_item_to_cached_detail(existing, item)
+            await service._write_cache(ref_key, patched, fetched_at=fetched_at)
         else:
+            memo_text = extract_memo_text(item)
+            if not memo_text and not (item.get("participant_names") or []):
+                continue
             detail = build_detail_from_dashboard_item(item)
             await service._write_cache(ref_key, detail, fetched_at=fetched_at)
         warmed += 1
 
     if warmed:
-        logger.info("meeting_memo_text_cache_warmed", count=warmed)
+        logger.info("meeting_memo_cache_warmed_from_dashboard", count=warmed)

@@ -391,7 +391,15 @@ class MeetingProtocolDraftService:
         entry_id: uuid.UUID,
         *,
         force: bool = False,
+        actor_fio: str | None = None,
     ) -> dict[str, Any]:
+        """Создать черновик протокола в 1С.
+
+        actor_fio — пользователь платформы, от имени которого создаётся протокол
+        (Подготовил_Key и Ответственный_Key / проверяющий). Если не передан
+        (фоновый Celery), берём руководителя совещания — иначе 1С подставит
+        служебную учётку OData.
+        """
         entry = await self.get_entry(entry_id)
         if entry is None:
             raise ValueError(f"Запись реестра не найдена: {entry_id}")
@@ -452,11 +460,18 @@ class MeetingProtocolDraftService:
             stored_title=entry.title,
         ) or (entry.subject or entry.title or "").strip()
         protocol_fields = await build_protocol_creation_fields(entry, topic, db=self.db)
+        protocol_actor_fio = (
+            (actor_fio or "").strip()
+            or (entry.manager_name or "").strip()
+            or None
+        )
 
         def _create() -> dict[str, Any]:
             return create_meeting_protocol(
                 comment=comment,
                 manager_fio=entry.manager_name,
+                responsible_fio=protocol_actor_fio,
+                prepared_by_fio=protocol_actor_fio,
                 topic_key=str(topic_key),
                 meeting_type=str(meeting_type) if meeting_type else None,
                 department_key=protocol_fields.get("department_key"),

@@ -171,7 +171,10 @@ async def test_create_protocol_draft_success() -> None:
             },
         ) as create_mock,
     ):
-        result = await service.create_protocol_draft_for_entry(entry_id)
+        result = await service.create_protocol_draft_for_entry(
+            entry_id,
+            actor_fio="Комарькова Анна Сергеевна",
+        )
 
     assert result["created"] is True
     assert entry.protocol_ref_key == "proto-1"
@@ -183,9 +186,63 @@ async def test_create_protocol_draft_success() -> None:
     assert create_mock.call_args.kwargs["room_key"] == "room-1"
     assert create_mock.call_args.kwargs["basis_key"] == "memo-1"
     assert create_mock.call_args.kwargs["next_meeting_date"] is None
+    assert create_mock.call_args.kwargs["responsible_fio"] == "Комарькова Анна Сергеевна"
+    assert create_mock.call_args.kwargs["prepared_by_fio"] == "Комарькова Анна Сергеевна"
     assert create_mock.call_args.kwargs["participant_ref_keys"] == [
         "11111111-1111-1111-1111-111111111111"
     ]
+
+
+@pytest.mark.asyncio
+async def test_create_protocol_draft_falls_back_to_manager_as_actor() -> None:
+    db = AsyncMock()
+    service = MeetingProtocolDraftService(db)
+    entry_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    entry = MeetingRegistryEntry(
+        id=entry_id,
+        memo_ref_key="memo-1",
+        manager_name="Руководитель Иван Иванович",
+        subject="Совещание",
+        slot_start=now + timedelta(minutes=5),
+        protocol_draft_at=now - timedelta(minutes=1),
+        stage=MeetingRegistryStage.INVITATIONS_SENT,
+        invitations_sent_at=now,
+        payload={"meeting_topic": {"ref_key": "topic-1", "meeting_type": "Отчетное"}},
+    )
+    service.get_entry = AsyncMock(return_value=entry)
+    service.registry = MagicMock()
+    service.registry.append_event = AsyncMock()
+
+    with (
+        patch(
+            "app.services.meeting_protocol_draft_service.build_protocol_creation_fields",
+            AsyncMock(return_value={}),
+        ),
+        patch(
+            "app.services.meeting_protocol_draft_service.MeetingProtocolDraftService.resolve_meeting_topic_for_protocol",
+            AsyncMock(
+                return_value={
+                    "ref_key": "topic-1",
+                    "meeting_type": "Отчетное",
+                    "participants": [
+                        {
+                            "participant_ref_key": "11111111-1111-1111-1111-111111111111",
+                            "fio": "Участник",
+                        }
+                    ],
+                }
+            ),
+        ),
+        patch(
+            "app.services.meeting_protocol_draft_service.create_meeting_protocol",
+            return_value={"protocol": {"ref_key": "proto-1", "number": "1"}},
+        ) as create_mock,
+    ):
+        await service.create_protocol_draft_for_entry(entry_id)
+
+    assert create_mock.call_args.kwargs["responsible_fio"] == "Руководитель Иван Иванович"
+    assert create_mock.call_args.kwargs["prepared_by_fio"] == "Руководитель Иван Иванович"
 
 
 @pytest.mark.asyncio
