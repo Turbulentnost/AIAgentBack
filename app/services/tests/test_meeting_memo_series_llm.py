@@ -110,7 +110,7 @@ def test_draft_from_llm_whole_week_code_counts_from_llm_dates() -> None:
     assert draft.recurrence is not None
     assert draft.planning_options == ["series", "single"]
     assert draft.occurrence_count == 5
-    assert draft.recurrence_label == "ежедневно, 12:00 · до 24.07.2026, 5 встреч"
+    assert draft.recurrence_label == "ежедневно по будням, 12:00 · до 24.07.2026, 5 встреч"
 
 
 def test_draft_from_llm_counts_meetings_from_llm_date_range_only() -> None:
@@ -139,7 +139,7 @@ def test_draft_from_llm_counts_meetings_from_llm_date_range_only() -> None:
     )
 
     assert draft.occurrence_count == 1
-    assert draft.recurrence_label == "ежедневно, 12:00 · до 24.07.2026, 1 встреча"
+    assert draft.recurrence_label == "ежедневно по будням, 12:00 · до 24.07.2026, 1 встреча"
 
 
 @pytest.mark.asyncio

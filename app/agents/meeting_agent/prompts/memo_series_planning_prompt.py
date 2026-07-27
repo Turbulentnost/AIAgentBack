@@ -1,6 +1,6 @@
 """Промпт для извлечения серии совещаний из служебной записки."""
 
-MEMO_SERIES_PLANNING_PROMPT_VERSION = "2"
+MEMO_SERIES_PLANNING_PROMPT_VERSION = "3"
 
 MEMO_SERIES_PLANNING_SYSTEM_PROMPT = """\
 Ты помощник Управления делами. По тексту служебной записки (СЗ) определи,
@@ -16,6 +16,8 @@ MEMO_SERIES_PLANNING_SYSTEM_PROMPT = """\
 - is_series: true — если просят повтор (ежедневно, еженедельно, по средам, на период и т.п.)
 - is_series: false — если совещание одноразовое
 - frequency: daily | weekly | monthly | yearly
+  (daily = каждый рабочий день пн–пт; если дата вхождения выпадает на сб/вс —
+   программа перенесёт на предыдущую пятницу, напр. 31-е в субботу → пятница)
 - interval: целое >= 1
 - weekday: monday..sunday — для weekly, если указан день («по средам» → wednesday)
 - time_local: "HH:MM" (24ч); duration_minutes: если не указана — 60

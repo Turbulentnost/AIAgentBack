@@ -35,6 +35,27 @@ def test_iter_occurrence_dates_daily_series() -> None:
     assert dates == [date(2026, 7, 15), date(2026, 7, 16), date(2026, 7, 17)]
 
 
+def test_iter_occurrence_dates_daily_skips_weekends() -> None:
+    # Пт 17.07 — вс 19.07 — пн 20.07: только пт и пн
+    dates = iter_occurrence_dates(
+        _recurrence(
+            series_start_date=date(2026, 7, 17),
+            series_end_date=date(2026, 7, 20),
+        )
+    )
+    assert dates == [date(2026, 7, 17), date(2026, 7, 20)]
+
+
+def test_iter_occurrence_dates_daily_skips_weekend_start() -> None:
+    dates = iter_occurrence_dates(
+        _recurrence(
+            series_start_date=date(2026, 7, 18),  # суббота
+            series_end_date=date(2026, 7, 21),
+        )
+    )
+    assert dates == [date(2026, 7, 20), date(2026, 7, 21)]
+
+
 def test_iter_occurrence_dates_weekly_series() -> None:
     dates = iter_occurrence_dates(
         _recurrence(
@@ -49,19 +70,56 @@ def test_iter_occurrence_dates_weekly_series() -> None:
 
 
 def test_iter_occurrence_dates_monthly_by_day() -> None:
+    # 15.02.2026 и 15.03.2026 — воскресенья → пятницы 13.02 и 13.03
     dates = iter_occurrence_dates(
         _recurrence(
             frequency=ScheduledMeetingFrequency.MONTHLY,
             interval=1,
             monthly_mode=ScheduledMeetingMonthlyMode.BY_DAY_OF_MONTH,
             day_of_month=15,
+            weekday=None,
             series_start_date=date(2026, 1, 1),
             series_end_date=date(2026, 3, 31),
         ),
         range_start=date(2026, 2, 1),
         range_end=date(2026, 3, 31),
     )
-    assert dates == [date(2026, 2, 15), date(2026, 3, 15)]
+    assert dates == [date(2026, 2, 13), date(2026, 3, 13)]
+
+
+def test_iter_occurrence_dates_monthly_last_day_moves_weekend_to_friday() -> None:
+    from app.services.scheduled_meeting_recurrence import adjust_weekend_to_preceding_weekday
+
+    # 31.01.2026 — суббота → 30.01 (пт); 28.02.2026 — суббота → 27.02 (пт)
+    assert date(2026, 1, 31).weekday() == 5
+    assert adjust_weekend_to_preceding_weekday(date(2026, 1, 31)) == date(2026, 1, 30)
+
+    dates = iter_occurrence_dates(
+        _recurrence(
+            frequency=ScheduledMeetingFrequency.MONTHLY,
+            interval=1,
+            monthly_mode=ScheduledMeetingMonthlyMode.BY_DAY_OF_MONTH,
+            day_of_month=31,
+            weekday=None,
+            series_start_date=date(2026, 1, 1),
+            series_end_date=date(2026, 2, 28),
+        )
+    )
+    assert dates == [date(2026, 1, 30), date(2026, 2, 27)]
+
+
+def test_iter_occurrence_dates_yearly_moves_weekend_to_friday() -> None:
+    # 04.07.2026 — суббота → 03.07 (пт)
+    dates = iter_occurrence_dates(
+        _recurrence(
+            frequency=ScheduledMeetingFrequency.YEARLY,
+            interval=1,
+            weekday=None,
+            series_start_date=date(2026, 7, 4),
+            series_end_date=date(2026, 7, 4),
+        )
+    )
+    assert dates == [date(2026, 7, 3)]
 
 
 def test_find_next_occurrence_returns_first_future_slot() -> None:

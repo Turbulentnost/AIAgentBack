@@ -62,7 +62,16 @@ def test_dispatch_scheduled_meeting_invite_daily(mock_load_config, mock_dispatch
     assert result["outlook_item_id"] == "series-1"
     mock_dispatch.assert_called_once()
     kwargs = mock_dispatch.call_args.kwargs
-    assert kwargs["pattern"] == "daily"
+    # Ежедневно → weekly пн–пт (иначе Outlook ставит сб/вс)
+    assert kwargs["pattern"] == "weekly"
+    assert kwargs["weekdays"] == [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+    ]
+    assert kwargs["interval"] == 1
     assert kwargs["end_type"] == "end_date"
     assert kwargs["end"] == "2026-07-17"
     assert kwargs["attendees"] == ["director@turbo-don.ru"]

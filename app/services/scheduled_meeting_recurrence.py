@@ -54,6 +54,44 @@ def format_time_label(value: time) -> str:
     return text
 
 
+def is_weekend(value: date) -> bool:
+    """Суббота и воскресенье (ISO: 5, 6)."""
+    return value.weekday() >= 5
+
+
+def first_weekday_on_or_after(value: date) -> date:
+    current = value
+    while is_weekend(current):
+        current += timedelta(days=1)
+    return current
+
+
+def adjust_weekend_to_preceding_weekday(value: date) -> date:
+    """Если дата — выходной, перенести на предыдущую пятницу.
+
+    Суббота → пятница (−1), воскресенье → пятница (−2).
+    Пример: последний день месяца 31.01 (сб) → 30.01 (пт).
+    """
+    if value.weekday() == 5:
+        return value - timedelta(days=1)
+    if value.weekday() == 6:
+        return value - timedelta(days=2)
+    return value
+
+
+def _business_day_index(anchor: date, value: date) -> int:
+    """0-based индекс рабочего дня value относительно anchor (оба — будни)."""
+    if value < anchor:
+        return -1
+    index = 0
+    current = anchor
+    while current < value:
+        current += timedelta(days=1)
+        if not is_weekend(current):
+            index += 1
+    return index
+
+
 @dataclass(frozen=True)
 class RecurrenceInput:
     frequency: ScheduledMeetingFrequency
@@ -125,7 +163,11 @@ def format_recurrence_label(data: RecurrenceInput) -> str:
     time_label = format_time_label(data.time_local)
 
     if data.frequency == ScheduledMeetingFrequency.DAILY:
-        prefix = "ежедневно" if data.interval == 1 else f"каждые {data.interval} дн."
+        # Ежедневные серии в УД — только рабочие дни (пн–пт).
+        if data.interval == 1:
+            prefix = "ежедневно по будням"
+        else:
+            prefix = f"каждые {data.interval} раб. дн."
         return f"{prefix}, {time_label}"
 
     if data.frequency == ScheduledMeetingFrequency.WEEKLY:
@@ -222,16 +264,17 @@ def iter_occurrence_dates(
     dates: list[date] = []
 
     if data.frequency == ScheduledMeetingFrequency.DAILY:
-        current = start
-        anchor = data.series_start_date
-        if current > anchor:
-            delta_days = (current - anchor).days
-            remainder = delta_days % data.interval
-            if remainder:
-                current += timedelta(days=data.interval - remainder)
+        # Только пн–пт; interval считает рабочие дни, не календарные.
+        anchor = first_weekday_on_or_after(data.series_start_date)
+        current = max(start, anchor)
+        if is_weekend(current):
+            current = first_weekday_on_or_after(current)
         while current <= end:
-            dates.append(current)
-            current += timedelta(days=data.interval)
+            if not is_weekend(current):
+                biz_index = _business_day_index(anchor, current)
+                if biz_index >= 0 and biz_index % data.interval == 0:
+                    dates.append(current)
+            current += timedelta(days=1)
         return dates
 
     if data.frequency == ScheduledMeetingFrequency.WEEKLY:
@@ -252,9 +295,9 @@ def iter_occurrence_dates(
             if remainder:
                 current += timedelta(days=(data.interval - remainder) * 7)
         while current <= end:
-            dates.append(current)
+            _append_adjusted_occurrence(dates, current, range_start=start, range_end=end)
             current += timedelta(days=7 * data.interval)
-        return dates
+        return _dedupe_sorted_dates(dates)
 
     if data.frequency == ScheduledMeetingFrequency.MONTHLY:
         month_cursor = date(start.year, start.month, 1)
@@ -282,26 +325,74 @@ def iter_occurrence_dates(
                         weekday=data.weekday,
                         weekday_position=data.weekday_position,
                     )
-                if occurrence is not None and start <= occurrence <= end:
-                    dates.append(occurrence)
+                if occurrence is not None:
+                    _append_adjusted_occurrence(
+                        dates,
+                        occurrence,
+                        range_start=start,
+                        range_end=end,
+                    )
             if month_cursor.month == 12:
                 month_cursor = date(month_cursor.year + 1, 1, 1)
             else:
                 month_cursor = date(month_cursor.year, month_cursor.month + 1, 1)
-        return dates
+        return _dedupe_sorted_dates(dates)
 
     if data.frequency == ScheduledMeetingFrequency.YEARLY:
         year = start.year
         while year <= end.year:
             years_since_start = year - data.series_start_date.year
             if years_since_start >= 0 and years_since_start % data.interval == 0:
-                occurrence = date(year, data.series_start_date.month, data.series_start_date.day)
-                if start <= occurrence <= end:
-                    dates.append(occurrence)
+                try:
+                    occurrence = date(
+                        year,
+                        data.series_start_date.month,
+                        data.series_start_date.day,
+                    )
+                except ValueError:
+                    # 29.02 в невисокосном — последний день февраля
+                    occurrence = _clamp_day_of_month(
+                        year,
+                        data.series_start_date.month,
+                        data.series_start_date.day,
+                    )
+                _append_adjusted_occurrence(
+                    dates,
+                    occurrence,
+                    range_start=start,
+                    range_end=end,
+                )
             year += 1
-        return dates
+        return _dedupe_sorted_dates(dates)
 
     raise ValueError(f"Неизвестная частота: {data.frequency}")
+
+
+def _append_adjusted_occurrence(
+    dates: list[date],
+    raw: date,
+    *,
+    range_start: date,
+    range_end: date,
+) -> None:
+    """Добавляет дату с переносом сб/вс → пт; исходная дата могла быть в диапазоне."""
+    adjusted = adjust_weekend_to_preceding_weekday(raw)
+    if range_start <= raw <= range_end or range_start <= adjusted <= range_end:
+        dates.append(adjusted)
+
+
+def _dedupe_sorted_dates(dates: list[date]) -> list[date]:
+    if not dates:
+        return dates
+    unique: list[date] = []
+    seen: set[date] = set()
+    for item in dates:
+        if item in seen:
+            continue
+        seen.add(item)
+        unique.append(item)
+    unique.sort()
+    return unique
 
 
 def occurrence_slot_bounds(

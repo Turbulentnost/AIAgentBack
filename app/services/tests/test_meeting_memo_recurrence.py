@@ -36,12 +36,13 @@ def test_daily_two_weeks_with_time_in_text() -> None:
     assert draft.recurrence.interval == 1
     assert draft.recurrence.series_start_date == date(2026, 7, 24)
     assert draft.recurrence.series_end_date == date(2026, 8, 6)
-    assert draft.occurrence_count == 14
+    # 24.07–06.08.2026 без выходных = 10 рабочих дней
+    assert draft.occurrence_count == 10
     assert draft.requires_user_choice is True
     assert draft.planning_options == ["series", "single"]
     assert draft.recurrence_label is not None
     assert "ежедневно" in draft.recurrence_label
-    assert "14" in draft.recurrence_label
+    assert "10" in draft.recurrence_label
 
 
 def test_sync_resolve_returns_stub_for_text_hints() -> None:

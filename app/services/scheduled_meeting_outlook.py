@@ -9,7 +9,6 @@ from typing import Any
 from exchangelib.items import SEND_ONLY_TO_ALL
 from exchangelib.recurrence import (
     AbsoluteMonthlyPattern,
-    DailyPattern,
     Recurrence,
     RelativeMonthlyPattern,
     WeeklyPattern,
@@ -76,9 +75,17 @@ _WEEKDAY_POSITION_TO_OUTLOOK: dict[ScheduledMeetingWeekdayPosition, str] = {
 
 
 def _combine_start(meeting: ScheduledMeeting, timezone: str) -> datetime:
-    start_date = meeting.series_start_date.isoformat()
+    from app.services.scheduled_meeting_recurrence import first_weekday_on_or_after
+
+    start_date = meeting.series_start_date
+    # Ежедневная серия — только будни: не стартуем с субботы/воскресенья.
+    if meeting.frequency == ScheduledMeetingFrequency.DAILY:
+        start_date = first_weekday_on_or_after(start_date)
     time_label = meeting.time_local.strftime("%H:%M")
-    return parse_start(f"{start_date} {time_label}", timezone)
+    return parse_start(f"{start_date.isoformat()} {time_label}", timezone)
+
+
+_WORKWEEK_OUTLOOK = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
 
 
 def _invite_body(meeting: ScheduledMeeting, attendees: list[tuple[str, str]]) -> str:
@@ -103,7 +110,11 @@ def _build_recurrence(meeting: ScheduledMeeting, start: datetime) -> Recurrence:
     end_date = meeting.series_end_date
 
     if meeting.frequency == ScheduledMeetingFrequency.DAILY:
-        pattern = DailyPattern(interval=interval)
+        # Outlook DailyPattern ставит и выходные — используем weekly пн–пт.
+        pattern = WeeklyPattern(
+            interval=1,
+            weekdays=list(_WORKWEEK_OUTLOOK),
+        )
     elif meeting.frequency == ScheduledMeetingFrequency.WEEKLY:
         if meeting.weekday is None:
             raise ScheduledMeetingOutlookError("Для weekly не задан weekday")
@@ -217,7 +228,9 @@ def dispatch_scheduled_meeting_invite(
     day_of_month: int | None = None
 
     if meeting.frequency == ScheduledMeetingFrequency.DAILY:
-        pattern = "daily"
+        # Не daily в Outlook (там будут сб/вс) — weekly по рабочим дням.
+        pattern = "weekly"
+        weekdays = list(_WORKWEEK_OUTLOOK)
     elif meeting.frequency == ScheduledMeetingFrequency.WEEKLY:
         pattern = "weekly"
         if meeting.weekday is None:
@@ -232,7 +245,13 @@ def dispatch_scheduled_meeting_invite(
     else:
         raise ScheduledMeetingOutlookError(f"Неизвестная частота: {meeting.frequency}")
 
-    interval = meeting.interval if meeting.frequency != ScheduledMeetingFrequency.YEARLY else 12
+    if meeting.frequency == ScheduledMeetingFrequency.YEARLY:
+        interval = 12
+    elif meeting.frequency == ScheduledMeetingFrequency.DAILY:
+        # WeeklyPattern.interval — недели; для «каждый рабочий день» = 1.
+        interval = 1
+    else:
+        interval = meeting.interval
     warning = (
         weekday_mismatch_warning(start=start, weekdays=weekdays)
         if pattern == "weekly"

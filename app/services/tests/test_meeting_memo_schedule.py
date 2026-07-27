@@ -67,7 +67,7 @@ def test_resolve_memo_recurrence_uses_schedule_before_text() -> None:
     assert draft.confidence == "high"
     assert draft.recurrence is not None
     assert draft.recurrence.frequency == ScheduledMeetingFrequency.DAILY
-    assert draft.occurrence_count == 14
+    assert draft.occurrence_count == 10
     assert draft.source_quote is not None
     assert "Расписание 1С" in draft.source_quote
 
