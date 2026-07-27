@@ -60,7 +60,10 @@ META_KEYS = (
 def msg_embedded_count(content: bytes) -> int | None:
     if not is_msg_bytes(content):
         return None
-    import olefile
+    try:
+        import olefile
+    except ImportError:
+        return None
 
     with tempfile.NamedTemporaryFile(suffix=".msg", delete=False) as tmp:
         path = tmp.name
