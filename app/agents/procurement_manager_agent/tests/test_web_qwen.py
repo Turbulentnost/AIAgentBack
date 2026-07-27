@@ -11,11 +11,13 @@ from app.agents.procurement_manager_agent.web_page_enrichment import (
     apply_page_enrichment,
     enrich_web_suppliers,
     parse_product_page_with_qwen,
+    run_qwen_browse_agent,
 )
 from app.agents.procurement_manager_agent.web_qwen import (
     normalize_qwen_page_fields,
     parse_json_object,
     refine_search_query_with_qwen,
+    select_urls_to_visit_with_qwen,
     strip_think_blocks,
 )
 
@@ -139,7 +141,8 @@ async def test_enrich_web_suppliers_with_mocked_qwen(monkeypatch: pytest.MonkeyP
                 {
                     "message": {
                         "content": (
-                            '{"title":"Ремень А-1250","unit_price":2500,"city":"Пермь",'
+                            '{"title":"Ремень А-1250","shop_name":"BeltShop",'
+                            '"unit_price":2500,"city":"Пермь",'
                             '"lead_time_days":7,"delivery_hint":"7 дней",'
                             '"product_match_confidence":0.8}'
                         )
@@ -165,7 +168,7 @@ async def test_enrich_web_suppliers_with_mocked_qwen(monkeypatch: pytest.MonkeyP
     )
     assert enriched[0].approx_cost == Decimal("2500")
     assert enriched[0].city == "Пермь"
-    assert "Ремень" in enriched[0].name
+    assert enriched[0].name == "BeltShop"
     assert any(item == "enrichment:qwen" for item in enriched[0].evidence)
     assert any(item.startswith("match_confidence:") for item in enriched[0].evidence)
 
@@ -251,3 +254,155 @@ def test_apply_page_enrichment_records_qwen_evidence() -> None:
     assert updated.city == "Тула"
     assert "enrichment:qwen" in updated.evidence
     assert "lead_time_days:2" in updated.evidence
+
+
+@pytest.mark.asyncio
+async def test_select_urls_to_visit_with_qwen(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROCUREMENT_WEB_USE_QWEN", "true")
+    monkeypatch.setenv("PROCUREMENT_WEB_QWEN_AGENT_SELECT_URLS", "true")
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://127.0.0.1:9/v1")
+
+    async def _chat(messages, model=None, timeout=None, **kwargs):
+        _ = (messages, model, timeout, kwargs)
+        return {"choices": [{"message": {"content": '{"visit_indexes": [2, 0]}'}}]}
+
+    hits = [
+        {"title": "Новость", "url": "https://news.example/1", "snippet": "новости"},
+        {"title": "Форум", "url": "https://forum.example/1", "snippet": "обсуждение"},
+        {"title": "Купить ремень", "url": "https://shop.example/belt", "snippet": "2340 ₽"},
+    ]
+    indexes = await select_urls_to_visit_with_qwen(
+        hits,
+        product_query="Ремень",
+        max_visit=2,
+        chat_fn=_chat,
+    )
+    assert indexes == [2, 0]
+
+
+@pytest.mark.asyncio
+async def test_select_urls_falls_back_when_gateway_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROCUREMENT_WEB_USE_QWEN", "true")
+    monkeypatch.setenv("PROCUREMENT_WEB_QWEN_AGENT_SELECT_URLS", "true")
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("LLM_GATEWAY_BASE_URL", raising=False)
+    monkeypatch.delenv("VISION_LM_STUDIO_BASE_URL", raising=False)
+
+    hits = [
+        {"title": "A", "url": "https://a.example", "snippet": ""},
+        {"title": "B", "url": "https://b.example", "snippet": ""},
+        {"title": "C", "url": "https://c.example", "snippet": ""},
+    ]
+    indexes = await select_urls_to_visit_with_qwen(hits, max_visit=2)
+    assert indexes == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_run_qwen_browse_agent_visits_and_enriches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROCUREMENT_WEB_USE_QWEN", "true")
+    monkeypatch.setenv("PROCUREMENT_WEB_QWEN_AGENT", "true")
+    monkeypatch.setenv("PROCUREMENT_WEB_QWEN_AGENT_SELECT_URLS", "true")
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://127.0.0.1:9/v1")
+
+    class _Provider:
+        def __init__(self) -> None:
+            self.fetched: list[str] = []
+
+        async def fetch(self, url: str) -> dict:
+            self.fetched.append(url)
+            return {"status": "available", "html": PAGE_HTML}
+
+    async def _chat(messages, model=None, timeout=None, **kwargs):
+        _ = (model, timeout, kwargs)
+        content = messages[-1]["content"] if messages else ""
+        if "visit_indexes" in (messages[0].get("content") or "") or "hits" in content:
+            return {"choices": [{"message": {"content": '{"visit_indexes": [0]}'}}]}
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"title":"Ремень А-1250","unit_price":2500,"city":"Пермь",'
+                            '"lead_time_days":7,"delivery_hint":"7 дней",'
+                            '"product_match_confidence":0.8}'
+                        )
+                    }
+                }
+            ]
+        }
+
+    provider = _Provider()
+    suppliers = [
+        Supplier(
+            supplier_id="web-1",
+            name="Shop",
+            source="web",
+            url="https://shop.example/belt",
+            evidence=["https://shop.example/belt", "цена от 2000"],
+        ),
+        Supplier(
+            supplier_id="web-2",
+            name="Other",
+            source="web",
+            url="https://other.example/x",
+        ),
+    ]
+    enriched, diagnostics = await run_qwen_browse_agent(
+        suppliers,
+        provider,
+        product_query="Ремень клиновой",
+        max_pages=1,
+        concurrency=1,
+        timeout_seconds=5,
+        chat_fn=_chat,
+    )
+    assert diagnostics["qwen_agent"] is True
+    assert diagnostics["status"] == "completed"
+    assert diagnostics["visited"] == 1
+    assert provider.fetched == ["https://shop.example/belt"]
+    assert enriched[0].city == "Пермь"
+    assert enriched[0].approx_cost == Decimal("2500")
+    assert "qwen_agent:visited" in enriched[0].evidence
+    assert "enrichment:qwen" in enriched[0].evidence
+    # Second SERP card kept untouched (not visited).
+    assert enriched[1].supplier_id == "web-2"
+    assert "qwen_agent:visited" not in enriched[1].evidence
+
+
+@pytest.mark.asyncio
+async def test_run_qwen_browse_agent_keeps_serp_when_fetch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROCUREMENT_WEB_USE_QWEN", "true")
+    monkeypatch.setenv("PROCUREMENT_WEB_QWEN_AGENT", "true")
+    monkeypatch.setenv("PROCUREMENT_WEB_QWEN_AGENT_SELECT_URLS", "false")
+
+    class _Boom:
+        async def fetch(self, url: str) -> dict:
+            _ = url
+            raise TimeoutError("browser down")
+
+    suppliers = [
+        Supplier(
+            supplier_id="web-1",
+            name="Shop",
+            source="web",
+            url="https://shop.example/belt",
+        )
+    ]
+    enriched, diagnostics = await run_qwen_browse_agent(
+        suppliers,
+        _Boom(),
+        product_query="Ремень",
+        max_pages=2,
+        concurrency=1,
+        timeout_seconds=1,
+    )
+    assert len(enriched) == 1
+    assert enriched[0].url == "https://shop.example/belt"
+    assert diagnostics["visited"] == 0
+    assert diagnostics["status"] == "no_pages_fetched"

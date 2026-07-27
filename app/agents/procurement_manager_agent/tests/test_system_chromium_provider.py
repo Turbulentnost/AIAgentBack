@@ -7,6 +7,7 @@ import pytest
 from app.agents.procurement_manager_agent.supplier_mcp_server import providers
 from app.agents.procurement_manager_agent.supplier_mcp_server.providers import (
     FallbackBrowserSearchProvider,
+    HttpSerpSearchProvider,
     SystemChromiumWebSearchProvider,
     SystemYandexBrowserProvider,
     build_default_browser_search_provider,
@@ -317,7 +318,7 @@ async def test_fallback_does_not_fabricate_when_both_fail() -> None:
     assert "system_chromium" in result["message"]
 
 
-def test_build_default_prefers_chromium_when_present(
+def test_build_default_auto_prefers_http_then_browser(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -328,9 +329,32 @@ def test_build_default_prefers_chromium_when_present(
     monkeypatch.delenv("YANDEX_BROWSER_PATH", raising=False)
     provider = build_default_browser_search_provider()
     assert isinstance(provider, FallbackBrowserSearchProvider)
-    assert isinstance(provider.primary, SystemChromiumWebSearchProvider)
-    assert isinstance(provider.fallback, SystemYandexBrowserProvider)
-    assert provider.primary.executable == edge
+    assert isinstance(provider.primary, HttpSerpSearchProvider)
+    assert isinstance(provider.fallback, FallbackBrowserSearchProvider)
+    assert isinstance(provider.fallback.primary, SystemChromiumWebSearchProvider)
+    assert isinstance(provider.fallback.fallback, SystemYandexBrowserProvider)
+    assert provider.fallback.primary.executable == edge
+
+
+def test_build_default_browser_first(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    edge = tmp_path / "msedge.exe"
+    edge.write_bytes(b"e")
+    monkeypatch.setenv("PROCUREMENT_WEB_BROWSER_PATH", str(edge))
+    monkeypatch.setenv("PROCUREMENT_WEB_SEARCH_PROVIDER", "browser_first")
+    provider = build_default_browser_search_provider()
+    assert isinstance(provider, FallbackBrowserSearchProvider)
+    assert isinstance(provider.primary, FallbackBrowserSearchProvider)
+    assert isinstance(provider.primary.primary, SystemChromiumWebSearchProvider)
+    assert isinstance(provider.fallback, HttpSerpSearchProvider)
+
+
+def test_build_default_http_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROCUREMENT_WEB_SEARCH_PROVIDER", "http")
+    provider = build_default_browser_search_provider()
+    assert isinstance(provider, HttpSerpSearchProvider)
 
 
 def test_build_default_yandex_only(monkeypatch: pytest.MonkeyPatch) -> None:

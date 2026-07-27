@@ -6,7 +6,7 @@ from io import BytesIO
 from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.agents.procurement_manager_agent.schemas import (
@@ -48,7 +48,9 @@ from app.agents.procurement_manager_agent.service import (
     ProcurementManagerService,
     case_in_manager_queue,
 )
-from app.api.deps import CurrentUser, DbSession
+from app.agents.procurement_manager_agent.suppliers import HybridSupplierSearchService
+from app.api.deps import CurrentUser, DbSession, oauth2_scheme, resolve_user_from_token
+from app.db.session import AsyncSessionLocal
 from app.services.procurement_orchestrator_service import ProcurementOrchestratorService
 from app.services.procurement_permission import (
     can_access_procurement_manager,
@@ -59,6 +61,69 @@ router = APIRouter(
     tags=["procurement-manager"],
 )
 operations_router = APIRouter(prefix="/procurement/operations", tags=["procurement-manager"])
+
+# Dashboard cards previously embedded full workspace (~500KB×N) and froze the UI.
+_DASHBOARD_DROP_KEYS = (
+    "suppliers",
+    "quotes",
+    "rfq_drafts",
+    "approvals",
+    "shipment_events",
+    "payment_document_draft",
+    "recommendation",
+    "recommendation_audit",
+    "comparison",
+)
+_DASHBOARD_PM_DROP_KEYS = (
+    *_DASHBOARD_DROP_KEYS,
+    "supplier_searches",
+    "nomenclature_results",
+    "purchase_order_drafts",
+    "operations",
+    "nonconformities",
+    "supplier_graph",
+    "supply_policy",
+    "strategy_graph",
+    "strategy_artifact",
+    "cost_estimate",
+    "evaluation",
+    "line_amounts",
+    "agent_interrupt",
+)
+_CASE_DETAIL_DROP_KEYS = (
+    "case_metadata",
+    "events",
+    "strategy_artifact",
+    "supply_policy",
+    "cost_estimate",
+)
+_TIMELINE_MAX = 40
+
+
+def _slim_manager_dashboard_case(item: dict[str, Any]) -> dict[str, Any]:
+    for key in _DASHBOARD_DROP_KEYS:
+        item.pop(key, None)
+    pm = item.get("procurement_manager")
+    if isinstance(pm, dict):
+        item["procurement_manager"] = {
+            key: value for key, value in pm.items() if key not in _DASHBOARD_PM_DROP_KEYS
+        }
+    return item
+
+
+def _slim_manager_case_detail(payload: dict[str, Any]) -> dict[str, Any]:
+    for key in _CASE_DETAIL_DROP_KEYS:
+        payload.pop(key, None)
+    timeline = payload.get("timeline")
+    if isinstance(timeline, list) and len(timeline) > _TIMELINE_MAX:
+        payload["timeline"] = timeline[-_TIMELINE_MAX:]
+    pm = payload.get("procurement_manager")
+    if isinstance(pm, dict):
+        for key in ("strategy_artifact", "supply_policy", "cost_estimate"):
+            pm.pop(key, None)
+    for key in ("strategy_artifact", "supply_policy", "cost_estimate"):
+        payload.pop(key, None)
+    return payload
 
 
 async def _require_access(db: DbSession, user: CurrentUser) -> None:
@@ -99,7 +164,12 @@ async def dashboard(
     payload["total_cases"] = sum(
         len(group.get("cases", [])) for group in payload.get("groups", [])
     )
-    return await ProcurementManagerService(db).enrich_dashboard_cases(payload)
+    enriched = await ProcurementManagerService(db).enrich_dashboard_cases(payload)
+    for group in enriched.get("groups", []):
+        group["cases"] = [
+            _slim_manager_dashboard_case(item) for item in group.get("cases") or []
+        ]
+    return enriched
 
 
 @router.get("/workspace-summary", response_model=WorkspaceSummary)
@@ -360,26 +430,86 @@ async def case_detail(
     workspace = await ProcurementManagerService(db).workspace_payload(case_id)
     payload["procurement_manager"] = workspace
     payload.update(workspace)
-    return payload
+    return _slim_manager_case_detail(payload)
 
 
 @router.post("/cases/{case_id}/supplier-search", response_model=SupplierSearchResult)
 async def supplier_search(
     case_id: uuid.UUID,
-    db: DbSession,
-    current_user: CurrentUser,
+    token: Annotated[str | None, Depends(oauth2_scheme)],
     data: Annotated[SupplierSearchRequest | None, Body()] = None,
 ) -> SupplierSearchResult:
-    await _require_access(db, current_user)
+    """Phased search: short DB sessions around a long browser/Qwen wait.
+
+    Holding one DbSession for the whole force_web search exhausted the pool and
+    left the UI spinning on dashboard/case cards («Загрузка…»).
+    """
+    request = data or SupplierSearchRequest()
+    async with AsyncSessionLocal() as db:
+        user = await resolve_user_from_token(db, token)
+        await _require_access(db, user)
+        service = ProcurementManagerService(db)
+        try:
+            prepared = await service.prepare_supplier_search(case_id, request)
+        except LookupError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        await db.commit()
+        if isinstance(prepared, SupplierSearchResult):
+            return prepared
+
+    # No DB checkout while Edge/Qwen runs (can take minutes).
+    runner = object.__new__(ProcurementManagerService)
+    runner.db = None  # type: ignore[assignment]
+    runner.supplier_search = HybridSupplierSearchService()
+    runner.use_graph = True
+    execute_error: str | None = None
+    result: SupplierSearchResult | None = None
     try:
-        result = await ProcurementManagerService(db).search_suppliers(
-            case_id,
-            data or SupplierSearchRequest(),
-        )
+        result = await runner.execute_supplier_search_web(prepared)
+    except Exception as exc:
+        execute_error = str(exc)[:1000]
+
+    async with AsyncSessionLocal() as db:
+        service = ProcurementManagerService(db)
+        try:
+            if execute_error is not None:
+                await service.finalize_supplier_search(
+                    prepared, execute_error=execute_error
+                )
+            assert result is not None
+            finalized = await service.finalize_supplier_search(prepared, result)
+        except LookupError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc)
+            ) from exc
+        await db.commit()
+        return finalized
+
+
+@router.get("/cases/{case_id}/supplier-search/progress/{operation_id}")
+async def supplier_search_progress(
+    case_id: uuid.UUID,
+    operation_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    """Live Qwen/web-search thoughts for an in-flight supplier search.
+
+    Reads the short-lived in-memory buffer (works while the long POST is still
+    uncommitted). Soft: empty thoughts when the buffer has nothing yet.
+    """
+    await _require_access(db, current_user)
+    # Ensure the case exists for the caller (404 vs empty thoughts).
+    try:
+        await ProcurementManagerService(db).require_case(case_id)
     except LookupError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    await _commit(db)
-    return result
+    return ProcurementManagerService.supplier_search_progress(
+        case_id=str(case_id),
+        operation_id=operation_id,
+    )
 
 
 @router.post(

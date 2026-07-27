@@ -9,11 +9,16 @@ import pytest
 from app.agents.procurement_manager_agent.schemas import Supplier
 from app.agents.procurement_manager_agent.web_page_enrichment import (
     apply_page_enrichment,
+    brand_from_title,
+    derive_web_supplier_name,
     enrich_web_suppliers,
     extract_city,
     extract_price,
     extract_rating,
+    extract_site_name,
     extract_title,
+    hostname_from_url,
+    is_weak_web_supplier_name,
     parse_product_page,
 )
 
@@ -28,6 +33,7 @@ SAMPLE_HTML = """
 <html>
 <head>
   <title>Ремень клиновой А-1250 — купить в Москве</title>
+  <meta property="og:site_name" content="BeltShop" />
   <meta itemprop="price" content="1450.50" />
   <meta property="og:locality" content="Москва" />
 </head>
@@ -79,7 +85,42 @@ def test_parse_product_page_bundle() -> None:
     assert parsed["city"]
     assert "Москва" in str(parsed["city"])
     assert parsed["title"] == "Ремень клиновой А-1250"
+    assert parsed["site_name"] == "BeltShop"
     assert parsed["delivery_hint"]
+
+
+def test_derive_web_supplier_name_prefers_shop_then_brand_then_host() -> None:
+    assert (
+        derive_web_supplier_name(
+            url="https://www.chipdip.ru/product/lm6172",
+            title="LM6172 | купить оптом и в розницу - chipdip",
+        )
+        == "Chipdip"
+    )
+    assert (
+        derive_web_supplier_name(
+            url="https://www.chipdip.ru/product/lm6172",
+            title="Микросхема LM6172IM SO8 корпус",
+            site_name="ChipDip",
+        )
+        == "ChipDip"
+    )
+    assert (
+        derive_web_supplier_name(
+            url="https://www.chipdip.ru/product/lm6172",
+            title="Микросхема LM6172IM SO8 корпус без бренда",
+        )
+        == "chipdip.ru"
+    )
+    assert brand_from_title("LM6172 | купить оптом и в розницу - chipdip") == "Chipdip"
+    assert hostname_from_url("https://www.chipdip.ru/x") == "chipdip.ru"
+    assert is_weak_web_supplier_name("web-abc123def456")
+    assert is_weak_web_supplier_name("Микросхема LM6172IM SO8 купить оптом")
+    assert not is_weak_web_supplier_name("Кабель-Поставка")
+
+
+def test_extract_site_name_from_og() -> None:
+    assert extract_site_name(SAMPLE_HTML) == "BeltShop"
 
 
 def test_apply_page_enrichment_fills_missing_fields_only() -> None:
@@ -96,6 +137,7 @@ def test_apply_page_enrichment_fills_missing_fields_only() -> None:
             "city": "Москва",
             "rating": Decimal("92.00"),
             "title": "Ремень клиновой А-1250",
+            "site_name": "BeltShop",
             "delivery_hint": "Доставка по России от 2 дней",
         },
     )
@@ -103,7 +145,7 @@ def test_apply_page_enrichment_fills_missing_fields_only() -> None:
     assert updated.approx_cost == Decimal("1450.50")
     assert updated.city == "Москва"
     assert updated.rating == Decimal("92.00")
-    assert updated.name == "Ремень клиновой А-1250"
+    assert updated.name == "BeltShop"
     assert any(item.startswith("delivery:") for item in updated.evidence)
 
 

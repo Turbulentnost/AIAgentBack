@@ -48,6 +48,8 @@ class SupplierSearchRequest(BaseModel):
     mode: Literal["auto", "manual_web"] | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
     nomenclatures: list[NomenclatureSearchItem] = Field(default_factory=list)
+    # UI alarm-clock budget: stop between page fetches when exceeded (30s–10min).
+    timeout_seconds: float | None = Field(default=None, ge=30, le=600)
 
     @property
     def is_manual_web(self) -> bool:
@@ -325,6 +327,8 @@ class OperationStatus(BaseModel):
     external_ref: str | None = None
     error: str | None = None
     updated_at: datetime
+    # Live search / Qwen stages from in-memory progress buffer (soft, optional).
+    thoughts: list[str] = Field(default_factory=list)
 
 
 class LineAmountEntry(BaseModel):
@@ -332,6 +336,8 @@ class LineAmountEntry(BaseModel):
     unit_price: Decimal | None = Field(default=None, ge=0)
     amount: Decimal | None = Field(default=None, ge=0)
     currency: str = Field(default="RUB", min_length=3, max_length=3)
+    # manual = saved by manager; po = healed from purchase-order drafts.
+    source: str | None = Field(default=None, max_length=32)
 
 
 class LineAmountsUpdateRequest(BaseModel):
@@ -426,6 +432,7 @@ class UsedSupplierPart(BaseModel):
     supplier_id: str
     supplier_name: str
     quantity: Decimal = Decimal("0")
+    unit_price: Decimal | None = None
 
 
 class SupplierOffersResponse(BaseModel):

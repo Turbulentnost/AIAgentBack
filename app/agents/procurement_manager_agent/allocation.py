@@ -330,13 +330,32 @@ def allocate_materials_by_deadline(
             if take <= 0:
                 continue
             from_supplier += take
-            supplier_parts.append(
-                {
-                    "supplier_id": supplier_id,
-                    "supplier_name": (supplier_meta.get(supplier_id) or {}).get("name"),
-                    "quantity": take,
-                }
-            )
+            # Prefer a positive unit_price from a matching offering (for line totals).
+            part_price = None
+            for offering in supplier_meta.get(supplier_id, {}).get("offerings") or []:
+                if not isinstance(offering, dict):
+                    continue
+                offering_keys = _match_keys(
+                    str(offering.get("nomenclature_id") or "").strip(),
+                    offering.get("nomenclature_name"),
+                )
+                if not any(key in match_keys for key in offering_keys):
+                    continue
+                try:
+                    price = Decimal(str(offering.get("unit_price")))
+                except Exception:
+                    continue
+                if price > 0:
+                    part_price = price
+                    break
+            part_payload: dict[str, Any] = {
+                "supplier_id": supplier_id,
+                "supplier_name": (supplier_meta.get(supplier_id) or {}).get("name"),
+                "quantity": take,
+            }
+            if part_price is not None:
+                part_payload["unit_price"] = part_price
+            supplier_parts.append(part_payload)
 
         covered = from_warehouse + from_supplier
         covered_qty_total += covered
@@ -374,7 +393,16 @@ def allocate_materials_by_deadline(
                 {**part, "quantity": str(part["quantity"])} for part in warehouse_parts
             ],
             "supplier_parts": [
-                {**part, "quantity": str(part["quantity"])} for part in supplier_parts
+                {
+                    **part,
+                    "quantity": str(part["quantity"]),
+                    **(
+                        {"unit_price": str(part["unit_price"])}
+                        if part.get("unit_price") is not None
+                        else {}
+                    ),
+                }
+                for part in supplier_parts
             ],
         }
         # Keep Decimal in internal calc; serialize below.
@@ -504,15 +532,20 @@ def _merge_supplier_parts(
             continue
         existing = target.get(sid)
         if existing is None:
-            target[sid] = {
+            row: dict[str, Any] = {
                 "supplier_id": sid,
                 "supplier_name": str(part.get("supplier_name") or sid),
                 "quantity": qty,
             }
+            if part.get("unit_price") is not None:
+                row["unit_price"] = part.get("unit_price")
+            target[sid] = row
             continue
         existing["quantity"] += qty
         if not existing.get("supplier_name") and part.get("supplier_name"):
             existing["supplier_name"] = str(part["supplier_name"])
+        if existing.get("unit_price") is None and part.get("unit_price") is not None:
+            existing["unit_price"] = part.get("unit_price")
 
 
 def _aggregate_positions(
@@ -570,17 +603,19 @@ def _aggregate_positions(
         if source == "warehouse" or bucket["from_supplier"] <= 0:
             used_parts: list[dict[str, Any]] = []
         else:
-            used_parts = [
-                {
+            used_parts = []
+            for part in sorted(
+                supplier_map.values(),
+                key=lambda item: (-_dec(item["quantity"]), str(item["supplier_name"])),
+            ):
+                row = {
                     "supplier_id": part["supplier_id"],
                     "supplier_name": part["supplier_name"],
                     "quantity": str(part["quantity"]),
                 }
-                for part in sorted(
-                    supplier_map.values(),
-                    key=lambda item: (-_dec(item["quantity"]), str(item["supplier_name"])),
-                )
-            ]
+                if part.get("unit_price") is not None:
+                    row["unit_price"] = str(part["unit_price"])
+                used_parts.append(row)
         bound = bounds.get(key) or bounds.get(str(bucket.get("nomenclature_id") or "").casefold())
         price_min = bound["price_min"] if bound else None
         price_max = bound["price_max"] if bound else None

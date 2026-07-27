@@ -256,11 +256,14 @@ async def search_web(
         query = str(row.get("query") or row.get("nomenclature_name") or "").strip()
         if len(query) < 2:
             continue
+        row_suppliers = _row_suppliers_as_models(list(row.get("suppliers") or []))
         need_web.append(
             NomenclatureSearchItem(
                 nomenclature_id=row.get("nomenclature_id"),
                 nomenclature_name=row.get("nomenclature_name"),
                 query=query,
+                # Carry prior cards with URLs so search_web can track them first.
+                existing_suppliers=row_suppliers,
             )
         )
     if not need_web and request.nomenclatures:

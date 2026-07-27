@@ -1,6 +1,8 @@
 """Demo order definitions for the procurement-manager workspace.
 
-Used by `scripts/_seed_procurement_manager_orders.py` and unit tests.
+Generator kept for unit tests and optional `--force-demo` seeding.
+Checked-in `data/demo_orders.json` is empty/disabled — the manager UI
+reads real 1C-synced cases from PostgreSQL only (no auto-merge of this file).
 OTK presentations are a separate dataset — do not confuse the two.
 """
 

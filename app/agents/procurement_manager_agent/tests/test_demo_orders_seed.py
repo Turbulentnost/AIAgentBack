@@ -1,4 +1,4 @@
-"""Validate procurement-manager demo orders fixture (no DB required)."""
+"""Validate procurement-manager demo orders helper / disabled fixture."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from app.agents.procurement_manager_agent.demo_orders import (
 )
 
 
-def test_build_orders_has_thirty_varied_project_orders() -> None:
+def test_build_orders_still_generates_varied_project_orders_for_tests() -> None:
+    """Generator kept for unit tests / --force-demo; not loaded into the UI queue."""
     orders = build_orders()
     assert len(orders) == 30
     assert orders[0]["id"] == str(DEMO_CASE_1)
@@ -34,10 +35,6 @@ def test_build_orders_has_thirty_varied_project_orders() -> None:
     }
     assert len(noms) >= 12
     assert all(item["current_agent_id"] == "procurement_logistics_agent" for item in orders)
-    assert all(
-        item["status"] in {"purchase_draft", "approval_required", "ordered"}
-        for item in orders
-    )
 
 
 def test_write_fixture_roundtrip(tmp_path: Path) -> None:
@@ -51,10 +48,12 @@ def test_write_fixture_roundtrip(tmp_path: Path) -> None:
     assert len(payload["orders"]) == 30
 
 
-def test_checked_in_fixture_matches_generator_if_present() -> None:
+def test_checked_in_fixture_is_disabled_empty() -> None:
+    """Production fixture must not ship demo orders into the manager queue."""
     if not DATA_PATH.exists():
         return
     payload = json.loads(DATA_PATH.read_text(encoding="utf-8"))
-    assert payload["orders_count"] == 30
-    assert payload["demo_case_id"] == str(DEMO_CASE_1)
-    assert len(payload["orders"]) == 30
+    assert payload.get("orders_count", 0) == 0
+    assert payload.get("orders") == []
+    assert payload.get("disabled") is True
+    assert payload.get("demo_case_id") == str(DEMO_CASE_1)

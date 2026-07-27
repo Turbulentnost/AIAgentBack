@@ -169,15 +169,73 @@ def test_sync_line_amounts_from_po_drafts_heals_missing_prices() -> None:
     entry = workspace["line_amounts"]["pm-25-L2"]
     assert Decimal(str(entry["unit_price"])) == Decimal("15.44")
     assert Decimal(str(entry["amount"])) == Decimal("339.68")
-    # Positive manual price must not be overwritten.
+    assert entry.get("source") == "po"
+    # Explicit manual source must not be overwritten.
     workspace["line_amounts"]["pm-25-L2"] = {
         "line_id": "pm-25-L2",
         "unit_price": "20",
         "amount": "440",
         "currency": "RUB",
+        "source": "manual",
     }
     assert ProcurementManagerService._sync_line_amounts_from_po_drafts(workspace) is False
     assert workspace["line_amounts"]["pm-25-L2"]["unit_price"] == "20"
+
+
+def test_sync_line_amounts_sums_multi_supplier_po_portions() -> None:
+    """Σ(qty_i × price_i), not first_price × total_qty."""
+    workspace = {
+        "purchase_order_drafts": [
+            {
+                "draft": {
+                    "po_id": "po-a",
+                    "supplier_id": "web-a",
+                    "supplier_name": "Chip A",
+                    "currency": "RUB",
+                    "lines": [
+                        {
+                            "line_id": "lm6172",
+                            "nomenclature_id": "LM6172IM",
+                            "quantity": "6",
+                            "unit_price": "549",
+                        }
+                    ],
+                }
+            },
+            {
+                "draft": {
+                    "po_id": "po-b",
+                    "supplier_id": "web-b",
+                    "supplier_name": "Chip B",
+                    "currency": "RUB",
+                    "lines": [
+                        {
+                            "line_id": "lm6172",
+                            "nomenclature_id": "LM6172IM",
+                            "quantity": "34",
+                            "unit_price": "500",
+                        }
+                    ],
+                }
+            },
+        ],
+        # Legacy bug: first price × full need.
+        "line_amounts": {
+            "lm6172": {
+                "line_id": "lm6172",
+                "unit_price": "549",
+                "amount": "21960",
+                "currency": "RUB",
+            }
+        },
+    }
+    assert ProcurementManagerService._sync_line_amounts_from_po_drafts(workspace) is True
+    entry = workspace["line_amounts"]["lm6172"]
+    # 6×549 + 34×500 = 3294 + 17000 = 20294
+    assert Decimal(str(entry["amount"])) == Decimal("20294.00")
+    # Purchase-weighted unit price = 20294 / 40
+    assert Decimal(str(entry["unit_price"])) == Decimal("507.35")
+    assert entry.get("source") == "po"
 
 
 @pytest.mark.asyncio

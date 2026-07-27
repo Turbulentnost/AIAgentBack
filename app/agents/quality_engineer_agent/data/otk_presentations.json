@@ -336,10 +336,11 @@
           "code": "00-00069286",
           "nomenclature": "Светодиод SMD DB1204A07 (угловой красный и зеленый)",
           "storage_unit": "шт",
-          "qty_upd": 130.0,
-          "qty_fact": 130.0,
-          "category": "other",
-          "supplier_quality_rating": null
+          "qty_upd": 128.0,
+          "qty_fact": 128.0,
+          "category": "fasteners",
+          "supplier_quality_rating": null,
+          "accepted": false
         },
         {
           "id": "l-cff573bb-2",
@@ -3869,7 +3870,8 @@
           "qty_upd": 43000.0,
           "qty_fact": 43000.0,
           "category": "other",
-          "supplier_quality_rating": null
+          "supplier_quality_rating": null,
+          "accepted": true
         }
       ],
       "_1c": {

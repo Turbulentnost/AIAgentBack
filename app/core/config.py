@@ -124,6 +124,18 @@ class Settings(BaseSettings):
     PROCUREMENT_WEB_QWEN_REFINE_QUERY: bool = False
     PROCUREMENT_WEB_QWEN_TIMEOUT_SECONDS: float = 25.0
     PROCUREMENT_WEB_QWEN_MODEL: str = ""
+    # Qwen browse agent after SERP for «Найти поставщиков» (force_web), incl. multi-item.
+    PROCUREMENT_WEB_QWEN_AGENT: bool = True
+    PROCUREMENT_WEB_QWEN_AGENT_SELECT_URLS: bool = True
+    PROCUREMENT_WEB_QWEN_AGENT_MAX_PAGES: int = 3
+    PROCUREMENT_WEB_QWEN_AGENT_CONCURRENCY: int = 2
+    # Hard budget per nomenclature for browse+extract; on expiry return SERP cards.
+    PROCUREMENT_WEB_QWEN_AGENT_BUDGET_SECONDS: float = 45.0
+    # auto|agent|full|light|skip — auto + agent=on → browse agent for force_web.
+    PROCUREMENT_WEB_ENRICH_ON_MANUAL_SEARCH: str = "auto"
+    # Outer asyncio.wait_for for manual force_web (settings/.env; not only os.environ).
+    PROCUREMENT_MANAGER_SEARCH_TIMEOUT_SECONDS: float = 180.0
+    PROCUREMENT_MANAGER_WEB_SEARCH_TIMEOUT_SECONDS: float = 300.0
     # Конструктор агентов: Claude → fallback в LM Studio (отдельно от OCR).
     AGENT_BUILDER_CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
     AGENT_BUILDER_FALLBACK_BASE_URL: str = ""

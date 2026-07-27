@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -88,7 +89,16 @@ from app.agents.procurement_manager_agent.suppliers import (
     HybridSupplierSearchService,
     qualifying_suppliers_for_skip,
 )
+from app.agents.procurement_manager_agent.search_progress import (
+    emit_progress,
+    finish_progress,
+    get_progress,
+    get_progress_meta,
+    progress_scope,
+    truncate_query,
+)
 from app.agents.procurement_manager_agent.web_page_enrichment import enrich_web_suppliers
+from app.agents.procurement_manager_agent.web_qwen import qwen_agent_enabled
 from app.agents.procurement_role_agents.schemas import (
     ProcurementRoleAgentRequest,
     ProcurementRoleAgentResult,
@@ -142,6 +152,19 @@ _STRATEGY_ARTIFACT: dict[str, Any] = {}
 STRATEGY_METADATA_KEY = "supply_policy"
 STRATEGY_GRAPH_KEY = "strategy_graph"
 
+# Coalesce dashboard / summary / case-detail / all-positions allocation work.
+# Without this, page load fires 3× full-queue allocate + DB case loads and can
+# exhaust the asyncpg pool (UI stuck on «Загрузка позиций...»).
+_ALLOCATION_TTL_SEC = 20.0
+_allocation_lock = asyncio.Lock()
+_allocation_cache: dict[str, Any] = {"ts": 0.0, "payload": None}
+
+
+def invalidate_allocation_cache() -> None:
+    """Drop cached queue allocation (call after coverage-affecting mutations)."""
+    _allocation_cache["payload"] = None
+    _allocation_cache["ts"] = 0.0
+
 
 class ProcurementManagerService:
     def __init__(
@@ -154,6 +177,51 @@ class ProcurementManagerService:
         self.db = db
         self.supplier_search = supplier_search or HybridSupplierSearchService()
         self.use_graph = use_graph
+
+    @staticmethod
+    def _env_or_setting_float(env_key: str, setting_attr: str, default: float) -> float:
+        raw = os.environ.get(env_key)
+        if raw is not None and str(raw).strip():
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+        try:
+            from app.core.config import settings
+
+            value = getattr(settings, setting_attr, None)
+            if value is not None and str(value).strip() != "":
+                return float(value)
+        except Exception:
+            pass
+        return default
+
+    @classmethod
+    def _search_timeout_seconds(cls, *, default: float = 90.0) -> float:
+        return cls._env_or_setting_float(
+            "PROCUREMENT_MANAGER_SEARCH_TIMEOUT_SECONDS",
+            "PROCUREMENT_MANAGER_SEARCH_TIMEOUT_SECONDS",
+            default,
+        )
+
+    @classmethod
+    def _force_web_timeout_seconds(cls, n_items: int) -> float:
+        """Outer wait_for for manual «Найти поставщиков»."""
+        configured_web = cls._env_or_setting_float(
+            "PROCUREMENT_MANAGER_WEB_SEARCH_TIMEOUT_SECONDS",
+            "PROCUREMENT_MANAGER_WEB_SEARCH_TIMEOUT_SECONDS",
+            0.0,
+        )
+        if configured_web > 0:
+            return configured_web
+        configured = cls._search_timeout_seconds(default=180.0)
+        items = max(1, n_items)
+        if qwen_agent_enabled():
+            # SERP + select URLs + page fetch + Qwen extract per nomenclature.
+            scaled = 90.0 + 55.0 * items
+            return max(configured, 240.0, min(480.0, scaled))
+        scaled = 60.0 + 40.0 * items
+        return max(configured, 180.0, min(300.0, scaled))
 
     async def run_role(self, payload: dict[str, Any]) -> ProcurementRoleAgentResult:
         request = ProcurementRoleAgentRequest.model_validate(payload)
@@ -237,6 +305,19 @@ class ProcurementManagerService:
         case_id: uuid.UUID,
         request: SupplierSearchRequest,
     ) -> SupplierSearchResult:
+        """Compatibility wrapper (holds DB for the whole call). Prefer phased API."""
+        prepared = await self.prepare_supplier_search(case_id, request)
+        if isinstance(prepared, SupplierSearchResult):
+            return prepared
+        result = await self.execute_supplier_search_web(prepared)
+        return await self.finalize_supplier_search(prepared, result)
+
+    async def prepare_supplier_search(
+        self,
+        case_id: uuid.UUID,
+        request: SupplierSearchRequest,
+    ) -> SupplierSearchResult | dict[str, Any]:
+        """Mark search running and return a DB-free prep payload (or replay result)."""
         case = await self.require_case(case_id)
         metadata = self._workspace(case)
         targets = request.nomenclatures or self._nomenclature_targets_from_case(
@@ -311,54 +392,145 @@ class ProcurementManagerService:
             operation="supplier_search",
             status="running",
         )
-        # Enrichment fetches product pages; allow more time for manual web search.
-        default_timeout = "180" if force_web else "90"
-        timeout_seconds = float(
-            os.environ.get("PROCUREMENT_MANAGER_SEARCH_TIMEOUT_SECONDS", default_timeout)
-        )
-        try:
-            # Manual supplier search stays outside the full HITL agent graph.
-            if to_search:
-                result = await asyncio.wait_for(
-                    self.supplier_search.search(effective_request),
-                    timeout=timeout_seconds,
+        if force_web:
+            timeout_seconds = self._force_web_timeout_seconds(len(to_search))
+        else:
+            timeout_seconds = self._search_timeout_seconds(default=90.0)
+        # Client alarm-clock budget shortens the outer wait_for (never extends past server max).
+        if request.timeout_seconds is not None:
+            client_budget = max(30.0, min(600.0, float(request.timeout_seconds)))
+            timeout_seconds = min(timeout_seconds, client_budget)
+            effective_request = effective_request.model_copy(
+                update={"timeout_seconds": client_budget}
+            )
+        return {
+            "case_id": str(case.id),
+            "operation_id": operation_id,
+            "effective_request": effective_request,
+            "timeout_seconds": timeout_seconds,
+            "to_search": to_search,
+            "skipped": skipped,
+            "targets": targets,
+            "query": query,
+            "force_web": force_web,
+        }
+
+    async def execute_supplier_search_web(
+        self,
+        prepared: dict[str, Any],
+    ) -> SupplierSearchResult:
+        """Run browser/Qwen search without holding a DB session."""
+        operation_id = str(prepared["operation_id"])
+        case_id = str(prepared["case_id"])
+        query = str(prepared["query"] or "")
+        timeout_seconds = float(prepared["timeout_seconds"])
+        force_web = bool(prepared["force_web"])
+        to_search: list[NomenclatureSearchItem] = list(prepared["to_search"] or [])
+        skipped: list[NomenclatureSupplierResult] = list(prepared["skipped"] or [])
+        targets: list[NomenclatureSearchItem] = list(prepared["targets"] or [])
+        effective_request: SupplierSearchRequest = prepared["effective_request"]
+
+        with progress_scope(operation_id, case_id=case_id):
+            emit_progress(
+                f"Ищу поставщиков: {truncate_query(query or 'номенклатура')}"
+            )
+            try:
+                if to_search:
+                    result = await asyncio.wait_for(
+                        self.supplier_search.search(effective_request),
+                        timeout=timeout_seconds,
+                    )
+                else:
+                    result = SupplierSearchResult(
+                        query=query,
+                        suppliers=[],
+                        sources_used=["existing"] if skipped else [],
+                        web_fallback_used=False,
+                        nomenclature_results=[],
+                    )
+                result = self._merge_nomenclature_search_results(
+                    result,
+                    skipped=skipped,
+                    targets=targets,
+                    query=query,
                 )
-            else:
-                result = SupplierSearchResult(
+                failed = (
+                    result.status == "failed"
+                    or (
+                        force_web
+                        and not result.suppliers
+                        and not any(row.suppliers for row in result.nomenclature_results)
+                    )
+                )
+                return result.model_copy(
+                    update={
+                        "operation_id": operation_id,
+                        "pending": False,
+                        "status": "failed" if failed else "completed",
+                        "message": result.message
+                        or (
+                            "Веб-поиск не вернул поставщиков"
+                            if failed and force_web
+                            else result.message
+                        ),
+                    }
+                )
+            except TimeoutError:
+                emit_progress(
+                    f"Время поиска истекло ({timeout_seconds:.0f}с) — останавливаю"
+                )
+                finish_progress(operation_id, status="failed")
+                return SupplierSearchResult(
                     query=query,
                     suppliers=[],
-                    sources_used=["existing"] if skipped else [],
+                    sources_used=[],
                     web_fallback_used=False,
                     nomenclature_results=[],
-                )
-            result = self._merge_nomenclature_search_results(
-                result,
-                skipped=skipped,
-                targets=targets,
-                query=query,
-            )
-            failed = (
-                result.status == "failed"
-                or (
-                    force_web
-                    and not result.suppliers
-                    and not any(row.suppliers for row in result.nomenclature_results)
-                )
-            )
-            result = result.model_copy(
-                update={
-                    "operation_id": operation_id,
-                    "pending": False,
-                    "status": "failed" if failed else "completed",
-                    "message": result.message
-                    or (
-                        "Веб-поиск не вернул поставщиков"
-                        if failed and force_web
-                        else result.message
+                    operation_id=operation_id,
+                    pending=False,
+                    status="failed",
+                    message=(
+                        f"Время поиска истекло ({timeout_seconds:.0f}с). "
+                        "Повторите поиск (кнопка «Найти поставщиков»)."
                     ),
-                }
+                    diagnostics={
+                        "timeout_seconds": timeout_seconds,
+                        "status": "timeout",
+                    },
+                )
+            except Exception as exc:
+                finish_progress(operation_id, status="failed")
+                prepared["execute_error"] = str(exc)[:1000]
+                raise
+
+    async def finalize_supplier_search(
+        self,
+        prepared: dict[str, Any],
+        result: SupplierSearchResult | None = None,
+        *,
+        execute_error: str | None = None,
+    ) -> SupplierSearchResult:
+        """Persist search outcome on a fresh short-lived DB session."""
+        case = await self.require_case(uuid.UUID(str(prepared["case_id"])))
+        operation_id = str(prepared["operation_id"])
+        effective_request: SupplierSearchRequest = prepared["effective_request"]
+        timeout_seconds = float(prepared["timeout_seconds"])
+        to_search: list[NomenclatureSearchItem] = list(prepared["to_search"] or [])
+        skipped: list[NomenclatureSupplierResult] = list(prepared["skipped"] or [])
+        err = execute_error or prepared.get("execute_error")
+        if err:
+            self._upsert_operation(
+                case,
+                operation_id=operation_id,
+                operation="supplier_search",
+                status="failed",
+                error=str(err)[:1000],
             )
-        except TimeoutError:
+            raise RuntimeError(str(err))
+
+        assert result is not None
+        is_timeout = (result.diagnostics or {}).get("status") == "timeout"
+        if is_timeout:
             self._upsert_operation(
                 case,
                 operation_id=operation_id,
@@ -370,6 +542,15 @@ class ProcurementManagerService:
                 ),
             )
             metadata = self._workspace(case)
+            previous = list(metadata.get("supplier_searches") or [])
+            previous.append(
+                {
+                    "idempotency_key": effective_request.idempotency_key,
+                    "at": datetime.now(UTC).isoformat(),
+                    "result": result.model_dump(mode="json"),
+                }
+            )
+            metadata["supplier_searches"] = previous[-20:]
             metadata["lifecycle_state"] = "supplier_search_timeout"
             self._save_workspace(case, metadata)
             await self._event(
@@ -378,31 +559,10 @@ class ProcurementManagerService:
                 f"supplier-search-timeout:{operation_id}",
                 {"operation_id": operation_id, "timeout_seconds": timeout_seconds},
             )
-            return SupplierSearchResult(
-                query=query,
-                suppliers=[],
-                sources_used=[],
-                web_fallback_used=False,
-                nomenclature_results=[],
-                operation_id=operation_id,
-                pending=False,
-                status="failed",
-                message=(
-                    f"Веб-поиск превысил таймаут {timeout_seconds:.0f}с. "
-                    "Повторите с новым idempotency_key."
-                ),
-                diagnostics={"timeout_seconds": timeout_seconds, "status": "timeout"},
-            )
-        except Exception as exc:
-            self._upsert_operation(
-                case,
-                operation_id=operation_id,
-                operation="supplier_search",
-                status="failed",
-                error=str(exc)[:1000],
-            )
-            raise
+            return result
 
+        metadata = self._workspace(case)
+        previous = list(metadata.get("supplier_searches") or [])
         previous.append(
             {
                 "idempotency_key": effective_request.idempotency_key,
@@ -410,12 +570,13 @@ class ProcurementManagerService:
                 "result": result.model_dump(mode="json"),
             }
         )
-        metadata = self._workspace(case)
         metadata["supplier_searches"] = previous
         metadata["nomenclature_results"] = [
             item.model_dump(mode="json") for item in result.nomenclature_results
         ]
-        metadata["suppliers"] = [item.model_dump(mode="json") for item in result.suppliers]
+        metadata["suppliers"] = [
+            item.model_dump(mode="json") for item in result.suppliers
+        ]
         metadata["lifecycle_state"] = "suppliers_identified"
         self._save_workspace(case, metadata)
         self._upsert_operation(
@@ -423,6 +584,10 @@ class ProcurementManagerService:
             operation_id=operation_id,
             operation="supplier_search",
             status="completed",
+        )
+        finish_progress(
+            operation_id,
+            status="failed" if result.status == "failed" else "completed",
         )
         await self._event(
             case,
@@ -818,6 +983,7 @@ class ProcurementManagerService:
         request: StrategyRunRequest | None = None,
     ) -> StrategyStatus:
         """Idempotent queue-level supply strategy (waves → optimize → HITL → multi-PO)."""
+        invalidate_allocation_cache()
         payload = request or StrategyRunRequest()
         cases = await self._manager_cases()
         if payload.case_ids:
@@ -1872,6 +2038,91 @@ class ProcurementManagerService:
         self._save_workspace(case, metadata)
         return OperationStatus.model_validate(payload)
 
+    @staticmethod
+    def supplier_search_progress(
+        *,
+        case_id: str,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Lightweight poll payload from the in-memory progress buffer."""
+        try:
+            meta = get_progress_meta(operation_id)
+        except Exception:
+            meta = None
+        if meta is None:
+            return {
+                "operation_id": operation_id,
+                "case_id": case_id,
+                "status": "unknown",
+                "thoughts": [],
+            }
+        buffer_case = meta.get("case_id")
+        if buffer_case and str(buffer_case) != str(case_id):
+            return {
+                "operation_id": operation_id,
+                "case_id": case_id,
+                "status": "unknown",
+                "thoughts": [],
+            }
+        return {
+            "operation_id": operation_id,
+            "case_id": case_id,
+            "status": meta.get("status") or "running",
+            "thoughts": list(meta.get("thoughts") or []),
+        }
+
+    @staticmethod
+    def _attach_operation_thoughts(
+        payload: OperationStatus,
+        *,
+        operation_id: str,
+    ) -> OperationStatus:
+        """Merge live progress buffer into OperationStatus (soft, never fails)."""
+        try:
+            thoughts = get_progress(operation_id)
+        except Exception:
+            thoughts = []
+        if not thoughts:
+            return payload
+        return payload.model_copy(update={"thoughts": thoughts})
+
+    @staticmethod
+    def _operation_from_progress_buffer(
+        operation_id: str,
+        *,
+        case_id: str | None = None,
+    ) -> OperationStatus | None:
+        """Synthetic running status when DB has not committed yet."""
+        try:
+            meta = get_progress_meta(operation_id)
+        except Exception:
+            return None
+        if not meta:
+            return None
+        buffer_case = meta.get("case_id")
+        if case_id and buffer_case and str(buffer_case) != str(case_id):
+            return None
+        allowed = {
+            "draft",
+            "running",
+            "completed",
+            "approval_required",
+            "approved",
+            "executed",
+            "rejected",
+            "failed",
+        }
+        status_raw = str(meta.get("status") or "running")
+        op_status = status_raw if status_raw in allowed else "running"
+        return OperationStatus(
+            operation_id=operation_id,
+            case_id=str(buffer_case or case_id or "") or None,
+            operation="supplier_search",
+            status=op_status,  # type: ignore[arg-type]
+            updated_at=datetime.now(UTC),
+            thoughts=list(meta.get("thoughts") or []),
+        )
+
     async def operation_status(
         self,
         case_id: uuid.UUID,
@@ -1880,8 +2131,13 @@ class ProcurementManagerService:
         case = await self.require_case(case_id)
         for item in self._workspace(case).get("operations", []):
             if item.get("operation_id") == operation_id:
-                return OperationStatus.model_validate(item)
-        return None
+                return self._attach_operation_thoughts(
+                    OperationStatus.model_validate(item),
+                    operation_id=operation_id,
+                )
+        return self._operation_from_progress_buffer(
+            operation_id, case_id=str(case_id)
+        )
 
     async def global_operation_status(
         self,
@@ -1892,16 +2148,17 @@ class ProcurementManagerService:
             for item in self._workspace(case).get("operations", []):
                 if item.get("operation_id") == operation_id:
                     payload = {**item, "case_id": str(case.id)}
-                    return OperationStatus.model_validate(payload)
-        return None
+                    return self._attach_operation_thoughts(
+                        OperationStatus.model_validate(payload),
+                        operation_id=operation_id,
+                    )
+        return self._operation_from_progress_buffer(operation_id)
 
     async def workspace_payload(self, case_id: uuid.UUID) -> dict[str, Any]:
         case = await self.require_case(case_id)
         workspace = self._workspace(case)
         # Heal older agent runs: PO draft prices were not mapped into line_amounts.
-        if self._sync_line_amounts_from_po_drafts(workspace):
-            self._save_workspace(case, workspace)
-            await self.db.flush()
+        dirty = self._sync_line_amounts_from_po_drafts(workspace)
         payload = self._public_workspace(workspace)
         meta = dict(case.case_metadata or {})
         # Surface project/demo titles for the manager workspace header.
@@ -1941,12 +2198,16 @@ class ProcurementManagerService:
         )
         payload["material_allocation"] = {"summary": allocation.get("summary")}
         cov_lines = list((payload.get("order_coverage") or {}).get("lines") or [])
+        prev_batches = workspace.get("batches")
         batches = sync_batches_workspace(
             workspace,
             positions=list(case.positions or []),
             coverage_lines=cov_lines,
         )
-        self._save_workspace(case, workspace)
+        # Avoid write+commit on every GET — that amplified pool pressure under polling.
+        if dirty or prev_batches != batches:
+            self._save_workspace(case, workspace)
+            await self.db.flush()
         payload["batches"] = batches
         payload["line_schedules"] = dict(workspace.get("line_schedules") or {})
         ful = fulfillment_payload(case_status=str(case.status or ""), workspace=workspace)
@@ -2038,6 +2299,7 @@ class ProcurementManagerService:
         line_id: str,
         payload: LineScheduleUpdateRequest,
     ) -> dict[str, Any]:
+        invalidate_allocation_cache()
         case = await self.require_case(case_id)
         workspace = self._workspace(case)
         position = next(
@@ -2090,15 +2352,32 @@ class ProcurementManagerService:
         public = bank.to_public()
         return MaterialBankResponse.model_validate(public)
 
-    async def allocate_coverage(self) -> dict[str, Any]:
-        cases = await self._manager_cases()
-        return allocate_materials_by_deadline(cases, bank=get_material_bank())
+    async def allocate_coverage(
+        self,
+        *,
+        cases: list[ProcurementCase] | None = None,
+    ) -> dict[str, Any]:
+        """Deadline allocation for the manager queue (short TTL + single-flight)."""
+        now = time.monotonic()
+        cached = _allocation_cache.get("payload")
+        if cached is not None and (now - float(_allocation_cache["ts"])) < _ALLOCATION_TTL_SEC:
+            return cached
+        async with _allocation_lock:
+            now = time.monotonic()
+            cached = _allocation_cache.get("payload")
+            if cached is not None and (now - float(_allocation_cache["ts"])) < _ALLOCATION_TTL_SEC:
+                return cached
+            queue = cases if cases is not None else await self._manager_cases()
+            result = allocate_materials_by_deadline(queue, bank=get_material_bank())
+            _allocation_cache["payload"] = result
+            _allocation_cache["ts"] = time.monotonic()
+            return result
 
     async def all_positions(self) -> AllPositionsResponse:
         """Aggregate queue nomenclature with supplier price_min/max and estimate."""
         cases = await self._manager_cases()
         bank = get_material_bank()
-        allocation = allocate_materials_by_deadline(cases, bank=bank)
+        allocation = await self.allocate_coverage(cases=cases)
         bounds = supplier_price_bounds(bank)
         coverage_by_nom = {
             str(row.get("nomenclature_id") or "").strip().casefold(): row
@@ -2160,6 +2439,7 @@ class ProcurementManagerService:
         rows: list[AllPositionsRow] = []
         total = Decimal("0")
         any_total = False
+        offers_by_nom: dict[str, list[Any]] = {}
         for key, bucket in buckets.items():
             bound = bounds.get(key)
             if bound is None and bucket.get("nomenclature_id"):
@@ -2176,9 +2456,13 @@ class ProcurementManagerService:
             if raw_from_warehouse is not None and raw_from_warehouse != "":
                 from_warehouse = Decimal(str(raw_from_warehouse))
             nom_id = bucket.get("nomenclature_id")
-            offers = (
-                collect_supplier_offers(str(nom_id), bank=bank) if nom_id else []
-            )
+            if nom_id:
+                nom_key = str(nom_id)
+                if nom_key not in offers_by_nom:
+                    offers_by_nom[nom_key] = collect_supplier_offers(nom_key, bank=bank)
+                offers = offers_by_nom[nom_key]
+            else:
+                offers = []
             estimate = estimate_nomenclature_amount(
                 bucket["quantity"],
                 price_min=price_min,
@@ -2207,11 +2491,19 @@ class ProcurementManagerService:
                         qty = Decimal("0")
                     if qty <= 0:
                         continue
+                    part_price = None
+                    raw_price = part.get("unit_price")
+                    if raw_price is not None and raw_price != "":
+                        try:
+                            part_price = Decimal(str(raw_price))
+                        except Exception:
+                            part_price = None
                     used_suppliers.append(
                         UsedSupplierPart(
                             supplier_id=sid,
                             supplier_name=str(part.get("supplier_name") or sid),
                             quantity=qty,
+                            unit_price=part_price if part_price is not None and part_price > 0 else None,
                         )
                     )
             req = bucket.get("required_date")
@@ -2487,6 +2779,7 @@ class ProcurementManagerService:
         case_id: uuid.UUID,
         payload: LineAmountsUpdateRequest,
     ) -> dict[str, Any]:
+        invalidate_allocation_cache()
         case = await self.require_case(case_id)
         workspace = self._workspace(case)
         current = dict(workspace.get("line_amounts") or {})
@@ -2520,6 +2813,7 @@ class ProcurementManagerService:
                 unit_price=unit_price,
                 amount=amount,
                 currency=(entry.currency or "RUB").upper(),
+                source=(entry.source or "manual"),
             ).model_dump(mode="json")
         workspace["line_amounts"] = current
         self._save_workspace(case, workspace)
@@ -2548,7 +2842,8 @@ class ProcurementManagerService:
 
         workspace = self._workspace(case)
         line_amounts = dict(workspace.get("line_amounts") or {})
-        quote_prices = self._quote_unit_prices(workspace)
+        po_portions = self._po_priced_portions(workspace)
+        quote_offers = self._quote_priced_offers(workspace)
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Смета"
@@ -2579,12 +2874,44 @@ class ProcurementManagerService:
                 manual = {}
             unit_price = self._estimate_decimal(manual.get("unit_price"))
             amount = self._estimate_decimal(manual.get("amount"))
-            source = "вручную" if unit_price is not None or amount is not None else ""
-            if unit_price is None and amount is None:
-                quoted = quote_prices.get(position.line_id)
-                if quoted is not None:
-                    unit_price = quoted
-                    source = "КП"
+            manual_source = str(manual.get("source") or "").strip().casefold()
+            source = (
+                "вручную"
+                if manual_source == "manual"
+                or (
+                    (unit_price is not None or amount is not None)
+                    and manual_source not in {"po", "quote"}
+                )
+                else ""
+            )
+            if manual_source != "manual":
+                portions = po_portions.get(position.line_id) or []
+                if portions:
+                    amount = sum(
+                        (qty * price for qty, price, _cur in portions), Decimal("0")
+                    ).quantize(Decimal("0.01"))
+                    if quantity > 0:
+                        unit_price = (amount / quantity).quantize(Decimal("0.0001"))
+                    else:
+                        purchase_qty = sum((qty for qty, _p, _c in portions), Decimal("0"))
+                        unit_price = (
+                            (amount / purchase_qty).quantize(Decimal("0.0001"))
+                            if purchase_qty > 0
+                            else unit_price
+                        )
+                    source = "PO"
+                elif amount is None and unit_price is None:
+                    covered = self._greedy_cover_amount(
+                        quantity, quote_offers.get(position.line_id) or []
+                    )
+                    if covered is not None:
+                        amount, _covered_qty = covered
+                        unit_price = (
+                            (amount / quantity).quantize(Decimal("0.0001"))
+                            if quantity > 0
+                            else None
+                        )
+                        source = "КП"
             if amount is None and unit_price is not None:
                 amount = (unit_price * quantity).quantize(Decimal("0.01"))
             if amount is not None:
@@ -2707,16 +3034,13 @@ class ProcurementManagerService:
                 out.append(draft)
         return out
 
-    @classmethod
-    def _sync_line_amounts_from_po_drafts(cls, workspace: dict[str, Any]) -> bool:
-        """Copy positive PO draft prices into line_amounts for position-row UI.
-
-        Does not overwrite an existing positive manual unit_price. Returns whether
-        ``workspace['line_amounts']`` changed.
-        """
-        current = dict(workspace.get("line_amounts") or {})
-        changed = False
-        for draft in cls._iter_po_draft_payloads(workspace):
+    @staticmethod
+    def _po_priced_portions(
+        workspace: dict[str, Any],
+    ) -> dict[str, list[tuple[Decimal, Decimal, str]]]:
+        """line_id → list of (quantity, unit_price, currency) from all PO drafts."""
+        portions: dict[str, list[tuple[Decimal, Decimal, str]]] = {}
+        for draft in ProcurementManagerService._iter_po_draft_payloads(workspace):
             currency = str(draft.get("currency") or "RUB").upper() or "RUB"
             for line in draft.get("lines") or []:
                 if not isinstance(line, dict):
@@ -2731,24 +3055,132 @@ class ProcurementManagerService:
                     continue
                 if unit_price <= 0 or quantity <= 0:
                     continue
-                existing = current.get(line_id) or {}
-                existing_price = existing.get("unit_price")
-                if existing_price is not None:
-                    try:
-                        if Decimal(str(existing_price)) > 0:
-                            continue
-                    except Exception:
-                        pass
-                amount = (unit_price * quantity).quantize(Decimal("0.01"))
-                entry = LineAmountEntry(
-                    line_id=line_id,
-                    unit_price=unit_price,
-                    amount=amount,
-                    currency=currency,
-                ).model_dump(mode="json")
-                if current.get(line_id) != entry:
-                    current[line_id] = entry
-                    changed = True
+                portions.setdefault(line_id, []).append((quantity, unit_price, currency))
+        return portions
+
+    @staticmethod
+    def _quote_priced_offers(
+        workspace: dict[str, Any],
+    ) -> dict[str, list[tuple[Decimal, Decimal]]]:
+        """line_id → list of (available_qty, unit_price) from quotes (offers, not yet allocated)."""
+        offers: dict[str, list[tuple[Decimal, Decimal]]] = {}
+        for quote in workspace.get("quotes") or []:
+            if not isinstance(quote, dict):
+                continue
+            body = quote.get("quote") if isinstance(quote.get("quote"), dict) else quote
+            if not isinstance(body, dict):
+                continue
+            for line in body.get("lines") or []:
+                if not isinstance(line, dict):
+                    continue
+                line_id = str(line.get("line_id") or "").strip()
+                if not line_id:
+                    continue
+                try:
+                    unit_price = Decimal(str(line.get("unit_price")))
+                    quantity = Decimal(str(line.get("quantity") or 0))
+                except Exception:
+                    continue
+                if unit_price <= 0 or quantity <= 0:
+                    continue
+                offers.setdefault(line_id, []).append((quantity, unit_price))
+        return offers
+
+    @staticmethod
+    def _greedy_cover_amount(
+        need_qty: Decimal,
+        offers: list[tuple[Decimal, Decimal]],
+    ) -> tuple[Decimal, Decimal] | None:
+        """Return (amount, covered_qty) covering need cheapest-first from (qty, price) offers."""
+        if need_qty <= 0 or not offers:
+            return None
+        ranked = sorted(offers, key=lambda row: (row[1], -row[0]))
+        left = need_qty
+        total = Decimal("0")
+        covered = Decimal("0")
+        for available, price in ranked:
+            if left <= 0:
+                break
+            take = min(left, available)
+            if take <= 0:
+                continue
+            total += take * price
+            covered += take
+            left -= take
+        if covered <= 0:
+            return None
+        return total.quantize(Decimal("0.01")), covered
+
+    @classmethod
+    def _line_amount_protected_from_po_sync(
+        cls,
+        existing: dict[str, Any] | None,
+        portions: list[tuple[Decimal, Decimal, str]],
+    ) -> bool:
+        """True when an existing line_amounts entry must not be overwritten by PO sync."""
+        if not existing or not isinstance(existing, dict):
+            return False
+        source = str(existing.get("source") or "").strip().casefold()
+        if source == "manual":
+            return True
+        if source == "po":
+            return False
+        # Legacy (no source): allow refresh when value matches PO-derived patterns,
+        # including the bug «first_price × sum(qty)» so multi-supplier can heal.
+        try:
+            price = Decimal(str(existing.get("unit_price") or 0))
+            amount = Decimal(str(existing.get("amount") or 0))
+        except Exception:
+            return bool(existing.get("unit_price"))
+        if price <= 0:
+            return False
+        po_qty = sum((qty for qty, _price, _cur in portions), Decimal("0"))
+        po_amount = sum((qty * p for qty, p, _cur in portions), Decimal("0")).quantize(
+            Decimal("0.01")
+        )
+        po_prices = {p for _qty, p, _cur in portions}
+        if amount == po_amount:
+            return False
+        if price in po_prices and amount == (price * po_qty).quantize(Decimal("0.01")):
+            return False
+        for qty, p, _cur in portions:
+            if price == p and amount == (p * qty).quantize(Decimal("0.01")):
+                return False
+        return True
+
+    @classmethod
+    def _sync_line_amounts_from_po_drafts(cls, workspace: dict[str, Any]) -> bool:
+        """Copy PO draft prices into line_amounts for position-row UI.
+
+        Multi-supplier lines: amount = Σ(qty_i × price_i), unit_price = amount / Σ qty_i
+        (purchase-weighted). Does not overwrite an explicit manual source. Returns whether
+        ``workspace['line_amounts']`` changed.
+        """
+        current = dict(workspace.get("line_amounts") or {})
+        portions_by_line = cls._po_priced_portions(workspace)
+        changed = False
+        for line_id, portions in portions_by_line.items():
+            existing = current.get(line_id) if isinstance(current.get(line_id), dict) else None
+            if cls._line_amount_protected_from_po_sync(existing, portions):
+                continue
+            purchase_qty = sum((qty for qty, _price, _cur in portions), Decimal("0"))
+            amount = sum((qty * price for qty, price, _cur in portions), Decimal("0")).quantize(
+                Decimal("0.01")
+            )
+            if purchase_qty <= 0 or amount <= 0:
+                continue
+            unit_price = (amount / purchase_qty).quantize(Decimal("0.0001"))
+            currency = portions[0][2] if portions else "RUB"
+            entry = LineAmountEntry(
+                line_id=line_id,
+                unit_price=unit_price,
+                amount=amount,
+                currency=currency,
+                source="po",
+            ).model_dump(mode="json")
+            if current.get(line_id) != entry:
+                current[line_id] = entry
+                changed = True
         if changed:
             workspace["line_amounts"] = current
         return changed
@@ -3086,4 +3518,5 @@ __all__ = [
     "ProcurementManagerService",
     "build_default_rfq_lines",
     "case_in_manager_queue",
+    "invalidate_allocation_cache",
 ]

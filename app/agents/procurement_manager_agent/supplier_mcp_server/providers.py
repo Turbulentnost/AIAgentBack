@@ -1232,6 +1232,246 @@ class SystemChromiumWebSearchProvider(IsolatedSystemBrowserProvider):
         }
 
 
+class HttpSerpSearchProvider:
+    """Fast HTTP SERP (DuckDuckGo HTML/Lite, optional Bing) — no browser process.
+
+    Used as the default primary in ``auto`` mode because headless Edge/Bing often
+    hits CAPTCHA or 45–60s CDP timeouts on Windows, while DDG HTML returns in ~2s.
+    """
+
+    provider_name = "http_serp"
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+        max_page_bytes: int | None = None,
+        max_results: int | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        self.timeout_seconds = float(
+            timeout_seconds
+            if timeout_seconds is not None
+            else os.environ.get(
+                "PROCUREMENT_WEB_HTTP_TIMEOUT_SECONDS",
+                os.environ.get("PROCUREMENT_WEB_BROWSER_TIMEOUT_SECONDS", "20"),
+            )
+        )
+        self.max_page_bytes = max_page_bytes or int(
+            os.environ.get(
+                "PROCUREMENT_WEB_BROWSER_MAX_PAGE_BYTES",
+                os.environ.get("YANDEX_BROWSER_MAX_PAGE_BYTES", "2000000"),
+            )
+        )
+        self.max_results = max_results or int(
+            os.environ.get(
+                "PROCUREMENT_WEB_BROWSER_MAX_RESULTS",
+                os.environ.get("YANDEX_BROWSER_MAX_RESULTS", "20"),
+            )
+        )
+        self.user_agent = (
+            user_agent
+            or os.environ.get("PROCUREMENT_WEB_BROWSER_USER_AGENT")
+            or (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        ).strip()
+
+    def _search_urls(self, query: str) -> tuple[str, ...]:
+        encoded = quote_plus(query)
+        engine = (
+            os.environ.get("PROCUREMENT_WEB_HTTP_SEARCH_ENGINE")
+            or os.environ.get("PROCUREMENT_WEB_SEARCH_ENGINE")
+            or "duckduckgo"
+        ).strip().casefold()
+        ddg_lite = DUCKDUCKGO_LITE_SEARCH_URL.format(query=encoded)
+        ddg_html = DUCKDUCKGO_HTML_SEARCH_URL.format(query=encoded)
+        bing = BING_SEARCH_URL.format(query=encoded)
+        if engine == "bing":
+            return (bing, ddg_html, ddg_lite)
+        # Default: DDG first — Bing HTTP is often blocked/slow without a real browser.
+        return (ddg_html, ddg_lite, bing)
+
+    def _parse_results(self, document: str, limit: int, *, url: str) -> list[dict[str, str]]:
+        host = (urlparse(url).hostname or "").casefold()
+        if "lite.duckduckgo.com" in host:
+            return parse_duckduckgo_lite_results(document, limit)
+        if "duckduckgo.com" in host:
+            return parse_duckduckgo_results(document, limit)
+        if "bing.com" in host:
+            return parse_bing_results(document, limit)
+        return (
+            parse_duckduckgo_results(document, limit)
+            or parse_duckduckgo_lite_results(document, limit)
+            or parse_bing_results(document, limit)
+        )
+
+    def _engine_label(self, url: str) -> str:
+        host = (urlparse(url).hostname or "").casefold()
+        if "duckduckgo.com" in host:
+            return "duckduckgo"
+        if "bing.com" in host:
+            return "bing"
+        return "http"
+
+    async def _get_document(self, url: str) -> tuple[str | None, str | None]:
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                headers=headers,
+                timeout=self.timeout_seconds,
+            ) as client:
+                response = await client.get(url)
+        except httpx.TimeoutException:
+            return None, "timeout"
+        except httpx.HTTPError as exc:
+            return None, f"http_error:{type(exc).__name__}"
+        if response.status_code >= 400:
+            return None, f"http_{response.status_code}"
+        document = response.text
+        if len(document.encode("utf-8")) > self.max_page_bytes:
+            return None, "page_too_large"
+        if not document.strip():
+            return None, "empty_document"
+        return document, None
+
+    async def search(self, query: str, limit: int) -> dict[str, Any]:
+        effective_limit = max(1, min(limit, self.max_results))
+        last_failure: dict[str, Any] | None = None
+        for url in self._search_urls(query):
+            document, error = await self._get_document(url)
+            engine = self._engine_label(url)
+            if document is None:
+                status = "timeout" if error == "timeout" else "unavailable"
+                last_failure = {
+                    "status": status,
+                    "capability": "supplier_search_web",
+                    "provider": self.provider_name,
+                    "query": query,
+                    "items": [],
+                    "live_data": False,
+                    "provenance": [],
+                    "search_engine": engine,
+                    "url": url,
+                    "message": f"HTTP SERP failed ({error})",
+                }
+                continue
+            if _is_ddg_challenge(document) or any(
+                marker in document.casefold() for marker in CAPTCHA_MARKERS
+            ):
+                last_failure = {
+                    "status": "captcha",
+                    "capability": "supplier_search_web",
+                    "provider": self.provider_name,
+                    "query": query,
+                    "items": [],
+                    "live_data": False,
+                    "provenance": [],
+                    "search_engine": engine,
+                    "url": url,
+                    "message": "HTTP SERP blocked by CAPTCHA/challenge",
+                }
+                continue
+            items = self._parse_results(document, effective_limit, url=url)
+            if not items:
+                last_failure = {
+                    "status": "unavailable",
+                    "capability": "supplier_search_web",
+                    "provider": self.provider_name,
+                    "query": query,
+                    "items": [],
+                    "live_data": False,
+                    "provenance": [],
+                    "search_engine": engine,
+                    "url": url,
+                    "message": "HTTP SERP returned no parseable results",
+                }
+                continue
+            return {
+                "status": "available",
+                "capability": "supplier_search_web",
+                "provider": self.provider_name,
+                "query": query,
+                "items": items,
+                "live_data": True,
+                "search_engine": engine,
+                "url": url,
+                "provenance": [
+                    {
+                        "source": item["url"],
+                        "provider": self.provider_name,
+                        "search_engine": engine,
+                        "live": True,
+                    }
+                    for item in items
+                ],
+            }
+        return last_failure or {
+            "status": "unavailable",
+            "capability": "supplier_search_web",
+            "provider": self.provider_name,
+            "query": query,
+            "items": [],
+            "live_data": False,
+            "provenance": [],
+            "message": "HTTP SERP search failed",
+        }
+
+    async def fetch(self, url: str) -> dict[str, Any]:
+        try:
+            safe_url = validate_public_url(url)
+        except ValueError as exc:
+            return {
+                "status": "unavailable",
+                "capability": "supplier_fetch_page",
+                "provider": self.provider_name,
+                "url": url,
+                "live_data": False,
+                "message": str(exc),
+            }
+        document, error = await self._get_document(safe_url)
+        if document is None:
+            status = "timeout" if error == "timeout" else "unavailable"
+            return {
+                "status": status,
+                "capability": "supplier_fetch_page",
+                "provider": self.provider_name,
+                "url": safe_url,
+                "live_data": False,
+                "message": f"HTTP fetch failed ({error})",
+            }
+        if any(marker in document.casefold() for marker in CAPTCHA_MARKERS):
+            return {
+                "status": "captcha",
+                "capability": "supplier_fetch_page",
+                "provider": self.provider_name,
+                "url": safe_url,
+                "live_data": False,
+                "message": "Page requested CAPTCHA verification.",
+            }
+        html_cap = min(self.max_page_bytes, 400_000)
+        return {
+            "status": "available",
+            "capability": "supplier_fetch_page",
+            "provider": self.provider_name,
+            "url": safe_url,
+            "live_data": True,
+            "content": _clean_text(document),
+            "html": document[:html_cap],
+            "content_bytes": len(document.encode("utf-8")),
+            "provenance": [
+                {"source": safe_url, "provider": self.provider_name, "live": True}
+            ],
+        }
+
+
 class FallbackBrowserSearchProvider:
     """Try primary browser search; on captcha/timeout/unavailable use fallback."""
 
@@ -1300,29 +1540,36 @@ class FallbackBrowserSearchProvider:
 
 
 def build_default_browser_search_provider() -> BrowserSearchProvider:
-    """Select Chromium/Yandex search strategy from environment.
+    """Select HTTP / Chromium / Yandex search strategy from environment.
 
     PROCUREMENT_WEB_SEARCH_PROVIDER:
-      - auto (default): Edge/Chrome+DuckDuckGo preferred when installed; Yandex fallback
+      - auto (default): HTTP DuckDuckGo SERP first; Edge/Chrome then Yandex fallback
+      - http|httpx|ddg_http: HTTP SERP only (no browser)
       - chromium|chrome|edge|duckduckgo: Chromium path only
       - yandex: Yandex only
       - yandex_first: Yandex then Chromium on captcha/timeout/unavailable
+      - browser_first: Edge/Chrome first, then HTTP, then Yandex
     """
     mode = (
         os.environ.get("PROCUREMENT_WEB_SEARCH_PROVIDER") or "auto"
     ).strip().casefold()
+    http = HttpSerpSearchProvider()
     chromium = SystemChromiumWebSearchProvider()
     yandex = SystemYandexBrowserProvider()
+    browser_chain = FallbackBrowserSearchProvider(primary=chromium, fallback=yandex)
     if mode in {"yandex"}:
         return yandex
+    if mode in {"http", "httpx", "ddg_http", "duckduckgo_http"}:
+        return http
     if mode in {"chromium", "chrome", "edge", "duckduckgo"}:
         return chromium
     if mode in {"yandex_first"}:
         return FallbackBrowserSearchProvider(primary=yandex, fallback=chromium)
-    # auto: prefer Chromium headless search when a browser is present
-    if chromium.executable is not None:
-        return FallbackBrowserSearchProvider(primary=chromium, fallback=yandex)
-    return FallbackBrowserSearchProvider(primary=yandex, fallback=chromium)
+    if mode in {"browser_first", "chromium_first"}:
+        # Legacy preference: headless browser, then fast HTTP if CDP fails.
+        return FallbackBrowserSearchProvider(primary=browser_chain, fallback=http)
+    # auto: HTTP SERP is reliable; browser remains fallback for blocked HTTP / fetch.
+    return FallbackBrowserSearchProvider(primary=http, fallback=browser_chain)
 
 
 class EnvironmentApprovalProvider:
@@ -1350,6 +1597,7 @@ __all__ = [
     "EnvironmentApprovalProvider",
     "FallbackBrowserSearchProvider",
     "FixtureSupplierProvider",
+    "HttpSerpSearchProvider",
     "IsolatedSystemBrowserProvider",
     "SystemChromiumWebSearchProvider",
     "SystemYandexBrowserProvider",

@@ -97,3 +97,22 @@ async def get_current_user(db: DbSession, token: Annotated[str | None, Depends(o
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
+
+async def resolve_user_from_token(
+    db: AsyncSession, token: str | None
+) -> User:
+    """Authenticate inside a caller-owned short-lived session (long endpoints)."""
+    if not token:
+        if _auth_disabled_allowed():
+            return await _resolve_dev_bypass_user(db)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Не удалось проверить учётные данные",
+        )
+    try:
+        return await authenticate_access_token(db, token)
+    except HTTPException:
+        if _auth_disabled_allowed():
+            return await _resolve_dev_bypass_user(db)
+        raise
+

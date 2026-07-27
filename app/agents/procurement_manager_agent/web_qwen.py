@@ -2,11 +2,13 @@
 
 Parses real fetched page / SERP text into structured supplier fields.
 Never invents suppliers — only extracts from provided text.
+Optional browse-agent step: pick which SERP URLs are worth visiting.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from decimal import Decimal, InvalidOperation
@@ -16,9 +18,16 @@ import httpx
 
 ChatFn = Callable[..., Awaitable[dict[str, Any]]]
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_QWEN_MODEL = "qwen/qwen3.5-9b"
 DEFAULT_QWEN_TIMEOUT_SECONDS = 25.0
 DEFAULT_PAGE_CHARS = 10_000
+# Hard cap for browse-agent / enrich page visits per nomenclature (SERP → fetch).
+MAX_AGENT_PAGES = 3
+DEFAULT_AGENT_MAX_PAGES = 3
+DEFAULT_AGENT_CONCURRENCY = 2
+DEFAULT_AGENT_BUDGET_SECONDS = 45.0
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _WS_RE = re.compile(r"\s+")
@@ -28,6 +37,7 @@ _PAGE_SYSTEM = (
     "Ответь ТОЛЬКО одним JSON-объектом без markdown и без пояснений. "
     "Схема: {"
     '"title": string|null, '
+    '"shop_name": string|null, '
     '"unit_price": number|null, '
     '"approx_cost": number|null, '
     '"city": string|null, '
@@ -35,8 +45,10 @@ _PAGE_SYSTEM = (
     '"delivery_hint": string|null, '
     '"product_match_confidence": number'
     "}. "
+    "shop_name — название магазина/дистрибьютора/сайта (например ChipDip), не название товара. "
+    "title — название товара на странице. "
     "Цены только в рублях (число без валюты). "
-    "Не выдумывай цену, город и срок — если нет в тексте, ставь null. "
+    "Не выдумывай цену, город, срок и shop_name — если нет в тексте, ставь null. "
     "product_match_confidence от 0 до 1: насколько страница про запрошенный товар."
 )
 
@@ -44,6 +56,15 @@ _QUERY_SYSTEM = (
     "Сожми запрос для поиска поставщика в Bing. "
     "Ответ: только короткая русская фраза до 12 слов, без кавычек и пояснений. "
     "Добавь слово «купить» или «поставщик» если уместно."
+)
+
+_SELECT_URLS_SYSTEM = (
+    "Ты помощник закупщика. По результатам поиска выбери страницы товаров/поставщиков, "
+    "которые стоит открыть для извлечения цены, города и срока поставки. "
+    "Ответь ТОЛЬКО одним JSON-объектом без markdown: "
+    '{"visit_indexes": [int, ...]}. '
+    "Индексы 0-based из переданного списка, без дублей, не больше max_visit. "
+    "Предпочитай карточки товара/прайс, а не новости и форумы. Не выдумывай URL."
 )
 
 
@@ -104,6 +125,79 @@ def qwen_refine_query_enabled() -> bool:
         return bool(getattr(settings, "PROCUREMENT_WEB_QWEN_REFINE_QUERY", False))
     except Exception:
         return False
+
+
+def qwen_agent_enabled() -> bool:
+    """PROCUREMENT_WEB_QWEN_AGENT — browse+extract after SERP for force_web (default true)."""
+    raw = os.environ.get("PROCUREMENT_WEB_QWEN_AGENT")
+    if raw is not None and str(raw).strip():
+        return _truthy(raw, default=True)
+    try:
+        from app.core.config import settings
+
+        return bool(getattr(settings, "PROCUREMENT_WEB_QWEN_AGENT", True))
+    except Exception:
+        return True
+
+
+def qwen_agent_select_urls_enabled() -> bool:
+    raw = os.environ.get("PROCUREMENT_WEB_QWEN_AGENT_SELECT_URLS")
+    if raw is not None and str(raw).strip():
+        return _truthy(raw, default=True)
+    try:
+        from app.core.config import settings
+
+        return bool(getattr(settings, "PROCUREMENT_WEB_QWEN_AGENT_SELECT_URLS", True))
+    except Exception:
+        return True
+
+
+def clamp_agent_pages(value: int | float | str | None) -> int:
+    """Clamp browse/enrich page budget to 1..MAX_AGENT_PAGES (3)."""
+    try:
+        return max(1, min(MAX_AGENT_PAGES, int(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_AGENT_MAX_PAGES
+
+
+def qwen_agent_max_pages() -> int:
+    raw = _env_or_setting(
+        "PROCUREMENT_WEB_QWEN_AGENT_MAX_PAGES",
+        "PROCUREMENT_WEB_QWEN_AGENT_MAX_PAGES",
+    )
+    if raw:
+        try:
+            return clamp_agent_pages(raw)
+        except ValueError:
+            pass
+    return DEFAULT_AGENT_MAX_PAGES
+
+
+def qwen_agent_concurrency() -> int:
+    raw = _env_or_setting(
+        "PROCUREMENT_WEB_QWEN_AGENT_CONCURRENCY",
+        "PROCUREMENT_WEB_QWEN_AGENT_CONCURRENCY",
+    )
+    if raw:
+        try:
+            return max(1, min(5, int(raw)))
+        except ValueError:
+            pass
+    return DEFAULT_AGENT_CONCURRENCY
+
+
+def qwen_agent_budget_seconds() -> float:
+    """Per-nomenclature hard cap for browse+extract; SERP cards kept on expiry."""
+    raw = _env_or_setting(
+        "PROCUREMENT_WEB_QWEN_AGENT_BUDGET_SECONDS",
+        "PROCUREMENT_WEB_QWEN_AGENT_BUDGET_SECONDS",
+    )
+    if raw:
+        try:
+            return max(8.0, min(180.0, float(raw)))
+        except ValueError:
+            pass
+    return DEFAULT_AGENT_BUDGET_SECONDS
 
 
 def resolve_qwen_gateway_url() -> str:
@@ -239,6 +333,9 @@ def normalize_qwen_page_fields(
     title = data.get("title")
     title_out = str(title).strip()[:240] if isinstance(title, str) and title.strip() else None
 
+    shop = data.get("shop_name") or data.get("site_name") or data.get("company_name")
+    shop_out = str(shop).strip()[:120] if isinstance(shop, str) and shop.strip() else None
+
     delivery = data.get("delivery_hint")
     delivery_out = (
         str(delivery).strip()[:160] if isinstance(delivery, str) and delivery.strip() else None
@@ -263,13 +360,14 @@ def normalize_qwen_page_fields(
         confidence = max(Decimal("0"), min(Decimal("1"), confidence))
 
     # Require at least one useful signal; empty JSON is treated as failure → regex fallback.
-    if price is None and not city_out and not title_out and not delivery_out:
+    if price is None and not city_out and not title_out and not delivery_out and not shop_out:
         return None
 
     return {
         "unit_price": price,
         "city": city_out,
         "title": title_out,
+        "shop_name": shop_out,
         "delivery_hint": delivery_out,
         "lead_time_days": lead_days,
         "product_match_confidence": confidence,
@@ -283,7 +381,7 @@ def normalize_qwen_page_fields(
 def merge_parsed_fields(primary: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
     """Prefer primary (Qwen) values; fill gaps from regex fallback."""
     merged = dict(fallback)
-    for key in ("unit_price", "city", "title", "delivery_hint", "rating"):
+    for key in ("unit_price", "city", "title", "shop_name", "site_name", "delivery_hint", "rating"):
         value = primary.get(key)
         if value is None or value == "":
             continue
@@ -400,6 +498,7 @@ async def extract_product_fields_with_qwen(
     if len(page) < 40:
         return None
     if chat_fn is None and not resolve_qwen_gateway_url():
+        logger.info("Qwen page extract skipped: LLM gateway URL is not configured")
         return None
 
     user_payload = {
@@ -413,7 +512,12 @@ async def extract_product_fields_with_qwen(
     ]
     try:
         content = await _chat_content(messages, chat_fn=chat_fn, timeout=timeout)
-    except Exception:
+    except Exception as exc:
+        logger.info(
+            "Qwen page extract failed for %s: %s",
+            (page_url or "")[:120],
+            type(exc).__name__,
+        )
         return None
     return normalize_qwen_page_fields(
         parse_json_object(content),
@@ -453,17 +557,88 @@ async def refine_search_query_with_qwen(
     return refined[:160]
 
 
+def _serp_hit_payload(hit: dict[str, Any], index: int) -> dict[str, Any]:
+    return {
+        "index": index,
+        "title": str(hit.get("title") or hit.get("name") or "")[:200],
+        "url": str(hit.get("url") or "")[:500],
+        "snippet": str(hit.get("snippet") or hit.get("description") or "")[:320],
+    }
+
+
+async def select_urls_to_visit_with_qwen(
+    hits: list[dict[str, Any]],
+    *,
+    product_query: str | None = None,
+    max_visit: int = DEFAULT_AGENT_MAX_PAGES,
+    chat_fn: ChatFn | SupportsChat | None = None,
+    timeout: float | None = None,
+) -> list[int]:
+    """Ask Qwen which SERP hits to open. On failure returns first ``max_visit`` indexes."""
+    capped = clamp_agent_pages(max_visit)
+    if not hits:
+        return []
+    fallback = list(range(min(capped, len(hits))))
+    if not qwen_web_enabled() or not qwen_agent_select_urls_enabled():
+        return fallback
+    if chat_fn is None and not resolve_qwen_gateway_url():
+        logger.info("Qwen URL select skipped: LLM gateway URL is not configured")
+        return fallback
+
+    payload = {
+        "product_query": (product_query or "").strip() or None,
+        "max_visit": capped,
+        "hits": [_serp_hit_payload(hit, index) for index, hit in enumerate(hits)],
+    }
+    messages = [
+        {"role": "system", "content": _SELECT_URLS_SYSTEM},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    try:
+        content = await _chat_content(messages, chat_fn=chat_fn, timeout=timeout)
+    except Exception as exc:
+        logger.info("Qwen URL select failed, using top SERP: %s", type(exc).__name__)
+        return fallback
+
+    data = parse_json_object(content)
+    raw_indexes = data.get("visit_indexes")
+    if not isinstance(raw_indexes, list):
+        return fallback
+    chosen: list[int] = []
+    for item in raw_indexes:
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < len(hits) and index not in chosen:
+            chosen.append(index)
+        if len(chosen) >= capped:
+            break
+    return chosen or fallback
+
+
 __all__ = [
+    "DEFAULT_AGENT_CONCURRENCY",
+    "DEFAULT_AGENT_MAX_PAGES",
     "DEFAULT_QWEN_MODEL",
+    "MAX_AGENT_PAGES",
+    "clamp_agent_pages",
     "extract_product_fields_with_qwen",
     "merge_parsed_fields",
     "normalize_qwen_page_fields",
     "parse_json_object",
+    "qwen_agent_concurrency",
+    "qwen_agent_budget_seconds",
+    "qwen_agent_concurrency",
+    "qwen_agent_enabled",
+    "qwen_agent_max_pages",
+    "qwen_agent_select_urls_enabled",
     "qwen_refine_query_enabled",
     "qwen_timeout_seconds",
     "qwen_web_enabled",
     "refine_search_query_with_qwen",
     "resolve_qwen_gateway_url",
     "resolve_qwen_model",
+    "select_urls_to_visit_with_qwen",
     "strip_think_blocks",
 ]

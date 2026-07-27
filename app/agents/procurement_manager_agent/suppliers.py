@@ -24,8 +24,21 @@ from app.agents.procurement_manager_agent.supplier_mcp_server.providers import (
     BrowserSearchProvider,
     build_default_browser_search_provider,
 )
-from app.agents.procurement_manager_agent.web_page_enrichment import enrich_web_suppliers
-from app.agents.procurement_manager_agent.web_qwen import refine_search_query_with_qwen
+from app.agents.procurement_manager_agent.search_progress import (
+    emit_progress,
+    truncate_query,
+)
+from app.agents.procurement_manager_agent.web_page_enrichment import (
+    derive_web_supplier_name,
+    enrich_web_suppliers,
+    run_qwen_browse_agent,
+)
+from app.agents.procurement_manager_agent.web_qwen import (
+    clamp_agent_pages,
+    qwen_agent_budget_seconds,
+    qwen_agent_enabled,
+    refine_search_query_with_qwen,
+)
 
 CONFIG_PATH = Path(__file__).with_name("supplier_mcp.json")
 
@@ -178,8 +191,8 @@ class BrowserSupplierSearchAdapter:
                 message = message or "Таймаут браузерного веб-поиска"
             elif not message:
                 message = (
-                    "Веб-поиск недоступен: Edge/Chrome не найден или SERP пуст. "
-                    "Проверьте PROCUREMENT_WEB_BROWSER_PATH / установку браузера."
+                    "Веб-поиск недоступен: HTTP SERP и Edge/Chrome не дали результатов. "
+                    "Проверьте сеть, PROCUREMENT_WEB_SEARCH_PROVIDER и браузер."
                 )
             self.last_diagnostics = {
                 "status": status or "unavailable",
@@ -270,12 +283,30 @@ class HybridSupplierSearchService:
             internal_threshold
             or int(os.environ.get("PROCUREMENT_MANAGER_INTERNAL_SUPPLIER_THRESHOLD", "1")),
         )
+        self.last_agent_diagnostics: dict[str, Any] = {}
+        self._agent_diag_lock = asyncio.Lock()
 
     def _with_web_diagnostics(self, result: SupplierSearchResult) -> SupplierSearchResult:
-        """Attach browser adapter diagnostics when web returned nothing."""
+        """Attach browser + Qwen-agent diagnostics (keep SERP cards on soft failures)."""
         diagnostics = dict(getattr(self.web, "last_diagnostics", None) or {})
+        agent_diag = dict(self.last_agent_diagnostics or {})
+        if agent_diag:
+            diagnostics = {**diagnostics, "qwen_browse_agent": agent_diag}
+            agent_message = agent_diag.get("message")
+            if agent_message and result.suppliers:
+                # Surface agent status even when SERP returned cards.
+                merged = dict(result.diagnostics or {})
+                merged.update(diagnostics)
+                return result.model_copy(
+                    update={
+                        "diagnostics": merged,
+                        "message": result.message or agent_message,
+                    }
+                )
         if result.suppliers or not diagnostics:
-            if result.message or result.diagnostics:
+            if result.diagnostics or result.message:
+                if diagnostics and not result.diagnostics:
+                    return result.model_copy(update={"diagnostics": diagnostics})
                 return result
             return result
         message = diagnostics.get("message") or result.message
@@ -302,6 +333,8 @@ class HybridSupplierSearchService:
         suppliers: list[Supplier],
         *,
         product_query: str | None = None,
+        light: bool = False,
+        deadline_monotonic: float | None = None,
     ) -> list[Supplier]:
         web_rows = [item for item in suppliers if item.source == "web" and _supplier_has_url(item)]
         if not web_rows:
@@ -309,13 +342,175 @@ class HybridSupplierSearchService:
         provider = self._fetch_provider()
         if provider is None:
             return suppliers
-        enriched = await enrich_web_suppliers(
-            web_rows,
-            provider,
-            product_query=product_query,
-        )
+        # Light mode: fewer pages, shorter fetch — keeps multi-nomenclature force_web
+        # under the API timeout (full Qwen enrich is available via /enrich).
+        enrich_kwargs: dict[str, Any] = {
+            "product_query": product_query,
+            "deadline_monotonic": deadline_monotonic,
+        }
+        if light:
+            enrich_kwargs["max_pages"] = clamp_agent_pages(
+                os.environ.get("PROCUREMENT_WEB_ENRICH_LIGHT_MAX_PAGES", "2")
+            )
+            enrich_kwargs["timeout_seconds"] = float(
+                os.environ.get("PROCUREMENT_WEB_ENRICH_LIGHT_TIMEOUT_SECONDS", "10")
+            )
+            enrich_kwargs["concurrency"] = int(
+                os.environ.get("PROCUREMENT_WEB_ENRICH_LIGHT_CONCURRENCY", "2")
+            )
+        enriched = await enrich_web_suppliers(web_rows, provider, **enrich_kwargs)
         by_id = {item.supplier_id: item for item in enriched}
         return [by_id.get(item.supplier_id, item) for item in suppliers]
+
+    async def _browse_agent_web(
+        self,
+        suppliers: list[Supplier],
+        *,
+        product_query: str | None = None,
+        deadline_monotonic: float | None = None,
+    ) -> list[Supplier]:
+        """Qwen browse+extract after SERP; fail-soft to unmodified SERP cards.
+
+        Hard per-nomenclature budget: if Qwen/browser is slow, return SERP cards
+        immediately so the outer force_web request does not time out empty.
+        Also respects client alarm-clock deadline between page fetches.
+        """
+        web_rows = [item for item in suppliers if item.source == "web" and _supplier_has_url(item)]
+        if not web_rows:
+            return suppliers
+        provider = self._fetch_provider()
+        if provider is None:
+            async with self._agent_diag_lock:
+                self.last_agent_diagnostics = {
+                    "qwen_agent": True,
+                    "status": "no_fetch_provider",
+                    "message": (
+                        "Qwen-агент: нет browser/fetch провайдера, "
+                        "карточки SERP без enrich"
+                    ),
+                }
+            return suppliers
+        budget = qwen_agent_budget_seconds()
+        if deadline_monotonic is not None:
+            remaining = float(deadline_monotonic) - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                emit_progress("Время поиска истекло — показываю ссылки из поиска")
+                return suppliers
+            budget = min(budget, remaining)
+
+        async def _run() -> tuple[list[Supplier], dict[str, Any]]:
+            return await run_qwen_browse_agent(
+                web_rows,
+                provider,
+                product_query=product_query,
+                deadline_monotonic=deadline_monotonic,
+            )
+
+        try:
+            enriched, diagnostics = await asyncio.wait_for(_run(), timeout=budget)
+        except TimeoutError:
+            emit_progress(
+                "Qwen не успел обогатить карточки — показываю ссылки из поиска"
+            )
+            async with self._agent_diag_lock:
+                previous = dict(self.last_agent_diagnostics or {})
+                runs = list(previous.get("runs") or [])
+                runs.append(
+                    {
+                        "query": (product_query or "")[:160],
+                        "status": "budget_timeout",
+                        "budget_seconds": budget,
+                    }
+                )
+                self.last_agent_diagnostics = {
+                    "qwen_agent": True,
+                    "status": "budget_timeout",
+                    "budget_seconds": budget,
+                    "runs": runs[-20:],
+                    "nomenclature_runs": len(runs),
+                    "message": (
+                        f"Qwen-агент: бюджет {budget:.0f}с исчерпан, "
+                        "возвращены карточки SERP"
+                    ),
+                }
+            return suppliers
+        except Exception as exc:
+            async with self._agent_diag_lock:
+                self.last_agent_diagnostics = {
+                    "qwen_agent": True,
+                    "status": "error",
+                    "error": type(exc).__name__,
+                    "message": "Qwen-агент: ошибка, возвращены карточки SERP",
+                }
+            return suppliers
+        # Merge per-nomenclature agent stats under a lock (parallel nomenclatures).
+        async with self._agent_diag_lock:
+            previous = dict(self.last_agent_diagnostics or {})
+            runs = list(previous.get("runs") or [])
+            runs.append(
+                {
+                    "query": (product_query or "")[:160],
+                    **{
+                        key: diagnostics.get(key)
+                        for key in (
+                            "status",
+                            "visited",
+                            "qwen_enriched",
+                            "selected_indexes",
+                            "qwen_skip_reason",
+                        )
+                    },
+                }
+            )
+            total_visited = sum(int(run.get("visited") or 0) for run in runs)
+            total_qwen = sum(int(run.get("qwen_enriched") or 0) for run in runs)
+            self.last_agent_diagnostics = {
+                **diagnostics,
+                "runs": runs[-20:],
+                "nomenclature_runs": len(runs),
+                "visited": total_visited,
+                "qwen_enriched": total_qwen,
+                "message": (
+                    f"Qwen-агент: номенклатур={len(runs)}, открыто стр.={total_visited}, "
+                    f"Qwen-полей={total_qwen}"
+                ),
+            }
+        by_id = {item.supplier_id: item for item in enriched}
+        return [by_id.get(item.supplier_id, item) for item in suppliers]
+
+    async def _track_existing_links(
+        self,
+        suppliers: list[Supplier],
+        *,
+        product_query: str | None = None,
+        do_enrich: bool | Literal["light", "agent"] = True,
+        deadline_monotonic: float | None = None,
+    ) -> list[Supplier]:
+        """Visit/enrich prior candidate URLs before a cold SERP search."""
+        link_seeds = existing_link_suppliers(suppliers)[:WEB_LIMIT_PER_NOMENCLATURE]
+        if not link_seeds:
+            return []
+        emit_progress(f"Обработка {len(link_seeds)} существующих ссылок…")
+        if (
+            deadline_monotonic is not None
+            and asyncio.get_running_loop().time() >= deadline_monotonic
+        ):
+            emit_progress("Время поиска истекло — оставляю существующие ссылки без обновления")
+            return link_seeds
+        if not do_enrich:
+            return link_seeds
+        if do_enrich == "agent":
+            return await self._browse_agent_web(
+                link_seeds,
+                product_query=product_query,
+                deadline_monotonic=deadline_monotonic,
+            )
+        return await self._enrich_web(
+            link_seeds,
+            product_query=product_query,
+            light=(do_enrich == "light"),
+            deadline_monotonic=deadline_monotonic,
+        )
 
     async def search_internal(self, request: SupplierSearchRequest) -> SupplierSearchResult:
         targets = resolve_nomenclature_targets(request) or [_fallback_target(request)]
@@ -355,60 +550,201 @@ class HybridSupplierSearchService:
     async def search_web(self, request: SupplierSearchRequest) -> SupplierSearchResult:
         targets = resolve_nomenclature_targets(request) or [_fallback_target(request)]
         force_web = request.is_manual_web
+        self.last_agent_diagnostics = {}
+        deadline_monotonic: float | None = None
+        if request.timeout_seconds is not None:
+            deadline_monotonic = (
+                asyncio.get_running_loop().time()
+                + max(30.0, min(600.0, float(request.timeout_seconds)))
+            )
+        # Cap parallelism: each item may open browsers / hit LLM; stampede → API timeout.
+        nom_concurrency = max(
+            1,
+            int(os.environ.get("PROCUREMENT_WEB_NOMENCLATURE_CONCURRENCY", "2")),
+        )
+        semaphore = asyncio.Semaphore(nom_concurrency)
+        # Manual «Найти поставщиков»: Qwen browse agent (default) visits top SERP URLs.
+        # PROCUREMENT_WEB_ENRICH_ON_MANUAL_SEARCH=skip disables enrich; =full uses classic enrich.
+        enrich_mode = (
+            os.environ.get("PROCUREMENT_WEB_ENRICH_ON_MANUAL_SEARCH") or "auto"
+        ).strip().casefold()
+        agent_on = qwen_agent_enabled()
+        if force_web:
+            if enrich_mode in {"0", "false", "no", "off", "skip"}:
+                do_enrich: bool | Literal["light", "agent"] = False
+            elif enrich_mode in {"1", "true", "yes", "on", "full"}:
+                do_enrich = "agent" if agent_on else True
+            elif enrich_mode in {"agent", "browse"}:
+                do_enrich = "agent"
+            elif enrich_mode == "light":
+                do_enrich = "light"
+            else:
+                # auto: prefer Qwen browse agent for force_web (incl. multi-item);
+                # without agent — single nomen full enrich, multi SERP-only (+ /enrich).
+                if agent_on:
+                    do_enrich = "agent"
+                else:
+                    do_enrich = True if len(targets) <= 1 else False
+        else:
+            do_enrich = True
 
         async def _one(target: NomenclatureSearchItem) -> NomenclatureSupplierResult:
-            existing = list(target.existing_suppliers or [])
-            query = (
-                target.query or target.nomenclature_name or request.query or "поставщик"
-            ).strip()
-            # Manual web UI: skip bank seeds and return enriched web-only cards.
-            if force_web:
-                single = await self._search_web_one(query, request)
-                web_only = await self._enrich_web(
-                    [item for item in single.suppliers if item.source == "web"][
-                        :WEB_LIMIT_PER_NOMENCLATURE
-                    ],
-                    product_query=query,
+            async with semaphore:
+                existing = list(target.existing_suppliers or [])
+                query = (
+                    target.query or target.nomenclature_name or request.query or "поставщик"
+                ).strip()
+                label = truncate_query(
+                    target.nomenclature_name or query, max_len=56
                 )
-                return NomenclatureSupplierResult(
-                    nomenclature_id=target.nomenclature_id,
-                    nomenclature_name=target.nomenclature_name,
-                    query=single.query or query,
-                    suppliers=web_only,
-                    sources_used=["web"] if web_only else list(single.sources_used),
-                    web_fallback_used=True,
-                )
+                if (
+                    deadline_monotonic is not None
+                    and asyncio.get_running_loop().time() >= deadline_monotonic
+                ):
+                    emit_progress(f"Время поиска истекло — пропуск: {label}")
+                    return NomenclatureSupplierResult(
+                        nomenclature_id=target.nomenclature_id,
+                        nomenclature_name=target.nomenclature_name,
+                        query=query,
+                        suppliers=[],
+                        sources_used=[],
+                        web_fallback_used=force_web,
+                    )
 
-            # NOTE: force_web diagnostics attached on aggregate via adapter.last_diagnostics
-            qualifying = qualifying_suppliers_for_skip(existing, force_web=force_web)
-            if len(qualifying) >= MIN_SUPPLIERS_BEFORE_SKIP:
+                # Prefer prior URLs (workspace cards / last search) before cold SERP.
+                tracked_links = await self._track_existing_links(
+                    existing,
+                    product_query=query,
+                    do_enrich=do_enrich,
+                    deadline_monotonic=deadline_monotonic,
+                )
+                if tracked_links:
+                    existing = _deduplicate([*tracked_links, *existing])
+
+                # Manual web UI: web-only cards; SERP only if tracked links are insufficient.
+                if force_web:
+                    strong_tracked = qualifying_suppliers_for_skip(
+                        tracked_links, force_web=True
+                    )
+                    if len(strong_tracked) >= MIN_SUPPLIERS_BEFORE_SKIP:
+                        web_only = [
+                            item
+                            for item in tracked_links
+                            if item.source == "web" and _supplier_has_url(item)
+                        ][:WEB_LIMIT_PER_NOMENCLATURE]
+                        emit_progress(
+                            f"Готово по номенклатуре {label}: "
+                            f"{len(web_only)} поставщиков (существующие ссылки)"
+                        )
+                        return NomenclatureSupplierResult(
+                            nomenclature_id=target.nomenclature_id,
+                            nomenclature_name=target.nomenclature_name,
+                            query=query,
+                            suppliers=web_only,
+                            sources_used=["existing", "web"] if web_only else ["existing"],
+                            web_fallback_used=False,
+                        )
+
+                    if (
+                        deadline_monotonic is not None
+                        and asyncio.get_running_loop().time() >= deadline_monotonic
+                    ):
+                        web_only = [
+                            item
+                            for item in tracked_links
+                            if item.source == "web" and _supplier_has_url(item)
+                        ][:WEB_LIMIT_PER_NOMENCLATURE]
+                        emit_progress(
+                            f"Время поиска истекло — показываю {len(web_only)} "
+                            "обработанных ссылок"
+                        )
+                        return NomenclatureSupplierResult(
+                            nomenclature_id=target.nomenclature_id,
+                            nomenclature_name=target.nomenclature_name,
+                            query=query,
+                            suppliers=web_only,
+                            sources_used=["existing", "web"] if web_only else [],
+                            web_fallback_used=False,
+                        )
+
+                    emit_progress(f"Ищу в интернете: {truncate_query(query)}")
+                    single = await self._search_web_one(query, request)
+                    web_rows = [
+                        item
+                        for item in single.suppliers
+                        if item.source == "web"
+                    ][:WEB_LIMIT_PER_NOMENCLATURE]
+                    emit_progress(f"Нашёл {len(web_rows)} ссылок")
+                    if do_enrich and web_rows:
+                        if do_enrich == "agent":
+                            serp_rows = await self._browse_agent_web(
+                                web_rows,
+                                product_query=query,
+                                deadline_monotonic=deadline_monotonic,
+                            )
+                        else:
+                            serp_rows = await self._enrich_web(
+                                web_rows,
+                                product_query=query,
+                                light=(do_enrich == "light"),
+                                deadline_monotonic=deadline_monotonic,
+                            )
+                    else:
+                        serp_rows = web_rows
+                    web_only = _deduplicate([*tracked_links, *serp_rows])[
+                        :WEB_LIMIT_PER_NOMENCLATURE
+                    ]
+                    web_only = [
+                        item
+                        for item in web_only
+                        if item.source == "web" and _supplier_has_url(item)
+                    ][:WEB_LIMIT_PER_NOMENCLATURE]
+                    sources = ["web"] if serp_rows else list(single.sources_used)
+                    if tracked_links:
+                        sources = list(dict.fromkeys(["existing", *sources]))
+                    emit_progress(
+                        f"Готово по номенклатуре {label}: {len(web_only)} поставщиков"
+                    )
+                    return NomenclatureSupplierResult(
+                        nomenclature_id=target.nomenclature_id,
+                        nomenclature_name=target.nomenclature_name,
+                        query=single.query or query,
+                        suppliers=web_only,
+                        sources_used=sources,
+                        web_fallback_used=bool(serp_rows),
+                    )
+
+                # NOTE: force_web diagnostics attached on aggregate via adapter.last_diagnostics
+                qualifying = qualifying_suppliers_for_skip(existing, force_web=force_web)
+                if len(qualifying) >= MIN_SUPPLIERS_BEFORE_SKIP:
+                    return NomenclatureSupplierResult(
+                        nomenclature_id=target.nomenclature_id,
+                        nomenclature_name=target.nomenclature_name,
+                        query=query,
+                        suppliers=_deduplicate(existing)[: request.limit],
+                        sources_used=["existing"],
+                        web_fallback_used=False,
+                    )
+                single = await self._search_web_one(query, request)
+                web_rows = await self._enrich_web(
+                    list(single.suppliers),
+                    product_query=query,
+                    deadline_monotonic=deadline_monotonic,
+                )
+                suppliers = _deduplicate([*existing, *web_rows])[
+                    : max(request.limit, WEB_LIMIT_PER_NOMENCLATURE)
+                ]
+                sources = list(single.sources_used)
+                if existing or tracked_links:
+                    sources = list(dict.fromkeys(["existing", *sources]))
                 return NomenclatureSupplierResult(
                     nomenclature_id=target.nomenclature_id,
                     nomenclature_name=target.nomenclature_name,
                     query=query,
-                    suppliers=_deduplicate(existing)[: request.limit],
-                    sources_used=["existing"],
-                    web_fallback_used=False,
+                    suppliers=suppliers,
+                    sources_used=sources,
+                    web_fallback_used=single.web_fallback_used,
                 )
-            single = await self._search_web_one(query, request)
-            web_rows = await self._enrich_web(
-                list(single.suppliers),
-                product_query=query,
-            )
-            suppliers = _deduplicate([*existing, *web_rows])[
-                : max(request.limit, WEB_LIMIT_PER_NOMENCLATURE)
-            ]
-            sources = list(single.sources_used)
-            if existing:
-                sources = list(dict.fromkeys(["existing", *sources]))
-            return NomenclatureSupplierResult(
-                nomenclature_id=target.nomenclature_id,
-                nomenclature_name=target.nomenclature_name,
-                query=query,
-                suppliers=suppliers,
-                sources_used=sources,
-                web_fallback_used=single.web_fallback_used,
-            )
 
         aggregated = _aggregate(
             list(await asyncio.gather(*[_one(item) for item in targets])), request
@@ -459,6 +795,21 @@ class HybridSupplierSearchService:
                     substantive, force_web=False
                 )
                 need_web = len(substantive) < self.internal_threshold
+            if need_web:
+                # Track prior URLs first; only cold-SERP when still below threshold.
+                tracked_links = await self._track_existing_links(
+                    suppliers,
+                    product_query=query,
+                    do_enrich=True,
+                )
+                if tracked_links:
+                    suppliers = _deduplicate([*tracked_links, *suppliers])
+                    sources = list(dict.fromkeys(["existing", *sources]))
+                    substantive = qualifying_suppliers_for_skip(
+                        [item for item in suppliers if not _is_fixture_supplier(item)],
+                        force_web=False,
+                    )
+                    need_web = len(substantive) < self.internal_threshold
             if need_web:
                 web = await self._search_web_one(query, request)
                 web_rows = await self._enrich_web(
@@ -647,6 +998,51 @@ def _supplier_has_url(supplier: Supplier) -> bool:
     return bool(supplier.url or supplier.contacts.get("website"))
 
 
+def _supplier_url_key(supplier: Supplier) -> str:
+    raw = (supplier.url or supplier.contacts.get("website") or "").strip()
+    return raw.casefold()
+
+
+def _as_trackable_web_supplier(supplier: Supplier) -> Supplier:
+    """Normalize prior cards with a URL so enrich/browse agents will open them."""
+    url = (supplier.url or supplier.contacts.get("website") or "").strip() or None
+    contacts = dict(supplier.contacts or {})
+    if url and not contacts.get("website"):
+        contacts["website"] = url
+    updates: dict[str, Any] = {"contacts": contacts}
+    if url and supplier.url != url:
+        updates["url"] = url
+    if supplier.source != "web":
+        updates["source"] = "web"
+    evidence = list(supplier.evidence or [])
+    if "existing_link" not in evidence:
+        evidence.append("existing_link")
+        updates["evidence"] = evidence
+    if not updates:
+        return supplier
+    return supplier.model_copy(update=updates)
+
+
+def existing_link_suppliers(suppliers: list[Supplier]) -> list[Supplier]:
+    """Prior/candidate cards that already carry a product/shop URL to track first."""
+    seen_url: set[str] = set()
+    seen_id: set[str] = set()
+    result: list[Supplier] = []
+    for supplier in suppliers:
+        if not _supplier_has_url(supplier):
+            continue
+        url_key = _supplier_url_key(supplier)
+        sid = supplier.tax_id or supplier.supplier_id
+        if (url_key and url_key in seen_url) or (sid and sid in seen_id):
+            continue
+        if url_key:
+            seen_url.add(url_key)
+        if sid:
+            seen_id.add(sid)
+        result.append(_as_trackable_web_supplier(supplier))
+    return result
+
+
 def _is_bank_seed_supplier(supplier: Supplier) -> bool:
     return any(str(evidence).startswith("bank:") for evidence in supplier.evidence)
 
@@ -763,9 +1159,18 @@ def _normalize_web_supplier(raw: dict[str, Any]) -> Supplier:
     city = str(raw["city"]) if raw.get("city") else _extract_city(snippet)
     price = _to_decimal(raw.get("unit_price") or raw.get("price")) or _extract_price(snippet)
     score = _to_decimal(raw.get("rating") or raw.get("score"))
+    title = raw.get("title")
+    name = raw.get("name")
+    display_name = derive_web_supplier_name(
+        url=url,
+        title=str(title) if title else None,
+        name=str(name) if name else None,
+        shop_name=str(raw["shop_name"]) if raw.get("shop_name") else None,
+        site_name=str(raw["site_name"]) if raw.get("site_name") else None,
+    )
     return Supplier(
         supplier_id=f"web-{digest}",
-        name=str(raw.get("title") or raw.get("name") or url),
+        name=display_name,
         source="web",
         categories=[],
         contacts={"website": url},
@@ -843,6 +1248,7 @@ __all__ = [
     "SupplierMCPWebAdapter",
     "SupplierSearchAdapter",
     "WEB_LIMIT_PER_NOMENCLATURE",
+    "existing_link_suppliers",
     "qualifying_suppliers_for_skip",
     "resolve_nomenclature_targets",
 ]
