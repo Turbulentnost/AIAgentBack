@@ -1,0 +1,17 @@
+# Vite dev server instead of nginx production build.
+services:
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${FRONTEND_PORT:-5173}:5173"
+    environment:
+      VITE_API_PROXY: http://backend:8080
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    depends_on:
+      backend:
+        condition: service_started

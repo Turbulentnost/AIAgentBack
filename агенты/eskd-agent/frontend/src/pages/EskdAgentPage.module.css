@@ -1,0 +1,373 @@
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.pageHeader h1 {
+  margin: 0 0 6px;
+  font-size: 1.5rem;
+  color: var(--color-text-strong);
+}
+
+.pageHeader p {
+  margin: 0;
+  color: var(--color-muted);
+  max-width: 640px;
+  line-height: 1.5;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+.panel {
+  padding: 20px;
+}
+
+.panelTitle {
+  margin: 0 0 14px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text-strong);
+}
+
+.dropzone {
+  border: 1.5px dashed var(--color-border);
+  border-radius: 12px;
+  padding: 28px 20px;
+  text-align: center;
+  background: var(--color-hover);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dropzone:hover,
+.dropzoneActive {
+  border-color: var(--color-primary);
+  background: var(--color-accent-soft);
+}
+
+.dropzoneHint {
+  margin: 8px 0 0;
+  font-size: 0.88rem;
+  color: var(--color-muted);
+}
+
+.fileList {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fileItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 10px;
+  background: var(--color-surface);
+  font-size: 0.9rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.field label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.field input,
+.field select {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  background: var(--color-surface);
+}
+
+.radioRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.radioRow label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.progressWrap {
+  margin-top: 16px;
+}
+
+.progressBar {
+  height: 8px;
+  background: #e8edf3;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 0.2s ease;
+}
+
+.progressMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--color-muted);
+}
+
+.livePanel {
+  margin-top: 14px;
+}
+
+.liveWaiting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--color-hover);
+  border: 1px solid var(--color-border-soft);
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+}
+
+.liveBox {
+  margin-top: 14px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sideCard {
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.sideCard h3 {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+}
+
+.sideCard dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 0.84rem;
+}
+
+.sideCard dt { color: var(--color-muted); }
+.sideCard dd { margin: 0; word-break: break-all; }
+
+.results {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.resultCard {
+  padding: 16px 18px;
+}
+
+.resultHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.resultHead h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.summary {
+  margin: 0 0 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
+.remarkList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.remarkError {
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  background: var(--color-danger-soft);
+  color: #7f1d1d;
+}
+
+.remarkWarning {
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  background: var(--color-warning-soft);
+  color: #92400e;
+}
+
+.remarkError code,
+.remarkWarning code {
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
+
+.empty {
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--color-muted);
+}
+
+.errorBanner {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 0.9rem;
+}
+
+.existingHint {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #eab308;
+  border-radius: 8px;
+  background: #fffbeb;
+  font-size: 0.88rem;
+}
+
+.existingHint p {
+  margin: 0;
+}
+
+.lookupPending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 0.88rem;
+  color: var(--color-muted);
+}
+
+.blockedHint {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.88rem;
+}
+
+.fromMarkingNote {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fffbeb;
+  border: 1px solid #eab308;
+  font-size: 0.82rem;
+  color: #854d0e;
+}
+
+.pipelineBadge {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  font-size: 0.8rem;
+  color: #1d4ed8;
+}
+
+.packageCard {
+  border-left: 4px solid #6366f1;
+}
+
+.packageList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.packageError,
+.packageWarning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.packageError {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.packageWarning {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.packageGost,
+.packagePages {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}

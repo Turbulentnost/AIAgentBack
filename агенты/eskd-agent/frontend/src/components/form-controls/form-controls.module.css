@@ -1,0 +1,588 @@
+/* Shared form toolbar controls — tokens from src/styles/tokens.css */
+
+.selectField {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.control {
+  width: 100%;
+  min-height: var(--form-control-min-height);
+  padding: var(--form-control-padding-y) var(--form-control-padding-x);
+  color: var(--form-control-text-color);
+  font-size: var(--form-control-font-size);
+  font-weight: var(--form-control-font-weight);
+  line-height: var(--form-control-line-height);
+  background: var(--form-control-bg);
+  border: var(--form-control-border-width) solid var(--form-control-border-color);
+  border-radius: var(--form-control-border-radius);
+  outline: none;
+  transition: var(--form-control-transition);
+}
+
+.control::placeholder {
+  color: var(--form-control-placeholder-color);
+  font-size: var(--form-control-placeholder-size);
+  font-weight: var(--form-control-placeholder-weight);
+  opacity: var(--form-control-placeholder-opacity);
+}
+
+.control:focus {
+  border-color: var(--form-control-focus-border-color);
+  box-shadow: var(--form-control-focus-ring);
+}
+
+.selectField .control,
+.selectField select {
+  padding: var(--form-control-padding-y) var(--form-control-padding-right-icon) var(--form-control-padding-y)
+    var(--form-control-padding-x);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.selectField:has(.selectSearch) .control,
+.selectField:has(.selectSearch) select {
+  padding-left: var(--form-control-padding-left-search);
+}
+
+/* Компактный вариант — toolbar фильтров */
+.compact .control,
+.compact.control {
+  min-height: var(--form-toolbar-control-min-height);
+  padding: var(--form-toolbar-control-padding-y) var(--form-toolbar-control-padding-x);
+  font-size: var(--form-toolbar-control-font-size);
+}
+
+.compact.selectField .control,
+.compact.selectField select {
+  padding: var(--form-toolbar-control-padding-y) var(--form-toolbar-control-padding-right-icon)
+    var(--form-toolbar-control-padding-y) var(--form-toolbar-control-padding-x);
+}
+
+.compact.selectField:has(.selectSearch) .control {
+  padding-left: var(--form-toolbar-control-padding-left-search);
+}
+
+.compact .selectSearch,
+.compact .selectChevron {
+  width: 14px;
+  height: 14px;
+}
+
+.compact .selectSearch {
+  left: 10px;
+}
+
+.compact .selectChevron {
+  right: 10px;
+}
+
+.compact select.control option {
+  padding: 8px 12px;
+  color: var(--form-control-text-color);
+  font-size: var(--form-control-font-size);
+  background: var(--form-control-bg);
+}
+
+.selectSearch {
+  position: absolute;
+  left: var(--form-icon-offset-x);
+  top: 50%;
+  z-index: 1;
+  color: var(--form-icon-color);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.selectChevron {
+  position: absolute;
+  right: var(--form-icon-offset-x);
+  top: 50%;
+  z-index: 1;
+  color: var(--form-icon-color);
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: transform 0.15s ease;
+}
+
+.selectChevronOpen {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+/* Custom dropdown (FormSelect) */
+.selectDropdown {
+  position: relative;
+}
+
+.selectDropdown .control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  cursor: pointer;
+}
+
+.selectValue {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectDropdownOpen {
+  z-index: 20;
+}
+
+.selectDropdownOpen .control {
+  border-color: var(--form-control-focus-border-color);
+  box-shadow: var(--form-control-focus-ring);
+}
+
+.selectMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 30;
+  max-height: var(--form-select-menu-max-height);
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  list-style: none;
+  background: var(--form-control-bg);
+  border: var(--form-control-border-width) solid var(--form-control-border-color);
+  border-radius: var(--form-control-border-radius);
+  box-shadow: var(--form-select-menu-shadow);
+}
+
+.selectOption {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  color: var(--form-control-text-color);
+  font-size: var(--form-control-font-size);
+  font-weight: var(--form-control-font-weight);
+  line-height: var(--form-control-line-height);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--form-control-border-radius) - 2px);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.compact .selectOption {
+  padding: 7px 10px;
+  font-size: var(--form-toolbar-control-font-size);
+}
+
+.selectOption:hover {
+  background: var(--color-hover);
+}
+
+.selectOptionActive {
+  color: var(--color-primary-text);
+  font-weight: 600;
+  background: var(--kb-selected-badge-bg);
+}
+
+.selectOptionActive:hover {
+  background: var(--color-primary-tint);
+}
+
+.selectOptionDisabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.selectOptionDisabled:hover {
+  background: transparent;
+}
+
+.selectEmpty {
+  padding: 10px 12px;
+  color: var(--color-muted);
+  font-size: var(--form-control-font-size);
+  line-height: var(--form-control-line-height);
+}
+
+.selectMenuFooter {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.selectOptionFooter {
+  color: var(--color-primary-text);
+  font-weight: 600;
+}
+
+/* Autocomplete combobox */
+.autocompleteField {
+  position: relative;
+}
+
+.autocompleteField .control {
+  cursor: text;
+}
+
+.autocompleteToggle {
+  position: absolute;
+  top: 50%;
+  right: var(--form-icon-offset-x);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.autocompleteToggle .selectChevron {
+  position: static;
+  transform: none;
+  pointer-events: none;
+}
+
+.autocompleteToggle .selectChevronOpen {
+  transform: rotate(180deg);
+}
+
+.compact .autocompleteToggle {
+  right: 10px;
+  width: 20px;
+  height: 20px;
+}
+
+/* Switch — Catalyst-style */
+label.switchField,
+.switchField {
+  display: inline-flex !important;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switchFieldDisabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.switchLabel {
+  flex-shrink: 0;
+  color: var(--form-label-color);
+  font-size: var(--form-toolbar-control-font-size, var(--form-control-font-size));
+  font-weight: var(--form-control-font-weight);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.switch {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  width: 44px;
+  height: 24px;
+  padding: 2px;
+  background: var(--color-border);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.15s ease;
+}
+
+.switch:focus-visible {
+  outline: none;
+  box-shadow: var(--form-control-focus-ring);
+}
+
+.switchChecked {
+  background: var(--color-primary);
+}
+
+.switchThumb {
+  width: 20px;
+  height: 20px;
+  background: var(--color-on-primary);
+  border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.16);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(0);
+}
+
+.switchChecked .switchThumb {
+  transform: translateX(20px);
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+}
+
+/* Source filter toolbar */
+.filterBarStack {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.filterBarPrimary {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.filterBarSecondary {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.65fr) minmax(0, 0.85fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.filterBarSearchWide {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 200px;
+  max-width: none;
+}
+
+.filterBarSwitchLabel {
+  flex-shrink: 0;
+  color: var(--form-label-color);
+  font-size: var(--form-toolbar-control-font-size, var(--form-control-font-size));
+  font-weight: var(--form-control-font-weight);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.filterBarPrimary .switchField {
+  flex-shrink: 0;
+}
+
+.filterBarDepartmentWide {
+  min-width: 0;
+}
+
+.filterBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(0, 1fr)) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.filterBarSearch {
+  min-width: 0;
+}
+
+.selectedBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--form-toolbar-control-min-height);
+  padding: 0 12px;
+  color: var(--color-primary-text);
+  background: var(--kb-selected-badge-bg);
+  border-radius: var(--form-control-border-radius);
+  font-size: var(--form-toolbar-control-font-size);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+@media (max-width: 1200px) {
+  .filterBarPrimary {
+    flex-wrap: wrap;
+  }
+
+  .filterBarSearchWide {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .filterBarSecondary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filterBarDepartmentWide {
+    grid-column: 1 / -1;
+  }
+
+  .filterBarBadge {
+    justify-self: end;
+  }
+
+  .filterBar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filterBarSearch {
+    grid-column: 1 / -1;
+  }
+
+  .filterBarBadge {
+    justify-self: end;
+  }
+}
+
+/* ── FormCheckbox ── */
+.checkboxField,
+.checkboxStandalone {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.checkboxStandalone {
+  position: relative;
+  align-items: center;
+  width: var(--form-checkbox-size);
+  height: var(--form-checkbox-size);
+}
+
+.checkboxFieldDisabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.checkboxInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.checkboxStandalone .checkboxInput {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  clip: auto;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.checkboxStandalone .checkboxInput:disabled {
+  cursor: not-allowed;
+}
+
+.checkboxBox {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: var(--form-checkbox-size);
+  height: var(--form-checkbox-size);
+  background: transparent;
+  border: var(--form-checkbox-border-width) solid var(--form-control-border-color);
+  border-radius: 4px;
+  transition: var(--form-control-transition);
+  pointer-events: none;
+}
+
+.checkboxInput:focus-visible + .checkboxBox {
+  border-color: var(--form-control-focus-border-color);
+  box-shadow: var(--form-control-focus-ring);
+}
+
+.checkboxInput:checked + .checkboxBox {
+  border-color: var(--form-checkbox-check-color);
+}
+
+.checkboxInput:disabled + .checkboxBox {
+  opacity: 0.55;
+}
+
+.checkboxMark {
+  width: 10px;
+  height: 10px;
+  overflow: visible;
+}
+
+.checkboxMark path {
+  fill: none;
+  stroke: var(--form-checkbox-check-color);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 12;
+  stroke-dashoffset: 12;
+}
+
+.checkboxInput:checked + .checkboxBox .checkboxMark path {
+  animation: checkboxCheckDraw 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.checkboxInput:not(:checked) + .checkboxBox .checkboxMark path {
+  animation: checkboxCheckErase 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes checkboxCheckDraw {
+  from {
+    stroke-dashoffset: 12;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes checkboxCheckErase {
+  from {
+    stroke-dashoffset: 0;
+  }
+
+  to {
+    stroke-dashoffset: 12;
+  }
+}
+
+.checkboxLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--form-label-color);
+  font-size: var(--form-label-size);
+  font-weight: var(--form-label-weight);
+  line-height: var(--form-label-line-height);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checkboxInput:checked + .checkboxBox .checkboxMark path,
+  .checkboxInput:not(:checked) + .checkboxBox .checkboxMark path {
+    animation: none;
+  }
+
+  .checkboxInput:checked + .checkboxBox .checkboxMark path {
+    stroke-dashoffset: 0;
+  }
+
+  .checkboxInput:not(:checked) + .checkboxBox .checkboxMark path {
+    stroke-dashoffset: 12;
+    opacity: 0;
+  }
+}

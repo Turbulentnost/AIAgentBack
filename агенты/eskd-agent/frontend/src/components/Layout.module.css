@@ -1,0 +1,35 @@
+.tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-muted);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.tab:hover {
+  background: var(--color-hover);
+  color: var(--color-text-strong);
+}
+
+.tabActive {
+  background: var(--color-accent-soft);
+  border-color: var(--color-primary);
+  color: var(--color-text-strong);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .tabs {
+    order: 3;
+    width: 100%;
+  }
+}

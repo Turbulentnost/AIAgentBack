@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eskd-agent.local/schemas/metadata-sidecar.v1.json",
+  "title": "PDM metadata sidecar",
+  "type": "object",
+  "required": ["document_id", "source_system"],
+  "properties": {
+    "document_id": { "type": "string" },
+    "source_system": { "type": "string", "default": "pdm-file" },
+    "designation": { "type": "string" },
+    "document_type": { "type": "string" },
+    "name": { "type": "string" },
+    "revision": { "type": "string" },
+    "sheet_count": { "type": "integer" },
+    "author": { "type": "string" },
+    "department": { "type": "string" },
+    "product_id": { "type": "string" },
+    "checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "status": { "type": "string" },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["filename"],
+        "properties": {
+          "filename": { "type": "string" },
+          "role": { "type": "string" }
+        }
+      }
+    },
+    "related_documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "document_id": { "type": "string" },
+          "relation": { "type": "string" }
+        }
+      }
+    }
+  }
+}

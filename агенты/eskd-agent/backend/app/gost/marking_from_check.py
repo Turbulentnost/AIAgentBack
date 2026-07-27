@@ -20,6 +20,16 @@ def remark_to_gost_key(remark: dict[str, Any]) -> str | None:
     return None
 
 
+def page_note_from_item(item: dict[str, Any]) -> str:
+    """Замечание к листу: только текст LLM после VLM (Stage 2b)."""
+    return str(item.get("llm_report_text") or "").strip()
+
+
+def problem_report_from_payload(payload: dict[str, Any]) -> str:
+    """Общий отчёт: только summary LLM после VLM (Stage 2b)."""
+    return str(payload.get("llm_summary") or "").strip()
+
+
 def _merge_page_finding(
     bucket: dict[int, dict[str, dict[str, Any]]],
     *,
@@ -72,7 +82,7 @@ def build_page_level_from_check(payload: dict[str, Any]) -> tuple[list[dict[str,
         page = int(item.get("page") or 0)
         if page <= 0:
             continue
-        page_note = str(item.get("report_text") or "").strip()
+        page_note = page_note_from_item(item)
         if page_note:
             page_notes[page] = page_note
 
@@ -149,5 +159,5 @@ def build_page_level_from_check(payload: dict[str, Any]) -> tuple[list[dict[str,
             continue
         page_level.append({"page": page_no, "gost_findings": findings, "note": note})
 
-    problem_report = str(payload.get("report_text") or payload.get("summary") or "").strip()
+    problem_report = problem_report_from_payload(payload)
     return page_level, problem_report
