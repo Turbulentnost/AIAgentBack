@@ -319,6 +319,13 @@ ScheduledMeetingPlanOccurrenceStatus = Literal[
     "unresolved",
 ]
 ScheduledMeetingPlanOverrideAction = Literal["keep", "shift", "skip"]
+ScheduledMeetingPlanOptionKind = Literal[
+    "shift_ours",
+    "reschedule_blockers",
+    "keep_conflict",
+    "skip",
+]
+ScheduledMeetingPlanDifficulty = Literal["easy", "medium", "hard"]
 
 
 class ScheduledMeetingPlanPreviewRequest(BaseModel):
@@ -331,6 +338,22 @@ class ScheduledMeetingPlanConflictRead(BaseModel):
     event_end: str | None = None
     event_subject: str | None = None
     busy_type: str | None = None
+    movability: Literal["high", "medium", "low"] | None = None
+    source: Literal["freebusy", "interval", "calendar", "company_calendar"] | None = None
+    reschedule_hint_start: str | None = None
+    reschedule_hint_end: str | None = None
+
+
+class ScheduledMeetingPlanOptionRead(BaseModel):
+    kind: ScheduledMeetingPlanOptionKind
+    available: bool = False
+    cost: float | None = None
+    difficulty: ScheduledMeetingPlanDifficulty | None = None
+    recommended: bool = False
+    suggested_start: str | None = None
+    suggested_end: str | None = None
+    blockers: list[ScheduledMeetingPlanConflictRead] = Field(default_factory=list)
+    reason: str | None = None
 
 
 class ScheduledMeetingPlanOccurrencePreview(BaseModel):
@@ -342,6 +365,8 @@ class ScheduledMeetingPlanOccurrencePreview(BaseModel):
     conflicts: list[ScheduledMeetingPlanConflictRead] = Field(default_factory=list)
     suggested_start: str | None = None
     suggested_end: str | None = None
+    options: list[ScheduledMeetingPlanOptionRead] = Field(default_factory=list)
+    recommended_option: ScheduledMeetingPlanOptionKind | None = None
 
 
 class ScheduledMeetingPlanPreviewRead(BaseModel):

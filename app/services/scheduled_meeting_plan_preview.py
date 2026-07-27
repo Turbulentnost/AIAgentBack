@@ -9,26 +9,34 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.enums import ScheduledMeetingStatus
+from app.models.enums import ScheduledMeetingStatus, ScheduledMeetingWeekday
 from app.models.scheduled_meeting import ScheduledMeeting
 from app.schemas.scheduled_meeting import (
     ScheduledMeetingPlanConflictRead,
     ScheduledMeetingPlanOccurrencePreview,
     ScheduledMeetingPlanPreviewRead,
 )
-from app.services.meeting_constants import SLOT_PREVIEW_TIMEOUT_SECONDS
+from app.services.meeting_constants import (
+    RESCHEDULE_HINT_SEARCH_DAYS,
+    SLOT_PREVIEW_TIMEOUT_SECONDS,
+)
 from app.services.scheduled_meeting_occurrences import build_occurrences_from_rule
 from app.services.scheduled_meeting_outlook import (
     ScheduledMeetingOutlookError,
     resolve_attendee_emails,
 )
+from app.services.scheduled_meeting_plan_costs import build_conflict_options
 from app.tools.Outlook.send_meeting_invite import load_config
 from app.tools.Outlook.slot_search.availability import (
     is_free_for_all,
     partition_attendees_at_slot,
 )
-from app.tools.Outlook.slot_search.busy import fetch_busy_intervals_freebusy
-from app.tools.Outlook.slot_search.conflicts import conflicting_intervals_at_slot
+from app.tools.Outlook.slot_search.busy import busy_intervals_and_events_from_freebusy
+from app.tools.Outlook.slot_search.conflicts import (
+    attach_reschedule_hints,
+    conflicting_events_at_slot,
+    conflicting_intervals_at_slot,
+)
 from app.tools.Outlook.slot_search.constants import WORK_END
 from app.tools.Outlook.slot_search.search import find_quorum_slots
 
@@ -83,31 +91,72 @@ def _parse_slot_datetime(value: str | datetime, *, timezone_name: str) -> dateti
     return parse_start(value, timezone_name)
 
 
+def _normalize_conflict_iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    text = str(value).strip()
+    return text or None
+
+
 def _build_conflict_reads(
     *,
-    attendees: list[str],
     busy_attendees: list[str],
     slot_start: datetime,
     duration: timedelta,
     busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    events_by_attendee: dict[str, list[Any]],
     config: Any,
 ) -> list[ScheduledMeetingPlanConflictRead]:
-    del attendees
     records: list[ScheduledMeetingPlanConflictRead] = []
+    reserved_slot = (slot_start, slot_start + duration)
+    search_end = slot_start + timedelta(days=RESCHEDULE_HINT_SEARCH_DAYS)
+
     for email in busy_attendees:
-        for item in conflicting_intervals_at_slot(
-            busy_by_attendee.get(email, []),
-            slot_start,
-            duration,
-            config,
-        ):
+        events = events_by_attendee.get(email) or []
+        raw_records: list[dict[str, Any]] = []
+        if events:
+            for item in conflicting_events_at_slot(events, slot_start, duration, config):
+                raw_records.append({**item, "source": "freebusy"})
+        if not raw_records:
+            for item in conflicting_intervals_at_slot(
+                busy_by_attendee.get(email, []),
+                slot_start,
+                duration,
+                config,
+            ):
+                raw_records.append({**item, "source": "interval"})
+
+        if not raw_records:
+            continue
+
+        hinted = attach_reschedule_hints(
+            raw_records,
+            owner_email=email,
+            busy_intervals=busy_by_attendee.get(email, []),
+            config=config,
+            step=timedelta(minutes=15),
+            search_end=search_end,
+            reserved_slot=reserved_slot,
+            light_hints=True,
+        )
+        for item in hinted:
             records.append(
                 ScheduledMeetingPlanConflictRead(
                     attendee_email=email,
-                    event_start=item.get("event_start"),
-                    event_end=item.get("event_end"),
+                    event_start=_normalize_conflict_iso(item.get("event_start")),
+                    event_end=_normalize_conflict_iso(item.get("event_end")),
                     event_subject=item.get("event_subject"),
                     busy_type=item.get("busy_type"),
+                    movability=item.get("movability"),
+                    source=item.get("source") or "interval",
+                    reschedule_hint_start=_normalize_conflict_iso(
+                        item.get("reschedule_hint_start")
+                    ),
+                    reschedule_hint_end=_normalize_conflict_iso(
+                        item.get("reschedule_hint_end")
+                    ),
                 )
             )
     return records
@@ -121,7 +170,13 @@ def _freebusy_window(
     starts = [item.slot_start for item in occurrences]
     window_start = min(starts) - timedelta(hours=1)
     last_week_end = week_latest_allowed(max(starts).date(), timezone_name=timezone_name)
-    window_end = max(last_week_end, max(item.slot_end for item in occurrences)) + timedelta(hours=1)
+    # Path B hints may look up to RESCHEDULE_HINT_SEARCH_DAYS past last occurrence.
+    hint_end = max(starts) + timedelta(days=RESCHEDULE_HINT_SEARCH_DAYS)
+    window_end = max(
+        last_week_end,
+        max(item.slot_end for item in occurrences),
+        hint_end,
+    ) + timedelta(hours=1)
     return window_start, window_end
 
 
@@ -199,8 +254,11 @@ def evaluate_occurrence_preview(
     conflict_policy: ConflictPolicy,
     attendees: list[str],
     busy_by_attendee: dict[str, list[tuple[datetime, datetime]]],
+    events_by_attendee: dict[str, list[Any]] | None = None,
     config: Any,
+    anchor_weekday: ScheduledMeetingWeekday | None = None,
 ) -> ScheduledMeetingPlanOccurrencePreview:
+    events_by_attendee = events_by_attendee or {}
     duration = occurrence.slot_end - occurrence.slot_start
     free, busy = partition_attendees_at_slot(
         occurrence.slot_start,
@@ -210,14 +268,7 @@ def evaluate_occurrence_preview(
         config=config,
     )
     del free
-    conflicts = _build_conflict_reads(
-        attendees=attendees,
-        busy_attendees=busy,
-        slot_start=occurrence.slot_start,
-        duration=duration,
-        busy_by_attendee=busy_by_attendee,
-        config=config,
-    )
+
     if is_free_for_all(occurrence.slot_start, duration, busy_by_attendee, config):
         return ScheduledMeetingPlanOccurrencePreview(
             occurrence_date=occurrence.occurrence_date,
@@ -228,61 +279,64 @@ def evaluate_occurrence_preview(
             conflicts=[],
             suggested_start=None,
             suggested_end=None,
+            options=[],
+            recommended_option=None,
         )
 
-    if conflict_policy == "strict":
-        return ScheduledMeetingPlanOccurrencePreview(
-            occurrence_date=occurrence.occurrence_date,
-            planned_start=_format_slot_label(occurrence.slot_start),
-            planned_end=_format_slot_label(occurrence.slot_end),
-            status="conflict",
-            busy_attendees=busy,
-            conflicts=conflicts,
-            suggested_start=None,
-            suggested_end=None,
-        )
-
-    if conflict_policy == "skip":
-        return ScheduledMeetingPlanOccurrencePreview(
-            occurrence_date=occurrence.occurrence_date,
-            planned_start=_format_slot_label(occurrence.slot_start),
-            planned_end=_format_slot_label(occurrence.slot_end),
-            status="skip",
-            busy_attendees=busy,
-            conflicts=conflicts,
-            suggested_start=None,
-            suggested_end=None,
-        )
-
-    suggested = _find_soft_week_slot(
-        config=config,
-        attendees=attendees,
-        planned_start=occurrence.slot_start,
+    conflicts = _build_conflict_reads(
+        busy_attendees=busy,
+        slot_start=occurrence.slot_start,
         duration=duration,
         busy_by_attendee=busy_by_attendee,
+        events_by_attendee=events_by_attendee,
+        config=config,
     )
-    if suggested is None:
-        return ScheduledMeetingPlanOccurrencePreview(
-            occurrence_date=occurrence.occurrence_date,
-            planned_start=_format_slot_label(occurrence.slot_start),
-            planned_end=_format_slot_label(occurrence.slot_end),
-            status="unresolved",
-            busy_attendees=busy,
-            conflicts=conflicts,
-            suggested_start=None,
-            suggested_end=None,
+
+    suggested_slot: tuple[datetime, datetime] | None = None
+    if conflict_policy == "soft_week":
+        suggested_slot = _find_soft_week_slot(
+            config=config,
+            attendees=attendees,
+            planned_start=occurrence.slot_start,
+            duration=duration,
+            busy_by_attendee=busy_by_attendee,
         )
 
-    suggested_start, suggested_end = suggested
+    options, recommended = build_conflict_options(
+        policy=conflict_policy,
+        planned_start=occurrence.slot_start,
+        suggested_slot=suggested_slot,
+        conflicts=conflicts,
+        anchor_weekday=anchor_weekday,
+        format_slot=_format_slot_label,
+    )
+
+    suggested_start = None
+    suggested_end = None
+    if suggested_slot is not None:
+        suggested_start = _format_slot_label(suggested_slot[0])
+        suggested_end = _format_slot_label(suggested_slot[1])
+
+    if conflict_policy == "strict":
+        status: OccurrencePreviewStatus = "conflict"
+    elif conflict_policy == "skip":
+        status = "skip"
+    elif suggested_slot is not None:
+        status = "shifted"
+    else:
+        status = "unresolved"
+
     return ScheduledMeetingPlanOccurrencePreview(
         occurrence_date=occurrence.occurrence_date,
         planned_start=_format_slot_label(occurrence.slot_start),
         planned_end=_format_slot_label(occurrence.slot_end),
-        status="shifted",
+        status=status,
         busy_attendees=busy,
         conflicts=conflicts,
-        suggested_start=_format_slot_label(suggested_start),
-        suggested_end=_format_slot_label(suggested_end),
+        suggested_start=suggested_start,
+        suggested_end=suggested_end,
+        options=options,
+        recommended_option=recommended,
     )
 
 
@@ -321,9 +375,9 @@ async def build_plan_preview(
     window_start, window_end = _freebusy_window(occurrences, timezone_name=timezone_name)
 
     if attendee_emails:
-        busy_by_attendee = await asyncio.wait_for(
+        busy_by_attendee, events_by_attendee = await asyncio.wait_for(
             asyncio.to_thread(
-                fetch_busy_intervals_freebusy,
+                busy_intervals_and_events_from_freebusy,
                 config,
                 attendee_emails,
                 window_start,
@@ -335,8 +389,13 @@ async def build_plan_preview(
             email.strip().lower(): intervals
             for email, intervals in busy_by_attendee.items()
         }
+        events_by_attendee = {
+            email.strip().lower(): events
+            for email, events in events_by_attendee.items()
+        }
     else:
         busy_by_attendee = {}
+        events_by_attendee = {}
 
     preview_items: list[ScheduledMeetingPlanOccurrencePreview] = []
     for occurrence in occurrences:
@@ -346,7 +405,9 @@ async def build_plan_preview(
                 conflict_policy=conflict_policy,
                 attendees=attendee_emails,
                 busy_by_attendee=busy_by_attendee,
+                events_by_attendee=events_by_attendee,
                 config=config,
+                anchor_weekday=getattr(meeting, "weekday", None),
             )
         )
 
