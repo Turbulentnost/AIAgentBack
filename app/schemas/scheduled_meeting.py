@@ -339,7 +339,7 @@ class ScheduledMeetingPlanConflictRead(BaseModel):
     event_subject: str | None = None
     busy_type: str | None = None
     movability: Literal["high", "medium", "low"] | None = None
-    source: Literal["freebusy", "interval", "calendar", "company_calendar"] | None = None
+    source: Literal["freebusy", "interval", "calendar", "company_calendar", "rule"] | None = None
     reschedule_hint_start: str | None = None
     reschedule_hint_end: str | None = None
 

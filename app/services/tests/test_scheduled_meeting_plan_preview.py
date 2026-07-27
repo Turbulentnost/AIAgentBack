@@ -123,6 +123,37 @@ def test_evaluate_ok_when_free() -> None:
     assert result.recommended_option is None
 
 
+@patch("app.services.scheduled_meeting_plan_preview.find_quorum_slots")
+def test_evaluate_lunch_break_is_rule_conflict(mock_find_quorum) -> None:
+    """Слот 12:00–12:20 пересекает обед 12:00–13:00 даже при свободных календарях."""
+    occurrence = _occurrence(date(2026, 7, 30), hour=12, duration_minutes=20)
+    mock_find_quorum.return_value = {
+        "candidates": [
+            {
+                "slot_start": "2026-07-30T11:00:00+03:00",
+                "slot_end": "2026-07-30T11:20:00+03:00",
+                "coverage": {"ratio": 1.0, "required_ok": True},
+                "busy_attendees": [],
+            }
+        ]
+    }
+    result = evaluate_occurrence_preview(
+        occurrence=occurrence,
+        conflict_policy="soft_week",
+        attendees=["a@turbo-don.ru"],
+        busy_by_attendee={"a@turbo-don.ru": []},
+        config=_config(),
+        anchor_weekday=ScheduledMeetingWeekday.THURSDAY,
+    )
+    assert result.status == "shifted"
+    assert any(
+        item.source == "rule" and "Обеденный перерыв" in (item.event_subject or "")
+        for item in result.conflicts
+    )
+    assert result.suggested_start == "2026-07-30 11:00"
+    assert result.recommended_option == "shift_ours"
+
+
 def test_evaluate_strict_keeps_conflict() -> None:
     occurrence = _occurrence(date(2026, 7, 15))
     result = evaluate_occurrence_preview(

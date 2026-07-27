@@ -26,6 +26,7 @@ from app.services.scheduled_meeting_outlook import (
     resolve_attendee_emails,
 )
 from app.services.scheduled_meeting_plan_costs import build_conflict_options
+from app.tools.Outlook.cancel_meeting import to_local
 from app.tools.Outlook.send_meeting_invite import load_config
 from app.tools.Outlook.slot_search.availability import (
     is_free_for_all,
@@ -37,7 +38,13 @@ from app.tools.Outlook.slot_search.conflicts import (
     conflicting_events_at_slot,
     conflicting_intervals_at_slot,
 )
-from app.tools.Outlook.slot_search.constants import WORK_END
+from app.tools.Outlook.slot_search.constants import FORBIDDEN_BLOCKS, WORK_END, WORK_START
+from app.tools.Outlook.slot_search.rules import (
+    combine,
+    intervals_overlap,
+    is_workday,
+    slot_respects_rules,
+)
 from app.tools.Outlook.slot_search.search import find_quorum_slots
 
 logger = logging.getLogger(__name__)
@@ -98,6 +105,53 @@ def _normalize_conflict_iso(value: Any) -> str | None:
         return value.isoformat()
     text = str(value).strip()
     return text or None
+
+
+def _build_rule_conflict_reads(
+    *,
+    slot_start: datetime,
+    duration: timedelta,
+    config: Any,
+) -> list[ScheduledMeetingPlanConflictRead]:
+    """Конфликты с правилами УД (рабочие часы, обед 12:00–13:00), не FreeBusy."""
+    if slot_respects_rules(slot_start, duration, config):
+        return []
+
+    start = to_local(slot_start, config)
+    end = start + duration
+    subjects: list[str] = []
+
+    if not is_workday(start, config):
+        subjects.append("Нерабочий день")
+    if start.date() != end.date():
+        subjects.append("Слот пересекает сутки")
+    if start.time() < WORK_START or end.time() > WORK_END:
+        subjects.append(
+            f"Вне рабочих часов {WORK_START.strftime('%H:%M')}–{WORK_END.strftime('%H:%M')}"
+        )
+    for block_start_t, block_end_t in FORBIDDEN_BLOCKS:
+        block_start = combine(start, block_start_t, config)
+        block_end = combine(start, block_end_t, config)
+        if intervals_overlap(start, end, block_start, block_end):
+            subjects.append(
+                f"Обеденный перерыв {block_start_t.strftime('%H:%M')}–{block_end_t.strftime('%H:%M')}"
+            )
+
+    if not subjects:
+        subjects.append("Слот не соответствует правилам УД")
+
+    return [
+        ScheduledMeetingPlanConflictRead(
+            attendee_email="правила УД",
+            event_start=_normalize_conflict_iso(start),
+            event_end=_normalize_conflict_iso(end),
+            event_subject=subject,
+            busy_type="Busy",
+            movability="low",
+            source="rule",
+        )
+        for subject in subjects
+    ]
 
 
 def _build_conflict_reads(
@@ -260,6 +314,11 @@ def evaluate_occurrence_preview(
 ) -> ScheduledMeetingPlanOccurrencePreview:
     events_by_attendee = events_by_attendee or {}
     duration = occurrence.slot_end - occurrence.slot_start
+    rule_conflicts = _build_rule_conflict_reads(
+        slot_start=occurrence.slot_start,
+        duration=duration,
+        config=config,
+    )
     free, busy = partition_attendees_at_slot(
         occurrence.slot_start,
         duration,
@@ -269,7 +328,10 @@ def evaluate_occurrence_preview(
     )
     del free
 
-    if is_free_for_all(occurrence.slot_start, duration, busy_by_attendee, config):
+    calendars_free = is_free_for_all(
+        occurrence.slot_start, duration, busy_by_attendee, config
+    )
+    if not rule_conflicts and calendars_free:
         return ScheduledMeetingPlanOccurrencePreview(
             occurrence_date=occurrence.occurrence_date,
             planned_start=_format_slot_label(occurrence.slot_start),
@@ -283,14 +345,17 @@ def evaluate_occurrence_preview(
             recommended_option=None,
         )
 
-    conflicts = _build_conflict_reads(
-        busy_attendees=busy,
-        slot_start=occurrence.slot_start,
-        duration=duration,
-        busy_by_attendee=busy_by_attendee,
-        events_by_attendee=events_by_attendee,
-        config=config,
-    )
+    conflicts = [
+        *rule_conflicts,
+        *_build_conflict_reads(
+            busy_attendees=busy,
+            slot_start=occurrence.slot_start,
+            duration=duration,
+            busy_by_attendee=busy_by_attendee,
+            events_by_attendee=events_by_attendee,
+            config=config,
+        ),
+    ]
 
     suggested_slot: tuple[datetime, datetime] | None = None
     if conflict_policy == "soft_week":
