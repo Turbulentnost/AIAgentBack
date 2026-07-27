@@ -390,17 +390,23 @@ def _header_has_document_date(header: dict[str, Any]) -> bool:
     return bool(_clean_text(header.get("Date")))
 
 
+def _header_has_memo_text(header: dict[str, Any]) -> bool:
+    return bool(extract_memo_text(header))
+
+
 def _header_with_people_keys(
     row: dict[str, Any],
     *,
     session: requests.Session | None = None,
     config: ODataConfig | None = None,
 ) -> dict[str, Any]:
+    """Дозагружает шапку документа, если нет людей/даты/текста СЗ."""
     if not session or not config:
         return row
     needs_people = not _header_has_people_keys(row)
     needs_date = not _header_has_document_date(row)
-    if not needs_people and not needs_date:
+    needs_memo_text = not _header_has_memo_text(row)
+    if not needs_people and not needs_date and not needs_memo_text:
         return row
     ref_key = row.get("Ref_Key")
     if not ref_key:

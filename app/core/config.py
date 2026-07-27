@@ -203,6 +203,16 @@ class Settings(BaseSettings):
     TURBO_PROJECT_EMAIL: str = ""
     TURBO_PROJECT_PASSWORD: str = ""
     TURBO_PROJECT_TIMEOUT: int = 60
+    TURBO_PROJECT_SERIES_SYNC_ENABLED: bool = True
+    # Нижний порог file_id (включительно). Старые проекты не трогаем. 0 = без порога.
+    TURBO_PROJECT_SERIES_MIN_FILE_ID: int = 433
+    # Доп. фильтр по uploaded_at за N дней (0 = выкл; uploaded_at в TP часто = дата обновления).
+    TURBO_PROJECT_SERIES_UPLOADED_WITHIN_DAYS: int = 0
+    TURBO_PROJECT_SERIES_SYNC_HOUR: int = 7
+    TURBO_PROJECT_SERIES_SYNC_MINUTE: int = 30
+    # Опрос TurboProject при открытии вкладки «график» (GET /meetings/scheduled).
+    TURBO_PROJECT_SERIES_SYNC_ON_SCHEDULE_LIST: bool = True
+    TURBO_PROJECT_SERIES_SYNC_COOLDOWN_SECONDS: int = 300
 
     @property
     def cors_origins(self) -> list[str]:

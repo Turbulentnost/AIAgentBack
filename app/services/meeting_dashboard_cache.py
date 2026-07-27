@@ -153,11 +153,21 @@ class MeetingDashboardCacheService:
 
     async def _fetch_and_store(self, day: date) -> tuple[dict[str, Any], datetime]:
         from app.agents.meeting_agent.dashboard import get_meeting_dashboard
+        from app.services.meeting_memo_cache import warm_memo_details_from_dashboard
 
         fetched_at = datetime.now(timezone.utc)
         payload = await asyncio.to_thread(get_meeting_dashboard, target_date=day)
         if settings.MEETING_DASHBOARD_CACHE_ENABLED:
             await self._write_cache(day, payload, fetched_at=fetched_at)
+            try:
+                # Текст СЗ дотягивается в get_meeting_dashboard и кладётся в per-memo кэш.
+                await warm_memo_details_from_dashboard(payload)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "meeting_memo_text_warm_failed",
+                    date=day.isoformat(),
+                    error=str(exc),
+                )
         return payload, fetched_at
 
     async def _read_cache(self, day: date) -> dict[str, Any] | None:

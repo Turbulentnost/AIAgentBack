@@ -112,6 +112,43 @@ def warm_meeting_dashboard_cache() -> dict[str, Any]:
     return _run_async_task(_warm)
 
 
+@celery_app.task(name="sync_turbo_project_meeting_series")
+def sync_turbo_project_meeting_series() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.turbo_project_series_sync_service import (
+        TurboProjectSeriesSyncError,
+        TurboProjectSeriesSyncService,
+    )
+
+    if not settings.TURBO_PROJECT_SERIES_SYNC_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "turbo_project_series_sync_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _sync() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await TurboProjectSeriesSyncService(db).discover_and_notify()
+                await db.commit()
+                return {
+                    **result.as_dict(),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except TurboProjectSeriesSyncError as exc:
+                await db.rollback()
+                return {
+                    "skipped": True,
+                    "reason": "sync_error",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_sync)
+
+
 @celery_app.task(name="create_registry_protocol_draft", bind=True, max_retries=2)
 def create_registry_protocol_draft(self, entry_id: str) -> dict[str, Any]:
     import uuid as uuid_module

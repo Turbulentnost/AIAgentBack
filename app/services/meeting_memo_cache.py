@@ -543,14 +543,49 @@ def refresh_cached_detail_assessment(
     return updated
 
 
+async def _persist_memo_detail_cache(ref_key: str, detail: dict[str, Any]) -> None:
+    """Сохраняет detail (с текстом СЗ) в Redis, не затирая fetched_at при обновлении."""
+    if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+        return
+    service = MeetingMemoCacheService()
+    normalized = ref_key.strip().lower()
+    cached = await service._read_cache(normalized)
+    if cached is not None:
+        base = dict(cached["payload"])
+        app = dict(base.get("application") or {})
+        queue = dict(base.get("queue") or {})
+        src_app = detail.get("application") or {}
+        src_queue = detail.get("queue") or {}
+        if src_app.get("memo_text"):
+            app["memo_text"] = src_app.get("memo_text")
+        if src_queue.get("ТекстСлужебнойЗаписки"):
+            queue["ТекстСлужебнойЗаписки"] = src_queue.get("ТекстСлужебнойЗаписки")
+        if src_app.get("memo_text_unavailable"):
+            app["memo_text_unavailable"] = True
+        if src_queue.get("memo_text_unavailable"):
+            queue["memo_text_unavailable"] = True
+        base["application"] = app
+        base["queue"] = queue
+        await service._write_cache(normalized, base, fetched_at=cached["fetched_at"])
+        return
+    await service._write_cache(
+        normalized,
+        detail,
+        fetched_at=datetime.now(timezone.utc),
+    )
+
+
 async def ensure_memo_text_in_detail(
     detail: dict[str, Any],
     *,
     ref_key: str | None = None,
 ) -> dict[str, Any]:
-    """Подгружает ТекстСлужебнойЗаписки из 1С, если в кэше его нет."""
+    """Подгружает ТекстСлужебнойЗаписки из 1С, если в кэше его нет, и сохраняет обратно."""
     app = dict(detail.get("application") or {})
     queue = dict(detail.get("queue") or {})
+    if app.get("memo_text_unavailable") or queue.get("memo_text_unavailable"):
+        return detail
+
     memo_text = extract_memo_text(queue=queue, application=app)
     if memo_text:
         app["memo_text"] = memo_text
@@ -578,16 +613,29 @@ async def ensure_memo_text_in_detail(
         )
     except Exception as exc:
         logger.warning("meeting_memo_text_fetch_failed: %s", exc)
+        app["memo_text_unavailable"] = True
+        queue["memo_text_unavailable"] = True
+        detail["application"] = app
+        detail["queue"] = queue
+        await _persist_memo_detail_cache(normalized_ref, detail)
         return detail
 
     memo_text = extract_memo_text(header)
     if not memo_text:
+        app["memo_text_unavailable"] = True
+        queue["memo_text_unavailable"] = True
+        detail["application"] = app
+        detail["queue"] = queue
+        await _persist_memo_detail_cache(normalized_ref, detail)
         return detail
 
     app["memo_text"] = memo_text
     queue["ТекстСлужебнойЗаписки"] = memo_text
+    app.pop("memo_text_unavailable", None)
+    queue.pop("memo_text_unavailable", None)
     detail["application"] = app
     detail["queue"] = queue
+    await _persist_memo_detail_cache(normalized_ref, detail)
     return detail
 
 
@@ -889,5 +937,48 @@ class MeetingMemoCacheService:
 
 
 async def warm_memo_details_from_dashboard(payload: dict[str, Any]) -> None:
-    """Устарело: детали и проверка СТО загружаются при первом открытии карточки."""
-    del payload
+    """Прогревает per-memo кэш текстом СЗ из dashboard (после refresh/warmup)."""
+    if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+        return
+
+    service = MeetingMemoCacheService()
+    fetched_at = datetime.now(timezone.utc)
+    warmed = 0
+    for item in _dashboard_items(payload):
+        if not isinstance(item, dict):
+            continue
+        ref_key = (item.get("ref_key") or "").strip().lower()
+        if not ref_key:
+            continue
+        memo_text = extract_memo_text(item)
+        if not memo_text:
+            continue
+
+        cached = await service._read_cache(ref_key)
+        if cached is not None:
+            existing = cached["payload"]
+            if extract_memo_text(
+                queue=existing.get("queue") if isinstance(existing.get("queue"), dict) else None,
+                application=(
+                    existing.get("application")
+                    if isinstance(existing.get("application"), dict)
+                    else None
+                ),
+            ):
+                continue
+            app = dict(existing.get("application") or {})
+            queue = dict(existing.get("queue") or {})
+            app["memo_text"] = memo_text
+            queue["ТекстСлужебнойЗаписки"] = memo_text
+            app.pop("memo_text_unavailable", None)
+            queue.pop("memo_text_unavailable", None)
+            existing["application"] = app
+            existing["queue"] = queue
+            await service._write_cache(ref_key, existing, fetched_at=cached["fetched_at"])
+        else:
+            detail = build_detail_from_dashboard_item(item)
+            await service._write_cache(ref_key, detail, fetched_at=fetched_at)
+        warmed += 1
+
+    if warmed:
+        logger.info("meeting_memo_text_cache_warmed", count=warmed)

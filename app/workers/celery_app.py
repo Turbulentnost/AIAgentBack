@@ -54,6 +54,15 @@ if settings.MEETING_PROTOCOL_DRAFT_ENABLED and settings.MEETING_PROTOCOL_DISPATC
         ),
         "options": {"queue": "default"},
     }
+if settings.TURBO_PROJECT_SERIES_SYNC_ENABLED:
+    _beat_schedule["sync-turbo-project-meeting-series"] = {
+        "task": "sync_turbo_project_meeting_series",
+        "schedule": crontab(
+            hour=settings.TURBO_PROJECT_SERIES_SYNC_HOUR,
+            minute=settings.TURBO_PROJECT_SERIES_SYNC_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -74,6 +83,7 @@ celery_app.conf.update(
         "sync_scheduled_meeting_registry_cards": {"queue": "default"},
         "create_registry_protocol_draft": {"queue": "default"},
         "dispatch_meeting_protocol_drafts": {"queue": "default"},
+        "sync_turbo_project_meeting_series": {"queue": "default"},
         "process_document": {"queue": "documents"},
         "run_agent": {"queue": "agents"},
         "index_document": {"queue": "indexing"},

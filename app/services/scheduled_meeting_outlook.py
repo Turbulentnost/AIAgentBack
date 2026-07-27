@@ -507,7 +507,7 @@ async def _resolve_participant_invitable_email(
         if user is not None:
             from app.services.scheduled_meeting_person import _invitable_email_for_user
 
-            invitable = await _invitable_email_for_user(user)
+            invitable = await _invitable_email_for_user(user, db=db)
             if invitable:
                 resolved_fio = fio or (user.full_name or "").strip() or invitable
                 return resolved_fio, invitable

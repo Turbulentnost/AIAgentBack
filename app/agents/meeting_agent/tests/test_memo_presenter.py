@@ -91,6 +91,7 @@ def test_header_with_people_keys_fetches_full_header_when_date_missing() -> None
         "Ref_Key": "37da8ed8-6b19-11f1-9825-6cb31113810e",
         "Ответственный_Key": "11111111-1111-1111-1111-111111111111",
         "РуководительСовещания_Key": "22222222-2222-2222-2222-222222222222",
+        "ТекстСлужебнойЗаписки": "уже есть текст",
     }
     full_header = {
         "Ref_Key": row["Ref_Key"],
@@ -108,6 +109,30 @@ def test_header_with_people_keys_fetches_full_header_when_date_missing() -> None
 
     fetch_header.assert_called_once()
     assert merged["Date"] == "2026-07-08T09:49:00"
+
+
+def test_header_with_people_keys_fetches_when_memo_text_missing() -> None:
+    row = {
+        "Ref_Key": "37da8ed8-6b19-11f1-9825-6cb31113810e",
+        "Date": "2026-07-08T09:49:00",
+        "Ответственный_Key": "11111111-1111-1111-1111-111111111111",
+        "РуководительСовещания_Key": "22222222-2222-2222-2222-222222222222",
+    }
+    full_header = {
+        "Ref_Key": row["Ref_Key"],
+        "ТекстСлужебнойЗаписки": "прошу назначить совещание",
+    }
+
+    with patch(
+        "app.agents.meeting_agent.memo_presenter.fetch_document_header",
+        return_value=full_header,
+    ) as fetch_header:
+        from app.agents.meeting_agent.memo_presenter import _header_with_people_keys
+
+        merged = _header_with_people_keys(row, session=object(), config=object())
+
+    fetch_header.assert_called_once()
+    assert merged["ТекстСлужебнойЗаписки"] == "прошу назначить совещание"
 
 
 def test_normalize_dashboard_item_formats_document_date() -> None:

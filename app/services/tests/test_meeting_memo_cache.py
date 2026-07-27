@@ -226,12 +226,18 @@ async def test_ensure_memo_text_in_detail_fetches_from_onec() -> None:
             "ТемаСовещания": "тест периодичности",
         }
     )
-    with patch(
-        "app.services.meeting_memo_cache.fetch_document_header",
-        return_value={
-            "Ref_Key": "ffc53a2a-866d-11f1-984a-6cb31113810e",
-            "ТекстСлужебнойЗаписки": "прошу распланировать ежедневные совещания на всю неделю",
-        },
+    with (
+        patch(
+            "app.services.meeting_memo_cache.fetch_document_header",
+            return_value={
+                "Ref_Key": "ffc53a2a-866d-11f1-984a-6cb31113810e",
+                "ТекстСлужебнойЗаписки": "прошу распланировать ежедневные совещания на всю неделю",
+            },
+        ),
+        patch(
+            "app.services.meeting_memo_cache._persist_memo_detail_cache",
+            AsyncMock(),
+        ) as persist,
     ):
         updated = await ensure_memo_text_in_detail(
             detail,
@@ -241,6 +247,40 @@ async def test_ensure_memo_text_in_detail_fetches_from_onec() -> None:
         updated["application"]["memo_text"]
         == "прошу распланировать ежедневные совещания на всю неделю"
     )
+    persist.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_memo_text_marks_unavailable_on_access_denied() -> None:
+    detail = build_detail_from_dashboard_item(
+        {
+            "ref_key": "ffc53a2a-866d-11f1-984a-6cb31113810e",
+            "title": "тест",
+        }
+    )
+    with (
+        patch(
+            "app.services.meeting_memo_cache.fetch_document_header",
+            side_effect=RuntimeError("HTTP 500: Нарушение прав доступа!"),
+        ) as fetch_header,
+        patch(
+            "app.services.meeting_memo_cache._persist_memo_detail_cache",
+            AsyncMock(),
+        ) as persist,
+    ):
+        updated = await ensure_memo_text_in_detail(
+            detail,
+            ref_key="ffc53a2a-866d-11f1-984a-6cb31113810e",
+        )
+        again = await ensure_memo_text_in_detail(
+            updated,
+            ref_key="ffc53a2a-866d-11f1-984a-6cb31113810e",
+        )
+
+    assert updated["application"]["memo_text_unavailable"] is True
+    assert again["application"]["memo_text_unavailable"] is True
+    fetch_header.assert_called_once()
+    persist.assert_awaited_once()
 
 
 def test_detail_is_agent_ready_rejects_dashboard_fallback() -> None:

@@ -224,8 +224,17 @@ async def list_scheduled_meetings(
     db: DbSession,
     current_user: CurrentUser,
 ) -> list[ScheduledMeetingRead]:
-    """Список серий совещаний из графика."""
+    """Список серий совещаний из графика.
+
+    При открытии вкладки дополнительно опрашивает TurboProject (с cooldown)
+    и создаёт in-app уведомления о новых проектах (без Outlook и без автосоздания серии).
+    """
     await _require_agent_access(db, current_user)
+    from app.services.turbo_project_series_sync_trigger import (
+        maybe_sync_turbo_projects_on_schedule_open,
+    )
+
+    await maybe_sync_turbo_projects_on_schedule_open(db)
     service = ScheduledMeetingService(db)
     await service.archive_expired_series()
     await db.commit()

@@ -36,12 +36,14 @@ def normalize_person_name(value: Any) -> str | None:
         return None
     if isinstance(value, str):
         normalized = value.strip()
-        return normalized or None
+        if not normalized or normalized.casefold() in {"none", "null", "nil", "-"}:
+            return None
+        return normalized
     if isinstance(value, dict):
         for key in ("Description", "description", "name", "Name", "fio", "FIO"):
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
+                return normalize_person_name(candidate)
     if isinstance(value, list):
         parts = [normalize_person_name(item) for item in value]
         cleaned = [part for part in parts if part]
@@ -64,11 +66,29 @@ def extract_working_group_members(project: dict[str, Any]) -> list[dict[str, str
         seen.add(key)
         members.append({"fio": normalized, "role": role, "source": source})
 
+    def has_role(role_label: str) -> bool:
+        return any(member.get("role") == role_label for member in members)
+
     data_1c = project.get("data_1c") if isinstance(project.get("data_1c"), dict) else {}
     for field, role_label in WORKING_GROUP_1C_ROLES:
         fio = normalize_person_name(data_1c.get(field))
         if fio:
             append_member(fio=fio, role=role_label, source="1c")
+
+    # В UI TurboProject РП/куратор часто в project.manager / project.curator, а не в data_1c.
+    if not has_role("Руководитель проекта"):
+        manager_fio = (
+            normalize_person_name(project.get("manager"))
+            or normalize_person_name(project.get("project_manager_display"))
+            or normalize_person_name(project.get("author"))
+        )
+        if manager_fio:
+            append_member(fio=manager_fio, role="Руководитель проекта", source="msp")
+
+    if not has_role("Куратор"):
+        curator_fio = normalize_person_name(project.get("curator"))
+        if curator_fio:
+            append_member(fio=curator_fio, role="Куратор", source="msp")
 
     for resource in project.get("resources") or []:
         if isinstance(resource, str):

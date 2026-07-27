@@ -139,6 +139,11 @@ def build_project_payload(summary_item: dict[str, Any], details: dict[str, Any])
         "uploaded_at": iso_or_none(summary_item.get("uploaded_at")),
         "project_name": (project_meta or {}).get("name") or summary_item.get("original_name"),
         "has_1c": bool(summary_item.get("has_1c")),
+        "manager": project_meta.get("manager") or details.get("project_manager_display"),
+        "curator": project_meta.get("curator"),
+        "author": project_meta.get("author"),
+        "project_manager_display": details.get("project_manager_display")
+        or project_meta.get("manager"),
         "dates": {
             "start_date": iso_or_none(project_meta.get("start_date")),
             "finish_date": iso_or_none(project_meta.get("finish_date")),
@@ -248,19 +253,27 @@ def get_turbo_project(
     project_name: str | None = None,
     one_c_ref_key: str | None = None,
     client: TurboProjectClient | None = None,
+    summary_item: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    api_client = client or TurboProjectClient()
     resolved_file_id = resolve_project_file_id(
         file_id=file_id,
         project_name=project_name,
         one_c_ref_key=one_c_ref_key,
-        client=client,
+        client=api_client,
     )
-    items = fetch_project_file_items(client=client)
-    summary_item = next((item for item in items if item.get("id") == resolved_file_id), None)
-    if summary_item is None:
-        summary_item = {"id": resolved_file_id, "has_1c": True}
-    details = fetch_project_details(resolved_file_id, client=client)
-    return build_project_payload(summary_item, details)
+    # При известном file_id не тянем весь /files — только детали проекта.
+    resolved_summary = summary_item
+    if resolved_summary is None and (project_name or one_c_ref_key) and file_id is None:
+        items = fetch_project_file_items(client=api_client)
+        resolved_summary = next(
+            (item for item in items if item.get("id") == resolved_file_id),
+            None,
+        )
+    if resolved_summary is None:
+        resolved_summary = {"id": resolved_file_id, "has_1c": True}
+    details = fetch_project_details(resolved_file_id, client=api_client)
+    return build_project_payload(resolved_summary, details)
 
 
 def resolve_project_file_id(

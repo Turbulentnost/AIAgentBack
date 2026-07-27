@@ -510,6 +510,10 @@ class ScheduledMeetingStatus(str, enum.Enum):
     ARCHIVE = "archive"
 
 
+class AppNotificationType(str, enum.Enum):
+    TURBO_PROJECT_RG = "turbo_project_rg"
+
+
 class ScheduledMeetingFrequency(str, enum.Enum):
     DAILY = "daily"
     WEEKLY = "weekly"

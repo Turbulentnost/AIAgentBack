@@ -132,7 +132,39 @@ async def resolve_position_id_for_person(
     return await resolve_position_id_for_title(db, title)
 
 
-async def _invitable_email_for_user(user: User) -> str | None:
+def _is_sync_placeholder_email(address: str | None) -> bool:
+    from app.services.employee_sync_service import SYNC_EMAIL_DOMAIN
+
+    normalized = (address or "").strip().lower()
+    return bool(normalized) and normalized.endswith(f"@{SYNC_EMAIL_DOMAIN}")
+
+
+async def _persist_corporate_email(
+    db: AsyncSession,
+    user: User,
+    corporate_email: str,
+) -> None:
+    """Заменяет заглушку enterprise.sync.local на корпоративный e-mail из Outlook."""
+    new_email = corporate_email.strip().lower()
+    current = (user.email or "").strip().lower()
+    if not new_email or current == new_email:
+        return
+    if not _is_sync_placeholder_email(current):
+        return
+    if not _is_invitable_attendee_email(new_email):
+        return
+
+    existing = await _resolve_user_by_email(db, new_email)
+    if existing is not None and existing.id != user.id:
+        return
+    user.email = new_email
+
+
+async def _invitable_email_for_user(
+    user: User,
+    *,
+    db: AsyncSession | None = None,
+) -> str | None:
     email = (user.email or "").strip()
     if email and _is_invitable_attendee_email(email):
         return email
@@ -145,7 +177,11 @@ async def _invitable_email_for_user(user: User) -> str | None:
     if gal_match is None:
         return None
     _resolved_fio, gal_email = gal_match
-    return gal_email if _is_invitable_attendee_email(gal_email) else None
+    if not _is_invitable_attendee_email(gal_email):
+        return None
+    if db is not None:
+        await _persist_corporate_email(db, user, gal_email)
+    return gal_email
 
 
 async def resolve_user_by_id(db: AsyncSession, user_id: uuid.UUID) -> User:
@@ -155,7 +191,7 @@ async def resolve_user_by_id(db: AsyncSession, user_id: uuid.UUID) -> User:
             f"Сотрудник не найден: {user_id}",
             status_code=404,
         )
-    email = await _invitable_email_for_user(user)
+    email = await _invitable_email_for_user(user, db=db)
     if not email:
         raise ScheduledMeetingPersonError(
             f"У сотрудника «{user.full_name or user_id}» нет корпоративного e-mail",
@@ -353,7 +389,7 @@ async def _ensure_user_from_outlook(
     try:
         matched = await _resolve_user_by_fio(db, normalized_fio)
         if matched is not None:
-            invitable = await _invitable_email_for_user(matched)
+            invitable = await _invitable_email_for_user(matched, db=db)
             if invitable:
                 return matched
     except ScheduledMeetingPersonError:
@@ -436,7 +472,7 @@ async def _resolve_person_from_outlook(
     position_id = await resolve_position_id_for_user(db, user)
     if position_id is None and position_name:
         position_id = await resolve_position_id_for_title(db, position_name)
-    invitable_email = await _invitable_email_for_user(user)
+    invitable_email = await _invitable_email_for_user(user, db=db)
     if not invitable_email:
         raise ScheduledMeetingPersonError(
             f"У сотрудника «{normalized_fio}» нет корпоративного e-mail",
@@ -481,15 +517,20 @@ async def resolve_person_by_fio(db: AsyncSession, fio: str) -> ResolvedPerson:
 
     user = await _resolve_user_by_fio(db, normalized)
     if user is not None:
-        email = (user.email or "").strip()
-        position_id = await resolve_position_id_for_user(db, user)
-        position_name = (user.position or "").strip() or None
-        return ResolvedPerson(
-            user_id=user.id,
-            fio=(user.full_name or normalized).strip(),
-            email=email,
-            position_id=position_id,
-            position_name=position_name,
+        email = await _invitable_email_for_user(user, db=db)
+        if email:
+            position_id = await resolve_position_id_for_user(db, user)
+            position_name = (user.position or "").strip() or None
+            return ResolvedPerson(
+                user_id=user.id,
+                fio=(user.full_name or normalized).strip(),
+                email=email,
+                position_id=position_id,
+                position_name=position_name,
+            )
+        raise ScheduledMeetingPersonError(
+            f"У сотрудника «{normalized}» нет корпоративного e-mail в Outlook",
+            status_code=400,
         )
 
     gal_match = await _resolve_gal_person(normalized)
@@ -518,7 +559,7 @@ async def resolve_person(
     if user_id is not None:
         user = await db.get(User, user_id)
         if user is not None and user.deleted_at is None and user.is_active:
-            invitable_email = await _invitable_email_for_user(user)
+            invitable_email = await _invitable_email_for_user(user, db=db)
             if invitable_email:
                 position_name = (user.position or "").strip() or primary_position_for_fio(
                     (user.full_name or fio or "").strip()
@@ -642,7 +683,7 @@ async def list_employee_options(
 
 
 async def _user_to_employee_option(db: AsyncSession, user: User) -> EmployeeOption | None:
-    email = await _invitable_email_for_user(user)
+    email = await _invitable_email_for_user(user, db=db)
     if not email:
         return None
     return EmployeeOption(
