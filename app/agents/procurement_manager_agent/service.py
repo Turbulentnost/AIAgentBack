@@ -16,9 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agents.procurement_manager_agent.allocation import allocate_materials_by_deadline
+from app.agents.procurement_manager_agent.batches import sync_batches_workspace
+from app.agents.procurement_manager_agent.delivery_schedule import compute_schedule
 from app.agents.procurement_manager_agent.documents import (
     render_purchase_order_draft,
     render_rfq_draft,
+)
+from app.agents.procurement_manager_agent.fulfillment import (
+    FULFILLMENT_LABELS,
+    fulfillment_payload,
 )
 from app.agents.procurement_manager_agent.graph import build_graph
 from app.agents.procurement_manager_agent.material_bank import get_material_bank
@@ -37,8 +43,10 @@ from app.agents.procurement_manager_agent.schemas import (
     ApprovalRecord,
     ApprovalRequest,
     ComparisonWeights,
+    FulfillmentStatusUpdateRequest,
     LineAmountEntry,
     LineAmountsUpdateRequest,
+    LineScheduleUpdateRequest,
     MaterialBankResponse,
     NomenclatureSearchItem,
     NomenclatureSupplierResult,
@@ -329,11 +337,25 @@ class ProcurementManagerService:
                 targets=targets,
                 query=query,
             )
+            failed = (
+                result.status == "failed"
+                or (
+                    force_web
+                    and not result.suppliers
+                    and not any(row.suppliers for row in result.nomenclature_results)
+                )
+            )
             result = result.model_copy(
                 update={
                     "operation_id": operation_id,
                     "pending": False,
-                    "status": "completed",
+                    "status": "failed" if failed else "completed",
+                    "message": result.message
+                    or (
+                        "Веб-поиск не вернул поставщиков"
+                        if failed and force_web
+                        else result.message
+                    ),
                 }
             )
         except TimeoutError:
@@ -365,6 +387,11 @@ class ProcurementManagerService:
                 operation_id=operation_id,
                 pending=False,
                 status="failed",
+                message=(
+                    f"Веб-поиск превысил таймаут {timeout_seconds:.0f}с. "
+                    "Повторите с новым idempotency_key."
+                ),
+                diagnostics={"timeout_seconds": timeout_seconds, "status": "timeout"},
             )
         except Exception as exc:
             self._upsert_operation(
@@ -1913,7 +1940,150 @@ class ProcurementManagerService:
             }
         )
         payload["material_allocation"] = {"summary": allocation.get("summary")}
+        cov_lines = list((payload.get("order_coverage") or {}).get("lines") or [])
+        batches = sync_batches_workspace(
+            workspace,
+            positions=list(case.positions or []),
+            coverage_lines=cov_lines,
+        )
+        self._save_workspace(case, workspace)
+        payload["batches"] = batches
+        payload["line_schedules"] = dict(workspace.get("line_schedules") or {})
+        ful = fulfillment_payload(case_status=str(case.status or ""), workspace=workspace)
+        payload.update(ful)
+        payload["fulfillment_status"] = ful["fulfillment_status"]
         return payload
+
+    async def update_fulfillment_status(
+        self,
+        case_id: uuid.UUID,
+        payload: FulfillmentStatusUpdateRequest,
+    ) -> dict[str, Any]:
+        case = await self.require_case(case_id)
+        workspace = self._workspace(case)
+        status = payload.fulfillment_status
+        if status not in FULFILLMENT_LABELS:
+            raise ValueError(f"Неизвестный статус: {status}")
+        workspace["fulfillment_status"] = status
+        workspace["fulfillment_status_manual"] = True
+        self._save_workspace(case, workspace)
+        await self._event(
+            case,
+            "fulfillment_status_updated",
+            payload.idempotency_key or f"fulfillment:{case_id}:{status}",
+            {"fulfillment_status": status},
+        )
+        return fulfillment_payload(case_status=str(case.status or ""), workspace=workspace)
+
+    async def create_otk_presentation_from_case(
+        self,
+        case_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Create OTK presentation card from case positions (manager UI button)."""
+        from app.agents.quality_engineer_agent.otk_service import OtkPresentationService
+
+        case = await self.require_case(case_id)
+        workspace = self._workspace(case)
+        meta = dict(case.case_metadata or {})
+        drafts = workspace.get("purchase_order_drafts") or []
+        supplier_name = ""
+        for item in drafts:
+            draft = item.get("draft") if isinstance(item, dict) and "draft" in item else item
+            if isinstance(draft, dict) and draft.get("supplier_name"):
+                supplier_name = str(draft.get("supplier_name"))
+                break
+        lines = []
+        for position in case.positions or []:
+            if position.cancelled:
+                continue
+            lines.append(
+                {
+                    "code": position.nomenclature_id or "",
+                    "nomenclature": position.nomenclature_name or position.nomenclature_id or "",
+                    "storage_unit": position.unit or "шт",
+                    "qty_upd": float(position.quantity or 0),
+                    "qty_fact": float(position.quantity or 0),
+                    "category": "other",
+                }
+            )
+        card = OtkPresentationService().create_presentation(
+            {
+                "purchase_order": case.source_number or str(case.id)[:8],
+                "supplier": supplier_name or "Поставщик",
+                "counterparty": supplier_name or "Поставщик",
+                "project_code": meta.get("project_code"),
+                "project_name": meta.get("project_name") or meta.get("need_title"),
+                "lines": lines,
+            }
+        )
+        workspace["otk_presentation_id"] = card.id
+        workspace["fulfillment_status"] = "otk_presentation"
+        workspace["fulfillment_status_manual"] = True
+        self._save_workspace(case, workspace)
+        await self._event(
+            case,
+            "otk_presentation_created",
+            f"otk-pres:{case.id}:{card.id}",
+            {"presentation_id": card.id},
+        )
+        return {
+            "presentation_id": card.id,
+            "presentation": card.model_dump(mode="json"),
+            **fulfillment_payload(case_status=str(case.status or ""), workspace=workspace),
+        }
+
+    async def update_line_schedule(
+        self,
+        case_id: uuid.UUID,
+        line_id: str,
+        payload: LineScheduleUpdateRequest,
+    ) -> dict[str, Any]:
+        case = await self.require_case(case_id)
+        workspace = self._workspace(case)
+        position = next(
+            (
+                p
+                for p in (case.positions or [])
+                if str(p.line_id) == str(line_id) and not p.cancelled
+            ),
+            None,
+        )
+        if position is None:
+            raise LookupError(f"Позиция {line_id} не найдена")
+        required = payload.required_date or getattr(position, "required_date", None)
+        schedule = compute_schedule(
+            required_date=required,
+            lead_days=payload.lead_days,
+            ship_date=payload.ship_date,
+        )
+        schedules = dict(workspace.get("line_schedules") or {})
+        schedules[str(line_id)] = {
+            **schedule,
+            "batch_no": payload.batch_no,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        workspace["line_schedules"] = schedules
+        if payload.required_date is not None:
+            position.required_date = payload.required_date
+        cov_lines = list((workspace.get("order_coverage") or {}).get("lines") or [])
+        sync_batches_workspace(
+            workspace,
+            positions=list(case.positions or []),
+            coverage_lines=cov_lines,
+        )
+        self._save_workspace(case, workspace)
+        await self._event(
+            case,
+            "line_schedule_updated",
+            payload.idempotency_key or f"schedule:{case_id}:{line_id}",
+            {"line_id": line_id, **schedule},
+        )
+        return {
+            "line_id": line_id,
+            "schedule": schedules[str(line_id)],
+            "batches": workspace.get("batches") or [],
+            "formula": schedule.get("formula"),
+        }
 
     async def material_bank(self) -> MaterialBankResponse:
         bank = get_material_bank()
@@ -2289,7 +2459,17 @@ class ProcurementManagerService:
                 # Nested copy so clients reading procurement_manager.* still see bank tone.
                 pm = dict(item.get("procurement_manager") or {})
                 pm["order_coverage"] = order_coverage
+                ful = fulfillment_payload(
+                    case_status=str(item.get("status") or ""),
+                    workspace=pm,
+                )
+                pm.update(ful)
                 item["procurement_manager"] = pm
+                item["fulfillment_status"] = ful["fulfillment_status"]
+                item["fulfillment_label"] = ful["fulfillment_label"]
+                item["fulfillment_tone"] = ful["fulfillment_tone"]
+                item["show_otk_button"] = ful["show_otk_button"]
+                item["is_completed"] = ful["is_completed"]
             # Urgency order within each dashboard group: earlier required_date first.
             group_cases = list(group.get("cases") or [])
             group_cases.sort(
@@ -2353,6 +2533,15 @@ class ProcurementManagerService:
         await self.db.flush()
         return {"line_amounts": current}
 
+    @staticmethod
+    def _estimate_decimal(value: Any) -> Decimal | None:
+        if value is None or value == "":
+            return None
+        try:
+            return Decimal(str(value))
+        except Exception:
+            return None
+
     def build_estimate_xlsx(self, case: ProcurementCase) -> bytes:
         from openpyxl import Workbook
         from openpyxl.styles import Font
@@ -2384,10 +2573,12 @@ class ProcurementManagerService:
         for index, position in enumerate(case.positions or [], start=1):
             if position.cancelled:
                 continue
-            quantity = Decimal(str(position.quantity or 0))
+            quantity = self._estimate_decimal(position.quantity) or Decimal("0")
             manual = line_amounts.get(position.line_id) or {}
-            unit_price = manual.get("unit_price")
-            amount = manual.get("amount")
+            if not isinstance(manual, dict):
+                manual = {}
+            unit_price = self._estimate_decimal(manual.get("unit_price"))
+            amount = self._estimate_decimal(manual.get("amount"))
             source = "вручную" if unit_price is not None or amount is not None else ""
             if unit_price is None and amount is None:
                 quoted = quote_prices.get(position.line_id)
@@ -2395,10 +2586,10 @@ class ProcurementManagerService:
                     unit_price = quoted
                     source = "КП"
             if amount is None and unit_price is not None:
-                amount = (Decimal(str(unit_price)) * quantity).quantize(Decimal("0.01"))
+                amount = (unit_price * quantity).quantize(Decimal("0.01"))
             if amount is not None:
-                total += Decimal(str(amount))
-            line_currency = str(manual.get("currency") or currency)
+                total += amount
+            line_currency = str(manual.get("currency") or currency) or "RUB"
             currency = line_currency
             sheet.cell(row=row_idx, column=1, value=index)
             sheet.cell(

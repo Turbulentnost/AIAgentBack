@@ -18,7 +18,9 @@ from app.agents.procurement_manager_agent.schemas import (
     ApprovalRecord,
     ApprovalRequest,
     ComparisonWeights,
+    FulfillmentStatusUpdateRequest,
     LineAmountsUpdateRequest,
+    LineScheduleUpdateRequest,
     MaterialBankResponse,
     NonconformityRequest,
     OperationStatus,
@@ -202,6 +204,79 @@ async def update_line_amounts(
     return result
 
 
+@router.post("/cases/{case_id}/otk-presentation")
+async def create_otk_presentation(
+    case_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).create_otk_presentation_from_case(
+            case_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.patch("/cases/{case_id}/fulfillment-status")
+async def update_fulfillment_status(
+    case_id: uuid.UUID,
+    data: FulfillmentStatusUpdateRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).update_fulfillment_status(case_id, data)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+@router.patch("/cases/{case_id}/lines/{line_id}/schedule")
+async def update_line_schedule(
+    case_id: uuid.UUID,
+    line_id: str,
+    data: LineScheduleUpdateRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict[str, Any]:
+    await _require_access(db, current_user)
+    try:
+        result = await ProcurementManagerService(db).update_line_schedule(
+            case_id, line_id, data
+        )
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    await _commit(db)
+    return result
+
+
+def _attachment_content_disposition(filename: str) -> str:
+    """Build Content-Disposition that Starlette can encode as latin-1.
+
+    Non-ASCII source numbers (e.g. ЗП-DEMO-0024) must not appear in the
+    ``filename=`` fallback — only in RFC 5987 ``filename*=``.
+    """
+    safe_name = filename.replace('"', "").strip() or "download.bin"
+    encoded = quote(safe_name)
+    ascii_name = safe_name.encode("ascii", "ignore").decode("ascii")
+    # Collapse gaps left by stripped Cyrillic: estimate_ЗП-DEMO → estimate_-DEMO.
+    ascii_name = ascii_name.replace("_-", "_").replace("-_", "-")
+    while "__" in ascii_name:
+        ascii_name = ascii_name.replace("__", "_")
+    ascii_name = ascii_name.strip("._- ") or "download.bin"
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded}'
+
+
 @router.get("/cases/{case_id}/estimate-report")
 async def estimate_report(
     case_id: uuid.UUID,
@@ -214,17 +289,18 @@ async def estimate_report(
         case = await service.require_case(case_id)
     except LookupError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    content = service.build_estimate_xlsx(case)
+    try:
+        content = service.build_estimate_xlsx(case)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось сформировать Excel-смету: {exc}",
+        ) from exc
     filename = f"estimate_{case.source_number or case_id}.xlsx"
-    encoded = quote(filename)
     return StreamingResponse(
         BytesIO(content),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": (
-                f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded}"
-            )
-        },
+        headers={"Content-Disposition": _attachment_content_disposition(filename)},
     )
 
 
@@ -232,17 +308,32 @@ async def estimate_report(
 async def sync_from_1c(
     db: DbSession,
     current_user: CurrentUser,
+    case_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> dict[str, Any]:
-    """Trigger procurement 1C poll when allowed; otherwise return a soft refresh hint."""
+    """Manual 1C sync (force=true). Optional case_id enriches one case chain only."""
     await _require_access(db, current_user)
+    if case_id is not None:
+        from app.services.procurement_1c_chain_enricher import Procurement1CChainEnricher
+
+        enricher = Procurement1CChainEnricher(db)
+        result = await enricher.enrich_case_by_id(case_id, force=True)
+        await db.commit()
+        return {
+            "status": "accepted",
+            "mode": "case_enrich",
+            "summary": result,
+        }
     if await can_refresh_procurement_orchestrator(db, current_user):
         from app.workers.tasks import poll_procurement_sources
 
-        async_result = poll_procurement_sources.apply_async(queue="procurement_poll")
+        async_result = poll_procurement_sources.apply_async(
+            kwargs={"force": True},
+            queue="procurement_poll",
+        )
         return {
             "status": "accepted",
             "mode": "poll",
-            "summary": {"celery_task_id": async_result.id},
+            "summary": {"celery_task_id": async_result.id, "force": True},
         }
     return {
         "status": "local_refresh",

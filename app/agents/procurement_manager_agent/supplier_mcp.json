@@ -41,7 +41,13 @@
       "capabilityMap": {
         "read_supplier_search": "read_reference_search_suppliers",
         "read_supplier_get": "read_reference_get_suppliers",
-        "read_supplier_history": "read_procurement_get_supplier_history"
+        "read_supplier_history": "read_procurement_get_supplier_history",
+        "read_procurement_get_supplier_history": "read_procurement_get_supplier_history",
+        "read_procurement_chain_purchase_orders": "read_document_get_documents",
+        "read_procurement_chain_cash_requests": "read_document_get_documents",
+        "read_procurement_chain_otk_presentations": "read_document_get_documents",
+        "read_procurement_chain_purchase_receipts": "read_document_get_documents",
+        "read_procurement_chain_goods_receipt_orders": "read_document_get_documents"
       },
       "env": {
         "ODATA_BASE_URL": "${ODATA_BASE_URL}",

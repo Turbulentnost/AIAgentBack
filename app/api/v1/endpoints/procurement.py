@@ -549,8 +549,12 @@ async def refresh_procurement_sources(
 
     from app.workers.tasks import poll_procurement_sources
 
-    async_result = poll_procurement_sources.apply_async(queue="procurement_poll")
+    # Manual refresh always bypasses the daily auto-poll throttle.
+    async_result = poll_procurement_sources.apply_async(
+        kwargs={"force": True},
+        queue="procurement_poll",
+    )
     return ProcurementRefreshResult(
         status="accepted",
-        summary={"celery_task_id": async_result.id},
+        summary={"celery_task_id": async_result.id, "force": True},
     )

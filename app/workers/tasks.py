@@ -940,7 +940,7 @@ def classify_template_document(self, document_link_id: str) -> dict[str, Any]:
 
 
 @celery_app.task(name="poll_procurement_sources", bind=True, max_retries=0)
-def poll_procurement_sources(self) -> dict[str, Any]:
+def poll_procurement_sources(self, force: bool = False) -> dict[str, Any]:
     from redis import Redis
 
     from app.core.config import settings
@@ -948,6 +948,8 @@ def poll_procurement_sources(self) -> dict[str, Any]:
     from app.services.procurement_orchestrator_service import (
         ProcurementOrchestratorService,
         build_poll_lock_key,
+        build_poll_success_key,
+        should_throttle_auto_poll,
     )
 
     if not settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
@@ -955,11 +957,29 @@ def poll_procurement_sources(self) -> dict[str, Any]:
             "celery_task_id": self.request.id,
             "task_name": "poll_procurement_sources",
             "status": "disabled",
+            "force": bool(force),
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
 
     lock_key = build_poll_lock_key()
+    success_key = build_poll_success_key()
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    skip, remaining = should_throttle_auto_poll(
+        redis_client.get(success_key),
+        force=bool(force),
+        min_interval_seconds=settings.PROCUREMENT_ORCHESTRATOR_MIN_INTERVAL_SECONDS,
+    )
+    if skip:
+        redis_client.close()
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "poll_procurement_sources",
+            "status": "skipped_throttle",
+            "force": bool(force),
+            "retry_after_seconds": remaining,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     acquired = bool(
         redis_client.set(
             lock_key,
@@ -974,6 +994,7 @@ def poll_procurement_sources(self) -> dict[str, Any]:
             "celery_task_id": self.request.id,
             "task_name": "poll_procurement_sources",
             "status": "skipped_locked",
+            "force": bool(force),
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -981,7 +1002,7 @@ def poll_procurement_sources(self) -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
             service = ProcurementOrchestratorService(db, enqueue_case=True)
             try:
-                summary = await service.poll_once()
+                summary = await service.poll_once(force=bool(force))
                 await db.commit()
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
@@ -989,6 +1010,7 @@ def poll_procurement_sources(self) -> dict[str, Any]:
                     "celery_task_id": self.request.id,
                     "task_name": "poll_procurement_sources",
                     "status": "failed",
+                    "force": bool(force),
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
@@ -1004,10 +1026,18 @@ def poll_procurement_sources(self) -> dict[str, Any]:
         summary["celery_task_id"] = self.request.id
         summary["task_name"] = "poll_procurement_sources"
         summary["status"] = "completed"
+        summary["force"] = bool(force)
         return summary
 
     try:
-        return _run_async_task(_run)
+        summary = _run_async_task(_run)
+        if summary.get("status") == "completed":
+            redis_client.set(
+                success_key,
+                datetime.now(timezone.utc).isoformat(),
+                ex=max(settings.PROCUREMENT_ORCHESTRATOR_MIN_INTERVAL_SECONDS * 2, 86400),
+            )
+        return summary
     finally:
         redis_client.delete(lock_key)
         redis_client.close()

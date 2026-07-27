@@ -1,13 +1,15 @@
-"""Procurement coverage optimizer: deadline → overpay/cost → delivery speed.
+"""Procurement coverage optimizer: deadline → ABC → overpay/cost → speed.
 
 Priority gates (deterministic, not a flat weighted sum):
 
 1. ``meets_deadline`` — поставщик успевает к ``required_date``
    (today + lead_time_days ≤ required_date); без срока — все равны.
-2. Среди успевающих — минимизировать ``total_cost`` = coverage_cost + overpay
+2. ABC-класс поставщика — A > B > C.
+3. Среди успевающих — минимизировать ``total_cost`` = coverage_cost + overpay
    (переплата за лот / min_order сверх потребности).
-3. Тай-брейк: меньший ``lead_time_days``, затем меньший ``unit_price``.
-4. Если никто не успевает — риск, выбираем лучшего из доступных с причиной.
+4. Тай-брейк: меньший ``lead_time_days``, затем меньший ``unit_price``,
+   затем выше ``quality_rating`` / ``delivery_rating``.
+5. Если никто не успевает — риск, выбираем лучшего из доступных с причиной.
 
 Bank-first: склад (и остаток банка) закрывается через
 ``allocate_materials_by_deadline``; оптимизатор ранжирует поставщиков
@@ -20,8 +22,16 @@ from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Literal, Mapping, Sequence
 
+from app.agents.procurement_manager_agent.delivery_schedule import (
+    DELIVERY_SCHEDULE_FORMULA,
+    offer_meets_deadline,
+)
 from app.agents.procurement_manager_agent.material_bank import MaterialBankStore, get_material_bank
 from app.agents.procurement_manager_agent.pricing import greedy_cover_cost
+from app.agents.procurement_manager_agent.supplier_abc import (
+    abc_sort_key,
+    get_cached_abc_class,
+)
 
 _SCORE_QUANT = Decimal("0.0001")
 _MONEY_QUANT = Decimal("0.01")
@@ -35,10 +45,12 @@ OPTIMIZATION_FORMULA = (
     "Приоритет (гейты, не взвешенная сумма): "
     "1) срок — meets_deadline: today + lead_time_days ≤ required_date "
     "(без required_date все равны; без lead_time — не подтверждён срок); "
-    "2) цена с переплатой — minimize total_cost = coverage_cost + overpay "
+    "2) ABC-класс поставщика — A > B > C (объём закупок за 12 мес.); "
+    "3) цена с переплатой — minimize total_cost = coverage_cost + overpay "
     "(лот/min_order сверх потребности); "
-    "3) скорость — меньший lead_time_days; "
-    "4) меньший unit_price. "
+    "4) скорость — меньший lead_time_days; "
+    "5) меньший unit_price; "
+    "6) выше quality_rating / delivery_rating. "
     "Склад/банк сначала (allocate_materials_by_deadline по required_date FIFO); "
     "оптимизатор — на остаток у поставщиков. "
     "Без успевающих в срок — риск, лучший из доступных. "
@@ -100,28 +112,6 @@ def _lead_days(offer: Mapping[str, Any]) -> int | None:
     return days if days >= 0 else None
 
 
-def offer_meets_deadline(
-    required_date: Any,
-    lead_time_days: int | None,
-    *,
-    today: date | None = None,
-) -> bool | None:
-    """
-    True if arrival (today + lead) is on/before required_date.
-
-    None — cannot verify (no lead_time while deadline is set).
-    True when no required_date (no deadline constraint).
-    """
-    req = _parse_date(required_date)
-    if req is None:
-        return True
-    if lead_time_days is None:
-        return None
-    as_of = today or date.today()
-    arrival = as_of + timedelta(days=int(lead_time_days))
-    return arrival <= req
-
-
 def _single_offer_cost(need: Decimal, offer: Mapping[str, Any]) -> tuple[Decimal, Decimal, Decimal]:
     """Return (total_cost, overpay, coverable_qty) for one offer vs need."""
     cover = greedy_cover_cost(need, [offer])
@@ -139,6 +129,7 @@ def _build_optimization_reason(
     min_price: Decimal,
     coverage_ratio: Decimal,
     deadline_risk: bool,
+    abc_class: str | None = None,
 ) -> str:
     parts: list[str] = []
     if meets is True:
@@ -147,6 +138,8 @@ def _build_optimization_reason(
         parts.append("срок нет")
     elif meets is None and deadline_risk:
         parts.append("срок неизвестен")
+    if abc_class in {"A", "B", "C"}:
+        parts.append(f"ABC {abc_class}")
     if overpay > 0:
         parts.append(f"переплата {_round_money(overpay)}")
     if lead_time_days is not None:
@@ -221,6 +214,14 @@ def optimize_supplier_offers(
             - Decimal("0.05") * (_ONE - coverage_ratio)
         )
         deadline_ok = meets is True
+        abc_raw = item.get("abc_class") or get_cached_abc_class(
+            str(item.get("supplier_id") or "")
+        )
+        abc_class = str(abc_raw).upper() if abc_raw else None
+        if abc_class not in {"A", "B", "C"}:
+            abc_class = None
+        quality = _dec(item.get("quality_rating")) or _ZERO
+        delivery = _dec(item.get("delivery_rating")) or _ZERO
         ranked.append(
             {
                 "rank": 0,
@@ -251,16 +252,20 @@ def optimize_supplier_offers(
                     else ("unknown" if meets is None else "miss")
                 ),
                 "lead_time_days": lead,
+                "abc_class": abc_class,
                 "unit": item.get("unit") or "шт",
                 "optimization_reason": "",
                 "reason": "",
                 "_sort_meets": 0 if deadline_ok else 1,
+                "_sort_abc": abc_sort_key(abc_class),
                 "_sort_cover": -coverable_qty,  # more coverage first within cohort
                 "_sort_cost": total_cost
                 if total_cost > 0
                 else (coverable_qty * unit_price),
                 "_sort_lead": lead if lead is not None else _MISSING_LEAD,
                 "_sort_price": unit_price,
+                "_sort_quality": -quality,
+                "_sort_delivery": -delivery,
                 "_meets_raw": meets,
             }
         )
@@ -272,10 +277,13 @@ def optimize_supplier_offers(
     ranked.sort(
         key=lambda row: (
             row["_sort_meets"],
+            row["_sort_abc"],
             row["_sort_cover"],
             row["_sort_cost"],
             row["_sort_lead"],
             row["_sort_price"],
+            row["_sort_quality"],
+            row["_sort_delivery"],
             row["supplier_id"],
         )
     )
@@ -284,10 +292,13 @@ def optimize_supplier_offers(
     for index, row in enumerate(top, start=1):
         meets_raw = row.pop("_meets_raw")
         row.pop("_sort_meets", None)
+        row.pop("_sort_abc", None)
         row.pop("_sort_cover", None)
         row.pop("_sort_cost", None)
         row.pop("_sort_lead", None)
         row.pop("_sort_price", None)
+        row.pop("_sort_quality", None)
+        row.pop("_sort_delivery", None)
         reason = _build_optimization_reason(
             meets=meets_raw,
             overpay=row["overpay"],
@@ -296,6 +307,7 @@ def optimize_supplier_offers(
             min_price=min_price,
             coverage_ratio=row["coverage_ratio"],
             deadline_risk=deadline_risk,
+            abc_class=row.get("abc_class"),
         )
         row["rank"] = index
         row["optimization_rank"] = index

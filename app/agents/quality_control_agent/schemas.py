@@ -83,7 +83,14 @@ class QualitySampleRule(BaseModel):
     # Алгоритм
     sample_pct: float | None = None
     sample_basis: Literal[
+        "3pct",
+        "5pct",
         "10pct",
+        "15pct",
+        "20pct",
+        "30pct",
+        "50pct",
+        "100pct",
         "1pct_rating",
         "per_package",
         "second_sample",

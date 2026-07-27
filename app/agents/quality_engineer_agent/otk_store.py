@@ -117,6 +117,10 @@ class OtkPresentationStore:
     def new_line_id() -> str:
         return f"l-{uuid.uuid4()}"
 
+    @staticmethod
+    def new_presentation_id() -> str:
+        return f"pres-{uuid.uuid4().hex[:8]}"
+
 
 _STORE: OtkPresentationStore | None = None
 

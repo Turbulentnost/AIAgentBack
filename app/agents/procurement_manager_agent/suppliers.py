@@ -148,28 +148,60 @@ class BrowserSupplierSearchAdapter:
 
     def __init__(self, provider: BrowserSearchProvider | None = None) -> None:
         self.provider = provider or build_default_browser_search_provider()
+        self.last_diagnostics: dict[str, Any] = {}
 
     async def search(self, query: str, category: str | None, limit: int) -> list[Supplier]:
         lead = (query or "").split(",")[0].strip() or (query or "")
         search_query = " ".join(part for part in (lead, category, "поставщик") if part)
         capped = max(1, min(limit, WEB_LIMIT_PER_NOMENCLATURE))
         response: dict[str, Any] | None = None
+        last_error: str | None = None
         for _attempt in range(2):
             try:
                 response = await self.provider.search(search_query, capped)
-            except Exception:
+            except Exception as exc:
                 response = None
+                last_error = str(exc)[:500]
                 continue
             if isinstance(response, dict) and response.get("status") == "available":
                 break
         if not isinstance(response, dict) or response.get("status") != "available":
+            status = (response or {}).get("status") if isinstance(response, dict) else None
+            message = (
+                (response or {}).get("message")
+                if isinstance(response, dict)
+                else None
+            ) or last_error
+            if status == "captcha":
+                message = message or "Поисковик показал CAPTCHA — повторите или смените PROCUREMENT_WEB_SEARCH_ENGINE"
+            elif status == "timeout":
+                message = message or "Таймаут браузерного веб-поиска"
+            elif not message:
+                message = (
+                    "Веб-поиск недоступен: Edge/Chrome не найден или SERP пуст. "
+                    "Проверьте PROCUREMENT_WEB_BROWSER_PATH / установку браузера."
+                )
+            self.last_diagnostics = {
+                "status": status or "unavailable",
+                "message": message,
+                "query": search_query,
+                "adapter": "browser",
+            }
             return []
         rows = response.get("items") or []
-        return [
+        suppliers = [
             _normalize_web_supplier(item)
             for item in rows[:capped]
             if isinstance(item, dict) and item.get("url")
         ]
+        self.last_diagnostics = {
+            "status": "available",
+            "message": None,
+            "query": search_query,
+            "count": len(suppliers),
+            "adapter": "browser",
+        }
+        return suppliers
 
     async def fetch(self, url: str) -> dict[str, Any]:
         return await self.provider.fetch(url)
@@ -237,6 +269,23 @@ class HybridSupplierSearchService:
             1,
             internal_threshold
             or int(os.environ.get("PROCUREMENT_MANAGER_INTERNAL_SUPPLIER_THRESHOLD", "1")),
+        )
+
+    def _with_web_diagnostics(self, result: SupplierSearchResult) -> SupplierSearchResult:
+        """Attach browser adapter diagnostics when web returned nothing."""
+        diagnostics = dict(getattr(self.web, "last_diagnostics", None) or {})
+        if result.suppliers or not diagnostics:
+            if result.message or result.diagnostics:
+                return result
+            return result
+        message = diagnostics.get("message") or result.message
+        status = "failed" if not result.suppliers and result.web_fallback_used else result.status
+        return result.model_copy(
+            update={
+                "message": message,
+                "diagnostics": diagnostics,
+                "status": status if not result.suppliers else result.status,
+            }
         )
 
     def _fetch_provider(self) -> BrowserSearchProvider | None:
@@ -329,6 +378,8 @@ class HybridSupplierSearchService:
                     sources_used=["web"] if web_only else list(single.sources_used),
                     web_fallback_used=True,
                 )
+
+            # NOTE: force_web diagnostics attached on aggregate via adapter.last_diagnostics
             qualifying = qualifying_suppliers_for_skip(existing, force_web=force_web)
             if len(qualifying) >= MIN_SUPPLIERS_BEFORE_SKIP:
                 return NomenclatureSupplierResult(
@@ -359,7 +410,10 @@ class HybridSupplierSearchService:
                 web_fallback_used=single.web_fallback_used,
             )
 
-        return _aggregate(list(await asyncio.gather(*[_one(item) for item in targets])), request)
+        aggregated = _aggregate(
+            list(await asyncio.gather(*[_one(item) for item in targets])), request
+        )
+        return self._with_web_diagnostics(aggregated)
 
     async def search(self, request: SupplierSearchRequest) -> SupplierSearchResult:
         targets = resolve_nomenclature_targets(request)
@@ -368,7 +422,7 @@ class HybridSupplierSearchService:
         force_web = request.is_manual_web
         # Manual «Найти поставщиков»: web-only enriched cards (no internal bank tiles).
         if force_web:
-            return await self.search_web(request)
+            return self._with_web_diagnostics(await self.search_web(request))
 
         async def _one(target: NomenclatureSearchItem) -> NomenclatureSupplierResult:
             existing = list(target.existing_suppliers or [])
@@ -462,17 +516,26 @@ class HybridSupplierSearchService:
             pass
         suppliers: list[Supplier] = []
         sources: list[str] = []
+        diagnostics: dict[str, Any] = {}
+        message: str | None = None
         if request.allow_web_fallback:
             web_limit = min(request.limit, WEB_LIMIT_PER_NOMENCLATURE)
             web_rows = await self.web.search(q, request.category, web_limit)
             suppliers = _deduplicate(web_rows)[:web_limit]
             if web_rows:
                 sources.append("web")
+            diagnostics = dict(getattr(self.web, "last_diagnostics", None) or {})
+            if not web_rows:
+                message = diagnostics.get("message") or (
+                    "Веб-поиск не вернул поставщиков. Проверьте браузер и сеть."
+                )
         return SupplierSearchResult(
             query=q,
             suppliers=suppliers,
             sources_used=sources,
             web_fallback_used=request.allow_web_fallback,
+            message=message,
+            diagnostics=diagnostics,
         )
 
 
@@ -667,6 +730,9 @@ def _normalize_supplier(raw: dict[str, Any]) -> Supplier:
         contacts.setdefault("website", str(url))
     unit_price = _to_decimal(raw.get("unit_price") or raw.get("approx_cost") or raw.get("price"))
     rating = _to_decimal(raw.get("rating") or raw.get("score"))
+    abc_raw = str(raw.get("abc_class") or "").strip().upper()
+    abc_class = abc_raw if abc_raw in {"A", "B", "C"} else None
+    abc_share = _to_decimal(raw.get("abc_spend_share"))
     supplier = Supplier(
         supplier_id=supplier_id,
         name=str(raw.get("name") or raw.get("Description") or supplier_id),
@@ -684,6 +750,8 @@ def _normalize_supplier(raw: dict[str, Any]) -> Supplier:
         unit_price=unit_price,
         approx_cost=unit_price,
         rating=rating,
+        abc_class=abc_class,  # type: ignore[arg-type]
+        abc_spend_share=abc_share if abc_share is not None and abc_share <= 1 else None,
     )
     return _with_rating(supplier)
 

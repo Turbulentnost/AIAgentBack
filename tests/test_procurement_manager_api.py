@@ -27,6 +27,16 @@ from app.main import app
 PREFIX = "/api/v1/procurement/role-agents/procurement_logistics_agent"
 
 
+def test_estimate_report_content_disposition_is_latin1_safe() -> None:
+    header = endpoint_module._attachment_content_disposition(
+        "estimate_ЗП-DEMO-0024.xlsx"
+    )
+    header.encode("latin-1")
+    assert "filename*=UTF-8''" in header
+    assert "ЗП" not in header.split("filename*=")[0]
+    assert "DEMO-0024.xlsx" in header
+
+
 def test_procurement_manager_api_surface_is_registered() -> None:
     paths = app.openapi()["paths"]
     assert f"{PREFIX}/dashboard" in paths

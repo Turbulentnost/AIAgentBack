@@ -24,6 +24,8 @@ class Supplier(BaseModel):
     unit_price: Decimal | None = Field(default=None, ge=0)
     approx_cost: Decimal | None = Field(default=None, ge=0)
     rating: Decimal | None = Field(default=None, ge=0, le=100)
+    abc_class: Literal["A", "B", "C"] | None = None
+    abc_spend_share: Decimal | None = Field(default=None, ge=0, le=1)
 
 
 class NomenclatureSearchItem(BaseModel):
@@ -72,6 +74,49 @@ class SupplierSearchResult(BaseModel):
     operation_id: str | None = None
     pending: bool = False
     status: Literal["completed", "running", "failed"] = "completed"
+    message: str | None = None
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
+class PurchaseBatch(BaseModel):
+    batch_no: int
+    line_id: str
+    quantity: float = 0
+    required_date: str | None = None
+    supplier_id: str | None = None
+    supplier_name: str | None = None
+    coverage_source: Literal["warehouse", "supplier", "mixed", "none"] | str = "none"
+    unit_price: float | None = None
+    planned_arrival: str | None = None
+    supplier_lead_days: int | None = None
+    supplier_ship_date: str | None = None
+    meets_deadline: bool | None = None
+
+
+class LineScheduleUpdateRequest(BaseModel):
+    lead_days: int | None = Field(default=None, ge=0, le=3650)
+    ship_date: date | None = None
+    required_date: date | None = None
+    batch_no: int | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def _require_input(self) -> LineScheduleUpdateRequest:
+        if self.lead_days is None and self.ship_date is None and self.required_date is None:
+            raise ValueError("Укажите lead_days, ship_date или required_date")
+        return self
+
+
+class FulfillmentStatusUpdateRequest(BaseModel):
+    fulfillment_status: Literal[
+        "no_supplier",
+        "payment",
+        "delivery",
+        "otk_presentation",
+        "posting",
+        "completed",
+    ]
+    idempotency_key: str | None = Field(default=None, max_length=255)
 
 
 class RFQLine(BaseModel):

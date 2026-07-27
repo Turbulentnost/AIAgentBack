@@ -187,6 +187,25 @@ def test_mixed_source_when_warehouse_and_supplier_used() -> None:
     )
     assert by_nom["used_suppliers"]
     assert by_nom["coverage_source"] == "mixed"
+    assert Decimal(by_nom["from_warehouse"]) > 0
+    assert Decimal(by_nom["from_supplier"]) > 0
+    # «Все позиции» reads these fields from by_nomenclature via AllPositionsRow.
+    from app.agents.procurement_manager_agent.schemas import AllPositionsRow
+
+    payload = AllPositionsRow(
+        nomenclature_id=by_nom.get("nomenclature_id"),
+        nomenclature_name=by_nom.get("nomenclature_name"),
+        quantity=Decimal(str(by_nom["needed_quantity"])),
+        amount_formula="test",
+        coverage_source=by_nom["coverage_source"],
+        coverage_source_label=by_nom.get("coverage_source_label"),
+        from_warehouse=Decimal(str(by_nom["from_warehouse"])),
+        from_supplier=Decimal(str(by_nom["from_supplier"])),
+    ).model_dump(mode="json")
+    assert "from_warehouse" in payload
+    assert "from_supplier" in payload
+    assert Decimal(str(payload["from_warehouse"])) == Decimal(by_nom["from_warehouse"])
+    assert Decimal(str(payload["from_supplier"])) == Decimal(by_nom["from_supplier"])
 
 
 def test_partial_coverage_case_tone_is_attention() -> None:

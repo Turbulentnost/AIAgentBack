@@ -171,10 +171,11 @@ class ProcurementOrchestratorService:
         self.enqueue_case = enqueue_case
         self.pending_dispatches: list[tuple[str, str]] = []
 
-    async def poll_once(self) -> dict[str, Any]:
+    async def poll_once(self, *, force: bool = False) -> dict[str, Any]:
         started = datetime.now(UTC)
         summary: dict[str, Any] = {
             "started_at": started.isoformat(),
+            "force": bool(force),
             "databases": [],
             "created": 0,
             "updated": 0,
@@ -182,6 +183,8 @@ class ProcurementOrchestratorService:
             "enqueued": 0,
             "errors": [],
             "sources": [],
+            "chain_enriched": 0,
+            "abc_updated": 0,
         }
         try:
             health = await self.mcp.call_capability("read_system_health_check", {})
@@ -212,6 +215,39 @@ class ProcurementOrchestratorService:
         summary["enqueued"] += backfilled
         claimed = await self.claim_engineer_dispatches(limit=5)
         summary["engineer_dispatched"] = claimed
+
+        try:
+            from app.services.procurement_1c_chain_enricher import (
+                Procurement1CChainEnricher,
+            )
+
+            enricher = Procurement1CChainEnricher(self.db, mcp=self.mcp)
+            enrich_summary = await enricher.enrich_active_cases(force=bool(force))
+            summary["chain_enriched"] = int(enrich_summary.get("enriched", 0))
+            if enrich_summary.get("errors"):
+                summary["errors"].extend(
+                    f"chain:{err}" for err in enrich_summary["errors"]
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("procurement.orchestrator.chain_enrich_failed")
+            summary["errors"].append(f"chain_enrich:{exc}")
+
+        try:
+            from app.agents.procurement_manager_agent.supplier_abc import (
+                refresh_supplier_abc_classes,
+            )
+
+            abc_summary = await refresh_supplier_abc_classes(
+                mcp=self.mcp,
+                force=bool(force),
+            )
+            summary["abc_updated"] = int(abc_summary.get("updated", 0))
+            if abc_summary.get("error"):
+                summary["errors"].append(f"abc:{abc_summary['error']}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("procurement.orchestrator.abc_refresh_failed")
+            summary["errors"].append(f"abc_refresh:{exc}")
+
         summary["finished_at"] = datetime.now(UTC).isoformat()
         return summary
 
@@ -2147,4 +2183,49 @@ def build_poll_lock_key() -> str:
     return f"procurement:orchestrator:poll:{digest}"
 
 
-__all__ = ["ProcurementOrchestratorService", "build_poll_lock_key"]
+def build_poll_success_key() -> str:
+    return "procurement:orchestrator:last_success_at"
+
+
+def should_throttle_auto_poll(
+    last_success_iso: str | None,
+    *,
+    force: bool = False,
+    min_interval_seconds: int | None = None,
+    now: datetime | None = None,
+) -> tuple[bool, int | None]:
+    """Return (should_skip, seconds_remaining). Manual force bypasses the daily throttle."""
+    if force:
+        return False, None
+    from app.core.config import settings
+
+    interval = int(
+        min_interval_seconds
+        if min_interval_seconds is not None
+        else settings.PROCUREMENT_ORCHESTRATOR_MIN_INTERVAL_SECONDS
+    )
+    if interval <= 0 or not last_success_iso:
+        return False, None
+    try:
+        raw = str(last_success_iso).strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        last = datetime.fromisoformat(raw)
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+    except ValueError:
+        return False, None
+    as_of = now or datetime.now(UTC)
+    elapsed = (as_of - last.astimezone(UTC)).total_seconds()
+    if elapsed >= interval:
+        return False, None
+    remaining = max(0, int(interval - elapsed))
+    return True, remaining
+
+
+__all__ = [
+    "ProcurementOrchestratorService",
+    "build_poll_lock_key",
+    "build_poll_success_key",
+    "should_throttle_auto_poll",
+]

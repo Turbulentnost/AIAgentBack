@@ -1,4 +1,4 @@
-"""Deterministic top-N supplier offer ranking (deadline → cost/overpay → speed)."""
+"""Deterministic top-N supplier offer ranking (deadline → ABC → cost → speed)."""
 
 from __future__ import annotations
 
@@ -61,6 +61,9 @@ def collect_supplier_offers(
             available = _available_qty(offering)
             if price is None or price < 0 or available is None or available <= 0:
                 continue
+            abc_class = supplier.get("abc_class")
+            if abc_class not in {"A", "B", "C"}:
+                abc_class = None
             row: dict[str, Any] = {
                 "supplier_id": str(supplier.get("supplier_id") or ""),
                 "supplier_name": str(supplier.get("name") or supplier.get("supplier_id") or ""),
@@ -70,6 +73,10 @@ def collect_supplier_offers(
                 "available_qty": available,
                 "unit": offering.get("unit") or "шт",
                 "lead_time_days": offering.get("lead_time_days"),
+                "abc_class": abc_class,
+                "abc_spend_share": supplier.get("abc_spend_share"),
+                "quality_rating": supplier.get("quality_rating"),
+                "delivery_rating": supplier.get("delivery_rating"),
             }
             for lot_key in ("lot_size", "pack_qty", "pack_size", "min_order_qty"):
                 lot_val = _dec(offering.get(lot_key))

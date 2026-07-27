@@ -72,6 +72,13 @@ def _enrich_card(card: dict[str, Any]) -> OtkPresentationCardRead:
     return OtkPresentationCardRead.model_validate(payload)
 
 
+def _is_fully_accepted(card: dict[str, Any]) -> bool:
+    lines = card.get("lines") or []
+    if not lines:
+        return False
+    return all(bool(line.get("accepted")) for line in lines)
+
+
 def _to_summary(card: dict[str, Any]) -> OtkPresentationSummary:
     project_code = card.get("project_code")
     project_name = card.get("project_name")
@@ -84,6 +91,7 @@ def _to_summary(card: dict[str, Any]) -> OtkPresentationSummary:
         due_at=str(card.get("due_at") or ""),
         status=card.get("status") or "queued",  # type: ignore[arg-type]
         lines_count=len(card.get("lines") or []),
+        all_accepted=_is_fully_accepted(card),
         executor_id=str(card.get("executor_id") or ""),
         project_code=str(project_code) if project_code else None,
         project_name=str(project_name) if project_name else None,
@@ -97,7 +105,11 @@ class OtkPresentationService:
     def list_presentations(self) -> OtkPresentationListResponse:
         cards = self.store.list_presentations()
         summaries = [_to_summary(card) for card in cards]
-        pending = [item for item in summaries if item.status != "done"]
+        pending = [
+            item
+            for item in summaries
+            if item.status != "done" and not item.all_accepted
+        ]
         earliest: str | None = None
         if pending:
             earliest = min(pending, key=lambda item: item.due_at).due_at
@@ -114,6 +126,35 @@ class OtkPresentationService:
         if card is None:
             return None
         return _enrich_card(card)
+
+    def create_presentation(self, payload: dict[str, Any]) -> OtkPresentationCardRead:
+        from app.agents.quality_engineer_agent.otk_schemas import OtkPresentationCreate
+
+        data = OtkPresentationCreate.model_validate(payload).model_dump(mode="json")
+        lines_in = list(data.pop("lines") or [])
+        card = {
+            **data,
+            "id": self.store.new_presentation_id(),
+            "lines": [
+                {**line, "id": self.store.new_line_id()}
+                for line in lines_in
+            ],
+        }
+        if not card.get("invoice_date"):
+            from datetime import date
+
+            card["invoice_date"] = date.today().isoformat()
+        if not card.get("due_at"):
+            from datetime import datetime, timedelta, timezone
+
+            card["due_at"] = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        if not card.get("invoice_number"):
+            card["invoice_number"] = f"УПД-{card['id'][-6:].upper()}"
+        workers = self.store.list_workers()
+        if not card.get("executor_id") and workers:
+            card["executor_id"] = str(workers[0].get("id") or "")
+        saved = self.store.save_presentation(card)
+        return _enrich_card(saved)
 
     def update_presentation(
         self,

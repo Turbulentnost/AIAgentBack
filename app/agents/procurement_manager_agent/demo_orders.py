@@ -13,6 +13,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from app.agents.procurement_manager_agent.batches import split_meter_pieces
+
 AGENT_ID = "procurement_logistics_agent"
 DEMO_TAG = "procurement_manager_demo_v1"
 DEMO_CASE_1 = uuid.UUID("685dbc88-3ee6-4f0d-8dd8-347ad930e89e")
@@ -89,12 +91,15 @@ WAREHOUSES = [
     "Склад электроники",
 ]
 
-STATUSES = [
-    "purchase_draft",
-    "purchase_draft",
-    "purchase_draft",
-    "approval_required",
-    "ordered",
+# Cycle through manager fulfillment categories (case.status → UI filter).
+# 5 each for 30 orders: no_supplier, payment, delivery, otk, posting, completed.
+FULFILLMENT_CYCLE: list[tuple[str, str]] = [
+    ("purchase_draft", "no_supplier"),
+    ("payment_pending", "payment"),
+    ("in_transit", "delivery"),
+    ("receiving", "otk_presentation"),
+    ("posting_required", "posting"),
+    ("posted", "completed"),
 ]
 
 
@@ -109,7 +114,7 @@ def build_orders(*, now: datetime | None = None) -> list[dict[str, Any]]:
     orders: list[dict[str, Any]] = []
     for index in range(1, 31):
         project = PROJECTS[(index - 1) % len(PROJECTS)]
-        status = STATUSES[(index - 1) % len(STATUSES)]
+        status, fulfillment_status = FULFILLMENT_CYCLE[(index - 1) % len(FULFILLMENT_CYCLE)]
         required = base + timedelta(days=(index % 12) - 2, hours=10)
         line_count = 2 + ((index * 3) % 5)  # 2..6
         positions: list[dict[str, Any]] = []
@@ -119,17 +124,27 @@ def build_orders(*, now: datetime | None = None) -> list[dict[str, Any]]:
             qty = Decimal(str(5 + ((index * 7 + line_no * 11) % 90)))
             if line_no == 1 and index % 4 == 0:
                 qty = Decimal(str(180 + index))
-            positions.append(
-                {
-                    "line_id": f"pm-{index:02d}-L{line_no}",
-                    "line_number": line_no,
-                    "nomenclature_id": nom_id,
-                    "nomenclature_name": nom_name,
-                    "unit": unit,
-                    "quantity": str(qty),
-                    "required_date": required.isoformat(),
-                }
-            )
+            # Meter goods: keep total as sum of physical cuts (e.g. 5.1 + 6.3).
+            meter_pieces: list[str] | None = None
+            if unit in {"м", "m"}:
+                # Prefer totals that split into several pipes (8–28 m).
+                if qty < 8:
+                    qty = Decimal(str(8 + (index + line_no) % 12))
+                pieces = split_meter_pieces(qty, seed=index * 10 + line_no)
+                qty = sum(pieces, Decimal("0"))
+                meter_pieces = [str(p) for p in pieces]
+            pos_row: dict[str, Any] = {
+                "line_id": f"pm-{index:02d}-L{line_no}",
+                "line_number": line_no,
+                "nomenclature_id": nom_id,
+                "nomenclature_name": nom_name,
+                "unit": unit,
+                "quantity": str(qty),
+                "required_date": required.isoformat(),
+            }
+            if meter_pieces:
+                pos_row["meter_pieces"] = meter_pieces
+            positions.append(pos_row)
         order_uuid = case_id_for_index(index)
         source_number = f"ЗП-DEMO-{index:04d}"
         orders.append(
@@ -140,6 +155,7 @@ def build_orders(*, now: datetime | None = None) -> list[dict[str, Any]]:
                 "source_1c_ref": f"demo-pm-order-{index:03d}",
                 "source_database": "demo",
                 "status": status,
+                "fulfillment_status": fulfillment_status,
                 "current_agent_id": AGENT_ID,
                 "department_name": project["department"],
                 "warehouse_name": WAREHOUSES[(index - 1) % len(WAREHOUSES)],
