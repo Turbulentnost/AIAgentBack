@@ -56,7 +56,8 @@ def stage_attachment_bytes(
         raise ValueError("stage_attachment_bytes: empty content")
 
     root = resolve_staging_root()
-    doc_part = _safe_segment(document_number or document_ref_key[:8], fallback="doc")
+    # GUID ref_key — ASCII-safe сегмент пути (НП00-… на Windows ломает mkdir/write).
+    doc_part = _safe_segment(document_ref_key, fallback="doc")
     msg_part = _safe_segment(message_id or document_ref_key, fallback="msg")
     target_dir = root / doc_part / msg_part
     target_dir.mkdir(parents=True, exist_ok=True)

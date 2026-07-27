@@ -86,6 +86,8 @@ def _build_integration(settings: Settings) -> IntegrationService:
             file_volume_key=settings.odata_file_volume_key,
             file_author_key=settings.odata_file_author_key,
             file_storage_mode=settings.odata_file_storage_mode,
+            file_volume_root=settings.odata_file_volume_root,
+            file_volume_preupload=settings.odata_file_volume_preupload,
         )
     if mode == "http":
         return HttpIntegrationService(settings.integration_service_url)

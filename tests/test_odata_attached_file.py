@@ -19,15 +19,20 @@ from agent_pochta.services.odata_attached_file import (
     format_attached_file_created_at,
     format_attached_file_modified_universal,
     format_volume_file_path,
+    is_volume_preupload_enabled,
     list_attached_files_for_document,
     now_attached_file_processed_at,
+    preupload_volume_file,
     read_attached_file_storage_bytes,
     release_attached_file_edit_lock,
     resolve_attached_file_storage_mode,
+    resolve_attached_file_upload_plan,
     resolve_stream_content_type,
+    resolve_volume_absolute_path,
     split_filename,
     verify_attached_file_reference_fields,
     verify_attached_file_storage,
+    verify_volume_file_on_disk,
 )
 
 _VOLUME_FIELD_MAP = {
@@ -521,6 +526,87 @@ def test_attach_file_checks_owner_exists():
             file_input=AttachedFileInput(filename="a.pdf", content=b"data"),
         )
     client.create_entity.assert_not_called()
+
+
+def test_resolve_attached_file_upload_plan_volume_preupload():
+    plan = resolve_attached_file_upload_plan(
+        {
+            "storage_mode": "volume",
+            "volume_preupload": True,
+        }
+    )
+    assert plan["mode"] == "volume"
+    assert plan["volume_preupload"] is True
+    assert plan["upload_via_stream"] is False
+    assert plan["include_binary"] is False
+
+
+def test_resolve_volume_absolute_path():
+    path = resolve_volume_absolute_path(r"\\srv2\erp_file", "20260727\\НП00-003900.msg")
+    assert "20260727" in str(path)
+    assert str(path).endswith("НП00-003900.msg")
+
+
+def test_preupload_and_verify_volume_file(tmp_path):
+    content = b"\xd0\xcf\x11\xe0" + b"\x00" * 64
+    target = preupload_volume_file(tmp_path, "20260727\\test.msg", content)
+    assert target.is_file()
+    assert verify_volume_file_on_disk(tmp_path, "20260727\\test.msg", expected_size=len(content)) == len(
+        content
+    )
+
+
+def test_is_volume_preupload_enabled():
+    assert is_volume_preupload_enabled({"volume_preupload": True}) is True
+    assert is_volume_preupload_enabled({}) is False
+
+
+def test_attach_file_volume_preupload_skips_stream(monkeypatch, tmp_path):
+    monkeypatch.setenv('ODATA_ATTACH_STAGING_ENABLED', 'false')
+    volume_map = {
+        **_VOLUME_FIELD_MAP,
+        'defaults': {
+            **_VOLUME_FIELD_MAP['defaults'],
+            'volume_preupload': True,
+            'volume_root': str(tmp_path),
+        },
+    }
+    client = MagicMock()
+    volume_kind = volume_map['defaults']['storage_kind']
+    attachment_meta = {
+        'Ref_Key': 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        'Размер': 4,
+        'ТипХраненияФайла': volume_kind,
+        'Том_Key': '21886495-364e-11ea-82f2-ac1f6b05524c',
+        'ПутьКФайлу': '20260724\\a.pdf',
+        'Редактирует_Key': '00000000-0000-0000-0000-000000000000',
+    }
+
+    def _get_by_key(_entity, ref_key):
+        if ref_key == DOC_KEY:
+            return {'Ref_Key': DOC_KEY}
+        return attachment_meta
+
+    client.get_by_key.side_effect = _get_by_key
+    client.get_entity_stream.return_value = b''
+    client.create_entity.return_value = {'Ref_Key': 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'}
+
+    ts = datetime(2026, 7, 24, 10, 30, 0, tzinfo=ZoneInfo('Europe/Moscow'))
+    result = attach_file_to_incoming_document(
+        client,
+        document_ref_key=DOC_KEY,
+        file_input=AttachedFileInput(
+            filename='a.pdf',
+            content=b'data',
+            processed_at=ts,
+        ),
+        field_map=volume_map,
+    )
+
+    assert result.ref_key == 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    disk_path = tmp_path / '20260724' / 'a.pdf'
+    assert disk_path.read_bytes() == b'data'
+    client.put_entity_stream.assert_not_called()
 
 
 def test_attach_file_posts_to_catalog_volume_mode(monkeypatch):

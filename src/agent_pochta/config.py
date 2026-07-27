@@ -131,6 +131,12 @@ class Settings(BaseSettings):
         alias="ODATA_FILE_VOLUME_KEY",
     )
     odata_file_author_key: str = Field(default="", alias="ODATA_FILE_AUTHOR_KEY")
+    # UNC/локальный корень тома 1С (fallback: OData Catalog_ТомаХраненияФайлов → ПолныйПутьWindows)
+    odata_file_volume_root: str = Field(default="", alias="ODATA_FILE_VOLUME_ROOT")
+    # Записать байты на том ДО OData POST (как drag-drop Outlook); без этого thick client не открывает .msg
+    odata_file_volume_preupload: bool = Field(
+        default=False, alias="ODATA_FILE_VOLUME_PREUPLOAD"
+    )
     # Локальный staging перед OData POST: аудит байт и round-trip проверка
     odata_attach_staging_enabled: bool = Field(
         default=True, alias="ODATA_ATTACH_STAGING_ENABLED"

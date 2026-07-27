@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,7 @@ _VOLUME_STORAGE_KIND = "ВТомахНаДиске"
 _DATABASE_STORAGE_KIND = "ВИнформационнойБазе"
 _DEFAULT_VOLUME_KEY = "21886495-364e-11ea-82f2-ac1f6b05524c"
 _VOLUME_BINARY_TYPE = "application/xml+xdto"
+_VOLUME_CATALOG_ENTITY = "Catalog_ТомаХраненияФайлов"
 _GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -284,6 +286,120 @@ def format_volume_file_path(
     return f"{date_part}\\{filename}"
 
 
+def is_volume_preupload_enabled(defaults: dict[str, Any] | None = None) -> bool:
+    cfg = defaults or {}
+    return bool(cfg.get("volume_preupload"))
+
+
+def resolve_volume_relative_path_parts(relative_path: str) -> tuple[str, ...]:
+    """20260727\\file.msg → ('20260727', 'file.msg')."""
+    cleaned = str(relative_path or "").strip().replace("/", "\\")
+    if not cleaned or cleaned.startswith("\\") or ".." in cleaned.split("\\"):
+        raise AttachedFileError(f"Некорректный относительный путь на томе: {relative_path!r}")
+    parts = tuple(part for part in cleaned.split("\\") if part)
+    if len(parts) < 2:
+        raise AttachedFileError(f"Некорректный относительный путь на томе: {relative_path!r}")
+    return parts
+
+
+def resolve_volume_absolute_path(volume_root: str | Path, relative_path: str) -> Path:
+    """Собирает абсолютный путь: {volume_root}\\YYYYMMDD\\file.msg."""
+    root = str(volume_root or "").strip().rstrip("\\/")
+    if not root:
+        raise AttachedFileError("Корень тома (ODATA_FILE_VOLUME_ROOT) не задан")
+    parts = resolve_volume_relative_path_parts(relative_path)
+    if os.name == "nt" or str(root).startswith("\\\\"):
+        return Path(str(PureWindowsPath(root, *parts)))
+    return Path(root, *parts)
+
+
+def fetch_volume_root_from_odata(
+    client,
+    *,
+    volume_key: str,
+    catalog_entity: str = _VOLUME_CATALOG_ENTITY,
+) -> str:
+    """Читает ПолныйПутьWindows/Linux из Catalog_ТомаХраненияФайлов."""
+    key = (volume_key or _DEFAULT_VOLUME_KEY).strip()
+    record = client.get_by_key(catalog_entity, key) or {}
+    if not record:
+        raise AttachedFileError(
+            f"Том {catalog_entity} Ref_Key={key} не найден в OData"
+        )
+    if os.name == "nt":
+        path = str(record.get("ПолныйПутьWindows") or "").strip()
+    else:
+        path = str(record.get("ПолныйПутьLinux") or "").strip()
+        if not path:
+            path = str(record.get("ПолныйПутьWindows") or "").strip()
+    if not path:
+        raise AttachedFileError(
+            f"Полный путь тома не заполнен (Ref_Key={key}, entity={catalog_entity})"
+        )
+    return path.rstrip("\\/")
+
+
+def resolve_volume_root(
+    client,
+    *,
+    defaults: dict[str, Any] | None = None,
+    volume_key: str | None = None,
+) -> str:
+    """Корень тома: ODATA_FILE_VOLUME_ROOT или OData Catalog_ТомаХраненияФайлов."""
+    cfg = defaults or {}
+    explicit = str(cfg.get("volume_root") or "").strip()
+    if explicit:
+        return explicit.rstrip("\\/")
+    key = (volume_key or cfg.get("volume_key") or _DEFAULT_VOLUME_KEY).strip()
+    return fetch_volume_root_from_odata(client, volume_key=key)
+
+
+def preupload_volume_file(
+    volume_root: str | Path,
+    relative_path: str,
+    content: bytes,
+) -> Path:
+    """Записывает байты на том 1С до OData POST (как ручной drag-drop Outlook)."""
+    binary = validate_file_content(content)
+    target = resolve_volume_absolute_path(volume_root, relative_path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(binary)
+    except PermissionError as exc:
+        raise AttachedFileError(
+            f"Нет прав записи на том 1С ({target.parent}): {exc}. "
+            "Запросите у админа 1С доступ на запись в ODATA_FILE_VOLUME_ROOT "
+            "или смонтируйте том в контейнер agent-pochta."
+        ) from exc
+    except OSError as exc:
+        raise AttachedFileError(
+            f"Не удалось записать файл на том 1С ({target}): {exc}"
+        ) from exc
+    if target.stat().st_size != len(binary):
+        raise AttachedFileError(
+            f"Размер файла на томе ({target.stat().st_size}) "
+            f"не совпадает с отправленным ({len(binary)}): {target}"
+        )
+    return target
+
+
+def verify_volume_file_on_disk(
+    volume_root: str | Path,
+    relative_path: str,
+    *,
+    expected_size: int,
+) -> int:
+    target = resolve_volume_absolute_path(volume_root, relative_path)
+    if not target.is_file():
+        raise AttachedFileError(f"Файл на томе не найден после pre-upload: {target}")
+    size = target.stat().st_size
+    if expected_size > 0 and size != expected_size:
+        raise AttachedFileError(
+            f"Размер файла на томе ({size}) не совпадает с ожидаемым ({expected_size})"
+        )
+    return size
+
+
 def resolve_attached_file_upload_plan(
     defaults: dict[str, Any] | None = None,
     *,
@@ -292,8 +408,9 @@ def resolve_attached_file_upload_plan(
     """План POST/PUT для режима volume vs database."""
     cfg = defaults or {}
     mode = resolve_attached_file_storage_mode(cfg)
+    preupload = mode == "volume" and is_volume_preupload_enabled(cfg)
     if mode == "volume":
-        upload_via_stream = True
+        upload_via_stream = not preupload
         storage_kind = _VOLUME_STORAGE_KIND
         if include_binary is None:
             include_binary = False
@@ -312,6 +429,7 @@ def resolve_attached_file_upload_plan(
         "include_binary": include_binary,
         "upload_via_stream": upload_via_stream,
         "binary_type": binary_type,
+        "volume_preupload": preupload,
     }
 
 
@@ -820,6 +938,18 @@ def attach_file_to_incoming_document(
     fields = cfg.get("fields") or {}
     defaults = cfg.get("defaults") or {}
     plan = resolve_attached_file_upload_plan(defaults)
+    volume_root: str | None = None
+    volume_relative_path: str | None = None
+    if plan.get("volume_preupload"):
+        path_field = str(fields.get("file_path") or "ПутьКФайлу")
+        volume_relative_path = str(payload.get(path_field) or "").strip()
+        if not volume_relative_path:
+            raise AttachedFileError(
+                "volume pre-upload: ПутьКФайлу не сформирован в payload"
+            )
+        volume_root = resolve_volume_root(client, defaults=defaults)
+        preupload_volume_file(volume_root, volume_relative_path, upload_content)
+
     data = client.create_entity(entity, payload)
     ref_key = str(data.get("Ref_Key") or "").strip()
     if not ref_key:
@@ -855,6 +985,16 @@ def attach_file_to_incoming_document(
                 filename=file_input.filename,
             )
 
+        # Снять блокировку сразу после записи байтов — иначе БСП может пометить
+        # двоичные данные «очищены как ненужные» до verify/read round-trip.
+        release_attached_file_edit_lock(
+            client,
+            entity=entity,
+            ref_key=ref_key,
+            field_map=cfg,
+            author_key=author_key,
+        )
+
         verify_attached_file_storage(
             client,
             entity=entity,
@@ -863,13 +1003,12 @@ def attach_file_to_incoming_document(
             field_map=cfg,
         )
 
-        release_attached_file_edit_lock(
-            client,
-            entity=entity,
-            ref_key=ref_key,
-            field_map=cfg,
-            author_key=author_key,
-        )
+        if plan.get("volume_preupload") and volume_root and volume_relative_path:
+            verify_volume_file_on_disk(
+                volume_root,
+                volume_relative_path,
+                expected_size=len(upload_content),
+            )
 
         final_record = client.get_by_key(entity, ref_key) or {}
         verify_attached_file_reference_fields(final_record, ref_key=ref_key)
@@ -893,6 +1032,8 @@ def attach_file_to_incoming_document(
                 extra={
                     "volume_path": final_record.get("ПутьКФайлу"),
                     "volume_stream_empty": len(odata_bytes) == 0,
+                    "volume_preupload": plan.get("volume_preupload"),
+                    "volume_root": volume_root,
                 },
             )
             if (

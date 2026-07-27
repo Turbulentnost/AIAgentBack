@@ -82,6 +82,8 @@ class ODataIntegrationService(IntegrationService):
         file_volume_key: str = "",
         file_author_key: str = "",
         file_storage_mode: str = "",
+        file_volume_root: str = "",
+        file_volume_preupload: bool = False,
     ) -> None:
         self._entity = entity.strip("/")
         self._field_map = load_field_map(field_map_json)
@@ -106,6 +108,8 @@ class ODataIntegrationService(IntegrationService):
             attached_file_field_map_path or None,
             file_volume_key=file_volume_key,
             file_storage_mode=file_storage_mode,
+            file_volume_root=file_volume_root,
+            file_volume_preupload=file_volume_preupload,
         )
         self._attach_files_enabled = attach_files_enabled
         self._file_author_key = resolve_attached_file_author_key(
@@ -125,6 +129,8 @@ class ODataIntegrationService(IntegrationService):
         *,
         file_volume_key: str = "",
         file_storage_mode: str = "",
+        file_volume_root: str = "",
+        file_volume_preupload: bool = False,
     ) -> dict[str, Any]:
         field_map = load_attached_file_field_map(path)
         defaults = dict(field_map.get("defaults") or {})
@@ -134,6 +140,11 @@ class ODataIntegrationService(IntegrationService):
         storage_mode = (file_storage_mode or defaults.get("storage_mode") or "").strip()
         if storage_mode:
             defaults["storage_mode"] = storage_mode
+        volume_root = (file_volume_root or defaults.get("volume_root") or "").strip()
+        if volume_root:
+            defaults["volume_root"] = volume_root
+        if file_volume_preupload:
+            defaults["volume_preupload"] = True
         return {**field_map, "defaults": defaults}
 
     def create_incoming_correspondence(
