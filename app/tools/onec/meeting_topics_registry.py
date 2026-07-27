@@ -13,11 +13,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import requests
 
+from app.core.config import settings
 from app.tools.onec.connection import CONFIG, ODataConfig, create_session
 from app.tools.onec.get_meetings import entity_url, odata_get_json
 
@@ -49,6 +52,78 @@ def is_empty_date(value: str | None) -> bool:
     return not normalized or normalized.startswith(EMPTY_DATE)
 
 
+def parse_closed_date(value: str | None) -> date | None:
+    if is_empty_date(value):
+        return None
+    normalized = (value or "").strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(normalized).date()
+    except ValueError:
+        return None
+
+
+def is_topic_active(raw_closed_date: str | None, *, today: date | None = None) -> bool:
+    """Тема активна, если дата закрытия не задана или строго позже сегодня."""
+    closed = parse_closed_date(raw_closed_date)
+    if closed is None:
+        return True
+    current = today or date.today()
+    return closed > current
+
+
+def _display_timezone() -> ZoneInfo:
+    tz_name = (settings.OUTLOOK_TIMEZONE or "Europe/Moscow").strip() or "Europe/Moscow"
+    return ZoneInfo(tz_name)
+
+
+def _parse_meeting_start(slot_start: str) -> datetime:
+    normalized = str(slot_start).strip().replace(" ", "T").replace("Z", "+00:00")
+    if not normalized:
+        raise ValueError(f"Некорректная дата совещания: {slot_start!r}")
+    try:
+        meeting_dt = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"Некорректная дата совещания: {slot_start!r}") from exc
+    if meeting_dt.tzinfo is None:
+        meeting_dt = meeting_dt.replace(tzinfo=ZoneInfo("UTC"))
+    return meeting_dt
+
+
+def topic_closed_date_from_meeting_start(
+    slot_start: str,
+    *,
+    weeks: int = 2,
+) -> str:
+    """Дата закрытия темы = дата совещания + N недель (поле ДатаЗакрытияТемы в 1С)."""
+    meeting_date = _parse_meeting_start(slot_start).astimezone(_display_timezone()).date()
+    closed_date = meeting_date + timedelta(weeks=weeks)
+    return f"{closed_date.isoformat()}T00:00:00"
+
+
+def update_meeting_topic_closed_date(
+    topic_ref_key: str,
+    closed_date: str,
+    *,
+    config: ODataConfig = CONFIG,
+) -> dict[str, Any]:
+    normalized_ref = (topic_ref_key or "").strip()
+    if is_empty_key(normalized_ref):
+        raise ValueError("Не указан Ref_Key темы совещания")
+
+    session = create_session(config)
+    url = f"{entity_url(config.url, CATALOG_ENTITY)}(guid'{normalized_ref}')?$format=json"
+    payload = {"ДатаЗакрытияТемы": closed_date}
+    response = session.patch(url, json=payload, timeout=config.timeout)
+    if not response.ok:
+        raise RuntimeError(
+            "Ошибка обновления даты закрытия темы совещания: "
+            f"HTTP {response.status_code}: {response.text[:800]}"
+        )
+    return response.json()
+
+
 def related_description(value: Any) -> str | None:
     if isinstance(value, dict):
         description = (value.get("Description") or "").strip()
@@ -61,6 +136,7 @@ def normalize_topic(row: dict[str, Any], *, expand_related: bool) -> dict[str, A
         "ref_key": row.get("Ref_Key"),
         "code": row.get("Code"),
         "description": (row.get("Description") or "").strip(),
+        "details": (row.get("Описание") or "").strip(),
         "meeting_type": row.get("ВидСовещания"),
         "priority": row.get("Приоритет"),
         "schedule_defined": bool(row.get("РасписаниеЗадано")),
@@ -69,7 +145,7 @@ def normalize_topic(row: dict[str, Any], *, expand_related: bool) -> dict[str, A
         "start_date": normalize_optional_datetime(row.get("ДатаНачала")),
         "end_date": normalize_optional_datetime(row.get("ДатаКонца")),
         "closed_date": normalize_optional_datetime(row.get("ДатаЗакрытияТемы")),
-        "is_active": is_empty_date(row.get("ДатаЗакрытияТемы")),
+        "is_active": is_topic_active(row.get("ДатаЗакрытияТемы")),
         "is_project_topic": bool(row.get("ПоПроекту")),
         "is_management_circle_topic": bool(row.get("ТемаКругаУправления")),
         "repeat": {
@@ -128,7 +204,11 @@ def build_filter_parts(
         parts.append(f"substringof('{odata_escape(query.strip())}', Description)")
 
     if active_only:
-        parts.append(f"ДатаЗакрытияТемы eq datetime'{EMPTY_DATE}'")
+        today = date.today().isoformat()
+        parts.append(
+            f"(ДатаЗакрытияТемы eq datetime'{EMPTY_DATE}' "
+            f"or ДатаЗакрытияТемы gt datetime'{today}T00:00:00')"
+        )
 
     return parts
 
@@ -165,6 +245,13 @@ def fetch_topic_by_key(
     try:
         row = odata_get_json(session, url, timeout=config.timeout)
     except RuntimeError:
+        if expand_related:
+            return fetch_topic_by_key(
+                session,
+                config,
+                ref_key,
+                expand_related=False,
+            )
         return None
     if row.get("DeletionMark"):
         return None

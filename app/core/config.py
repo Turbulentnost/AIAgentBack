@@ -185,17 +185,60 @@ class Settings(BaseSettings):
     MEETING_DASHBOARD_CACHE_WARMUP_HOURS: str = "10,15"
     MEETING_DASHBOARD_CACHE_WARMUP_MINUTE: int = 0
     MEETING_DASHBOARD_CACHE_WARMUP_TIMEZONE: str = "Europe/Moscow"
+    MEETING_DASHBOARD_ONEC_LIMIT: int = 50
+    MEETING_TOPIC_SIMILARITY_USE_EMBEDDINGS: bool = True
+    MEETING_TOPIC_SIMILARITY_THRESHOLD: float = 0.85
+    MEETING_TOPIC_SIMILARITY_WEIGHT_TOPIC: float = 0.50
+    MEETING_TOPIC_SIMILARITY_WEIGHT_PARTICIPANTS: float = 0.30
+    MEETING_TOPIC_SIMILARITY_WEIGHT_DETAILS: float = 0.20
+    MEETING_TOPIC_SIMILARITY_MIN_TOPIC_SCORE: float = 0.70
+    SCHEDULED_MEETINGS_ARCHIVE_ENABLED: bool = True
+    SCHEDULED_MEETINGS_ARCHIVE_HOUR: int = 1
+    SCHEDULED_MEETINGS_ARCHIVE_MINUTE: int = 0
+    SCHEDULED_MEETINGS_CARD_SYNC_ENABLED: bool = True
+    SCHEDULED_MEETINGS_CARD_SYNC_HOUR: int = 6
+    SCHEDULED_MEETINGS_CARD_SYNC_MINUTE: int = 0
+    MEETING_MEMO_SERIES_LLM_ENABLED: bool = True
+    MEETING_MEMO_SERIES_LLM_MODEL: str | None = None
+    MEETING_MEMO_SERIES_LLM_MAX_TOKENS: int = 1500
+    MEETING_PROTOCOL_DRAFT_ENABLED: bool = True
+    MEETING_PROTOCOL_DRAFT_MINUTES_BEFORE: int = 10
+    MEETING_PROTOCOL_DRAFT_NUMBER_TEMPLATE: str = "AUTO_{memo_number}_{date}"
+    MEETING_PROTOCOL_DRAFT_TEMPLATE_PREFIX: str | None = None
+    MEETING_PROTOCOL_DISPATCH_LOOKAHEAD_HOURS: int = 48
+    MEETING_PROTOCOL_DISPATCH_CATCHUP_GRACE_MINUTES: int = 30
+    MEETING_PROTOCOL_DISPATCH_BEAT_ENABLED: bool = True
+    MEETING_PROTOCOL_DISPATCH_BEAT_HOURS: str = "8,12,16"
+    MEETING_PROTOCOL_DISPATCH_BEAT_MINUTE: int = 0
 
     # Outlook / Exchange (COM-календарь, EWS, SMTP) — значения из .env.
     OUTLOOK_EMAIL: str = ""
     OUTLOOK_PASSWORD: str = ""
     OUTLOOK_SERVER: str = ""
+    OUTLOOK_WEB_APP_URL: str = ""
     OUTLOOK_MAILBOX: str = ""
     OUTLOOK_TIMEZONE: str = "Europe/Moscow"
     OUTLOOK_SMTP_HOST: str = ""
     OUTLOOK_SMTP_PORT: int = 587
     OUTLOOK_SMTP_TLS: str = "true"
     OUTLOOK_SMTP_FROM: str = ""
+    OUTLOOK_COMPANY_CALENDAR: str = "calendar@turbo-don.ru"
+
+    # TurboProject (MS Project + 1С) — значения из .env.
+    TURBO_PROJECT_API_BASE_URL: str = ""
+    TURBO_PROJECT_EMAIL: str = ""
+    TURBO_PROJECT_PASSWORD: str = ""
+    TURBO_PROJECT_TIMEOUT: int = 60
+    TURBO_PROJECT_SERIES_SYNC_ENABLED: bool = True
+    # Нижний порог file_id (включительно). Старые проекты не трогаем. 0 = без порога.
+    TURBO_PROJECT_SERIES_MIN_FILE_ID: int = 433
+    # Доп. фильтр по uploaded_at за N дней (0 = выкл; uploaded_at в TP часто = дата обновления).
+    TURBO_PROJECT_SERIES_UPLOADED_WITHIN_DAYS: int = 0
+    TURBO_PROJECT_SERIES_SYNC_HOUR: int = 7
+    TURBO_PROJECT_SERIES_SYNC_MINUTE: int = 30
+    # Опрос TurboProject при открытии вкладки «график» (GET /meetings/scheduled).
+    TURBO_PROJECT_SERIES_SYNC_ON_SCHEDULE_LIST: bool = True
+    TURBO_PROJECT_SERIES_SYNC_COOLDOWN_SECONDS: int = 300
 
     @property
     def cors_origins(self) -> list[str]:

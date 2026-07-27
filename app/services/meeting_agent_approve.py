@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from app.agents.meeting_agent.backend import ResolvedParticipant
-from app.agents.meeting_agent.config import AGENT_NAME, DEFAULT_MODEL
 from app.schemas.meeting import MeetingAgentSlotApproveRequest, MeetingAttendeeRead
+from app.services.meeting_invite_format import invite_body_from_attendees
 
-ATTENDEE_ROLE_LABELS = {
-    "initiator": "Инициатор",
-    "manager": "Руководитель",
-    "participant": "Участник",
-}
+from app.services.meeting_attendee_priority import (
+    ATTENDEE_ROLE_LABELS,
+    REQUIRED_PRIORITY_ROLES,
+    is_required_priority_role,
+    priority_role_label,
+    weight_for_priority_role,
+)
 
 
 class MeetingApproveError(ValueError):
@@ -61,11 +63,9 @@ def resolve_approve_recipients(
     return attendee_details, resolved
 
 
-def build_approve_invite_body(subject: str) -> str:
-    return "\n".join(
-        [
-            "Приглашение на совещание.",
-            subject,
-            f"Подготовлено агентом {AGENT_NAME} ({DEFAULT_MODEL}).",
-        ]
-    )
+def build_approve_invite_body(
+    attendees: list[MeetingAttendeeRead],
+    *,
+    room: dict[str, str] | None = None,
+) -> str:
+    return invite_body_from_attendees(attendees, room=room)

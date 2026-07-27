@@ -44,6 +44,42 @@ if settings.PROCUREMENT_SUPPLIER_RECONCILIATION_ENABLED:
         "schedule": float(settings.PROCUREMENT_SUPPLIER_RECONCILIATION_INTERVAL_SECONDS),
         "options": {"queue": "procurement_poll"},
     }
+if settings.SCHEDULED_MEETINGS_ARCHIVE_ENABLED:
+    _beat_schedule["archive-expired-scheduled-meetings"] = {
+        "task": "archive_expired_scheduled_meetings",
+        "schedule": crontab(
+            hour=settings.SCHEDULED_MEETINGS_ARCHIVE_HOUR,
+            minute=settings.SCHEDULED_MEETINGS_ARCHIVE_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
+if settings.SCHEDULED_MEETINGS_CARD_SYNC_ENABLED:
+    _beat_schedule["sync-scheduled-meeting-registry-cards"] = {
+        "task": "sync_scheduled_meeting_registry_cards",
+        "schedule": crontab(
+            hour=settings.SCHEDULED_MEETINGS_CARD_SYNC_HOUR,
+            minute=settings.SCHEDULED_MEETINGS_CARD_SYNC_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
+if settings.MEETING_PROTOCOL_DRAFT_ENABLED and settings.MEETING_PROTOCOL_DISPATCH_BEAT_ENABLED:
+    _beat_schedule["dispatch-meeting-protocol-drafts"] = {
+        "task": "dispatch_meeting_protocol_drafts",
+        "schedule": crontab(
+            hour=settings.MEETING_PROTOCOL_DISPATCH_BEAT_HOURS,
+            minute=settings.MEETING_PROTOCOL_DISPATCH_BEAT_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
+if settings.TURBO_PROJECT_SERIES_SYNC_ENABLED:
+    _beat_schedule["sync-turbo-project-meeting-series"] = {
+        "task": "sync_turbo_project_meeting_series",
+        "schedule": crontab(
+            hour=settings.TURBO_PROJECT_SERIES_SYNC_HOUR,
+            minute=settings.TURBO_PROJECT_SERIES_SYNC_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -60,6 +96,11 @@ celery_app.conf.update(
     task_routes={
         "debug_task": {"queue": "default"},
         "warm_meeting_dashboard_cache": {"queue": "default"},
+        "archive_expired_scheduled_meetings": {"queue": "default"},
+        "sync_scheduled_meeting_registry_cards": {"queue": "default"},
+        "create_registry_protocol_draft": {"queue": "default"},
+        "dispatch_meeting_protocol_drafts": {"queue": "default"},
+        "sync_turbo_project_meeting_series": {"queue": "default"},
         "process_document": {"queue": "documents"},
         "run_agent": {"queue": "agents"},
         "index_document": {"queue": "indexing"},

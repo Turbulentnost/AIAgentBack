@@ -34,6 +34,62 @@ def debug_task(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+@celery_app.task(name="archive_expired_scheduled_meetings")
+def archive_expired_scheduled_meetings() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.scheduled_meeting_service import ScheduledMeetingService
+
+    if not settings.SCHEDULED_MEETINGS_ARCHIVE_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "archive_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _archive() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            result = await ScheduledMeetingService(db).archive_expired_series()
+            await db.commit()
+            return {
+                **result,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    return _run_async_task(_archive)
+
+
+@celery_app.task(name="sync_scheduled_meeting_registry_cards")
+def sync_scheduled_meeting_registry_cards() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.scheduled_meeting_registry_sync import ScheduledMeetingRegistrySyncService
+
+    if not settings.SCHEDULED_MEETINGS_CARD_SYNC_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "card_sync_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _sync() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            result = await ScheduledMeetingRegistrySyncService(db).sync_all_due_series()
+            await db.commit()
+            return {
+                "processed": result.processed,
+                "created": result.created,
+                "rolled": result.rolled,
+                "updated": result.updated,
+                "skipped": result.skipped,
+                "no_occurrences": result.no_occurrences,
+                "errors": result.errors,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    return _run_async_task(_sync)
+
+
 @celery_app.task(name="warm_meeting_dashboard_cache")
 def warm_meeting_dashboard_cache() -> dict[str, Any]:
     from app.core.config import settings
@@ -54,6 +110,98 @@ def warm_meeting_dashboard_cache() -> dict[str, Any]:
         }
 
     return _run_async_task(_warm)
+
+
+@celery_app.task(name="sync_turbo_project_meeting_series")
+def sync_turbo_project_meeting_series() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.turbo_project_series_sync_service import (
+        TurboProjectSeriesSyncError,
+        TurboProjectSeriesSyncService,
+    )
+
+    if not settings.TURBO_PROJECT_SERIES_SYNC_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "turbo_project_series_sync_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _sync() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await TurboProjectSeriesSyncService(db).discover_and_notify()
+                await db.commit()
+                return {
+                    **result.as_dict(),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except TurboProjectSeriesSyncError as exc:
+                await db.rollback()
+                return {
+                    "skipped": True,
+                    "reason": "sync_error",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_sync)
+
+
+@celery_app.task(name="create_registry_protocol_draft", bind=True, max_retries=2)
+def create_registry_protocol_draft(self, entry_id: str) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+    async def _create() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = MeetingProtocolDraftService(db)
+            try:
+                result = await service.create_protocol_draft_for_entry(uuid_module.UUID(entry_id))
+                await db.commit()
+                return {
+                    **result,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as exc:
+                await db.commit()
+                raise exc
+
+    try:
+        return _run_async_task(_create)
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60) from exc
+
+
+@celery_app.task(name="dispatch_meeting_protocol_drafts")
+def dispatch_meeting_protocol_drafts() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.services.meeting_protocol_dispatch_service import run_protocol_draft_dispatch
+
+    if not settings.MEETING_PROTOCOL_DRAFT_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "protocol_draft_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+    if not settings.MEETING_PROTOCOL_DISPATCH_BEAT_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "dispatch_beat_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _dispatch() -> dict[str, Any]:
+        result = await run_protocol_draft_dispatch()
+        return {
+            **result,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return _run_async_task(_dispatch)
 
 
 @celery_app.task(name="run_task", bind=True, max_retries=3)

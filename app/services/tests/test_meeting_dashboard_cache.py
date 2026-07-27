@@ -15,11 +15,19 @@ from app.services.meeting_dashboard_cache import (
 
 @pytest.fixture
 def sample_payload() -> dict:
+    card = {
+        "number": "000009853",
+        "ref_key": "11111111-1111-1111-1111-111111111111",
+        "initiator": {"full_name": "Иванов И.И."},
+        "manager": {"full_name": "Петров П.П."},
+        "ТекстСлужебнойЗаписки": "Текст служебной записки",
+    }
     return {
         "date": "2026-06-17",
-        "unapproved": [{"number": "000009853"}],
-        "today": [{"number": "000009853"}],
-        "counts": {"unapproved": 1, "today": 1},
+        "unapproved": [card],
+        "today": [card],
+        "items": [card],
+        "counts": {"unapproved": 1, "today": 1, "items": 1},
     }
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -21,9 +22,14 @@ from exchangelib.properties import Attendee
 from exchangelib.version import EXCHANGE_2013_SP1, Version
 
 from app.tools.Outlook.outlook_config import OutlookConfig, build_outlook_config
+from app.tools.Outlook.outlook_html_body import plain_text_to_html
+from app.tools.Outlook.outlook_meeting_link import calendar_item_outlook_meta
 
 
 _EWS_VERSION = Version(build=EXCHANGE_2013_SP1)
+
+_SERVICE_ACCOUNT_CACHE: dict[str, Account] = {}
+_SERVICE_ACCOUNT_LOCK = threading.Lock()
 
 
 def load_config() -> OutlookConfig:
@@ -40,6 +46,19 @@ def is_shared_mailbox(config: OutlookConfig) -> bool:
     return bool(config.mailbox) and config.mailbox.strip().lower() != config.email.strip().lower()
 
 
+def _service_account_cache_key(config: OutlookConfig) -> str:
+    return (
+        f"{config.email.strip().lower()}|{config.server.strip().lower()}|"
+        f"{primary_smtp_address(config).lower()}"
+    )
+
+
+def clear_service_account_cache() -> None:
+    """Сброс кэша Postagent Account (для тестов и смены пароля без рестарта)."""
+    with _SERVICE_ACCOUNT_LOCK:
+        _SERVICE_ACCOUNT_CACHE.clear()
+
+
 def connect_account(config: OutlookConfig, *, verify_mailbox: bool = True) -> Account:
     if not config.email or not config.password:
         raise ValueError(
@@ -48,6 +67,12 @@ def connect_account(config: OutlookConfig, *, verify_mailbox: bool = True) -> Ac
         )
     if not primary_smtp_address(config):
         raise ValueError("Не задан email (и OUTLOOK_MAILBOX, если SMTP ящика другой).")
+
+    cache_key = _service_account_cache_key(config)
+    with _SERVICE_ACCOUNT_LOCK:
+        cached = _SERVICE_ACCOUNT_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
 
     smtp = primary_smtp_address(config)
     credentials = Credentials(username=config.email, password=config.password)
@@ -73,6 +98,9 @@ def connect_account(config: OutlookConfig, *, verify_mailbox: bool = True) -> Ac
 
     if verify_mailbox:
         verify_mailbox_access(account, config)
+
+    with _SERVICE_ACCOUNT_LOCK:
+        _SERVICE_ACCOUNT_CACHE[cache_key] = account
     return account
 
 
@@ -151,17 +179,18 @@ def send_meeting_invite(
     location: str = "",
     resources: list[str] | None = None,
     attendees: list[str] | None = None,
-) -> None:
+) -> CalendarItem:
     account = connect_account(config)
     end = start + timedelta(minutes=duration_minutes)
     people = attendees or [attendee]
     room_resources = [email.strip() for email in (resources or []) if email.strip()]
 
+    invite_body = plain_text_to_html(body or subject)
     item = CalendarItem(
         account=account,
         folder=account.calendar,
         subject=subject,
-        body=body or subject,
+        body=invite_body,
         start=start,
         end=end,
         location=location,
@@ -169,6 +198,7 @@ def send_meeting_invite(
         resources=[resolve_resource(room) for room in room_resources],
     )
     item.save(send_meeting_invitations=SEND_ONLY_TO_ALL)
+    return item
 
 
 def dispatch_meeting_invite(
@@ -193,7 +223,7 @@ def dispatch_meeting_invite(
         raise ValueError("Не указан ни один участник (attendee / attendees).")
 
     room_resources = [email.strip() for email in (resources or []) if email.strip()]
-    send_meeting_invite(
+    item = send_meeting_invite(
         config=config,
         attendee=people[0],
         subject=subject,
@@ -205,6 +235,10 @@ def dispatch_meeting_invite(
         attendees=people,
     )
     end_dt = start_dt + timedelta(minutes=duration_minutes)
+    outlook_meta = calendar_item_outlook_meta(item, config)
+    from app.tools.Outlook.company_calendar_sync import sync_meeting_to_company_calendar
+
+    company_meta = sync_meeting_to_company_calendar(item, config=config)
     return {
         "status": "sent",
         "from": primary_smtp_address(config),
@@ -217,6 +251,8 @@ def dispatch_meeting_invite(
         "location": location,
         "resources": room_resources,
         "timezone": tz_name,
+        **outlook_meta,
+        **company_meta,
     }
 
 
@@ -318,6 +354,8 @@ def main(argv: list[str] | None = None) -> int:
         print("  Переговорные (ресурсы):")
         for email in result["resources"]:
             print(f"    - {email}")
+    if result.get("outlook_meeting_url"):
+        print(f"  Ссылка в Outlook: {result['outlook_meeting_url']}")
     return 0
 
 

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +99,37 @@ def load_rooms(path: Path | str | None = None) -> list[dict[str, str]]:
 def load_pending_room_names(path: Path | str | None = None) -> list[str]:
     payload = load_rooms_payload(path)
     return [str(name).strip() for name in payload.get("pending_without_email", []) if str(name).strip()]
+
+
+def normalize_room_name(value: str) -> str:
+    text = (value or "").strip().lower().replace("ё", "е")
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[«»\"'.,;:!?()\[\]{}]", "", text)
+    return text
+
+
+def resolve_room_by_name(
+    room_name: str,
+    *,
+    rooms_file: Path | str | None = None,
+    min_score: float = 0.85,
+) -> dict[str, str] | None:
+    """Ищет переговорную в meeting_rooms.json по названию помещения."""
+    query = normalize_room_name(room_name)
+    if not query:
+        return None
+
+    best_match: dict[str, str] | None = None
+    best_score = 0.0
+    for room in load_rooms(rooms_file):
+        score = SequenceMatcher(None, query, normalize_room_name(room["name"])).ratio()
+        if score > best_score:
+            best_score = score
+            best_match = room
+
+    if best_match and best_score >= min_score:
+        return best_match
+    return None
 
 
 def discover_rooms_from_ews(*, config: OutlookConfig | None = None) -> list[dict[str, str]]:

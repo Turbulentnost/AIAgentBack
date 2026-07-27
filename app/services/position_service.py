@@ -1,52 +1,87 @@
 from __future__ import annotations
 
-import asyncio
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.integrations.onec_odata import create_session
-from app.models.user import User
-from app.services import list_enterprise_positions as onec
-from app.utils.department_classification import is_position_like_department_name, normalize_position_name
-from app.utils.position_names import position_display_name
+from app.models.position import DepartmentPosition, Position
+from app.models.user import Department
+from app.schemas.position import PositionDepartmentRead, PositionRead
 
 
 class PositionService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def list(self) -> list[str]:
-        names: set[str] = set()
-
-        result = await self.db.execute(
-            select(User.position)
-            .where(
-                User.deleted_at.is_(None),
-                User.position.is_not(None),
-                User.position != "",
+    async def list(
+        self,
+        *,
+        search: str | None = None,
+        department_id: uuid.UUID | None = None,
+        limit: int = 1000,
+        active_only: bool = True,
+        with_departments: bool = False,
+    ) -> list[Position]:
+        stmt = select(Position).order_by(Position.name.asc()).limit(limit)
+        if active_only:
+            stmt = stmt.where(Position.is_active.is_(True))
+        if department_id is not None:
+            stmt = stmt.join(DepartmentPosition).where(
+                DepartmentPosition.department_id == department_id
             )
-            .distinct()
-        )
-        for position in result.scalars().all():
-            normalized = normalize_position_name((position or "").strip())
+        if search:
+            normalized = search.strip().lower().replace("ё", "е")
             if normalized:
-                names.add(normalized)
+                stmt = stmt.where(
+                    Position.normalized_name.ilike(f"%{normalized}%")
+                    | Position.name.ilike(f"%{normalized}%")
+                )
+        if with_departments:
+            stmt = stmt.options(
+                selectinload(Position.department_links).selectinload(DepartmentPosition.department)
+            )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().unique().all())
 
-        try:
-            session = await asyncio.to_thread(create_session)
-            positions_map = await asyncio.to_thread(onec.load_positions, session)
-            for position in positions_map.values():
-                normalized = normalize_position_name((position or "").strip())
-                if normalized:
-                    names.add(normalized)
+    async def get(self, position_id: uuid.UUID) -> Position | None:
+        result = await self.db.execute(
+            select(Position)
+            .where(Position.id == position_id)
+            .options(
+                selectinload(Position.department_links).selectinload(DepartmentPosition.department)
+            )
+        )
+        return result.scalar_one_or_none()
 
-            structure_positions = await asyncio.to_thread(onec.build_enterprise_structure_positions, session)
-            for row in structure_positions:
-                normalized = position_display_name(external_id=row.get("external_id"), name=row["name"])
-                if normalized:
-                    names.add(normalized)
-        except Exception:
-            pass
-
-        return sorted(names, key=str.casefold)
+    def to_read(self, position: Position, *, with_departments: bool = True) -> PositionRead:
+        departments: list[PositionDepartmentRead] = []
+        if with_departments:
+            for link in position.department_links:
+                department = link.department
+                if department is None:
+                    continue
+                departments.append(
+                    PositionDepartmentRead(
+                        id=department.id,
+                        name=department.name,
+                        slug=department.slug,
+                    )
+                )
+            departments.sort(key=lambda item: item.name.casefold())
+        return PositionRead(
+            id=position.id,
+            name=position.name,
+            normalized_name=position.normalized_name,
+            canonical_key=position.canonical_key,
+            slug=position.slug,
+            departments_count=position.departments_count,
+            assignments_count=position.assignments_count,
+            is_active=position.is_active,
+            source_system=position.source_system,
+            external_id=position.external_id,
+            created_at=position.created_at,
+            updated_at=position.updated_at,
+            departments=departments,
+        )

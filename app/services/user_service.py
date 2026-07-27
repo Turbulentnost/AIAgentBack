@@ -12,7 +12,10 @@ from app.models.user import Department, User, UserAgent, UserSession
 from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.schemas.user import AdminUserCreate, UserCreate, UserUpdate
 from app.services.employee_sync_service import SOURCE_SYSTEM
-from app.utils.department_classification import is_position_like_department_name
+from app.utils.department_classification import (
+    is_position_like_department_name,
+    is_schedule_participant_department_name,
+)
 from app.utils.department_utils import is_liquidated_department_name
 
 
@@ -172,6 +175,30 @@ class DepartmentService:
                 and not is_position_like_department_name(department.name)
             ]
         return departments
+
+    async def list_schedule_participant_options(
+        self,
+        *,
+        search: str | None = None,
+        limit: int = 100,
+    ) -> list[Department]:
+        """Должности из справочника departments для графика совещаний."""
+        result = await self.db.execute(select(Department).order_by(Department.name.asc()))
+        departments = [
+            department
+            for department in result.scalars().all()
+            if is_schedule_participant_department_name(department.name)
+            and not is_liquidated_department_name(department.name)
+        ]
+        if search:
+            normalized = search.strip().lower().replace("ё", "е")
+            if normalized:
+                departments = [
+                    department
+                    for department in departments
+                    if normalized in department.name.lower().replace("ё", "е")
+                ]
+        return departments[:limit]
 
     async def get(self, department_id: uuid.UUID) -> Department | None:
         return await self.db.get(Department, department_id)

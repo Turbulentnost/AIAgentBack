@@ -93,13 +93,14 @@ async def find_meeting_slot(state: MeetingState) -> dict:
     backend = state.get("backend")
     if backend is None:
         return {}
-    slots = await backend.find_slots(
+    find_result = await backend.find_slots(
         memo=state.get("memo"),
         participants=state.get("participants", []),
         planned_start=state.get("planned_start"),
         duration_minutes=state.get("duration_minutes"),
         current_user=state.get("current_user"),
     )
+    slots = find_result.slots
     slot_dicts = [_slot_to_dict(item) for item in slots]
     selected = slot_dicts[0] if slot_dicts and slot_dicts[0].get("confidence", 0) >= HIGH_CONFIDENCE_THRESHOLD else None
     return {"suggested_slots": slot_dicts, "selected_slot": selected}
