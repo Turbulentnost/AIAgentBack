@@ -27,6 +27,9 @@ from app.schemas.scheduled_meeting import (
     ScheduledMeetingOccurrenceRead,
     ScheduledMeetingParticipantOptionRead,
     ScheduledMeetingParticipantRead,
+    ScheduledMeetingPlanPreviewRead,
+    ScheduledMeetingPlanPreviewRequest,
+    ScheduledMeetingPlanRequest,
     ScheduledMeetingPositionResolveItemRead,
     ScheduledMeetingPositionResolveRead,
     ScheduledMeetingParticipantCreate,
@@ -362,14 +365,58 @@ class ScheduledMeetingService:
             "as_of_date": as_of_date.isoformat(),
         }
 
-    async def plan(self, meeting_id: uuid.UUID) -> ScheduledMeetingRead:
+    async def plan_preview(
+        self,
+        meeting_id: uuid.UUID,
+        payload: ScheduledMeetingPlanPreviewRequest | None = None,
+    ) -> ScheduledMeetingPlanPreviewRead:
+        from app.services.scheduled_meeting_plan_preview import (
+            ScheduledMeetingPlanPreviewError,
+            build_plan_preview,
+        )
+
         meeting = await self._load_meeting(meeting_id)
         if meeting is None:
             raise ScheduledMeetingServiceError("Серия совещаний не найдена", status_code=404)
+        body = payload or ScheduledMeetingPlanPreviewRequest()
+        try:
+            return await build_plan_preview(
+                self.db,
+                meeting,
+                conflict_policy=body.conflict_policy,
+            )
+        except ScheduledMeetingPlanPreviewError as exc:
+            raise ScheduledMeetingServiceError(str(exc), status_code=exc.status_code) from exc
+        except TimeoutError as exc:
+            raise ScheduledMeetingServiceError(
+                "Таймаут проверки занятости участников серии",
+                status_code=504,
+            ) from exc
+
+    async def plan(
+        self,
+        meeting_id: uuid.UUID,
+        payload: ScheduledMeetingPlanRequest | None = None,
+    ) -> ScheduledMeetingRead:
+        from app.services.scheduled_meeting_plan_overrides import (
+            ScheduledMeetingPlanOverrideError,
+            apply_plan_overrides,
+        )
+
+        meeting = await self._load_meeting(meeting_id)
+        if meeting is None:
+            raise ScheduledMeetingServiceError("Серия совещаний не найдена", status_code=404)
+        body = payload or ScheduledMeetingPlanRequest()
         try:
             await plan_scheduled_meeting_in_outlook(self.db, meeting)
         except ScheduledMeetingOutlookError as exc:
             raise ScheduledMeetingServiceError(str(exc), status_code=exc.status_code) from exc
+
+        if body.overrides:
+            try:
+                await apply_plan_overrides(meeting, body.overrides)
+            except ScheduledMeetingPlanOverrideError as exc:
+                raise ScheduledMeetingServiceError(str(exc), status_code=exc.status_code) from exc
 
         from app.services.scheduled_meeting_registry_sync import ScheduledMeetingRegistrySyncService
 

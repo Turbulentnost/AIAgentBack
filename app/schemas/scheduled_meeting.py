@@ -308,3 +308,61 @@ class ScheduledMeetingCancelRead(BaseModel):
     outlook_warning: str | None = None
     registry_warning: str | None = None
     message: str | None = None
+
+
+ScheduledMeetingConflictPolicy = Literal["strict", "soft_week", "skip"]
+ScheduledMeetingPlanOccurrenceStatus = Literal[
+    "ok",
+    "conflict",
+    "shifted",
+    "skip",
+    "unresolved",
+]
+ScheduledMeetingPlanOverrideAction = Literal["keep", "shift", "skip"]
+
+
+class ScheduledMeetingPlanPreviewRequest(BaseModel):
+    conflict_policy: ScheduledMeetingConflictPolicy = "soft_week"
+
+
+class ScheduledMeetingPlanConflictRead(BaseModel):
+    attendee_email: str
+    event_start: str | None = None
+    event_end: str | None = None
+    event_subject: str | None = None
+    busy_type: str | None = None
+
+
+class ScheduledMeetingPlanOccurrencePreview(BaseModel):
+    occurrence_date: date
+    planned_start: str
+    planned_end: str
+    status: ScheduledMeetingPlanOccurrenceStatus
+    busy_attendees: list[str] = Field(default_factory=list)
+    conflicts: list[ScheduledMeetingPlanConflictRead] = Field(default_factory=list)
+    suggested_start: str | None = None
+    suggested_end: str | None = None
+
+
+class ScheduledMeetingPlanPreviewRead(BaseModel):
+    meeting_id: uuid.UUID
+    conflict_policy: ScheduledMeetingConflictPolicy
+    occurrences: list[ScheduledMeetingPlanOccurrencePreview] = Field(default_factory=list)
+    summary: dict[str, int] = Field(default_factory=dict)
+
+
+class ScheduledMeetingPlanOverride(BaseModel):
+    occurrence_date: date
+    action: ScheduledMeetingPlanOverrideAction
+    new_start: str | None = None
+
+    @model_validator(mode="after")
+    def validate_shift_requires_new_start(self) -> ScheduledMeetingPlanOverride:
+        if self.action == "shift" and not (self.new_start or "").strip():
+            raise ValueError("Для action=shift укажите new_start")
+        return self
+
+
+class ScheduledMeetingPlanRequest(BaseModel):
+    conflict_policy: ScheduledMeetingConflictPolicy = "strict"
+    overrides: list[ScheduledMeetingPlanOverride] = Field(default_factory=list)

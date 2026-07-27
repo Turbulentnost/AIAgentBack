@@ -74,6 +74,9 @@ from app.schemas.scheduled_meeting import (
     ScheduledMeetingDetailRead,
     ScheduledMeetingEmployeeOptionRead,
     ScheduledMeetingParticipantOptionRead,
+    ScheduledMeetingPlanPreviewRead,
+    ScheduledMeetingPlanPreviewRequest,
+    ScheduledMeetingPlanRequest,
     ScheduledMeetingPositionResolveRead,
     ScheduledMeetingPositionResolveRequest,
     ScheduledMeetingRead,
@@ -262,16 +265,35 @@ async def create_scheduled_meeting(
         raise _scheduled_meeting_error(exc) from exc
 
 
+@router.post(
+    "/scheduled/{meeting_id}/plan-preview",
+    response_model=ScheduledMeetingPlanPreviewRead,
+)
+async def plan_preview_scheduled_meeting(
+    db: DbSession,
+    current_user: CurrentUser,
+    meeting_id: uuid.UUID,
+    payload: ScheduledMeetingPlanPreviewRequest | None = None,
+) -> ScheduledMeetingPlanPreviewRead:
+    """Проверка конфликтов серии и предложения soft_week до распланирования в Outlook."""
+    await _require_agent_access(db, current_user)
+    try:
+        return await ScheduledMeetingService(db).plan_preview(meeting_id, payload)
+    except ScheduledMeetingServiceError as exc:
+        raise _scheduled_meeting_error(exc) from exc
+
+
 @router.post("/scheduled/{meeting_id}/plan", response_model=ScheduledMeetingRead)
 async def plan_scheduled_meeting(
     db: DbSession,
     current_user: CurrentUser,
     meeting_id: uuid.UUID,
+    payload: ScheduledMeetingPlanRequest | None = None,
 ) -> ScheduledMeetingRead:
     """Создание серии совещаний в Outlook по правилу из графика."""
     await _require_agent_access(db, current_user)
     try:
-        meeting = await ScheduledMeetingService(db).plan(meeting_id)
+        meeting = await ScheduledMeetingService(db).plan(meeting_id, payload)
         await db.commit()
         return meeting
     except ScheduledMeetingServiceError as exc:
