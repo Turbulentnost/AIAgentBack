@@ -32,6 +32,8 @@ class IntegrationService(ABC):
         *,
         document_ref_key: str,
         files: list,
+        document_number: str | None = None,
+        message_id: str | None = None,
     ) -> list[dict]:
         """Прикрепляет файлы к уже созданному Document_ТД_ВходящаяКорреспонденция.
 
@@ -91,6 +93,8 @@ class StubIntegrationService(IntegrationService):
         *,
         document_ref_key: str,
         files: list,
+        document_number: str | None = None,
+        message_id: str | None = None,
     ) -> list[dict]:
         StubIntegrationService._counter += 1
         base = StubIntegrationService._counter

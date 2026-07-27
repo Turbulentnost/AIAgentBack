@@ -600,6 +600,8 @@ def attach_email_files_to_document(
         results = integration.attach_files_to_incoming_correspondence(
             document_ref_key=document_ref_key,
             files=files,
+            document_number=erp_document_number,
+            message_id=email.message_id,
         )
     except Exception:
         logger.exception(
@@ -662,6 +664,8 @@ def attach_missing_email_files_to_document(
         results = integration.attach_files_to_incoming_correspondence(
             document_ref_key=document_ref_key,
             files=files,
+            document_number=erp_document_number,
+            message_id=email.message_id,
         )
     except Exception:
         logger.exception(

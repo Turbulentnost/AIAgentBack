@@ -175,7 +175,7 @@ def test_build_attached_file_payload_database_mode_by_default():
     assert "Изменил_Key" not in payload
     assert "Том_Key" not in payload
     assert "ПутьКФайлу" not in payload
-    assert "DeletionMark" not in payload
+    assert payload.get("DeletionMark") is False
     assert "Редактирует_Key" not in payload
 
 
@@ -523,7 +523,8 @@ def test_attach_file_checks_owner_exists():
     client.create_entity.assert_not_called()
 
 
-def test_attach_file_posts_to_catalog_volume_mode():
+def test_attach_file_posts_to_catalog_volume_mode(monkeypatch):
+    monkeypatch.setenv("ODATA_ATTACH_STAGING_ENABLED", "false")
     client = MagicMock()
     client.get_by_key.return_value = {
         "Ref_Key": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",

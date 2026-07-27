@@ -52,6 +52,8 @@ class AttachedFileResult:
     size_bytes: int
     entity: str
     odata_response: dict[str, Any]
+    staging_path: str | None = None
+    roundtrip_ok: bool | None = None
 
 
 def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, Any]:
@@ -758,11 +760,21 @@ def attach_file_to_incoming_document(
     field_map: dict[str, Any] | None = None,
     verify_owner_exists: bool = True,
     owner_document_entity: str | None = None,
+    document_number: str | None = None,
+    message_id: str | None = None,
 ) -> AttachedFileResult:
     """Создаёт элемент справочника присоединённых файлов и привязывает к документу.
 
     Не создаёт и не изменяет документ-владелец.
     """
+    from agent_pochta.config import get_settings
+    from agent_pochta.services.erp_attachment_staging import (
+        cleanup_staged_attachment,
+        read_staged_bytes,
+        stage_attachment_bytes,
+        write_roundtrip_report,
+    )
+
     cfg = field_map or load_attached_file_field_map()
     doc_entity = (
         owner_document_entity
@@ -778,9 +790,31 @@ def attach_file_to_incoming_document(
                 f"Документ {doc_entity} с Ref_Key={owner_key} не найден — файл не создан"
             )
 
+    upload_content = validate_file_content(file_input.content)
+    staged = None
+    settings = get_settings()
+    if settings.odata_attach_staging_enabled:
+        staged = stage_attachment_bytes(
+            upload_content,
+            file_input.filename,
+            document_ref_key=owner_key,
+            document_number=document_number,
+            message_id=message_id,
+        )
+        upload_content = read_staged_bytes(staged.path)
+
+    upload_input = AttachedFileInput(
+        filename=file_input.filename,
+        content=upload_content,
+        author_key=file_input.author_key,
+        edited_by_key=file_input.edited_by_key,
+        comment=file_input.comment,
+        processed_at=file_input.processed_at,
+    )
+
     entity, payload = build_attached_file_payload(
         document_ref_key=owner_key,
-        file_input=file_input,
+        file_input=upload_input,
         field_map=cfg,
     )
     fields = cfg.get("fields") or {}
@@ -793,58 +827,95 @@ def attach_file_to_incoming_document(
             f"OData создал запись {entity}, но Ref_Key отсутствует в ответе"
         )
 
-    if plan["mode"] == "volume":
-        path_field = str(fields.get("file_path") or "ПутьКФайлу")
-        expected_path = str(payload.get(path_field) or "").strip()
-        if expected_path:
-            record = client.get_by_key(entity, ref_key) or {}
-            current_path = str(record.get(path_field) or "").strip()
-            if not current_path:
-                # PATCH ПутьКФайлу через OData не поддерживается 1С — только POST.
-                raise AttachedFileError(
-                    f"OData POST не заполнил {path_field} (Ref_Key={ref_key}); "
-                    f"ожидался путь {expected_path!r}"
-                )
+    roundtrip_ok: bool | None = None
+    staging_path = str(staged.path) if staged else None
 
-    author_key = file_input.author_key
+    try:
+        if plan["mode"] == "volume":
+            path_field = str(fields.get("file_path") or "ПутьКФайлу")
+            expected_path = str(payload.get(path_field) or "").strip()
+            if expected_path:
+                record = client.get_by_key(entity, ref_key) or {}
+                current_path = str(record.get(path_field) or "").strip()
+                if not current_path:
+                    raise AttachedFileError(
+                        f"OData POST не заполнил {path_field} (Ref_Key={ref_key}); "
+                        f"ожидался путь {expected_path!r}"
+                    )
 
-    if plan["upload_via_stream"]:
-        upload_attached_file_binary(
+        author_key = file_input.author_key
+
+        if plan["upload_via_stream"]:
+            upload_attached_file_binary(
+                client,
+                entity=entity,
+                ref_key=ref_key,
+                content=upload_content,
+                field_map=cfg,
+                filename=file_input.filename,
+            )
+
+        verify_attached_file_storage(
             client,
             entity=entity,
             ref_key=ref_key,
-            content=file_input.content,
+            expected_size=len(upload_content),
             field_map=cfg,
-            filename=file_input.filename,
         )
 
-    verify_attached_file_storage(
-        client,
-        entity=entity,
-        ref_key=ref_key,
-        expected_size=len(file_input.content),
-        field_map=cfg,
-    )
+        release_attached_file_edit_lock(
+            client,
+            entity=entity,
+            ref_key=ref_key,
+            field_map=cfg,
+            author_key=author_key,
+        )
 
-    release_attached_file_edit_lock(
-        client,
-        entity=entity,
-        ref_key=ref_key,
-        field_map=cfg,
-        author_key=author_key,
-    )
+        final_record = client.get_by_key(entity, ref_key) or {}
+        verify_attached_file_reference_fields(final_record, ref_key=ref_key)
 
-    final_record = client.get_by_key(entity, ref_key) or {}
-    verify_attached_file_reference_fields(final_record, ref_key=ref_key)
+        if staged is not None:
+            odata_bytes = read_attached_file_storage_bytes(
+                client,
+                entity=entity,
+                ref_key=ref_key,
+                field_map=cfg,
+            )
+            storage_kind = str(final_record.get("ТипХраненияФайла") or "")
+            roundtrip_ok = (
+                len(odata_bytes) > 0 and odata_bytes == upload_content
+            ) if storage_kind == _DATABASE_STORAGE_KIND else None
+            write_roundtrip_report(
+                staged,
+                ref_key=ref_key,
+                odata_bytes=odata_bytes,
+                storage_kind=storage_kind,
+                extra={
+                    "volume_path": final_record.get("ПутьКФайлу"),
+                    "volume_stream_empty": len(odata_bytes) == 0,
+                },
+            )
+            if (
+                roundtrip_ok is True
+                and settings.odata_attach_staging_delete_after_success
+            ):
+                cleanup_staged_attachment(staged)
+                staging_path = None
+    except Exception:
+        if staged is not None and not settings.odata_attach_staging_keep_on_failure:
+            cleanup_staged_attachment(staged)
+        raise
 
     base_name, extension = split_filename(file_input.filename)
     return AttachedFileResult(
         ref_key=ref_key,
         filename=base_name,
         extension=extension,
-        size_bytes=len(file_input.content),
+        size_bytes=len(upload_content),
         entity=entity,
         odata_response=data,
+        staging_path=staging_path,
+        roundtrip_ok=roundtrip_ok,
     )
 
 
@@ -855,6 +926,8 @@ def attach_files_to_incoming_document(
     files: list[AttachedFileInput],
     field_map: dict[str, Any] | None = None,
     verify_owner_exists: bool = True,
+    document_number: str | None = None,
+    message_id: str | None = None,
 ) -> list[AttachedFileResult]:
     """Последовательно прикрепляет несколько файлов к одному документу."""
     results: list[AttachedFileResult] = []
@@ -866,6 +939,8 @@ def attach_files_to_incoming_document(
                 file_input=item,
                 field_map=field_map,
                 verify_owner_exists=verify_owner_exists and not results,
+                document_number=document_number,
+                message_id=message_id,
             )
         )
     return results

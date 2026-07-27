@@ -48,6 +48,6 @@
     "store_versions": false,
     "signed_ep": false,
     "encrypted": false,
-    "include_static_fields": false
+    "include_static_fields": true
   }
 }

@@ -131,6 +131,20 @@ class Settings(BaseSettings):
         alias="ODATA_FILE_VOLUME_KEY",
     )
     odata_file_author_key: str = Field(default="", alias="ODATA_FILE_AUTHOR_KEY")
+    # Локальный staging перед OData POST: аудит байт и round-trip проверка
+    odata_attach_staging_enabled: bool = Field(
+        default=True, alias="ODATA_ATTACH_STAGING_ENABLED"
+    )
+    odata_attach_staging_dir: str = Field(
+        default="data/temp/erp_attach_staging",
+        alias="ODATA_ATTACH_STAGING_DIR",
+    )
+    odata_attach_staging_delete_after_success: bool = Field(
+        default=True, alias="ODATA_ATTACH_STAGING_DELETE_AFTER_SUCCESS"
+    )
+    odata_attach_staging_keep_on_failure: bool = Field(
+        default=True, alias="ODATA_ATTACH_STAGING_KEEP_ON_FAILURE"
+    )
     odata_timeout_sec: float = Field(default=60.0, alias="ODATA_TIMEOUT_SEC")
     celery_broker_url: str = Field(
         default="amqp://guest:guest@localhost:5672//", alias="CELERY_BROKER_URL"

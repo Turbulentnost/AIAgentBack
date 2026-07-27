@@ -209,6 +209,8 @@ class ODataIntegrationService(IntegrationService):
         *,
         document_ref_key: str,
         files: list[AttachedFileInput],
+        document_number: str | None = None,
+        message_id: str | None = None,
     ) -> list[dict]:
         if not self._attach_files_enabled:
             return []
@@ -242,6 +244,8 @@ class ODataIntegrationService(IntegrationService):
             document_ref_key=document_ref_key,
             files=enriched,
             field_map=self._attached_file_field_map,
+            document_number=document_number,
+            message_id=message_id,
         )
         return [
             {
@@ -254,6 +258,8 @@ class ODataIntegrationService(IntegrationService):
                 "extension": item.extension,
                 "size_bytes": item.size_bytes,
                 "entity": item.entity,
+                "staging_path": item.staging_path,
+                "roundtrip_ok": item.roundtrip_ok,
             }
             for item in results
         ]
