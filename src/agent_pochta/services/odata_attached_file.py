@@ -90,13 +90,13 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "edit_lock_key": "Редактирует_Key",
             },
             "defaults": {
-                "storage_mode": "database",
-                "storage_kind": _DATABASE_STORAGE_KIND,
+                "storage_mode": "volume",
+                "storage_kind": _VOLUME_STORAGE_KIND,
                 "volume_key": _DEFAULT_VOLUME_KEY,
                 "volume_binary_type": _VOLUME_BINARY_TYPE,
                 "storage_binary_type": "application/octet-stream",
                 "text_storage_type": _VOLUME_BINARY_TYPE,
-                "upload_binary_via_stream": False,
+                "upload_binary_via_stream": True,
                 "loan_date": "0001-01-01T00:00:00",
                 "image_index": "0",
                 "comment": "",
@@ -108,6 +108,10 @@ def load_attached_file_field_map(path: str | Path | None = None) -> dict[str, An
                 "signed_ep": False,
                 "encrypted": False,
                 "include_static_fields": False,
+                "minimal_payload": True,
+                "omit_storage_kind": False,
+                "volume_preupload": False,
+                "verify_mode": "volume",
             },
         }
     data = json.loads(file_path.read_text(encoding="utf-8"))
@@ -246,6 +250,39 @@ def _apply_static_attached_file_fields(
     for map_key, fallback_name, value in static_values:
         if name := _field_name(fields, map_key, fallback_name):
             payload[name] = value
+
+
+def is_minimal_attached_file_payload(defaults: dict[str, Any] | None = None) -> bool:
+    """Минимальный POST: только владелец, имя, расширение, размер и хранилище."""
+    cfg = defaults or {}
+    return bool(cfg.get("minimal_payload", False))
+
+
+def should_omit_storage_kind(defaults: dict[str, Any] | None = None) -> bool:
+    """Не слать ТипХраненияФайла — расширение 1С заполнит через БСП."""
+    cfg = defaults or {}
+    if "omit_storage_kind" in cfg:
+        return bool(cfg.get("omit_storage_kind"))
+    # По умолчанию для BSP-exchange (ПередЗаписью/ПриЗаписи) — не слать kind.
+    return str(cfg.get("verify_mode") or "").strip().casefold() == "bsp_exchange"
+
+
+def resolve_attached_file_verify_mode(defaults: dict[str, Any] | None = None) -> str:
+    """Режим проверки после POST: bytes | volume | bsp_exchange."""
+    cfg = defaults or {}
+    mode = str(cfg.get("verify_mode") or "").strip().casefold()
+    if mode in {"bsp_exchange", "bsp", "exchange"}:
+        return "bsp_exchange"
+    if mode in {"volume", "tom", "disk"}:
+        return "volume"
+    if mode in {"bytes", "database", "db", "strict"}:
+        return "bytes"
+    # Авто: volume storage → volume; иначе при omit_storage_kind → bsp_exchange.
+    if resolve_attached_file_storage_mode(cfg) == "volume":
+        return "volume"
+    if should_omit_storage_kind(cfg) or is_minimal_attached_file_payload(cfg):
+        return "bsp_exchange"
+    return "bytes"
 
 
 def resolve_attached_file_storage_mode(defaults: dict[str, Any] | None = None) -> str:
@@ -519,27 +556,37 @@ def build_attached_file_payload(
             if plan["mode"] != "volume":
                 # Base64 POST: 1С падает с 500 на application/vnd.ms-outlook / message/rfc822.
                 payload[str(storage_type_field)] = plan["binary_type"]
-    if kind_field := fields.get("storage_kind"):
-        payload[str(kind_field)] = storage_kind
+    # ТипХраненияФайла: при omit_storage_kind не шлём — ПередЗаписью/БСП заполнят сами.
+    if not should_omit_storage_kind(defaults):
+        if kind_field := fields.get("storage_kind"):
+            payload[str(kind_field)] = storage_kind
     if size_field := fields.get("size"):
         payload[str(size_field)] = len(content)
-    if created_field := fields.get("created_at"):
-        payload[str(created_field)] = format_attached_file_created_at(processed_at)
-    if modified_field := fields.get("modified_at"):
-        payload[str(modified_field)] = format_attached_file_modified_universal(processed_at)
+    minimal = is_minimal_attached_file_payload(defaults)
+    # Даты: расширение дозаполнит пустые; шлём сами, если не omit_dates (UI без 0001).
+    if not bool(defaults.get("omit_dates", False)):
+        if created_field := fields.get("created_at"):
+            payload[str(created_field)] = format_attached_file_created_at(processed_at)
+        if modified_field := fields.get("modified_at"):
+            payload[str(modified_field)] = format_attached_file_modified_universal(
+                processed_at
+            )
     if file_input.author_key and (author_field := fields.get("author_key")):
         payload[str(author_field)] = file_input.author_key
-    # Изменил_Key — только при явном edited_by_key (шаблон АЛ00-000760: пустой GUID).
+    # Изменил_Key — только при явном edited_by_key (не заполняем в minimal mode).
     modified_by = (file_input.edited_by_key or "").strip()
-    if modified_by and modified_by != _EMPTY_GUID and (
-        modified_field := fields.get("modified_by_key")
+    if (
+        not minimal
+        and modified_by
+        and modified_by != _EMPTY_GUID
+        and (modified_field := fields.get("modified_by_key"))
     ):
         payload[str(modified_field)] = modified_by
     # Редактирует_Key — блокировка «файл занят» в БСП; не заполняем на POST.
-    if file_input.comment and (comment_field := fields.get("comment")):
+    if not minimal and file_input.comment and (comment_field := fields.get("comment")):
         payload[str(comment_field)] = file_input.comment.strip()
 
-    if defaults.get("include_static_fields"):
+    if not minimal and defaults.get("include_static_fields"):
         _apply_static_attached_file_fields(payload, fields=fields, defaults=defaults)
 
     if not payload:
@@ -580,6 +627,7 @@ def verify_attached_file_reference_fields(
     record: dict[str, Any],
     *,
     ref_key: str | None = None,
+    field_map: dict[str, Any] | None = None,
 ) -> None:
     """Проверяет ссылочные поля после POST/PATCH (1С падает при открытии иначе)."""
     lock_field = "Редактирует_Key"
@@ -590,24 +638,28 @@ def verify_attached_file_reference_fields(
             f"Блокировка {lock_field} не снята (Ref_Key={label}, значение={lock_value!r})"
         )
 
+    defaults = (field_map or {}).get("defaults") or {}
+    verify_mode = resolve_attached_file_verify_mode(defaults)
     storage_kind = str(record.get("ТипХраненияФайла") or "").strip()
     volume_key = str(record.get("Том_Key") or "").strip()
     file_path = str(record.get("ПутьКФайлу") or "").strip()
-    if storage_kind == _DATABASE_STORAGE_KIND and volume_key and volume_key != _EMPTY_GUID:
-        label = ref_key or record.get("Ref_Key") or "?"
-        raise AttachedFileError(
-            f"Том_Key заполнен при хранении в ИБ (Ref_Key={label}, Том_Key={volume_key!r})"
-        )
-    if is_volume_storage_kind(storage_kind):
-        label = ref_key or record.get("Ref_Key") or "?"
-        if not volume_key or volume_key == _EMPTY_GUID:
+    # bsp_exchange: тип хранения выставляет БСП (том или ИБ) — не валим на рассинхрон.
+    if verify_mode != "bsp_exchange":
+        if storage_kind == _DATABASE_STORAGE_KIND and volume_key and volume_key != _EMPTY_GUID:
+            label = ref_key or record.get("Ref_Key") or "?"
             raise AttachedFileError(
-                f"Том_Key не задан при хранении в томе (Ref_Key={label})"
+                f"Том_Key заполнен при хранении в ИБ (Ref_Key={label}, Том_Key={volume_key!r})"
             )
-        if not file_path:
-            raise AttachedFileError(
-                f"ПутьКФайлу пуст при хранении в томе (Ref_Key={label})"
-            )
+        if is_volume_storage_kind(storage_kind):
+            label = ref_key or record.get("Ref_Key") or "?"
+            if not volume_key or volume_key == _EMPTY_GUID:
+                raise AttachedFileError(
+                    f"Том_Key не задан при хранении в томе (Ref_Key={label})"
+                )
+            if not file_path:
+                raise AttachedFileError(
+                    f"ПутьКФайлу пуст при хранении в томе (Ref_Key={label})"
+                )
 
     if record.get("DeletionMark") is True:
         label = ref_key or record.get("Ref_Key") or "?"
@@ -622,8 +674,13 @@ def verify_attached_file_storage(
     expected_size: int,
     field_map: dict[str, Any] | None = None,
 ) -> int:
-    """Проверяет, что после POST в хранилище записаны ненулевые байты или метаданные тома."""
+    """Проверяет запись после POST.
+
+    bsp_exchange (расширение ПередЗаписью/ПриЗаписи): поле обмена ФайлХранилище
+    очищается после записи в БСП — пустой stream/Base64 допустим, важен Размер.
+    """
     cfg = field_map or load_attached_file_field_map()
+    defaults = cfg.get("defaults") or {}
     fields = cfg.get("fields") or {}
     record = client.get_by_key(entity, ref_key)
     if not record:
@@ -641,7 +698,51 @@ def verify_attached_file_storage(
     except (TypeError, ValueError):
         meta_size = 0
 
-    if is_volume_storage_kind(storage_kind):
+    verify_mode = resolve_attached_file_verify_mode(defaults)
+    if verify_mode == "bsp_exchange" or (
+        verify_mode == "bytes" and should_omit_storage_kind(defaults)
+    ):
+        if record.get("DeletionMark") is True:
+            raise AttachedFileError(
+                f"Присоединённый файл помечен на удаление (Ref_Key={ref_key})"
+            )
+        if expected_size > 0 and meta_size > 0 and meta_size != expected_size:
+            raise AttachedFileError(
+                f"Размер в метаданных ({meta_size}) не совпадает с отправленным ({expected_size})"
+            )
+        if expected_size > 0 and meta_size == 0:
+            raise AttachedFileError(
+                f"Размер пуст после BSP-обмена (Ref_Key={ref_key}, ожидалось {expected_size})"
+            )
+        # «Призрачный том»: БСП выставила ВТомахНаДиске и очистила Base64,
+        # но Том_Key/ПутьКФайлу пусты — толстый клиент: «Данные файла недоступны».
+        if is_volume_storage_kind(storage_kind):
+            volume_key = str(
+                record.get(fields.get("volume_key") or "Том_Key") or ""
+            ).strip()
+            file_path = str(record.get(path_field) or "").strip()
+            if not file_path or not volume_key or volume_key == _EMPTY_GUID:
+                raise AttachedFileError(
+                    "После BSP-обмена ТипХранения=ВТомахНаДиске, но Том_Key/ПутьКФайлу "
+                    f"пусты (Ref_Key={ref_key}, Том_Key={volume_key!r}, "
+                    f"ПутьКФайлу={file_path!r}). Обновите расширение 1С "
+                    "(force ИБ или запись на том до ОчиститьПолеОбмена)."
+                )
+        stored_bytes = read_attached_file_storage_bytes(
+            client,
+            entity=entity,
+            ref_key=ref_key,
+            field_map=cfg,
+        )
+        stored_size = len(stored_bytes)
+        # После ОчиститьПолеОбмена stream/Base64 = 0 — это успех расширения.
+        if stored_size > 0 and expected_size > 0 and stored_size != expected_size:
+            raise AttachedFileError(
+                f"Размер в хранилище ({stored_size}) не совпадает с отправленным ({expected_size})"
+            )
+        return meta_size or stored_size or expected_size
+
+    if is_volume_storage_kind(storage_kind) or verify_mode == "volume":
         file_path = str(record.get(path_field) or "").strip()
         volume_key = str(record.get(fields.get("volume_key") or "Том_Key") or "").strip()
         if not file_path:
@@ -1052,7 +1153,9 @@ def attach_file_to_incoming_document(
             )
 
         final_record = client.get_by_key(entity, ref_key) or {}
-        verify_attached_file_reference_fields(final_record, ref_key=ref_key)
+        verify_attached_file_reference_fields(
+            final_record, ref_key=ref_key, field_map=cfg
+        )
 
         if staged is not None:
             odata_bytes = read_attached_file_storage_bytes(
@@ -1062,9 +1165,19 @@ def attach_file_to_incoming_document(
                 field_map=cfg,
             )
             storage_kind = str(final_record.get("ТипХраненияФайла") or "")
-            roundtrip_ok = (
-                len(odata_bytes) > 0 and odata_bytes == upload_content
-            ) if storage_kind == _DATABASE_STORAGE_KIND else None
+            verify_mode = resolve_attached_file_verify_mode(defaults)
+            if verify_mode == "bsp_exchange":
+                try:
+                    meta_size = int(final_record.get("Размер") or 0)
+                except (TypeError, ValueError):
+                    meta_size = 0
+                roundtrip_ok = meta_size == len(upload_content)
+            elif storage_kind == _DATABASE_STORAGE_KIND:
+                roundtrip_ok = (
+                    len(odata_bytes) > 0 and odata_bytes == upload_content
+                )
+            else:
+                roundtrip_ok = None
             write_roundtrip_report(
                 staged,
                 ref_key=ref_key,
@@ -1075,6 +1188,10 @@ def attach_file_to_incoming_document(
                     "volume_stream_empty": len(odata_bytes) == 0,
                     "volume_preupload": plan.get("volume_preupload"),
                     "volume_root": volume_root,
+                    "verify_mode": verify_mode,
+                    "bsp_exchange_cleared": (
+                        verify_mode == "bsp_exchange" and len(odata_bytes) == 0
+                    ),
                 },
             )
             if (

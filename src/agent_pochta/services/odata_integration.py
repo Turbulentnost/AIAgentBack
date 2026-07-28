@@ -24,6 +24,7 @@ from agent_pochta.services.odata_attached_file import (
     attach_files_to_incoming_document,
     delete_attached_file_refs,
     delete_attached_files_for_document,
+    is_minimal_attached_file_payload,
     list_attached_files_for_document,
     load_attached_file_field_map,
     now_attached_file_processed_at,
@@ -150,6 +151,43 @@ class ODataIntegrationService(IntegrationService):
             defaults["volume_preupload"] = True
         return {**field_map, "defaults": defaults}
 
+    def _prepare_attached_file_inputs(
+        self,
+        files: list[AttachedFileInput],
+        *,
+        processed_at,
+    ) -> list[AttachedFileInput]:
+        defaults = self._attached_file_field_map.get("defaults") or {}
+        if is_minimal_attached_file_payload(defaults):
+            return [
+                AttachedFileInput(
+                    filename=item.filename,
+                    content=item.content,
+                    author_key=item.author_key,
+                    edited_by_key=item.edited_by_key,
+                    comment=item.comment,
+                    processed_at=item.processed_at or processed_at,
+                )
+                for item in files
+            ]
+        author_key = self._file_author_key
+        if not author_key or author_key == _EMPTY_GUID:
+            raise AttachedFileError(
+                "Автор_Key не задан: укажите ODATA_FILE_AUTHOR_KEY "
+                "или Пользователь_Key / Ответственный_Key в odata_incoming_defaults.json"
+            )
+        return [
+            AttachedFileInput(
+                filename=item.filename,
+                content=item.content,
+                author_key=item.author_key or author_key,
+                edited_by_key=item.edited_by_key,
+                comment=item.comment,
+                processed_at=item.processed_at or processed_at,
+            )
+            for item in files
+        ]
+
     def create_incoming_correspondence(
         self,
         email: EmailMessage,
@@ -232,26 +270,7 @@ class ODataIntegrationService(IntegrationService):
             return []
 
         processed_at = now_attached_file_processed_at()
-        author_key = self._file_author_key
-        if not author_key or author_key == _EMPTY_GUID:
-            raise AttachedFileError(
-                "Автор_Key не задан: укажите ODATA_FILE_AUTHOR_KEY "
-                "или Пользователь_Key / Ответственный_Key в odata_incoming_defaults.json"
-            )
-
-        enriched: list[AttachedFileInput] = []
-        for item in files:
-            author = item.author_key or author_key
-            enriched.append(
-                AttachedFileInput(
-                    filename=item.filename,
-                    content=item.content,
-                    author_key=author,
-                    edited_by_key=item.edited_by_key,
-                    comment=item.comment,
-                    processed_at=item.processed_at or processed_at,
-                )
-            )
+        enriched = self._prepare_attached_file_inputs(files, processed_at=processed_at)
 
         results = attach_files_to_incoming_document(
             self._client,
@@ -324,25 +343,7 @@ class ODataIntegrationService(IntegrationService):
         if not self._attach_files_enabled:
             return {"attached": [], "deleted_old_refs": []}
         processed_at = now_attached_file_processed_at()
-        author_key = self._file_author_key
-        if not author_key or author_key == _EMPTY_GUID:
-            raise AttachedFileError(
-                "Автор_Key не задан: укажите ODATA_FILE_AUTHOR_KEY "
-                "или Пользователь_Key / Ответственный_Key в odata_incoming_defaults.json"
-            )
-        enriched: list[AttachedFileInput] = []
-        for item in files:
-            author = item.author_key or author_key
-            enriched.append(
-                AttachedFileInput(
-                    filename=item.filename,
-                    content=item.content,
-                    author_key=author,
-                    edited_by_key=item.edited_by_key,
-                    comment=item.comment,
-                    processed_at=item.processed_at or processed_at,
-                )
-            )
+        enriched = self._prepare_attached_file_inputs(files, processed_at=processed_at)
         result = replace_attached_files_for_document(
             self._client,
             document_ref_key=document_ref_key,

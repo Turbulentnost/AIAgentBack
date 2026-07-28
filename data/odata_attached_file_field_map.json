@@ -48,6 +48,10 @@
     "store_versions": false,
     "signed_ep": false,
     "encrypted": false,
-    "include_static_fields": true
+    "include_static_fields": false,
+    "minimal_payload": true,
+    "omit_storage_kind": false,
+    "volume_preupload": false,
+    "verify_mode": "bsp_exchange"
   }
 }

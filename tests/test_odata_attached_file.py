@@ -174,14 +174,17 @@ def test_build_attached_file_payload_database_mode_by_default():
     assert payload["Description"] == "АЛ00-000762"
     assert payload["Расширение"] == "msg"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
-    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
-    assert payload["ФайлХранилище_Base64Data"]
+    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+    assert payload["Том_Key"] == "21886495-364e-11ea-82f2-ac1f6b05524c"
+    assert "ПутьКФайлу" in payload
+    assert "ФайлХранилище_Base64Data" not in payload  # stream PUT после POST
+    assert payload["ФайлХранилище_Type"] == "application/xml+xdto"
     assert payload["Размер"] == 68
     assert "Изменил_Key" not in payload
-    assert "Том_Key" not in payload
-    assert "ПутьКФайлу" not in payload
-    assert payload.get("DeletionMark") is False
+    assert "Автор_Key" not in payload
+    assert "ДатаСоздания" in payload
+    assert "ДатаМодификацииУниверсальная" in payload
+    assert "DeletionMark" not in payload
     assert "Редактирует_Key" not in payload
 
 
@@ -344,13 +347,54 @@ def test_resolve_attached_file_author_key_prefers_user_key(monkeypatch, tmp_path
     )
 
 
-def test_odata_integration_attach_files_requires_author():
+def test_odata_integration_attach_files_minimal_payload_without_author():
     service = ODataIntegrationService(
         "http://example/odata/standard.odata/",
         entity="Document_ТД_ВходящаяКорреспонденция",
         file_author_key="",
         incoming_defaults_file="__missing__.json",
     )
+    service._client.get_by_key = MagicMock(
+        return_value={
+            "Ref_Key": DOC_KEY,
+            "Размер": 3,
+            "ТипХраненияФайла": "ВТомахНаДиске",
+            "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+            "ПутьКФайлу": "20260728\\НП00-003877.msg",
+            "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
+        }
+    )
+    service._client.get_entity_stream = MagicMock(return_value=b"")
+    service._client.create_entity = MagicMock(
+        return_value={"Ref_Key": "dddddddd-dddd-dddd-dddd-dddddddddddd"}
+    )
+    service._client.patch_entity = MagicMock()
+    service._client.put_entity_stream = MagicMock()
+    service.attach_files_to_incoming_correspondence(
+        document_ref_key=DOC_KEY,
+        files=[AttachedFileInput(filename="НП00-003877.msg", content=b"123")],
+    )
+    _entity, payload = service._client.create_entity.call_args[0]
+    assert "Автор_Key" not in payload
+    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+    assert "ФайлХранилище_Base64Data" not in payload
+    service._client.put_entity_stream.assert_called()
+    assert "ДатаСоздания" in payload
+
+
+def test_odata_integration_attach_files_requires_author_when_not_minimal():
+    service = ODataIntegrationService(
+        "http://example/odata/standard.odata/",
+        entity="Document_ТД_ВходящаяКорреспонденция",
+        file_author_key="",
+        incoming_defaults_file="__missing__.json",
+    )
+    defaults = dict(service._attached_file_field_map.get("defaults") or {})
+    defaults["minimal_payload"] = False
+    service._attached_file_field_map = {
+        **service._attached_file_field_map,
+        "defaults": defaults,
+    }
     with pytest.raises(AttachedFileError, match="Автор_Key"):
         service.attach_files_to_incoming_correspondence(
             document_ref_key=DOC_KEY,
@@ -729,15 +773,15 @@ def test_odata_integration_attach_files_delegates_to_client():
         return_value={
             "Ref_Key": DOC_KEY,
             "Размер": 3,
-            "ТипХраненияФайла": "ВИнформационнойБазе",
-            "Том_Key": "00000000-0000-0000-0000-000000000000",
-            "ПутьКФайлу": "",
+            "ТипХраненияФайла": "ВТомахНаДиске",
+            "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+            "ПутьКФайлу": "20260728\\НП00-003877.msg",
             "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
             "Изменил_Key": AUTHOR_KEY,
             "Автор_Key": AUTHOR_KEY,
         }
     )
-    service._client.get_entity_stream = MagicMock(return_value=b"123")
+    service._client.get_entity_stream = MagicMock(return_value=b"")
     service._client.create_entity = MagicMock(
         return_value={"Ref_Key": "cccccccc-cccc-cccc-cccc-cccccccccccc"}
     )
@@ -753,12 +797,12 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert out[0]["ref_key"] == "cccccccc-cccc-cccc-cccc-cccccccccccc"
     assert out[0]["filename"] == "НП00-003877.msg"
     _entity, payload = service._client.create_entity.call_args[0]
-    assert payload["Автор_Key"] == AUTHOR_KEY
+    assert "Автор_Key" not in payload  # minimal
     assert "Редактирует_Key" not in payload
     assert payload["Description"] == "НП00-003877"
-    assert payload["ФайлХранилище_Base64Data"]
-    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
-    assert "ПутьКФайлу" not in payload
+    assert "ФайлХранилище_Base64Data" not in payload
+    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
+    assert "ПутьКФайлу" in payload
     service._client.patch_entity.assert_called()
     patch_calls = service._client.patch_entity.call_args_list
     assert not any("Автор_Key" in call.args[2] for call in patch_calls)
@@ -767,7 +811,7 @@ def test_odata_integration_attach_files_delegates_to_client():
         for call in patch_calls
     )
     assert not any("Изменил_Key" in call.args[2] for call in patch_calls)
-    service._client.put_entity_stream.assert_not_called()
+    service._client.put_entity_stream.assert_called()
 
 
 def test_verify_attached_file_storage_accepts_volume_with_zero_stream():
@@ -787,6 +831,7 @@ def test_verify_attached_file_storage_accepts_volume_with_zero_stream():
         entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
         ref_key=DOC_KEY,
         expected_size=100,
+        field_map=_VOLUME_FIELD_MAP,
     )
     assert size == 100
 
@@ -808,6 +853,7 @@ def test_verify_attached_file_storage_rejects_volume_without_path():
             entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
             ref_key=DOC_KEY,
             expected_size=100,
+            field_map=_VOLUME_FIELD_MAP,
         )
 
 
@@ -820,14 +866,86 @@ def test_verify_attached_file_storage_rejects_empty_stream_in_database_mode():
         "ФайлХранилище_Base64Data": "",
     }
     client.get_entity_stream.return_value = b""
-
+    field_map = {
+        **_DATABASE_FIELD_MAP,
+        "defaults": {
+            **_DATABASE_FIELD_MAP["defaults"],
+            "verify_mode": "bytes",
+            "omit_storage_kind": False,
+            "minimal_payload": False,
+        },
+    }
     with pytest.raises(AttachedFileError, match="Пустое хранилище"):
         verify_attached_file_storage(
             client,
             entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
             ref_key=DOC_KEY,
             expected_size=100,
-            field_map=_DATABASE_FIELD_MAP,
+            field_map=field_map,
+        )
+
+
+def test_verify_attached_file_storage_bsp_exchange_accepts_cleared_store():
+    """После ПриЗаписи расширение очищает ФайлХранилище — пустой stream OK."""
+    client = MagicMock()
+    client.get_by_key.return_value = {
+        "Ref_Key": DOC_KEY,
+        "Размер": 100,
+        "ТипХраненияФайла": "ВТомахНаДиске",
+        "Том_Key": "21886495-364e-11ea-82f2-ac1f6b05524c",
+        "ПутьКФайлу": "20260728\\file.msg",
+        "ФайлХранилище_Base64Data": "",
+        "DeletionMark": False,
+        "Редактирует_Key": "00000000-0000-0000-0000-000000000000",
+    }
+    client.get_entity_stream.return_value = b""
+    field_map = {
+        **_DATABASE_FIELD_MAP,
+        "defaults": {
+            **_DATABASE_FIELD_MAP["defaults"],
+            "verify_mode": "bsp_exchange",
+            "omit_storage_kind": True,
+            "minimal_payload": True,
+        },
+    }
+    size = verify_attached_file_storage(
+        client,
+        entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+        ref_key=DOC_KEY,
+        expected_size=100,
+        field_map=field_map,
+    )
+    assert size == 100
+
+
+def test_verify_attached_file_storage_bsp_exchange_rejects_ghost_volume():
+    """ВТомахНаДиске без Том/Путь после очистки Base64 — неуспех."""
+    client = MagicMock()
+    client.get_by_key.return_value = {
+        "Ref_Key": DOC_KEY,
+        "Размер": 100,
+        "ТипХраненияФайла": "ВТомахНаДиске",
+        "Том_Key": "00000000-0000-0000-0000-000000000000",
+        "ПутьКФайлу": "",
+        "ФайлХранилище_Base64Data": "",
+        "DeletionMark": False,
+    }
+    client.get_entity_stream.return_value = b""
+    field_map = {
+        **_DATABASE_FIELD_MAP,
+        "defaults": {
+            **_DATABASE_FIELD_MAP["defaults"],
+            "verify_mode": "bsp_exchange",
+            "omit_storage_kind": True,
+        },
+    }
+    with pytest.raises(AttachedFileError, match="Том_Key/ПутьКФайлу"):
+        verify_attached_file_storage(
+            client,
+            entity="Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+            ref_key=DOC_KEY,
+            expected_size=100,
+            field_map=field_map,
         )
 
 
@@ -991,7 +1109,15 @@ def test_attach_file_rolls_back_post_on_verify_failure(monkeypatch):
             client,
             document_ref_key=DOC_KEY,
             file_input=AttachedFileInput(filename="a.pdf", content=b"data"),
-            field_map=_DATABASE_FIELD_MAP,
+            field_map={
+                **_DATABASE_FIELD_MAP,
+                "defaults": {
+                    **_DATABASE_FIELD_MAP["defaults"],
+                    "verify_mode": "bytes",
+                    "omit_storage_kind": False,
+                    "minimal_payload": False,
+                },
+            },
         )
 
     client.delete_entity.assert_called_once_with(

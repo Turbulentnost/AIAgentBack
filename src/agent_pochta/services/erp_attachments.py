@@ -21,10 +21,7 @@ from agent_pochta.services.integration_service import IntegrationService
 from agent_pochta.services.email_msg import eml_bytes_to_msg_bytes
 from agent_pochta.services.odata_attached_file import (
     AttachedFileInput,
-    build_volume_storage_filename,
-    load_attached_file_field_map,
     now_attached_file_processed_at,
-    resolve_attached_file_storage_mode,
 )
 from agent_pochta.services.odata_integration import ODataIntegrationService
 from agent_pochta.services.vault import VaultClient
@@ -522,18 +519,8 @@ def _collect_erp_upload_files(
     skip = {name.strip() for name in (skip_filenames or set()) if name and name.strip()}
     attach_time = processed_at or now_attached_file_processed_at()
 
-    storage_mode = resolve_attached_file_storage_mode(
-        load_attached_file_field_map().get("defaults")
-    )
-    if storage_mode == "volume":
-        subject = (email.subject or "").strip()
-        msg_name = (
-            build_volume_storage_filename(subject, "msg")
-            if subject
-            else erp_full_email_filename(email, erp_document_number=erp_document_number)
-        )
-    else:
-        msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
+    # Имя = номер документа (.msg): стабильный Description и ПутьКФайлу на томе.
+    msg_name = erp_full_email_filename(email, erp_document_number=erp_document_number)
     if not full_email_bytes:
         return []
     if not msg_name.lower().endswith(".msg"):

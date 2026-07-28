@@ -18,6 +18,19 @@ logger = structlog.get_logger(__name__)
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
+def _safe_segment(value: str, *, fallback: str = "unknown") -> str:
+    cleaned = _UNSAFE.sub("_", (value or "").strip())
+    return cleaned[:120] or fallback
+
+
+def _staging_message_segment(message_id: str | None, *, fallback: str = "msg") -> str:
+    """Короткий ASCII-сегмент пути (полный message_id на Windows > MAX_PATH)."""
+    raw = (message_id or fallback or "msg").strip()
+    if len(raw) <= 32 and "@" not in raw:
+        return _safe_segment(raw, fallback=fallback)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
 @dataclass(frozen=True)
 class StagedAttachment:
     """Файл, записанный на диск агента перед OData POST."""
@@ -27,11 +40,6 @@ class StagedAttachment:
     size_bytes: int
     sha256: str
     manifest_path: Path
-
-
-def _safe_segment(value: str, *, fallback: str = "unknown") -> str:
-    cleaned = _UNSAFE.sub("_", (value or "").strip())
-    return cleaned[:120] or fallback
 
 
 def resolve_staging_root() -> Path:
@@ -58,7 +66,7 @@ def stage_attachment_bytes(
     root = resolve_staging_root()
     # GUID ref_key — ASCII-safe сегмент пути (НП00-… на Windows ломает mkdir/write).
     doc_part = _safe_segment(document_ref_key, fallback="doc")
-    msg_part = _safe_segment(message_id or document_ref_key, fallback="msg")
+    msg_part = _staging_message_segment(message_id, fallback=document_ref_key)
     target_dir = root / doc_part / msg_part
     target_dir.mkdir(parents=True, exist_ok=True)
 
