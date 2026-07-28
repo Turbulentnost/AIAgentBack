@@ -26,11 +26,19 @@ export interface KnowledgeBaseItem {
 
   marked_pages_count: number;
 
+  marking_errors_count: number;
+
+  marking_warnings_count: number;
+
   marking_updated_at: string | null;
 
   human_verified_at: string | null;
 
   pages_count: number | null;
+
+  verifiers: string[];
+
+  verifiers_count: number;
 
 }
 

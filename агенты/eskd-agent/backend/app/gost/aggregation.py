@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from app.gost.catalog import DOCUMENT_WIDE_PACKAGE_CODES, GOST_LINE_KEYS, issue_to_line
+from app.gost.catalog import (
+    DOCUMENT_WIDE_PACKAGE_CODES,
+    GOST_LINE_KEYS,
+    is_internal_validation_code,
+    issue_to_line,
+)
 
 
 def _add_issue(
@@ -31,6 +36,8 @@ def collect_issues_from_item(item: dict[str, Any]) -> tuple[dict[str, set[int]],
 
     for err in item.get("errors") or []:
         if isinstance(err, dict):
+            if is_internal_validation_code(str(err.get("code") or "") or None):
+                continue
             _add_issue(
                 errors,
                 page=page,
@@ -42,6 +49,8 @@ def collect_issues_from_item(item: dict[str, Any]) -> tuple[dict[str, set[int]],
 
     for warn in item.get("warnings") or []:
         if isinstance(warn, dict):
+            if is_internal_validation_code(str(warn.get("code") or "") or None):
+                continue
             _add_issue(
                 warnings,
                 page=page,
@@ -145,6 +154,8 @@ def aggregate_from_check_response(payload: dict[str, Any]) -> dict[str, Any]:
 
     for err in payload.get("package_errors") or []:
         if not isinstance(err, dict):
+            continue
+        if is_internal_validation_code(str(err.get("code") or "") or None):
             continue
         pages = _pages_from_package_error(err, item_pages)
         line = issue_to_line(

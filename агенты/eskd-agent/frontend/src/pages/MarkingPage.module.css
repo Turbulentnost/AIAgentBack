@@ -113,10 +113,10 @@
   justify-content: center;
   gap: 8px;
   padding: 8px 14px;
-  border: 1px solid #eab308;
+  border: 1px solid var(--color-warning);
   border-radius: 8px;
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--color-warning-surface);
+  color: var(--color-warning-dark);
   font: inherit;
   font-size: 0.88rem;
   font-weight: 600;
@@ -124,7 +124,7 @@
 }
 
 .verifyBtn:hover:not(:disabled) {
-  background: #fde68a;
+  background: var(--color-hover-strong);
 }
 
 .verifyBtn:disabled {
@@ -134,12 +134,20 @@
 
 .ok {
   margin-top: 12px;
-  color: var(--color-ok, #0a7a44);
+  color: var(--color-success-text);
 }
 
 .err {
   margin-top: 12px;
-  color: var(--color-err, #c0392b);
+  color: var(--color-danger);
+}
+
+.docHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
 }
 
 .docHead h2 {
@@ -155,12 +163,30 @@
   font-size: 0.88rem;
 }
 
+.pendingHint {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-primary-alpha-22);
+  border-radius: 8px;
+  background: var(--color-info-surface);
+  font-size: 0.9rem;
+}
+
+.pendingHint p {
+  margin: 0;
+}
+
+.pendingNote {
+  margin-top: 8px !important;
+  color: var(--color-primary);
+}
+
 .existingHint {
   margin-top: 12px;
   padding: 10px 12px;
-  border: 1px solid #eab308;
+  border: 1px solid var(--color-warning);
   border-radius: 8px;
-  background: #fffbeb;
+  background: var(--color-warning-surface);
   font-size: 0.88rem;
 }
 
@@ -174,4 +200,17 @@
   gap: 8px;
   font-size: 0.85rem;
   color: var(--color-muted);
+}
+
+.printBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+@media print {
+  .screenOnly {
+    display: none !important;
+  }
 }

@@ -20,6 +20,8 @@ class KnowledgeBaseItemRead(BaseModel):
     has_marking: bool = False
     marking_document_id: uuid.UUID | None = None
     marked_pages_count: int = 0
+    marking_errors_count: int = 0
+    marking_warnings_count: int = 0
     marking_updated_at: datetime | None = None
     human_verified_at: datetime | None = None
     pages_count: int | None = None

@@ -1,7 +1,30 @@
 <!doctype html>
 <html lang="ru">
   <head>
+    <script>
+      (function () {
+        var valid = [
+          "light",
+          "dark",
+          "cyberpunk",
+          "matrix",
+          "glassmorphism",
+          "retro",
+          "sketch",
+          "ocean",
+          "sunset",
+          "nord",
+          "sakura",
+          "amethyst"
+        ];
+        var theme = localStorage.getItem("ai-platform-theme");
+        if (valid.indexOf(theme) !== -1) {
+          document.documentElement.dataset.theme = theme;
+        }
+      })();
+    </script>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ESKD Agent — проверка КД</title>
   </head>

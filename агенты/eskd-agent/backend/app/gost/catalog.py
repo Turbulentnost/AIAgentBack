@@ -20,6 +20,13 @@ GOST_LINE_KEYS: list[str] = [key for key, _ in GOST_LINE_ORDER]
 # Cross-page package errors без явного списка pages — применяются ко всем листам items.
 DOCUMENT_WIDE_PACKAGE_CODES = frozenset({"sheet_sequence", "designation_mismatch_across_pages"})
 
+# Технические коды rule engine — не показываются в карточках и разметке (только LLM-текст).
+INTERNAL_VALIDATION_CODES = DOCUMENT_WIDE_PACKAGE_CODES
+
+
+def is_internal_validation_code(code: str | None) -> bool:
+    return bool(code and code in INTERNAL_VALIDATION_CODES)
+
 ERROR_CODE_TO_LINE: dict[str, str] = {
     "missing_signature": "2.104",
     "sheet_mismatch": "2.104",

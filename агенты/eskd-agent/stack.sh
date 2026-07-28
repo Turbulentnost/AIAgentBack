@@ -233,6 +233,10 @@ if [[ "$CMD" == "up" && ${#EXTRA_ARGS[@]} -eq 0 ]]; then
   EXTRA_ARGS=(-d)
 fi
 
+if [[ "$CMD" == "up" && "$MODULE" =~ ^(app|backend|frontend)$ && "$MODEL_HOST" != "1" ]]; then
+  MODEL_HOST=1
+fi
+
 case "$CMD" in
   up)
     SERVICES="$(services_for "$MODULE")"

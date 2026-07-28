@@ -9,13 +9,18 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      MODEL_SERVICE_URL: ${MODEL_SERVICE_URL:-http://model:8765}
+      MODEL_SERVICE_URL: ${MODEL_SERVICE_URL:-http://host.docker.internal:8765}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-200}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://eskd:eskd@postgres:5432/eskd_agent}
       STORAGE_PATH: ${STORAGE_PATH:-/data/previews}
       ODA_CONVERTER_PATH: ${ODA_CONVERTER_PATH:-}
       KOMPAS_EXPORT_CMD: ${KOMPAS_EXPORT_CMD:-}
+      ESKD_PIPELINE_MODE: ${ESKD_PIPELINE_MODE:-legacy}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_EVAL_MODEL: ${OPENROUTER_EVAL_MODEL:-anthropic/claude-sonnet-4}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       - eskd_storage:/data/previews
       - eskd_integration:/data/integration

@@ -1,20 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, Save, Upload } from "lucide-react";
-import { fetchGostCatalog } from "@/api/history";
+import { CheckCircle2, Loader2, Printer, Save, Upload } from "lucide-react";
+import { fetchCheckRunDetail, fetchGostCatalog } from "@/api/history";
 import { fetchKnowledgeBase, verifyKnowledgeBaseEntry } from "@/api/knowledgeBase";
+import layout from "@/styles/pageLayout.module.css";
+import type { MarkingOpenIntent } from "@/types/markingOpen";
 import {
   createMarkingLabel,
   fetchMarkingDocument,
+  fetchLatestMarkingLabel,
   fetchSuggestedMarkingLabel,
   lookupMarkingDocumentByFilename,
   markingPreviewUrl,
+  openMarkingFromCheckRun,
   updateMarkingLabel,
   uploadMarkingDocument
 } from "@/api/marking";
 import type { MarkingDocumentLookup } from "@/types/marking";
 import DocumentPreview from "@/components/DocumentPreview";
 import GostSummaryForm from "@/components/GostSummaryForm";
+import MarkingReportPrint from "@/components/MarkingReportPrint";
+import { filterLlmMetaText } from "@/utils/llmMetaFilter";
 import type { GostFinding, MarkingDocument, PageLevelFinding } from "@/types/marking";
 import styles from "./MarkingPage.module.css";
 
@@ -34,11 +40,11 @@ function buildDocumentLevelPerPage(pageFindings: PageLevelFinding[]): GostFindin
 }
 
 export default function MarkingPage({
-  openDocumentId = null,
-  onOpenDocumentHandled
+  openIntent = null,
+  onOpenIntentHandled
 }: {
-  openDocumentId?: string | null;
-  onOpenDocumentHandled?: () => void;
+  openIntent?: MarkingOpenIntent | null;
+  onOpenIntentHandled?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
@@ -56,6 +62,9 @@ export default function MarkingPage({
   const [error, setError] = useState<string | null>(null);
   const [existingLookup, setExistingLookup] = useState<MarkingDocumentLookup | null>(null);
   const [forceNewUpload, setForceNewUpload] = useState(false);
+  const [pendingCheckRun, setPendingCheckRun] = useState<{ checkRunId: string; filename: string } | null>(
+    null
+  );
 
   const catalog = useQuery({
     queryKey: ["gost-catalog"],
@@ -71,6 +80,25 @@ export default function MarkingPage({
     },
     enabled: Boolean(document?.id)
   });
+
+  const savedLabel = useQuery({
+    queryKey: ["marking-label-report", labelId, document?.id],
+    queryFn: () => fetchLatestMarkingLabel(document!.id),
+    enabled: Boolean(document?.id && labelId)
+  });
+
+  const reportCheckRunId =
+    draftCheckRunId ?? savedLabel.data?.check_run_id ?? kbEntry.data?.last_check_run_id ?? null;
+
+  const reportCheckRun = useQuery({
+    queryKey: ["marking-report-check-run", reportCheckRunId],
+    queryFn: () => fetchCheckRunDetail(reportCheckRunId!),
+    enabled: Boolean(reportCheckRunId)
+  });
+
+  function handlePrintReport() {
+    window.print();
+  }
 
   const verify = useMutation({
     mutationFn: verifyKnowledgeBaseEntry,
@@ -116,6 +144,7 @@ export default function MarkingPage({
     setError(null);
     setExistingLookup(null);
     setForceNewUpload(false);
+    setPendingCheckRun(null);
   }
 
   async function checkExistingByFilename(filename: string) {
@@ -132,8 +161,13 @@ export default function MarkingPage({
     const suggested = await fetchSuggestedMarkingLabel(docId);
     setLabelId(suggested.source === "saved" ? suggested.label_id : null);
     setDraftCheckRunId(suggested.source === "check_run" ? suggested.check_run_id : null);
-    setPageFindings(suggested.page_level ?? []);
-    setProblemReport(suggested.problem_report ?? "");
+    setPageFindings(
+      (suggested.page_level ?? []).map((entry) => ({
+        ...entry,
+        note: filterLlmMetaText(entry.note)
+      }))
+    );
+    setProblemReport(filterLlmMetaText(suggested.problem_report ?? ""));
     if (!suggested.found) {
       return "Документ открыт — разметка пока пустая";
     }
@@ -161,9 +195,56 @@ export default function MarkingPage({
   }
 
   useEffect(() => {
-    if (!openDocumentId) return;
-    void openSavedDocument(openDocumentId).finally(() => onOpenDocumentHandled?.());
-  }, [openDocumentId, onOpenDocumentHandled]);
+    if (!openIntent) return;
+    if (openIntent.type === "document") {
+      void openSavedDocument(openIntent.documentId).finally(() => onOpenIntentHandled?.());
+      return;
+    }
+    void openFromCheckRun(openIntent.checkRunId, openIntent.filename).finally(() =>
+      onOpenIntentHandled?.()
+    );
+  }, [openIntent, onOpenIntentHandled]);
+
+  async function openFromCheckRun(checkRunId: string, filename: string, attachFile?: File) {
+    setLoadingDoc(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const doc = await openMarkingFromCheckRun(checkRunId, attachFile);
+      const messageText = await applySuggestedLabel(doc.id);
+      setDocument(doc);
+      setCurrentPage(doc.pages[0]?.page ?? 1);
+      setFile(null);
+      setPendingCheckRun(null);
+      setMessage(messageText);
+    } catch (exc) {
+      const err = exc as Error & { response?: { status?: number; data?: { detail?: string } } };
+      const detail = err.response?.data?.detail;
+      const text = typeof detail === "string" ? detail : err.message || "Не удалось открыть разметку";
+      if (err.response?.status === 409) {
+        setPendingCheckRun({ checkRunId, filename });
+        setError(null);
+        setMessage(text);
+      } else {
+        setError(text);
+      }
+    } finally {
+      setLoadingDoc(false);
+    }
+  }
+
+  async function handlePendingCheckUpload() {
+    if (!pendingCheckRun) return;
+    if (!file) {
+      setError(`Выберите файл «${pendingCheckRun.filename}»`);
+      return;
+    }
+    if (file.name.trim().toLowerCase() !== pendingCheckRun.filename.trim().toLowerCase()) {
+      setError(`Нужен файл «${pendingCheckRun.filename}», выбран «${file.name}»`);
+      return;
+    }
+    await openFromCheckRun(pendingCheckRun.checkRunId, pendingCheckRun.filename, file);
+  }
 
   async function handleUpload() {
     if (!file) {
@@ -276,16 +357,17 @@ export default function MarkingPage({
       : "";
 
   return (
-    <>
-      <div className={styles.header}>
-        <div>
+    <section className={layout.page}>
+      <div className={styles.screenOnly}>
+      <header className={layout.header}>
+        <div className={layout.headerMain}>
           <h1>Разметка</h1>
           <p>
             Пролистывайте листы и отмечайте нарушения ГОСТ. Можно переключаться на другие вкладки — черновик не
             сбросится.
           </p>
         </div>
-      </div>
+      </header>
 
       {!document && loadingDoc && (
         <div className={`card ${styles.uploadCard}`}>
@@ -295,7 +377,43 @@ export default function MarkingPage({
         </div>
       )}
 
-      {!document && !loadingDoc && (
+      {!document && !loadingDoc && pendingCheckRun && (
+        <section className={`card ${styles.uploadCard}`}>
+          <div className={styles.pendingHint}>
+            <p>
+              Для разметки нужен исходный PDF проверки: <strong>{pendingCheckRun.filename}</strong>
+            </p>
+            {message && <p className={styles.pendingNote}>{message}</p>}
+          </div>
+          <div className={styles.uploadRow}>
+            <label className={styles.fileBtn}>
+              <Upload size={16} />
+              {file ? file.name : pendingCheckRun.filename}
+              <input
+                type="file"
+                hidden
+                accept=".pdf,.png,.jpg,.jpeg"
+                onChange={(e) => {
+                  const picked = e.target.files?.[0] ?? null;
+                  setFile(picked);
+                  setError(null);
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="primaryBtn"
+              disabled={loadingDoc || !file}
+              onClick={() => void handlePendingCheckUpload()}
+            >
+              {loadingDoc ? <Loader2 size={16} className="spin" /> : null}
+              Открыть разметку
+            </button>
+          </div>
+        </section>
+      )}
+
+      {!document && !loadingDoc && !pendingCheckRun && (
         <section className={`card ${styles.uploadCard}`}>
           <div className={styles.uploadRow}>
             <label className={styles.fileBtn}>
@@ -383,6 +501,15 @@ export default function MarkingPage({
                       : " · новая разметка"}
                 </p>
               </div>
+              <button
+                type="button"
+                className={`secondaryBtn ${styles.printBtn}`}
+                onClick={handlePrintReport}
+                title="Печать отчёта по разметке"
+              >
+                <Printer size={16} />
+                Печать отчёта
+              </button>
             </div>
 
             <GostSummaryForm
@@ -445,6 +572,21 @@ export default function MarkingPage({
 
       {message && <p className={styles.ok}>{message}</p>}
       {error && <p className={styles.err}>{error}</p>}
-    </>
+      </div>
+
+      {document && catalog.data && (
+        <MarkingReportPrint
+          document={document}
+          catalog={catalog.data}
+          pageFindings={pageFindings}
+          problemReport={problemReport}
+          labelId={labelId}
+          draftCheckRunId={draftCheckRunId}
+          savedLabel={savedLabel.data}
+          checkRun={reportCheckRun.data}
+          kbEntry={kbEntry.data}
+        />
+      )}
+    </section>
   );
 }

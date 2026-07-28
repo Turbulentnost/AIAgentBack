@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$WslIp,
-    [string]$Ports = "8000,8080,8765,3000"
+    [string]$Ports = "8000,8080,8765,3000,5173"
 )
 
 [int[]]$PortList = $Ports -split ',' | ForEach-Object { [int]$_.Trim() }
@@ -72,6 +72,9 @@ foreach ($ip in $lanIps) {
     Write-Host ""
     Write-Host "  UI:  http://${ip}:${uiPort}/"
     Write-Host "  API: http://${ip}:8080/health"
+    if ($PortList -contains 5173) {
+        Write-Host "  Vite (AIAgentFront dev): http://${ip}:5173/"
+    }
 }
 
 Write-Host ""

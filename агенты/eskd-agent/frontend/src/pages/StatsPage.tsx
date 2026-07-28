@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { fetchMarkingStats } from "@/api/marking";
+import layout from "@/styles/pageLayout.module.css";
 import styles from "./StatsPage.module.css";
 
 export default function StatsPage() {
@@ -10,13 +11,13 @@ export default function StatsPage() {
   });
 
   return (
-    <>
-      <div className={styles.header}>
-        <div>
+    <section className={layout.page}>
+      <header className={layout.header}>
+        <div className={layout.headerMain}>
           <h1>Статистика ГОСТ в разметке</h1>
           <p>Какие стандарты чаще всего отмечают при разметке документов.</p>
         </div>
-      </div>
+      </header>
 
       <section className={`card ${styles.card}`}>
         {stats.isLoading ? (
@@ -56,6 +57,6 @@ export default function StatsPage() {
           <p className={styles.empty}>Нет данных разметки. Создайте записи на вкладке «Разметка».</p>
         )}
       </section>
-    </>
+    </section>
   );
 }

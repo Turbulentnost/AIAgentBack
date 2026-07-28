@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAN_PORT="$(grep -E '^FRONTEND_LAN_PORT=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r\n' || true)"
 LAN_PORT="${LAN_PORT:-8000}"
+VITE_DEV_PORT="$(grep -E '^VITE_DEV_PORT=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '
+' || true)"
+VITE_DEV_PORT="${VITE_DEV_PORT:-5173}"
+
 
 GET_LAN_PS1="$(wslpath -w "$ROOT/scripts/get-lan-ip.ps1" 2>/dev/null || echo "")"
 if [[ -n "$GET_LAN_PS1" ]]; then
@@ -21,6 +25,8 @@ else
   echo "  (запустите scripts/SHOW-URL.bat в Windows)"
 fi
 echo ""
+echo "  AIAgentFront (Vite dev): http://${LAN_IP:-<IP-вашего-WiFi>}:${VITE_DEV_PORT}/"
+  echo ""
 echo "  Не используйте localhost и не порт 3000 с другого ПК."
 echo "  Если не открывается: scripts/START-LAN-ADMIN.bat от администратора"
 echo ""

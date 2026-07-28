@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchAuthMe, fetchExchangeLog, type ExchangeLogItem } from "@/api/integration";
+import layout from "@/styles/pageLayout.module.css";
 import styles from "./IntegrationLogPage.module.css";
 
 export default function IntegrationLogPage() {
@@ -35,12 +36,14 @@ export default function IntegrationLogPage() {
   }, [requestId, sourceSystem]);
 
   return (
-    <div className={styles.wrap}>
-      <header className={styles.header}>
-        <h1>Журнал интеграций</h1>
-        <p className={styles.sub}>
-          Пользователь: <strong>{authSubject}</strong> · роли: {authRoles.join(", ") || "—"}
-        </p>
+    <section className={layout.page}>
+      <header className={layout.header}>
+        <div className={layout.headerMain}>
+          <h1>Журнал интеграций</h1>
+          <p className={styles.sub}>
+            Пользователь: <strong>{authSubject}</strong> · роли: {authRoles.join(", ") || "—"}
+          </p>
+        </div>
       </header>
 
       <div className={styles.filters}>
@@ -88,6 +91,6 @@ export default function IntegrationLogPage() {
           </tbody>
         </table>
       </div>
-    </div>
+    </section>
   );
 }

@@ -1,6 +1,6 @@
 # Удалить проброс портов ESKD Agent (запуск от администратора).
 param(
-    [int[]]$Ports = @(8000, 3000, 8080, 8765)
+    [int[]]$Ports = @(8000, 3000, 8080, 8765, 5173)
 )
 
 $ErrorActionPreference = "Stop"

@@ -65,7 +65,7 @@
 }
 
 .rowRunning {
-  background: #fffbeb;
+  background: var(--color-warning-surface);
 }
 
 .statusBadge {
@@ -80,13 +80,13 @@
 }
 
 .statusRunning {
-  background: #fff4e5;
-  color: #b54708;
+  background: var(--color-warning-surface);
+  color: var(--color-warning-dark);
 }
 
 .statusDone {
-  background: #e8f5ee;
-  color: #0a7a44;
+  background: var(--color-success-surface);
+  color: var(--color-success-text);
 }
 
 .fileCell {
@@ -102,14 +102,14 @@
 
 .miniProgress {
   height: 4px;
-  background: #e5e7eb;
+  background: var(--color-border);
   border-radius: 999px;
   overflow: hidden;
 }
 
 .miniProgressFill {
   height: 100%;
-  background: var(--color-accent, #2563eb);
+  background: var(--color-primary);
   transition: width 0.2s;
 }
 
@@ -124,14 +124,14 @@
 
 .progressBar {
   height: 8px;
-  background: #e5e7eb;
+  background: var(--color-border);
   border-radius: 999px;
   overflow: hidden;
 }
 
 .progressFill {
   height: 100%;
-  background: var(--color-accent, #2563eb);
+  background: var(--color-primary);
   transition: width 0.2s;
 }
 
@@ -150,7 +150,7 @@
   border-radius: 10px;
   margin-bottom: 8px;
   padding: 0 10px 10px;
-  background: #fff;
+  background: var(--color-surface);
 }
 
 .pageCard > summary {

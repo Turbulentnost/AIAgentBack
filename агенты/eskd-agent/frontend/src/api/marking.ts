@@ -9,6 +9,22 @@ import type {
   MarkingLabelUpdate
 } from "@/types/marking";
 
+export async function openMarkingFromCheckRun(checkRunId: string, file?: File): Promise<MarkingDocument> {
+  if (file) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const { data } = await api.post<MarkingDocument>(
+      `/api/v1/eskd/marking/documents/open-from-check-run/${checkRunId}`,
+      fd
+    );
+    return data;
+  }
+  const { data } = await api.post<MarkingDocument>(
+    `/api/v1/eskd/marking/documents/open-from-check-run/${checkRunId}`
+  );
+  return data;
+}
+
 export async function lookupMarkingDocumentByFilename(filename: string): Promise<MarkingDocumentLookup> {
   const { data } = await api.get<MarkingDocumentLookup>("/api/v1/eskd/marking/documents/lookup", {
     params: { filename }

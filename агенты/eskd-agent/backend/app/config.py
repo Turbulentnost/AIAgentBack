@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    model_service_url: str = "http://model:8765"
+    model_service_url: str = "http://host.docker.internal:8765"
     cors_origins: str = "*"
     max_upload_mb: int = 200
     request_timeout_sec: float = 600.0
@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     eskd_pipeline_mode: str = "legacy"
     openrouter_api_key: str = ""
     openrouter_model: str = "anthropic/claude-sonnet-4"
+    openrouter_eval_model: str = "anthropic/claude-sonnet-4"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     @property

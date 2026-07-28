@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, CircleDashed, FileText, Loader2, Search, Sparkles, Trash2, X } from "lucide-react";
 import { deleteKnowledgeBaseEntry, fetchKnowledgeBase, verifyKnowledgeBaseEntry } from "@/api/knowledgeBase";
 import type { KnowledgeBaseFilter, KnowledgeBaseItem } from "@/types/knowledgeBase";
+import layout from "@/styles/pageLayout.module.css";
 import styles from "./KnowledgeBasePage.module.css";
 
 function formatDate(value: string | null) {
@@ -79,21 +80,31 @@ function DeleteDialog({
 function Tile({
   item,
   onOpenMarking,
+  onOpenMarkingFromCheck,
   onVerify,
   onDelete,
   verifying
 }: {
   item: KnowledgeBaseItem;
   onOpenMarking?: (documentId: string) => void;
+  onOpenMarkingFromCheck?: (checkRunId: string, filename: string) => void;
   onVerify?: (item: KnowledgeBaseItem) => void;
   onDelete?: (item: KnowledgeBaseItem) => void;
   verifying?: boolean;
 }) {
-  const canOpen = Boolean(item.marking_document_id);
+  const canOpenCheck = Boolean(item.has_ai_check && item.last_check_run_id);
+  const canOpenMarking = Boolean(item.marking_document_id);
+  const canOpen = canOpenCheck || canOpenMarking;
   const canVerify = !item.checked && Boolean(item.last_check_run_id || item.marking_document_id);
 
-  function openMarking() {
-    if (item.marking_document_id) onOpenMarking?.(item.marking_document_id);
+  function openItem() {
+    if (canOpenMarking && item.marking_document_id) {
+      onOpenMarking?.(item.marking_document_id);
+      return;
+    }
+    if (canOpenCheck && item.last_check_run_id) {
+      onOpenMarkingFromCheck?.(item.last_check_run_id, item.display_name);
+    }
   }
 
   function stopClick(e: MouseEvent | KeyboardEvent) {
@@ -107,13 +118,13 @@ function Tile({
       }`}
       role={canOpen ? "button" : undefined}
       tabIndex={canOpen ? 0 : undefined}
-      onClick={canOpen ? openMarking : undefined}
+      onClick={canOpen ? openItem : undefined}
       onKeyDown={
         canOpen
           ? (e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                openMarking();
+                openItem();
               }
             }
           : undefined
@@ -163,6 +174,10 @@ function Tile({
           <>
             <dt>Разметка</dt>
             <dd>{item.marked_pages_count} лист(ов)</dd>
+            <dt>Ошибки / замеч.</dt>
+            <dd>
+              {item.marking_errors_count ?? 0} / {item.marking_warnings_count ?? 0}
+            </dd>
             <dt>Дата разметки</dt>
             <dd>{formatDate(item.marking_updated_at)}</dd>
           </>
@@ -171,16 +186,38 @@ function Tile({
           <>
             <dt>Проверка ИИ</dt>
             <dd>{formatDate(item.last_checked_at)}</dd>
-            <dt>Ошибки / замеч.</dt>
-            <dd>
-              {item.total_errors ?? 0} / {item.total_warnings ?? 0}
-            </dd>
+            {!item.has_marking && (
+              <>
+                <dt>Ошибки / замеч.</dt>
+                <dd>
+                  {item.total_errors ?? 0} / {item.total_warnings ?? 0}
+                </dd>
+              </>
+            )}
           </>
         )}
         {item.checked && item.human_verified_at && (
           <>
             <dt>Подтверждено</dt>
             <dd>{formatDate(item.human_verified_at)}</dd>
+          </>
+        )}
+        {item.verifiers_count > 0 && (
+          <>
+            <dt>Проверили</dt>
+            <dd
+              className={styles.verifiersCell}
+              title={item.verifiers.join("\n")}
+              onClick={stopClick}
+              onKeyDown={stopClick}
+            >
+              <span className={styles.verifiersValue}>{item.verifiers_count}</span>
+              <span className={styles.verifiersTooltip} role="tooltip">
+                {item.verifiers.map((name) => (
+                  <span key={name}>{name}</span>
+                ))}
+              </span>
+            </dd>
           </>
         )}
       </dl>
@@ -203,9 +240,11 @@ function Tile({
 }
 
 export default function KnowledgeBasePage({
-  onOpenMarking
+  onOpenMarking,
+  onOpenMarkingFromCheck
 }: {
   onOpenMarking?: (documentId: string) => void;
+  onOpenMarkingFromCheck?: (checkRunId: string, filename: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
@@ -278,9 +317,9 @@ export default function KnowledgeBasePage({
   }
 
   return (
-    <>
-      <div className={styles.header}>
-        <div>
+    <section className={layout.page}>
+      <header className={layout.header}>
+        <div className={layout.headerMain}>
           <h1>База знаний</h1>
           <p>
             После проверки ИИ файлы попадают сюда как непроверенные (жёлтые). Человек подтверждает или
@@ -288,13 +327,15 @@ export default function KnowledgeBasePage({
           </p>
         </div>
         {summary && (
-          <div className={styles.summary}>
-            <span>Всего: {summary.total}</span>
-            <span className={styles.summaryOk}>Проверено: {summary.checked}</span>
-            <span className={styles.summaryPending}>Не проверено: {summary.unchecked}</span>
+          <div className={layout.headerAside}>
+            <div className={styles.summary}>
+              <span>Всего: {summary.total}</span>
+              <span className={styles.summaryOk}>Проверено: {summary.checked}</span>
+              <span className={styles.summaryPending}>Не проверено: {summary.unchecked}</span>
+            </div>
           </div>
         )}
-      </div>
+      </header>
 
       <section className={`card ${styles.toolbar}`}>
         <label className={styles.search}>
@@ -343,6 +384,7 @@ export default function KnowledgeBasePage({
                 key={item.key}
                 item={item}
                 onOpenMarking={onOpenMarking}
+                onOpenMarkingFromCheck={onOpenMarkingFromCheck}
                 onVerify={(entry) => void handleVerify(entry)}
                 onDelete={startDelete}
                 verifying={verifyingKey === item.key && verify.isPending}
@@ -390,6 +432,6 @@ export default function KnowledgeBasePage({
           onConfirm={() => void confirmDelete()}
         />
       )}
-    </>
+    </section>
   );
 }

@@ -138,6 +138,7 @@ class HistoryService:
             run.created_by_name = actor.display_name
         await self._db.commit()
         await self._db.refresh(run)
+        persist_check_uploads(uploads)
         return run
 
     async def save_check_run(
@@ -182,6 +183,7 @@ class HistoryService:
         await self._db.commit()
         await self._db.refresh(run)
         await self._db.refresh(change)
+        persist_check_uploads(uploads)
         return run
 
     async def list_runs(

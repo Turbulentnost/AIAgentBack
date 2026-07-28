@@ -26,12 +26,12 @@
 }
 
 .summaryOk {
-  color: var(--color-ok, #0a7a44);
+  color: var(--color-success-text);
 }
 
 .summaryIdle,
 .summaryPending {
-  color: #b45309;
+  color: var(--color-warning-dark);
 }
 
 .toolbar {
@@ -69,6 +69,7 @@
 .filterBtn {
   border: 1px solid var(--color-border);
   background: var(--color-surface);
+  color: var(--color-text-strong);
   border-radius: 999px;
   padding: 6px 12px;
   font: inherit;
@@ -76,9 +77,15 @@
   cursor: pointer;
 }
 
+.filterBtn:hover:not(.filterBtnActive) {
+  border-color: var(--color-border-strong, var(--color-border));
+  background: var(--color-surface-muted, var(--color-surface));
+}
+
 .filterBtnActive {
   border-color: var(--color-primary);
   background: var(--color-accent-soft);
+  color: var(--color-accent-text);
   font-weight: 600;
 }
 
@@ -110,7 +117,7 @@
 
 .tileClickable:hover {
   border-color: var(--color-primary);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-md);
 }
 
 .tileClickable:focus-visible {
@@ -124,16 +131,17 @@
 }
 
 .tileChecked {
-  border-left: 4px solid var(--color-success, #0a7a44);
+  border-left: 4px solid var(--color-success);
 }
 
 .tileUnchecked {
-  border-left: 4px solid #eab308;
-  background: #fffbeb;
+  border-left: 4px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-warning) 28%, var(--color-border));
 }
 
 .tileUnchecked:hover {
-  border-color: #ca8a04;
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
 }
 
 .tileHead {
@@ -162,8 +170,8 @@
 }
 
 .deleteIconBtn:hover {
-  color: #b91c1c;
-  background: #fee2e2;
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
 }
 
 .tileTitle {
@@ -185,7 +193,7 @@
   gap: 6px;
   margin: 0;
   font-size: 0.78rem;
-  color: #b45309;
+  color: var(--color-warning);
 }
 
 .verifyBtn {
@@ -195,17 +203,17 @@
   gap: 6px;
   margin-top: 4px;
   padding: 6px 10px;
-  border: 1px solid #eab308;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
   border-radius: 8px;
-  background: #fef3c7;
-  color: #92400e;
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+  color: var(--color-warning);
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
 }
 
 .verifyBtn:hover:not(:disabled) {
-  background: #fde68a;
+  background: var(--color-hover-strong);
 }
 
 .tileMeta {
@@ -222,6 +230,46 @@
 
 .tileMeta dd {
   margin: 0;
+}
+
+.verifiersCell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  cursor: help;
+}
+
+.verifiersValue {
+  font-weight: 600;
+  color: var(--color-success-text);
+  border-bottom: 1px dotted currentColor;
+}
+
+.verifiersTooltip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.verifiersCell:hover .verifiersTooltip,
+.verifiersCell:focus-within .verifiersTooltip {
+  display: flex;
 }
 
 .loading,
@@ -253,7 +301,7 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(15, 23, 42, 0.45);
+  background: var(--color-overlay);
 }
 
 .modal {
@@ -261,7 +309,8 @@
   padding: 18px;
   border-radius: var(--radius-card);
   background: var(--color-surface);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xl);
 }
 
 .modalHead {
@@ -286,7 +335,7 @@
 }
 
 .modalWarn {
-  color: #b45309;
+  color: var(--color-warning-dark);
 }
 
 .modalActions {
@@ -302,17 +351,17 @@
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  border: 1px solid #dc2626;
+  border: 1px solid var(--color-danger);
   border-radius: 8px;
-  background: #dc2626;
-  color: #fff;
+  background: var(--color-danger);
+  color: var(--color-on-primary);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 
 .deleteBtn:hover:not(:disabled) {
-  background: #b91c1c;
+  filter: brightness(0.92);
 }
 
 .deleteBtn:disabled {

@@ -17,13 +17,14 @@ FRONTEND_PORT="$(read_env FRONTEND_PORT 3000)"
 LAN_PORT="$(read_env FRONTEND_LAN_PORT 8000)"
 BACKEND_PORT="$(read_env BACKEND_PORT 8080)"
 MODEL_PORT="$(read_env MODEL_PORT 8765)"
+VITE_DEV_PORT="$(read_env VITE_DEV_PORT 5173)"
 WSL_IP="$(hostname -I | awk '{print $1}')"
 PS1="$ROOT/scripts/enable-lan-access.ps1"
-PORTS_CSV="${LAN_PORT},${BACKEND_PORT},${MODEL_PORT},${FRONTEND_PORT}"
+PORTS_CSV="${LAN_PORT},${BACKEND_PORT},${MODEL_PORT},${FRONTEND_PORT},${VITE_DEV_PORT}"
 
 echo "=== ESKD Agent — доступ из LAN ==="
 echo "WSL IP: $WSL_IP"
-echo "Порты: LAN UI=$LAN_PORT local UI=$FRONTEND_PORT API=$BACKEND_PORT"
+echo "Порты: LAN UI=$LAN_PORT local UI=$FRONTEND_PORT Vite dev=$VITE_DEV_PORT API=$BACKEND_PORT"
 echo ""
 
 if ! command -v powershell.exe >/dev/null 2>&1; then

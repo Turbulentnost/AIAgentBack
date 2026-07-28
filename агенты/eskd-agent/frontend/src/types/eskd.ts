@@ -96,17 +96,35 @@ export interface EskdCheckResponse {
   gost_summary?: Record<string, unknown> | null;
 }
 
+export interface ModelHealthStatus {
+  reachable?: boolean;
+  configured?: boolean;
+  required?: boolean;
+  model_loaded?: boolean;
+  model?: string;
+  backend?: string;
+  base_url?: string;
+  target?: string;
+  gateway_target?: string;
+  gateway_url?: string;
+  inference?: string;
+  inference_target?: string;
+  location?: "local" | "lan" | "remote";
+  model_path?: string;
+  adapter_path?: string;
+  load_seconds?: number;
+  ping_ms?: number;
+  error?: string;
+}
+
 export interface HealthResponse {
   status: string;
   gateway: string;
-  model: {
-    reachable?: boolean;
-    model_loaded?: boolean;
-    model_path?: string;
-    adapter_path?: string;
-    load_seconds?: number;
-    error?: string;
-  };
+  pipeline_mode?: string;
+  vlm?: ModelHealthStatus;
+  llm?: ModelHealthStatus;
+  /** @deprecated используйте vlm */
+  model: ModelHealthStatus;
 }
 
 export type PageMode = "all" | "single" | "range" | "list";

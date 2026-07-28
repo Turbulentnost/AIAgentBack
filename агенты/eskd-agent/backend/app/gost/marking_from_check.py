@@ -5,10 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from app.gost.aggregation import collect_issues_from_item
-from app.gost.catalog import GOST_LINE_KEYS, issue_to_line
+from app.gost.catalog import GOST_LINE_KEYS, is_internal_validation_code, issue_to_line
+from app.gost.llm_report_filter import filter_llm_report_text
 
 
 def remark_to_gost_key(remark: dict[str, Any]) -> str | None:
+    if is_internal_validation_code(str(remark.get("code") or "") or None):
+        return None
     key = issue_to_line(
         code=remark.get("code"),
         element=remark.get("element"),
@@ -22,12 +25,12 @@ def remark_to_gost_key(remark: dict[str, Any]) -> str | None:
 
 def page_note_from_item(item: dict[str, Any]) -> str:
     """Замечание к листу: только текст LLM после VLM (Stage 2b)."""
-    return str(item.get("llm_report_text") or "").strip()
+    return filter_llm_report_text(str(item.get("llm_report_text") or ""))
 
 
 def problem_report_from_payload(payload: dict[str, Any]) -> str:
     """Общий отчёт: только summary LLM после VLM (Stage 2b)."""
-    return str(payload.get("llm_summary") or "").strip()
+    return filter_llm_report_text(str(payload.get("llm_summary") or ""))
 
 
 def _merge_page_finding(

@@ -32,6 +32,8 @@ class _KbRow:
     has_marking: bool = False
     marking_document_id: uuid.UUID | None = None
     marked_pages_count: int = 0
+    marking_errors_count: int = 0
+    marking_warnings_count: int = 0
     marking_updated_at: datetime | None = None
     human_verified_at: datetime | None = None
     pages_count: int | None = None
@@ -44,6 +46,14 @@ def _entry_key(*, sha256: str | None, filename: str | None) -> str:
         return f"sha:{sha256.strip().lower()}"
     name = (filename or "unknown").strip().lower()
     return f"name:{name}"
+
+
+def _kb_display_name(*, designation: str | None, filename: str | None) -> str:
+    des = (designation or "").strip()
+    if des:
+        return des
+    name = (filename or "").strip()
+    return name or "Без имени"
 
 
 def _filename_to_sha_map(check_runs: list[EskdCheckRun]) -> dict[str, str]:
@@ -67,6 +77,24 @@ def _format_person_short(name: str | None) -> str | None:
     surname = parts[0]
     initials = "".join(f"{part[0]}." for part in parts[1:] if part[0].isalpha())
     return f"{surname} {initials}".strip() if initials else surname
+
+
+def _count_marking_findings(page_level: list | None) -> tuple[int, int]:
+    """Считает отметки разметчика (page_level.gost_findings), без document_level."""
+    errors = 0
+    warnings = 0
+    for page_entry in page_level or []:
+        if not isinstance(page_entry, dict):
+            continue
+        for finding in page_entry.get("gost_findings") or []:
+            if not isinstance(finding, dict):
+                continue
+            severity = str(finding.get("severity") or "ok")
+            if severity == "error":
+                errors += 1
+            elif severity == "warning":
+                warnings += 1
+    return errors, warnings
 
 
 def _add_verifier(row: _KbRow, name: str | None) -> None:
@@ -275,13 +303,24 @@ class KnowledgeBaseService:
             doc_for_row = latest_doc or doc
             latest = await marking_svc.get_latest_label_for_document(doc_for_row.id)
             marked_pages = len(latest.page_level or []) if latest else 0
-            row = by_key.get(key) or _KbRow(key=key, display_name=doc.source_filename)
+            marking_errors, marking_warnings = (
+                _count_marking_findings(latest.page_level) if latest else (0, 0)
+            )
+            row = by_key.get(key) or _KbRow(
+                key=key,
+                display_name=_kb_display_name(designation=doc_for_row.designation, filename=doc.source_filename),
+            )
             row.key = key
-            row.display_name = doc_for_row.source_filename
             row.designation = doc_for_row.designation or row.designation
+            row.display_name = _kb_display_name(
+                designation=row.designation,
+                filename=doc_for_row.source_filename,
+            )
             row.has_marking = True
             row.marking_document_id = doc_for_row.id
             row.marked_pages_count = max(row.marked_pages_count, marked_pages)
+            row.marking_errors_count = max(row.marking_errors_count, marking_errors)
+            row.marking_warnings_count = max(row.marking_warnings_count, marking_warnings)
             row.pages_count = len(doc.pages or []) or row.pages_count
             marking_ts = latest.updated_at if latest else doc.updated_at
             if row.marking_updated_at is None or marking_ts > row.marking_updated_at:
@@ -302,11 +341,17 @@ class KnowledgeBaseService:
             )
             row = by_key.get(key) or _KbRow(
                 key=key,
-                display_name=run.original_filename or "Без имени",
+                display_name=_kb_display_name(
+                    designation=run.designation,
+                    filename=run.original_filename,
+                ),
             )
             row.key = key
-            row.display_name = run.original_filename or row.display_name
             row.designation = run.designation or row.designation
+            row.display_name = _kb_display_name(
+                designation=row.designation,
+                filename=run.original_filename or row.display_name,
+            )
             row.has_ai_check = True
             row.check_count += 1
             if row.last_checked_at is None or (run.created_at and run.created_at > row.last_checked_at):
@@ -343,6 +388,8 @@ class KnowledgeBaseService:
             "has_marking": row.has_marking,
             "marking_document_id": row.marking_document_id,
             "marked_pages_count": row.marked_pages_count,
+            "marking_errors_count": row.marking_errors_count,
+            "marking_warnings_count": row.marking_warnings_count,
             "marking_updated_at": row.marking_updated_at,
             "human_verified_at": row.human_verified_at,
             "pages_count": row.pages_count,

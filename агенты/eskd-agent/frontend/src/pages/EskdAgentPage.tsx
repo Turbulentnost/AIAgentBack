@@ -1,32 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  FileText,
-  Loader2,
-  Square,
-  Upload,
-  X
-} from "lucide-react";
+import { FileText, Loader2, Square, Upload, X } from "lucide-react";
 import { cancelEskdJob, fetchHealth, lookupCheckCache, streamEskdCheck, type CheckCacheLookup } from "@/api/eskd";
+import { fetchCheckRunDetail } from "@/api/history";
 import { EskdAnalysisView, itemToAnalysisData } from "@/components/EskdAnalysisView";
+import ServiceStatusCard from "@/components/ServiceStatusCard";
 import type { EskdCheckResponse, EskdItemReport, PageMode } from "@/types/eskd";
+import { detailToCheckResponse } from "@/utils/checkRunDetail";
+import { filterUserFacingRemarks } from "@/utils/internalValidation";
+import { isVlmLoading, isVlmReady } from "@/utils/modelHealth";
 import { parseLiveJson } from "@/utils/parseLiveJson";
+import layout from "@/styles/pageLayout.module.css";
 import styles from "./EskdAgentPage.module.css";
-
-function statusPillClass(modelLoaded?: boolean, running?: boolean) {
-  if (running) return "warn";
-  if (modelLoaded) return "ok";
-  return "idle";
-}
 
 function itemTitle(item: EskdItemReport) {
   const name = item.filename || item.source;
   return `${name} · лист ${item.page}`;
 }
 
-export default function EskdAgentPage() {
+export default function EskdAgentPage({
+  openCheckRunId,
+  onOpenCheckHandled
+}: {
+  openCheckRunId?: string | null;
+  onOpenCheckHandled?: () => void;
+} = {}) {
   const [files, setFiles] = useState<File[]>([]);
   const [designation, setDesignation] = useState("");
   const [pageMode, setPageMode] = useState<PageMode>("all");
@@ -44,38 +42,61 @@ export default function EskdAgentPage() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [existingLookup, setExistingLookup] = useState<CheckCacheLookup | null>(null);
   const [lookupPending, setLookupPending] = useState(false);
+  const [openedFromKb, setOpenedFromKb] = useState<string | null>(null);
+  const [loadingCheckRun, setLoadingCheckRun] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const autoRanFor = useRef<string | null>(null);
 
   const health = useQuery({
-    queryKey: ["health"],
+    queryKey: ["eskd-model-health"],
     queryFn: fetchHealth,
-    refetchInterval: running ? false : 15_000
+    refetchInterval: running ? false : 15_000,
+    retry: 2
   });
 
-  const modelReady = Boolean(health.data?.model?.model_loaded);
-  const modelOffline = health.data?.model?.reachable === false;
+  const modelReady = isVlmReady(health.data);
+  const modelLoading = isVlmLoading(health.data);
+  const healthPending = health.isLoading && !health.data;
+  const healthFailed = health.isError && !health.data;
 
   const hasCachedResult = Boolean(files.length === 1 && existingLookup?.found);
+
+  const packageErrors = useMemo(
+    () => filterUserFacingRemarks(result?.package_errors),
+    [result?.package_errors]
+  );
 
   const canRun =
     (files.length === 1 && !lookupPending && (modelReady || hasCachedResult)) ||
     (files.length > 1 && modelReady);
 
   const runBlockedReason = useMemo(() => {
-    if (!files.length || lookupPending) return null;
+    if (!files.length || lookupPending || healthPending) return null;
     if (files.length > 1 && !modelReady) {
+      if (modelLoading) return "Модель ИИ загружается…";
+      if (healthFailed) return "Не удалось проверить статус модели ИИ. Обновите страницу.";
       return "Для нескольких файлов нужна модель ИИ.";
     }
     if (files.length === 1 && !modelReady && !hasCachedResult) {
+      if (modelLoading) return "Модель ИИ загружается…";
+      if (healthFailed) return "Не удалось проверить статус модели ИИ. Обновите страницу.";
       return (
         existingLookup?.message ||
         "Модель ИИ не запущена. Выберите файл с сохранённой разметкой или проверкой в базе."
       );
     }
     return null;
-  }, [existingLookup?.message, files.length, hasCachedResult, lookupPending, modelReady]);
+  }, [
+    existingLookup?.message,
+    files.length,
+    hasCachedResult,
+    healthFailed,
+    healthPending,
+    lookupPending,
+    modelLoading,
+    modelReady
+  ]);
 
   useEffect(() => {
     if (files.length !== 1) {
@@ -104,6 +125,42 @@ export default function EskdAgentPage() {
       cancelled = true;
     };
   }, [files]);
+
+  useEffect(() => {
+    if (!openCheckRunId) return;
+    let cancelled = false;
+    setLoadingCheckRun(true);
+    setError(null);
+    setOpenedFromKb(null);
+
+    void fetchCheckRunDetail(openCheckRunId)
+      .then((detail) => {
+        if (cancelled) return;
+        const mapped = detailToCheckResponse(detail);
+        if (!mapped) {
+          setError("Не удалось загрузить результат проверки");
+          return;
+        }
+        setResult(mapped);
+        setDesignation(detail.designation ?? "");
+        setProgress(100);
+        setProgressLabel("Результат из базы знаний");
+        setOpenedFromKb(detail.original_filename ?? openCheckRunId);
+        onOpenCheckHandled?.();
+      })
+      .catch((exc) => {
+        if (!cancelled) {
+          setError((exc as Error).message || "Ошибка загрузки проверки");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCheckRun(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [openCheckRunId, onOpenCheckHandled]);
 
   const liveParsed = useMemo(() => parseLiveJson(liveText), [liveText]);
   const showLivePanel = Boolean(running || (liveParsed && !result));
@@ -251,33 +308,30 @@ export default function EskdAgentPage() {
   }
 
   return (
-    <>
-      <div className={styles.pageHeader}>
-        <div>
+    <section className={layout.page}>
+      <header className={layout.header}>
+        <div className={layout.headerMain}>
           <h1>Проверка конструкторской документации по ЕСКД</h1>
           <p>
             Загрузите PDF, изображения чертежей или ZIP-комплект. Агент проверит штамп, обозначения,
             спецификацию и типовые нарушения ГОСТ.
           </p>
         </div>
-        <span className={`statusPill ${statusPillClass(modelReady, running)}`}>
-          {running ? (
+      </header>
+
+      {(openedFromKb || loadingCheckRun) && (
+        <p className={styles.kbOpenedNotice}>
+          {loadingCheckRun ? (
             <>
-              <Loader2 size={14} className="spin" /> Анализ…
-            </>
-          ) : modelReady ? (
-            <>
-              <CheckCircle2 size={14} /> Модель готова
+              <Loader2 size={14} className="spin" /> Загрузка результата проверки…
             </>
           ) : (
-            <>
-              <AlertTriangle size={14} /> Модель загружается
-            </>
+            <>Открыт результат из базы знаний: {openedFromKb}</>
           )}
-        </span>
-      </div>
+        </p>
+      )}
 
-      <div className={styles.grid}>
+      <div className={styles.workGrid}>
         <section className={`card ${styles.panel}`}>
           <h2 className={styles.panelTitle}>Загрузка документов</h2>
 
@@ -448,27 +502,9 @@ export default function EskdAgentPage() {
           {error && <div className={styles.errorBanner}>{error}</div>}
         </section>
 
-        <aside>
-          <div className={`card ${styles.sideCard}`}>
-            <h3>Статус сервисов</h3>
-            <dl>
-              <dt>Backend</dt>
-              <dd>{health.data?.status ?? "…"}</dd>
-              <dt>Model</dt>
-              <dd>
-                {health.data?.model?.reachable
-                  ? modelReady
-                    ? "loaded"
-                    : "loading"
-                  : modelOffline
-                    ? "offline (не нужна для файлов из базы)"
-                    : "offline"}
-              </dd>
-              <dt>Adapter</dt>
-              <dd>{health.data?.model?.adapter_path || "—"}</dd>
-            </dl>
-          </div>
-          {result && (
+        <aside className={styles.workAside}>
+          <ServiceStatusCard />
+          {result ? (
             <div className={`card ${styles.sideCard}`}>
               <h3>Итог</h3>
               {result.status === "from_marking" && (
@@ -499,7 +535,7 @@ export default function EskdAgentPage() {
                 </dd>
               </dl>
             </div>
-          )}
+          ) : null}
         </aside>
       </div>
 
@@ -518,16 +554,16 @@ export default function EskdAgentPage() {
             </pre>
           </article>
         ))}
-        {result?.package_errors && result.package_errors.length > 0 && (
+        {packageErrors.length > 0 && (
           <article className={`card ${styles.resultCard} ${styles.packageCard}`}>
             <div className={styles.resultHead}>
               <h3>Проверка комплекта (cross-page)</h3>
-              <span className={`statusPill ${result.package_errors.some((e) => e.severity === "error") ? "err" : "warn"}`}>
-                {result.package_errors.length} замеч.
+              <span className={`statusPill ${packageErrors.some((e) => e.severity === "error") ? "err" : "warn"}`}>
+                {packageErrors.length} замеч.
               </span>
             </div>
             <ul className={styles.packageList}>
-              {result.package_errors.map((item, idx) => (
+              {packageErrors.map((item, idx) => (
                 <li
                   key={`${item.code}-${idx}`}
                   className={item.severity === "error" ? styles.packageError : styles.packageWarning}
@@ -563,8 +599,6 @@ export default function EskdAgentPage() {
           </article>
         ))}
       </section>
-
-      <style>{`.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </>
+    </section>
   );
 }

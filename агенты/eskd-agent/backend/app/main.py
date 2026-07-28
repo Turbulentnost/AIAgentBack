@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -37,6 +38,7 @@ from app.gost.aggregation import aggregate_from_check_response
 from app.services.history_service import persist_check_run_safe, persist_check_uploads
 from app.services.history_stream_service import handle_stream_history_event, new_stream_state
 from app.services.marking_check_cache import MarkingCheckCacheService
+from app.services.model_health import build_llm_status, build_vlm_status, check_llm_health
 from app.services.user_service import UserService
 
 _CACHED_CHECK_STATUSES = frozenset({"from_marking", "from_cache"})
@@ -100,19 +102,41 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        model_status: dict = {"reachable": False}
+        model_payload: dict = {"reachable": False}
+        t0 = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(f"{settings.model_service_url.rstrip('/')}/health")
                 resp.raise_for_status()
-                model_status = {"reachable": True, **resp.json()}
+                ping_ms = round((time.perf_counter() - t0) * 1000, 1)
+                model_payload = {"reachable": True, "ping_ms": ping_ms, **resp.json()}
         except Exception as exc:
-            model_status["error"] = str(exc)
-        ready = model_status.get("reachable") and model_status.get("model_loaded")
+            model_payload["ping_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+            model_payload["error"] = str(exc)
+
+        vlm_status = build_vlm_status(
+            model_payload,
+            ping_ms=float(model_payload.get("ping_ms") or 0),
+            reachable=bool(model_payload.get("reachable")),
+            service_url=settings.model_service_url,
+        )
+        llm_status = build_llm_status(model_payload, await check_llm_health())
+
+        vlm_ready = vlm_status.get("reachable") and vlm_status.get("model_loaded")
+        llm_required = bool(llm_status.get("required"))
+        llm_ready = not llm_required or (llm_status.get("reachable") and llm_status.get("configured"))
+        overall_ok = vlm_ready and llm_ready
+
+        # Backward compatibility: `model` mirrors VLM status for older UI code.
+        model_compat = {**vlm_status}
+
         return {
-            "status": "ok" if ready else "degraded",
+            "status": "ok" if overall_ok else "degraded",
             "gateway": "eskd-backend",
-            "model": model_status,
+            "pipeline_mode": model_payload.get("pipeline_mode") or settings.eskd_pipeline_mode,
+            "vlm": vlm_status,
+            "llm": llm_status,
+            "model": model_compat,
             "integration": {
                 "worker_enabled": settings.integration_worker_enabled,
                 "api_prefix": "/api/v1/checks",
@@ -144,7 +168,12 @@ def create_app() -> FastAPI:
         stream: bool = False,
     ) -> httpx.Response | AsyncIterator[bytes]:
         url = f"{settings.model_service_url.rstrip('/')}{path}"
-        timeout = httpx.Timeout(settings.request_timeout_sec, connect=30.0)
+        # SSE от model-сервиса: между событиями VLM может молчать 5–10 мин на лист.
+        timeout = (
+            httpx.Timeout(connect=30.0, read=None, write=settings.request_timeout_sec, pool=settings.request_timeout_sec)
+            if stream
+            else httpx.Timeout(settings.request_timeout_sec, connect=30.0)
+        )
         client = httpx.AsyncClient(timeout=timeout)
         try:
             req = client.build_request("POST", url, files=files, data=data)

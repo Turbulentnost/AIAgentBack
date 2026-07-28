@@ -64,7 +64,7 @@ sc query iphlpsvc | find "RUNNING" >nul || net start iphlpsvc >nul 2>&1
 
 
 
-for %%P in (8000 8080 8765 3000) do (
+for %%P in (8000 8080 8765 3000 5173) do (
 
   netsh interface portproxy delete v4tov4 listenport=%%P listenaddress=0.0.0.0 >nul 2>&1
 
@@ -111,6 +111,7 @@ if not defined LAN_IP for /f "tokens=*" %%i in ('powershell.exe -NoProfile -Comm
 if not defined LAN_IP set LAN_IP=192.168.2.102
 
 echo   http://!LAN_IP!:8000/
+echo   http://!LAN_IP!:5173/  ^(AIAgentFront Vite dev^)
 
 echo.
 

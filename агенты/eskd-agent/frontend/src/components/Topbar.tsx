@@ -1,44 +1,38 @@
-import { ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { Bell, Search } from "lucide-react";
 import OtkUserSelector from "@/components/OtkUserSelector";
 import ThemeToggle from "@/components/ThemeToggle";
-import type { AppTab } from "@/components/Layout";
-
-const TABS: { id: AppTab; label: string }[] = [
-  { id: "check", label: "Проверка" },
-  { id: "history", label: "История" },
-  { id: "marking", label: "Разметка" },
-  { id: "knowledge", label: "База знаний" },
-  { id: "stats", label: "Статистика" },
-  { id: "integration", label: "Интеграции" }
-];
 
 interface TopbarProps {
-  activeTab: AppTab;
-  onTabChange: (tab: AppTab) => void;
+  title: string;
 }
 
-export default function Topbar({ activeTab, onTabChange }: TopbarProps) {
+export default function Topbar({ title }: TopbarProps) {
+  const [notificationCount] = useState(0);
+
   return (
     <header className="topbar">
       <a className="header-brand" href="/" aria-label="ESKD Agent">
-        <ShieldCheck size={26} strokeWidth={2.2} aria-hidden="true" />
+        <img src="/platform-logo.png" alt="" width={28} height={28} />
         <span>ESKD Agent</span>
       </a>
 
-      <nav className="header-nav" aria-label="Разделы">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`header-nav-link ${activeTab === tab.id ? "active" : ""}`}
-            onClick={() => onTabChange(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
-
       <div className="topbar-actions">
+        <label className="header-search" aria-label={`Поиск на странице ${title}`}>
+          <Search aria-hidden="true" size={17} strokeWidth={2.2} />
+          <input type="search" placeholder="Поиск..." />
+          <kbd>⌘K</kbd>
+        </label>
+
+        <button
+          className="notification-button"
+          type="button"
+          aria-label={`Уведомления: ${notificationCount}`}
+        >
+          <Bell aria-hidden="true" size={22} strokeWidth={1.9} />
+          {notificationCount > 0 ? <span className="notification-badge">{notificationCount}</span> : null}
+        </button>
+
         <ThemeToggle />
         <OtkUserSelector />
       </div>

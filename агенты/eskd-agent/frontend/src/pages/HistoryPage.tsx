@@ -13,6 +13,7 @@ import GostSummaryCompact from "@/components/GostSummaryCompact";
 import { EskdAnalysisView, itemToAnalysisData } from "@/components/EskdAnalysisView";
 import type { EskdItemReport } from "@/types/eskd";
 import type { CheckRunListItem } from "@/types/history";
+import layout from "@/styles/pageLayout.module.css";
 import styles from "./HistoryPage.module.css";
 
 function formatDate(value: string) {
@@ -85,15 +86,15 @@ export default function HistoryPage() {
   }
 
   return (
-    <>
-      <div className={styles.header}>
-        <div>
+    <section className={layout.page}>
+      <header className={layout.header}>
+        <div className={layout.headerMain}>
           <h1>История проверок</h1>
           <p>
             Завершённые и текущие проверки. Формат сводки по 8 ГОСТ — как в разметке и базе знаний.
           </p>
         </div>
-      </div>
+      </header>
 
       <div className={styles.filters}>
         <input
@@ -296,6 +297,6 @@ export default function HistoryPage() {
           )}
         </aside>
       </div>
-    </>
+    </section>
   );
 }

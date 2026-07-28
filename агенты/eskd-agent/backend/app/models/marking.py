@@ -17,7 +17,11 @@ class EskdMarkingDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_filename: Mapped[str] = mapped_column(String(512))
     pages: Mapped[list | None] = mapped_column(JSONB)
 
-    labels: Mapped[list["EskdMarkingLabel"]] = relationship(back_populates="document")
+    labels: Mapped[list["EskdMarkingLabel"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class EskdMarkingLabel(UUIDPrimaryKeyMixin, TimestampMixin, Base):

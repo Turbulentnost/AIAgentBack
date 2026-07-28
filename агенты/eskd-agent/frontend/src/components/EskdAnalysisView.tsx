@@ -1,6 +1,8 @@
 import { AlertTriangle, CheckCircle2, ClipboardList, Info, Loader2 } from "lucide-react";
 import type { EskdItemReport, EskdPosition, EskdRemark } from "@/types/eskd";
 import type { LiveCheck, LiveEskdPayload } from "@/utils/parseLiveJson";
+import { filterUserFacingRemarks } from "@/utils/internalValidation";
+import { filterLlmMetaText } from "@/utils/llmMetaFilter";
 import styles from "./EskdAnalysisView.module.css";
 
 type AnalysisData = LiveEskdPayload & {
@@ -110,23 +112,24 @@ export function EskdAnalysisView({
 }) {
   const checks = data.checks ?? [];
   const positions = (data.positions ?? []) as EskdPosition[];
-  const errors = data.errors ?? [];
-  const warnings = data.warnings ?? [];
-  const tone = statusTone(data.summary, errors, warnings);
+  const errors = filterUserFacingRemarks(data.errors ?? []);
+  const warnings = filterUserFacingRemarks(data.warnings ?? []);
+  const summary = filterLlmMetaText(data.summary);
+  const tone = statusTone(summary, errors, warnings);
 
   const SummaryIcon =
     tone === "err" ? AlertTriangle : tone === "warn" ? Info : CheckCircle2;
 
   return (
     <div className={styles.root}>
-      {(data.summary || streaming) && (
+      {(summary || streaming) && (
         <div className={`${styles.summaryBanner} ${styles[`tone_${tone}`]}`}>
           <SummaryIcon size={20} className={styles.summaryIcon} />
           <div>
             <div className={styles.summaryTitle}>
-              {data.summary || (streaming ? "Формирование ответа…" : "Результат")}
+              {summary || (streaming ? "Формирование ответа…" : "Результат")}
             </div>
-            {streaming && !data.summary && (
+            {streaming && !summary && (
               <div className={styles.summaryHint}>Модель анализирует чертёж</div>
             )}
           </div>
