@@ -415,7 +415,10 @@ async def append_warehouse_complex_chief_agent(
 
 
 async def can_access_purchase_manager(db: AsyncSession, user: User) -> bool:
+    # Position is primary; full_name covers demo accounts with empty position.
     if user.is_superuser or is_purchase_manager_position(user.position):
+        return True
+    if is_purchase_manager_position(getattr(user, "full_name", None)):
         return True
     agent = await db.scalar(select(Agent).where(Agent.slug == PURCHASE_MANAGER_AGENT_SLUG))
     if agent is None:
