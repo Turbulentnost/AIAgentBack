@@ -90,7 +90,7 @@ async def _require_superuser(db: DbSession, user: User) -> None:
     if not await can_access_procurement_orchestrator(db, user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Оркестратор закупок доступен только администратору системы",
+            detail="ИИ-агент по закупкам доступен только администратору системы",
         )
 
 

@@ -256,6 +256,86 @@ async def test_montage_section_2_material_order_goes_to_picker_not_engineer(
 
 
 @pytest.mark.asyncio
+async def test_picker_poll_redispatches_pending_task_and_reports_status(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    await service._enqueue_role_agent(case)
+    picker_task_id = case.current_task_id
+    picker_task = await db_session.get(Task, picker_task_id)
+    picker_task.task_metadata = {
+        key: value
+        for key, value in (picker_task.task_metadata or {}).items()
+        if key != "dispatch_requested_at"
+    }
+    service.pending_dispatches.clear()
+
+    result = await service.ensure_picker_agent_work()
+
+    assert result == {"reported": 1, "enqueued": 0, "redispatched": 1}
+    assert service.pending_dispatches == [(str(case.id), str(picker_task_id))]
+    assert case.case_metadata["picker_last_reported_status"] == "processing"
+    assert case.case_metadata["picker_last_status_reported_at"]
+
+
+@pytest.mark.asyncio
+async def test_picker_poll_restarts_waiting_task_without_result(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    await service._enqueue_role_agent(case)
+    old_task = await db_session.get(Task, case.current_task_id)
+    old_task.status = TaskStatus.WAITING_HUMAN
+    case.case_metadata = {
+        **(case.case_metadata or {}),
+        "picker_workspace_status": "awaiting_action",
+    }
+    service.pending_dispatches.clear()
+
+    result = await service.ensure_picker_agent_work()
+
+    assert result == {"reported": 1, "enqueued": 1, "redispatched": 0}
+    assert old_task.status is TaskStatus.CANCELLED
+    assert case.current_task_id != old_task.id
+    new_task = await db_session.get(Task, case.current_task_id)
+    assert new_task.status is TaskStatus.PENDING
+    assert (new_task.task_metadata or {})["agent_slug"] == WAREHOUSE_PICKER_AGENT_ID
+    assert service.pending_dispatches == [(str(case.id), str(new_task.id))]
+
+
+@pytest.mark.asyncio
 async def test_montage_section_2_ignores_old_engineer_dispatcher_handoff(
     db_session: AsyncSession,
 ):

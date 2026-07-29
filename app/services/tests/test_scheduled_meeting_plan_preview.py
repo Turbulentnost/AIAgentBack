@@ -25,6 +25,7 @@ from app.services.scheduled_meeting_plan_costs import (
     cost_shift_ours,
 )
 from app.services.scheduled_meeting_plan_preview import (
+    _fetch_freebusy_chunked,
     build_plan_preview,
     evaluate_occurrence_preview,
     week_latest_allowed,
@@ -98,6 +99,39 @@ def _fake_event(*, subject: str, busy_type: str = "Busy") -> SimpleNamespace:
         start=datetime(2026, 7, 15, 9, 0, tzinfo=TZ),
         end=datetime(2026, 7, 15, 10, 0, tzinfo=TZ),
     )
+
+
+def test_fetch_freebusy_chunked_respects_exchange_window_limit() -> None:
+    range_start = datetime(2026, 7, 1, tzinfo=TZ)
+    range_end = range_start + timedelta(days=168)
+    calls: list[tuple[datetime, datetime]] = []
+
+    def fake_fetch(
+        _config: SimpleNamespace,
+        _attendees: list[str],
+        chunk_start: datetime,
+        chunk_end: datetime,
+    ) -> tuple[dict[str, list[tuple[datetime, datetime]]], dict[str, list[str]]]:
+        calls.append((chunk_start, chunk_end))
+        return {"user@example.com": [(chunk_start, chunk_end)]}, {
+            "user@example.com": [chunk_start.isoformat()]
+        }
+
+    with patch(
+        "app.services.scheduled_meeting_plan_preview.busy_intervals_and_events_from_freebusy",
+        side_effect=fake_fetch,
+    ):
+        busy, events = _fetch_freebusy_chunked(
+            _config(),
+            ["user@example.com"],
+            range_start,
+            range_end,
+        )
+
+    assert len(calls) == 3
+    assert all(chunk_end - chunk_start <= timedelta(days=60) for chunk_start, chunk_end in calls)
+    assert len(busy["user@example.com"]) == 3
+    assert len(events["user@example.com"]) == 3
 
 
 def test_week_latest_allowed_is_friday_work_end() -> None:

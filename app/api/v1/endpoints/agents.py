@@ -44,6 +44,8 @@ async def _agent_read(db: DbSession, agent) -> AgentRead:
 
 async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessRead:
     data = (await _agent_read(db, agent)).model_dump()
+    if agent.slug == "procurement_logistics_agent":
+        data["name"] = "ИИ-агент по закупкам"
     if agent.slug == "production_dispatcher_agent":
         data["name"] = "Агент диспетчера производства"
     if agent.slug == "warehouse_picker_agent":

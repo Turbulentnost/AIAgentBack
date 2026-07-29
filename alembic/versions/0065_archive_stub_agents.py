@@ -24,7 +24,6 @@ STUB_AGENT_SLUGS = (
     "deputy_head_omto_agent",
     "quality_deputy_director_agent",
     "production_preparation_engineer_agent",
-    "procurement_logistics_agent",
     "executive_director_agent",
     "quality_kpi_agent",
     "omto_chief_agent",

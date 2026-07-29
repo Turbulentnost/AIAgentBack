@@ -223,6 +223,10 @@ class ProcurementOrchestratorService:
                     summary["errors"].append(
                         f"{capability.source_type.value}:{source_summary['error']}"
                     )
+        picker_sync = await self.ensure_picker_agent_work()
+        summary["picker_status_reported"] = picker_sync["reported"]
+        summary["picker_enqueued"] = picker_sync["enqueued"]
+        summary["picker_redispatched"] = picker_sync["redispatched"]
         backfilled = await self.ensure_active_case_assignments()
         summary["backfilled"] = backfilled
         summary["enqueued"] += backfilled
@@ -1460,6 +1464,7 @@ class ProcurementOrchestratorService:
                 "source_type": case.source_type,
                 "agent_slug": agent_id,
                 "role_completion_key": completion_key,
+                "dispatch_requested_at": datetime.now(UTC).isoformat(),
             },
         )
         self.db.add(task)
@@ -1621,6 +1626,126 @@ class ProcurementOrchestratorService:
             if await self._enqueue_role_agent(case):
                 enqueued += 1
         return enqueued
+
+    async def ensure_picker_agent_work(self) -> dict[str, int]:
+        """Синхронизировать статус комплектовщика и восстановить потерянный запуск."""
+        result = {"reported": 0, "enqueued": 0, "redispatched": 0}
+        if not self.enqueue_case:
+            return result
+
+        cases = (
+            await self.db.execute(
+                select(ProcurementCase)
+                .options(selectinload(ProcurementCase.positions))
+                .where(
+                    ProcurementCase.status.in_(
+                        list(ORCHESTRATOR_PROCESSING_CASE_STATUSES)
+                    )
+                )
+            )
+        ).scalars().all()
+        now = datetime.now(UTC)
+
+        for case in cases:
+            metadata = dict(case.case_metadata or {})
+            picker_assigned = (
+                case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+                or WAREHOUSE_PICKER_AGENT_ID in (case.assigned_agents or [])
+            )
+            if (
+                not picker_assigned
+                or metadata.get("picker_workspace_archived_at")
+                or metadata.get("picker_workspace_status") == "archived"
+            ):
+                continue
+
+            picker_output = metadata.get("warehouse_picker_output")
+            current_task = (
+                await self.db.get(Task, case.current_task_id)
+                if case.current_task_id
+                else None
+            )
+            picker_task = (
+                current_task
+                if current_task is not None
+                and (current_task.task_metadata or {}).get("agent_slug")
+                == WAREHOUSE_PICKER_AGENT_ID
+                else None
+            )
+
+            reported_status = str(
+                metadata.get("picker_workspace_status")
+                or (
+                    picker_task.status.value
+                    if picker_task is not None
+                    else "assigned"
+                )
+            )
+            metadata["picker_last_status_reported_at"] = now.isoformat()
+            metadata["picker_last_reported_status"] = reported_status
+            case.case_metadata = metadata
+            result["reported"] += 1
+
+            if picker_task is not None and picker_task.status == TaskStatus.PENDING:
+                task_metadata = dict(picker_task.task_metadata or {})
+                dispatch_requested_at = task_metadata.get("dispatch_requested_at")
+                try:
+                    last_dispatch = (
+                        datetime.fromisoformat(str(dispatch_requested_at))
+                        if dispatch_requested_at
+                        else None
+                    )
+                except ValueError:
+                    last_dispatch = None
+                stale_before = now - timedelta(
+                    seconds=settings.PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS
+                )
+                if last_dispatch is None or last_dispatch <= stale_before:
+                    dispatch = (str(case.id), str(picker_task.id))
+                    if dispatch not in self.pending_dispatches:
+                        self.pending_dispatches.append(dispatch)
+                        result["redispatched"] += 1
+                    task_metadata["dispatch_requested_at"] = now.isoformat()
+                    picker_task.task_metadata = task_metadata
+                    metadata["picker_workspace_status"] = "processing"
+                    case.case_metadata = metadata
+                continue
+
+            if picker_task is not None and picker_task.status in {
+                TaskStatus.PLANNING,
+                TaskStatus.RUNNING,
+            }:
+                continue
+
+            if picker_output:
+                continue
+
+            if picker_task is not None and picker_task.status in {
+                TaskStatus.WAITING_HUMAN,
+                TaskStatus.WAITING_EXTERNAL,
+                TaskStatus.FAILED,
+            }:
+                picker_task.status = TaskStatus.CANCELLED
+                picker_task.finished_at = now
+                picker_task.error_message = (
+                    "Оркестратор повторно запустил комплектовщика: "
+                    "предыдущая задача не передала результат."
+                )
+                case.current_task_id = None
+                case.current_agent_id = None
+                metadata.pop("role_agent_completion_key", None)
+                case.case_metadata = metadata
+
+            can_enqueue = current_task is None or (
+                picker_task is not None
+                and picker_task.status
+                in {TaskStatus.COMPLETED, TaskStatus.CANCELLED}
+            )
+            if can_enqueue and await self._enqueue_role_agent(case):
+                result["enqueued"] += 1
+
+        await self.db.flush()
+        return result
 
     async def _apply_role_agent_result(
         self,
@@ -2617,7 +2742,7 @@ class ProcurementOrchestratorService:
             "control_point": case.control_point,
             "current_agent_id": case.current_agent_id,
             "current_agent_label": (
-                "Агент закупок и логистики"
+                procurement_config.AGENT_NAME
                 if case.current_agent_id == procurement_config.AGENT_ID
                 else agent_label(case.current_agent_id)
             ),
@@ -3015,7 +3140,7 @@ class ProcurementOrchestratorService:
             "control_point": case.control_point,
             "current_agent_id": case.current_agent_id,
             "current_agent_name": (
-                "Агент закупок и логистики"
+                procurement_config.AGENT_NAME
                 if case.current_agent_id == procurement_config.AGENT_ID
                 else agent_label(case.current_agent_id)
             ),

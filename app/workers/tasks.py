@@ -1205,7 +1205,10 @@ def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
 
     from app.core.config import settings
     from app.db.session import AsyncSessionLocal
-    from app.services.procurement_orchestrator_service import build_poll_lock_key
+    from app.services.procurement_orchestrator_service import (
+        ProcurementOrchestratorService,
+        build_poll_lock_key,
+    )
     from app.services.supplier_order_reconciliation_service import (
         SupplierOrderReconciliationService,
     )
@@ -1243,6 +1246,8 @@ def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
             try:
                 summary = await SupplierOrderReconciliationService(db).reconcile()
                 tmc_summary = await TmcPresentationReconciliationService(db).reconcile()
+                orchestrator = ProcurementOrchestratorService(db, enqueue_case=True)
+                picker_sync = await orchestrator.ensure_picker_agent_work()
                 await db.commit()
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
@@ -1253,7 +1258,16 @@ def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
+        dispatched = 0
+        for case_id, task_id in orchestrator.pending_dispatches:
+            run_procurement_case_task.apply_async(
+                args=[case_id, task_id],
+                queue="agents",
+            )
+            dispatched += 1
         summary["tmc_presentation"] = tmc_summary
+        summary["picker_sync"] = picker_sync
+        summary["picker_dispatched"] = dispatched
         summary["celery_task_id"] = self.request.id
         summary["task_name"] = "reconcile_procurement_supplier_orders"
         summary["finished_at"] = datetime.now(timezone.utc).isoformat()

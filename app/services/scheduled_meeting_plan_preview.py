@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 ConflictPolicy = Literal["strict", "soft_week", "skip"]
 OccurrencePreviewStatus = Literal["ok", "conflict", "shifted", "skip", "unresolved"]
+FREEBUSY_CHUNK_DAYS = 60
 
 
 class ScheduledMeetingPlanPreviewError(Exception):
@@ -232,6 +233,37 @@ def _freebusy_window(
         hint_end,
     ) + timedelta(hours=1)
     return window_start, window_end
+
+
+def _fetch_freebusy_chunked(
+    config: Any,
+    attendees: list[str],
+    range_start: datetime,
+    range_end: datetime,
+) -> tuple[dict[str, list[tuple[datetime, datetime]]], dict[str, list[Any]]]:
+    """Exchange ограничивает GetUserAvailability интервалом не более 62 дней."""
+    busy_result: dict[str, list[tuple[datetime, datetime]]] = {}
+    events_result: dict[str, list[Any]] = {}
+    chunk_start = range_start
+
+    while chunk_start < range_end:
+        chunk_end = min(
+            chunk_start + timedelta(days=FREEBUSY_CHUNK_DAYS),
+            range_end,
+        )
+        busy_chunk, events_chunk = busy_intervals_and_events_from_freebusy(
+            config,
+            attendees,
+            chunk_start,
+            chunk_end,
+        )
+        for email, intervals in busy_chunk.items():
+            busy_result.setdefault(email, []).extend(intervals)
+        for email, events in events_chunk.items():
+            events_result.setdefault(email, []).extend(events)
+        chunk_start = chunk_end
+
+    return busy_result, events_result
 
 
 def _pick_fully_free_candidate(
@@ -442,7 +474,7 @@ async def build_plan_preview(
     if attendee_emails:
         busy_by_attendee, events_by_attendee = await asyncio.wait_for(
             asyncio.to_thread(
-                busy_intervals_and_events_from_freebusy,
+                _fetch_freebusy_chunked,
                 config,
                 attendee_emails,
                 window_start,
