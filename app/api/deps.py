@@ -12,7 +12,14 @@ from app.db.session import get_db
 from app.models.user import User, UserSession
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login", auto_error=False)
 DbSession = Annotated[AsyncSession, Depends(get_db)]
-async def authenticate_access_token(db: AsyncSession, token: str) -> User:
+
+
+async def authenticate_access_token(
+    db: AsyncSession,
+    token: str,
+    *,
+    allow_without_session: bool | None = None,
+) -> User:
     exc = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Не удалось проверить учётные данные")
     if not token:
         raise exc
@@ -22,9 +29,15 @@ async def authenticate_access_token(db: AsyncSession, token: str) -> User:
     token_id = payload.get("jti")
     if not token_id:
         raise exc
+    skip_session = (
+        settings.AUTH_ALLOW_JWT_WITHOUT_SESSION
+        if allow_without_session is None
+        else allow_without_session
+    )
     session = await db.scalar(select(UserSession).where(UserSession.token_jti == token_id))
     if session is None or session.revoked_at is not None or session.expires_at <= datetime.now(timezone.utc):
-        raise exc
+        if not skip_session:
+            raise exc
     try:
         user_id = uuid.UUID(str(payload["sub"]))
     except ValueError as err:
@@ -41,5 +54,34 @@ async def get_current_user(db: DbSession, token: Annotated[str | None, Depends(o
     return await authenticate_access_token(db, token)
 
 
-CurrentUser = Annotated[User, Depends(get_current_user)]
+async def get_document_analysis_user(
+    db: DbSession,
+    token: Annotated[str | None, Depends(oauth2_scheme)],
+) -> User | None:
+    """Auth для Excel API Авиона при раздельных backend (login host ≠ aveon host).
 
+    При DOCUMENT_ANALYSIS_REQUIRE_AUTH=false эндпоинты доступны без сессии платформы
+    (токен с другого host всё равно принимается best-effort и игнорируется при ошибке).
+    """
+    if not settings.DOCUMENT_ANALYSIS_REQUIRE_AUTH:
+        if not token:
+            return None
+        try:
+            return await authenticate_access_token(
+                db,
+                token,
+                allow_without_session=True,
+            )
+        except HTTPException:
+            return None
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Не удалось проверить учётные данные")
+    return await authenticate_access_token(
+        db,
+        token,
+        allow_without_session=settings.AUTH_ALLOW_JWT_WITHOUT_SESSION,
+    )
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
+DocumentAnalysisUser = Annotated[User | None, Depends(get_document_analysis_user)]

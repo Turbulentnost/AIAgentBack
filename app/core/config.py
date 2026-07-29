@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     PASSWORD_MIN_LENGTH: int = 8
+    # Авион (Excel): если false — classify/analyze/templates без обязательной сессии платформы.
+    # Нужно, когда мобилка логинится на один host, а Aveon API — на другой (разная БД jti).
+    DOCUMENT_ANALYSIS_REQUIRE_AUTH: bool = True
+    # Принимать JWT по подписи без строки UserSession (общий SECRET_KEY, разные БД сессий).
+    AUTH_ALLOW_JWT_WITHOUT_SESSION: bool = False
     ONEC_AUTH_API_BASE_URL: str = "http://192.168.0.247:8000/api/v1"
     ONEC_TOKEN_MAX_AGE_HOURS: int = 4
     BACKEND_CORS_ORIGINS: str = (
@@ -141,7 +146,7 @@ class Settings(BaseSettings):
     VISION_OCR_TIMEOUT_SECONDS: int = 600
     # Агент закупок (Авион): qwen/qwen3.5-9b лучше подходит из доступных
     # локальных моделей для структурного анализа Excel и JSON-вывода.
-    AVEON_LM_STUDIO_BASE_URL: str = "http://localhost:1234/v1"
+    AVEON_LM_STUDIO_BASE_URL: str = "http://127.0.0.1:1234/v1"
     AVEON_LM_STUDIO_MODEL: str = "qwen/qwen3.5-9b"
     AVEON_LM_STUDIO_TIMEOUT_SECONDS: int = 600
     EMBEDDINGS_PROVIDER: str = "local"
