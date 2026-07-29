@@ -242,6 +242,11 @@ class ProcurementOrchestratorService:
         summary["complex_enqueued"] = complex_sync["enqueued"]
         summary["complex_redispatched"] = complex_sync["redispatched"]
         summary["complex_migrated"] = complex_sync.get("migrated", 0)
+        purchase_manager_sync = await self.ensure_purchase_manager_work()
+        summary["purchase_manager_status_reported"] = purchase_manager_sync["reported"]
+        summary["purchase_manager_enqueued"] = purchase_manager_sync["enqueued"]
+        summary["purchase_manager_redispatched"] = purchase_manager_sync["redispatched"]
+        summary["purchase_manager_assigned"] = purchase_manager_sync["assigned"]
         backfilled = await self.ensure_active_case_assignments()
         summary["backfilled"] = backfilled
         summary["enqueued"] += backfilled
@@ -1667,6 +1672,154 @@ class ProcurementOrchestratorService:
         result["migrated"] = migrated
         return result
 
+    async def ensure_purchase_manager_work(self) -> dict[str, int]:
+        """Каждые ~30 мин: вернуть менеджеру кейсы, уже покрытые заказами поставщику.
+
+        partial — менеджер в assigned_agents параллельно с picker/chief;
+        full — current_agent = purchase_manager, при необходимости перезапуск задачи.
+        """
+        result = {"reported": 0, "enqueued": 0, "redispatched": 0, "assigned": 0}
+        if not self.enqueue_case:
+            return result
+
+        cases = (
+            await self.db.execute(
+                select(ProcurementCase)
+                .options(selectinload(ProcurementCase.positions))
+                .where(
+                    ProcurementCase.status.in_(
+                        list(ORCHESTRATOR_PROCESSING_CASE_STATUSES)
+                    ),
+                    ProcurementCase.source_type
+                    == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value,
+                    ProcurementCase.closed_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        now = datetime.now(UTC)
+
+        for case in cases:
+            metadata = dict(case.case_metadata or {})
+            coverage = (
+                metadata.get("supplier_order_coverage")
+                if isinstance(metadata.get("supplier_order_coverage"), dict)
+                else {}
+            )
+            coverage_status = str(coverage.get("coverage_status") or "")
+            if coverage_status not in {"partial", "full"}:
+                continue
+            if metadata.get("purchase_manager_workspace_archived_at"):
+                continue
+
+            assigned = list(dict.fromkeys(case.assigned_agents or []))
+            if PURCHASE_MANAGER_AGENT_ID not in assigned:
+                assigned.append(PURCHASE_MANAGER_AGENT_ID)
+                result["assigned"] += 1
+            case.assigned_agents = assigned
+
+            metadata.setdefault("purchase_manager_invoked_at", now.isoformat())
+            if metadata.get("purchase_manager_workspace_status") != "processing":
+                metadata["purchase_manager_workspace_status"] = "awaiting_action"
+            metadata.pop("purchase_manager_workspace_archived_at", None)
+            metadata["purchase_manager_output"] = coverage
+            manager_ws = dict(metadata.get("procurement_manager") or {})
+            manager_ws.setdefault("lifecycle_state", "handoff_received")
+            manager_ws.setdefault("handoff_received_at", now.isoformat())
+            manager_ws.setdefault("payment_document_draft", None)
+            manager_ws.setdefault("recommendation_audit", [])
+            manager_ws.setdefault("purchase_order_drafts", [])
+            metadata["procurement_manager"] = manager_ws
+            metadata["purchase_manager_last_status_reported_at"] = now.isoformat()
+            metadata["purchase_manager_last_reported_status"] = coverage_status
+            case.case_metadata = metadata
+            result["reported"] += 1
+
+            # Partial: picker/chief remain current — do not steal the task.
+            if coverage_status != "full":
+                continue
+
+            if case.current_agent_id != PURCHASE_MANAGER_AGENT_ID:
+                case.current_agent_id = PURCHASE_MANAGER_AGENT_ID
+                if case.control_point in {None, "", "basis", "data", "coverage"}:
+                    case.control_point = "purchase"
+
+            current_task = (
+                await self.db.get(Task, case.current_task_id)
+                if case.current_task_id
+                else None
+            )
+            pm_task = (
+                current_task
+                if current_task is not None
+                and (current_task.task_metadata or {}).get("agent_slug")
+                == PURCHASE_MANAGER_AGENT_ID
+                else None
+            )
+            if (
+                current_task is not None
+                and pm_task is None
+                and current_task.status
+                in {
+                    TaskStatus.PENDING,
+                    TaskStatus.WAITING_HUMAN,
+                    TaskStatus.WAITING_EXTERNAL,
+                    TaskStatus.FAILED,
+                }
+            ):
+                current_task.status = TaskStatus.CANCELLED
+                current_task.finished_at = now
+                current_task.error_message = (
+                    "Кейс передан ИИ-агенту менеджера по закупкам: "
+                    "все позиции уже в заказах поставщику."
+                )
+                case.current_task_id = None
+                current_task = None
+                metadata.pop("role_agent_completion_key", None)
+                case.case_metadata = metadata
+
+            if pm_task is not None and pm_task.status == TaskStatus.PENDING:
+                task_metadata = dict(pm_task.task_metadata or {})
+                dispatch_requested_at = task_metadata.get("dispatch_requested_at")
+                try:
+                    last_dispatch = (
+                        datetime.fromisoformat(str(dispatch_requested_at))
+                        if dispatch_requested_at
+                        else None
+                    )
+                except ValueError:
+                    last_dispatch = None
+                stale_before = now - timedelta(
+                    seconds=settings.PROCUREMENT_SUPPLIER_RECONCILIATION_INTERVAL_SECONDS
+                )
+                if last_dispatch is None or last_dispatch <= stale_before:
+                    dispatch = (str(case.id), str(pm_task.id))
+                    if dispatch not in self.pending_dispatches:
+                        self.pending_dispatches.append(dispatch)
+                        result["redispatched"] += 1
+                    task_metadata["dispatch_requested_at"] = now.isoformat()
+                    pm_task.task_metadata = task_metadata
+                    metadata["purchase_manager_workspace_status"] = "processing"
+                    case.case_metadata = metadata
+                continue
+
+            if pm_task is not None and pm_task.status in {
+                TaskStatus.PLANNING,
+                TaskStatus.RUNNING,
+                TaskStatus.WAITING_HUMAN,
+                TaskStatus.WAITING_EXTERNAL,
+            }:
+                continue
+
+            can_enqueue = current_task is None or (
+                pm_task is not None
+                and pm_task.status in {TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.FAILED}
+            )
+            if can_enqueue and await self._enqueue_role_agent(case):
+                result["enqueued"] += 1
+
+        await self.db.flush()
+        return result
+
     async def _ensure_procurement_manager_agent_running(
         self,
         case: ProcurementCase,
@@ -2889,11 +3042,21 @@ class ProcurementOrchestratorService:
                 else active_complex_cases
             )
         elif purchase_manager_workspace:
+            def _coverage_status(case: ProcurementCase) -> str:
+                coverage = (case.case_metadata or {}).get("supplier_order_coverage")
+                if not isinstance(coverage, dict):
+                    return ""
+                return str(coverage.get("coverage_status") or "")
+
             manager_cases = [
                 case
                 for case in loaded_cases
-                if (case.case_metadata or {}).get("purchase_manager_invoked_at")
-                or (case.case_metadata or {}).get("purchase_manager_output")
+                if _coverage_status(case) in {"partial", "full"}
+                and (
+                    (case.case_metadata or {}).get("purchase_manager_invoked_at")
+                    or (case.case_metadata or {}).get("purchase_manager_output")
+                    or case.current_agent_id == PURCHASE_MANAGER_AGENT_ID
+                )
             ]
 
             def is_purchase_manager_archived(case: ProcurementCase) -> bool:

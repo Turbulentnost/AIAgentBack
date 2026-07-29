@@ -15,6 +15,7 @@ from app.agents.procurement_role_agents.config import (
     OMTO_CHIEF_AGENT_ID,
     PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+    PURCHASE_MANAGER_AGENT_ID,
     SOURCE_AGENT_MAP,
     WAREHOUSE_COMPLEX_CHIEF_AGENT_ID,
     WAREHOUSE_PICKER_AGENT_ID,
@@ -450,6 +451,64 @@ async def test_picker_poll_restarts_waiting_task_without_result(
     assert new_task.status is TaskStatus.PENDING
     assert (new_task.task_metadata or {})["agent_slug"] == WAREHOUSE_PICKER_AGENT_ID
     assert service.pending_dispatches == [(str(case.id), str(new_task.id))]
+
+
+@pytest.mark.asyncio
+async def test_ensure_purchase_manager_work_assigns_coverage_cases(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.current_agent_id = WAREHOUSE_PICKER_AGENT_ID
+    case.assigned_agents = [WAREHOUSE_PICKER_AGENT_ID]
+    case.case_metadata = {
+        "supplier_order_coverage": {
+            "coverage_status": "partial",
+            "covered_positions": 1,
+            "positions_count": 2,
+        }
+    }
+
+    result = await service.ensure_purchase_manager_work()
+
+    assert result["reported"] == 1
+    assert result["assigned"] == 1
+    assert result["enqueued"] == 0
+    assert PURCHASE_MANAGER_AGENT_ID in (case.assigned_agents or [])
+    assert case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+    assert case.case_metadata["purchase_manager_invoked_at"]
+    assert case.case_metadata["purchase_manager_last_reported_status"] == "partial"
+
+    case.case_metadata = {
+        **case.case_metadata,
+        "supplier_order_coverage": {
+            "coverage_status": "full",
+            "covered_positions": 2,
+            "positions_count": 2,
+        },
+    }
+    case.current_task_id = None
+    case.current_agent_id = WAREHOUSE_PICKER_AGENT_ID
+    service.pending_dispatches.clear()
+
+    full_result = await service.ensure_purchase_manager_work()
+
+    assert full_result["reported"] == 1
+    assert case.current_agent_id == PURCHASE_MANAGER_AGENT_ID
+    assert full_result["enqueued"] == 1
+    assert case.current_task_id is not None
 
 
 @pytest.mark.asyncio

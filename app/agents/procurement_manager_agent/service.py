@@ -139,13 +139,16 @@ def case_in_manager_queue(
     purchase_manager_invoked_at: str | None = None,
     supplier_coverage_status: str | None = None,
 ) -> bool:
-    """Whether a case belongs to the procurement manager left-hand queue."""
-    if current_agent_id == AGENT_ID:
+    """Queue = cases already in purchasing (supplier coverage partial/full).
+
+    Status-only MANAGER_QUEUE_STATUSES is intentionally not used: on main the
+    orchestrator hands off via supplier_order_coverage, not engineer route.
+    """
+    _ = status
+    if supplier_coverage_status in {"partial", "full"}:
         return True
-    # Handoff from warehouse coverage: manager works in parallel (partial) or fully.
-    if purchase_manager_invoked_at or supplier_coverage_status in {"partial", "full"}:
-        return True
-    return (status or "") in MANAGER_QUEUE_STATUSES
+    # Keep current PM owner briefly if coverage snapshot is mid-refresh.
+    return current_agent_id == AGENT_ID and bool(purchase_manager_invoked_at)
 
 
 # In-app graph with MemorySaver for HITL interrupt/resume (not used by Studio).
@@ -3004,8 +3007,8 @@ class ProcurementManagerService:
                 ProcurementCase.status.in_(manager_visible_statuses),
                 or_(
                     ProcurementCase.current_agent_id == AGENT_ID,
-                    ProcurementCase.status.in_(list(MANAGER_QUEUE_STATUSES)),
                     ProcurementCase.case_metadata.has_key("purchase_manager_invoked_at"),
+                    ProcurementCase.case_metadata.has_key("supplier_order_coverage"),
                 ),
                 ProcurementCase.closed_at.is_(None),
             )
