@@ -1,3 +1,5 @@
+import pytest
+
 from app.services.procurement_permission import (
     is_omto_support_manager_position,
     is_production_preparation_engineer_position,
@@ -35,3 +37,24 @@ def test_warehouse_complex_chief_position_rules():
     assert is_warehouse_complex_department_name("Складской комплекс")
     assert is_warehouse_complex_department_name("Отдел «Складской комплекс»")
     assert not is_warehouse_complex_department_name("Склад №1")
+
+
+@pytest.mark.asyncio
+async def test_warehouse_complex_chief_exclusive_user(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import procurement_permission as perm
+
+    user = SimpleNamespace(
+        is_superuser=False,
+        position="Начальник склада",
+        department_id="dept-1",
+    )
+
+    async def _in_complex(_db, _user):
+        return True
+
+    monkeypatch.setattr(perm, "user_in_warehouse_complex_department", _in_complex)
+    assert await perm.is_warehouse_complex_chief_exclusive_user(None, user) is True
+
+    user.is_superuser = True
+    assert await perm.is_warehouse_complex_chief_exclusive_user(None, user) is False

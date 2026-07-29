@@ -385,6 +385,20 @@ async def can_access_warehouse_complex_chief(
     return await PermissionService(db).can_access_agent(user, agent.id, action="run")
 
 
+async def is_warehouse_complex_chief_exclusive_user(
+    db: AsyncSession,
+    user: User,
+) -> bool:
+    """Должность начальника склада/комплекса: в каталоге только его агент по закупкам."""
+    if user.is_superuser:
+        return False
+    if is_warehouse_complex_chief_position(user.position):
+        return True
+    return is_warehouse_head_position(user.position) and await user_in_warehouse_complex_department(
+        db, user
+    )
+
+
 async def append_warehouse_complex_chief_agent(
     db: AsyncSession,
     user: User,
@@ -462,6 +476,7 @@ __all__ = [
     "is_purchase_manager_position",
     "is_quality_deputy_director_position",
     "is_quality_engineer_position",
+    "is_warehouse_complex_chief_exclusive_user",
     "is_warehouse_complex_chief_position",
     "is_warehouse_complex_department_name",
     "is_warehouse_head_position",

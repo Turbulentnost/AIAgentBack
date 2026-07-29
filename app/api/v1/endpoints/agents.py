@@ -31,6 +31,7 @@ from app.services.procurement_permission import (
     append_quality_engineer_agent,
     append_warehouse_complex_chief_agent,
     append_warehouse_picker_agent,
+    is_warehouse_complex_chief_exclusive_user,
 )
 from app.services.profile_image_service import AvatarValidationError
 
@@ -72,6 +73,11 @@ async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessR
 
 @router.get("/available", response_model=list[AgentAccessRead])
 async def list_available_agents(db: DbSession, current_user: CurrentUser):
+    # Начальник склада / складского комплекса видит только свой агент по закупкам.
+    if await is_warehouse_complex_chief_exclusive_user(db, current_user):
+        agents = await append_warehouse_complex_chief_agent(db, current_user, [])
+        return [await _agent_access_read(db, agent, current_user) for agent in agents]
+
     agents = await PermissionService(db).list_available_agents(current_user)
     agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
     agents = await append_meeting_agent_for_office_management(db, current_user, agents)
