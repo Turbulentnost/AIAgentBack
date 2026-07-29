@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: eskd-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-eskd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eskd}
+      POSTGRES_DB: ${POSTGRES_DB:-eskd_agent}
+    volumes:
+      - eskd_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eskd} -d ${POSTGRES_DB:-eskd_agent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - eskd

@@ -1,0 +1,118 @@
+.printRoot {
+  display: none;
+}
+
+@media print {
+  .printRoot {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 12mm 14mm;
+    background: #fff;
+    color: #111;
+    font: 11pt/1.45 "Segoe UI", system-ui, sans-serif;
+  }
+
+  .printRoot h1 {
+    margin: 0 0 4mm;
+    font-size: 16pt;
+    font-weight: 700;
+  }
+
+  .printRoot h2 {
+    margin: 5mm 0 2mm;
+    font-size: 12pt;
+    font-weight: 700;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 1mm;
+  }
+
+  .printRoot h3 {
+    margin: 3mm 0 1.5mm;
+    font-size: 10.5pt;
+    font-weight: 600;
+  }
+
+  .metaTable {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 4mm;
+  }
+
+  .metaTable th,
+  .metaTable td {
+    text-align: left;
+    vertical-align: top;
+    padding: 1.5mm 2mm;
+    border: 1px solid #ddd;
+  }
+
+  .metaTable th {
+    width: 34%;
+    background: #f5f5f5;
+    font-weight: 600;
+  }
+
+  .checksList {
+    margin: 0;
+    padding-left: 5mm;
+  }
+
+  .checksList li {
+    margin-bottom: 1.5mm;
+  }
+
+  .gostTable {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 2mm;
+    font-size: 10pt;
+  }
+
+  .gostTable th,
+  .gostTable td {
+    border: 1px solid #ddd;
+    padding: 1.5mm 2mm;
+    vertical-align: top;
+  }
+
+  .gostTable th {
+    background: #f5f5f5;
+    font-weight: 600;
+  }
+
+  .ok {
+    color: #1a7f37;
+    font-weight: 600;
+  }
+
+  .warn {
+    color: #9a6700;
+    font-weight: 600;
+  }
+
+  .err {
+    color: #cf222e;
+    font-weight: 600;
+  }
+
+  .muted {
+    color: #555;
+  }
+
+  .problemBlock {
+    margin-top: 3mm;
+    padding: 2mm 3mm;
+    border: 1px solid #ddd;
+    border-radius: 2mm;
+    white-space: pre-wrap;
+  }
+
+  .footer {
+    margin-top: 6mm;
+    font-size: 9pt;
+    color: #666;
+  }
+}

@@ -1,0 +1,14 @@
+# Shared networks and volumes for ESKD Agent modular stack.
+# Use via: ./stack.sh up <module>
+
+name: eskd
+
+volumes:
+  hf_cache:
+  eskd_pg_data:
+  eskd_storage:
+  eskd_integration:
+
+networks:
+  eskd:
+    driver: bridge
