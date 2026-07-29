@@ -31,6 +31,7 @@ from app.services.procurement_permission import (
     QUALITY_DEPUTY_DIRECTOR_AGENT_SLUG,
     QUALITY_ENGINEER_AGENT_SLUG,
     QUALITY_KPI_AGENT_SLUG,
+    WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG,
     WAREHOUSE_PICKER_AGENT_SLUG,
     can_access_omto_support_manager,
     can_access_otk_head,
@@ -41,6 +42,7 @@ from app.services.procurement_permission import (
     can_access_quality_deputy_director,
     can_access_quality_engineer,
     can_access_quality_kpi,
+    can_access_warehouse_complex_chief,
     can_access_warehouse_picker,
     can_refresh_procurement_orchestrator,
 )
@@ -56,6 +58,9 @@ _ROLE_WORKSPACE_FORBIDDEN = {
     ),
     WAREHOUSE_PICKER_AGENT_SLUG: (
         "Рабочее место доступно только кладовщику-комплектовщику"
+    ),
+    WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG: (
+        "Рабочее место доступно только начальнику складского комплекса"
     ),
     PURCHASE_MANAGER_AGENT_SLUG: (
         "Рабочее место доступно только менеджеру по закупкам"
@@ -99,6 +104,7 @@ async def _role_access(db: DbSession, user: User, agent_id: str) -> bool:
         PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG: can_access_production_preparation_engineer,
         PRODUCTION_DISPATCHER_AGENT_SLUG: can_access_production_dispatcher,
         WAREHOUSE_PICKER_AGENT_SLUG: can_access_warehouse_picker,
+        WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG: can_access_warehouse_complex_chief,
         PURCHASE_MANAGER_AGENT_SLUG: can_access_purchase_manager,
         OMTO_SUPPORT_MANAGER_AGENT_SLUG: can_access_omto_support_manager,
         OTK_HEAD_AGENT_SLUG: can_access_otk_head,
@@ -209,6 +215,7 @@ async def get_procurement_permissions(
         (PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG, can_access_production_preparation_engineer),
         (PRODUCTION_DISPATCHER_AGENT_SLUG, can_access_production_dispatcher),
         (WAREHOUSE_PICKER_AGENT_SLUG, can_access_warehouse_picker),
+        (WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG, can_access_warehouse_complex_chief),
         (PURCHASE_MANAGER_AGENT_SLUG, can_access_purchase_manager),
         (OMTO_SUPPORT_MANAGER_AGENT_SLUG, can_access_omto_support_manager),
         (OTK_HEAD_AGENT_SLUG, can_access_otk_head),
@@ -257,6 +264,12 @@ async def get_procurement_role_dashboard(
             view=view,
             source_type="production_material_order",
             picker_workspace=True,
+        )
+    elif agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG:
+        payload = await service.list_dashboard(
+            view=view,
+            source_type="production_material_order",
+            complex_workspace=True,
         )
     elif agent_id == PURCHASE_MANAGER_AGENT_SLUG:
         payload = await service.list_dashboard(
@@ -407,6 +420,71 @@ async def get_procurement_role_case(
                 "picker_conclusion_confirmed",
                 "picker_critical_acknowledged",
                 "picker_handoff_to_omto_chief",
+            }
+        ]
+    elif agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG:
+        if payload.get("source_type") != "production_material_order":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
+        if not (
+            metadata.get("complex_invoked_at")
+            or metadata.get("warehouse_complex_output")
+            or (
+                payload.get("department_name") is not None
+                and not is_montage_section_2_department(payload.get("department_name"))
+            )
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
+        if is_montage_section_2_department(payload.get("department_name")):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кейс не найден")
+        # Shared picker UI panel reads warehouse_picker_output / picker_* keys.
+        payload["case_metadata"] = {
+            "warehouse_picker_output": metadata.get("warehouse_complex_output"),
+            "warehouse_complex_output": metadata.get("warehouse_complex_output"),
+            "picker_evidence_fingerprint": metadata.get("complex_evidence_fingerprint"),
+            "picker_calculated_at": metadata.get("complex_calculated_at"),
+            "picker_decision_kind": metadata.get("complex_decision_kind"),
+            "picker_invoked_at": metadata.get("complex_invoked_at"),
+            "picker_workspace_archived_at": metadata.get("complex_workspace_archived_at"),
+            "picker_action_at": metadata.get("complex_action_at"),
+            "picker_confirmed_action": metadata.get("complex_confirmed_action"),
+            "picker_critical_acknowledged_at": metadata.get(
+                "complex_critical_acknowledged_at"
+            ),
+            "complex_decision_kind": metadata.get("complex_decision_kind"),
+            "complex_invoked_at": metadata.get("complex_invoked_at"),
+            "production_order_1c_ref": metadata.get("production_order_1c_ref"),
+            "supplier_order_coverage": metadata.get("supplier_order_coverage"),
+        }
+        payload["assigned_agents"] = [WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG]
+        payload["route_stages"] = []
+        payload["events"] = [
+            event
+            for event in payload.get("events") or []
+            if event.get("agent_id") == WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG
+            or event.get("event_type")
+            in {
+                "case_created_from_source",
+                "source_document_changed",
+                "case_archived_from_source",
+                "complex_conclusion_confirmed",
+                "complex_critical_acknowledged",
+                "complex_handoff_to_omto_chief",
+                "complex_migrated_from_engineer",
+            }
+        ]
+        payload["timeline"] = [
+            item
+            for item in payload.get("timeline") or []
+            if item.get("actor_id") == WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG
+            or item.get("kind")
+            in {
+                "case_created_from_source",
+                "source_document_changed",
+                "case_archived_from_source",
+                "complex_conclusion_confirmed",
+                "complex_critical_acknowledged",
+                "complex_handoff_to_omto_chief",
+                "complex_migrated_from_engineer",
             }
         ]
     elif agent_id == PURCHASE_MANAGER_AGENT_SLUG:
@@ -591,6 +669,10 @@ async def acknowledge_role_critical(
         result = await service.acknowledge_picker_critical(
             case_id, user_id=str(current_user.id)
         )
+    elif agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG:
+        result = await service.acknowledge_complex_chief_critical(
+            case_id, user_id=str(current_user.id)
+        )
     else:
         result = await service.acknowledge_dispatcher_critical(
             case_id, user_id=str(current_user.id)
@@ -616,14 +698,24 @@ async def confirm_picker_conclusion(
     action: str | None = Query(default=None),
 ) -> ProcurementEngineerActionRead:
     await _require_role_workspace(db, current_user, agent_id)
-    if agent_id != WAREHOUSE_PICKER_AGENT_SLUG:
+    if agent_id not in {
+        WAREHOUSE_PICKER_AGENT_SLUG,
+        WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG,
+    }:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Действие недоступно")
     service = ProcurementOrchestratorService(db, enqueue_case=False)
-    result = await service.confirm_picker_conclusion(
-        case_id,
-        user_id=str(current_user.id),
-        action=action,
-    )
+    if agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG:
+        result = await service.confirm_complex_chief_conclusion(
+            case_id,
+            user_id=str(current_user.id),
+            action=action,
+        )
+    else:
+        result = await service.confirm_picker_conclusion(
+            case_id,
+            user_id=str(current_user.id),
+            action=action,
+        )
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

@@ -18,6 +18,7 @@ from app.agents.procurement_agent.mcp_client import (
 from app.agents.procurement_role_agents.config import (
     PURCHASE_MANAGER_AGENT_ID,
     QUALITY_ENGINEER_AGENT_ID,
+    WAREHOUSE_COMPLEX_CHIEF_AGENT_ID,
     WAREHOUSE_PICKER_AGENT_ID,
 )
 from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
@@ -407,12 +408,27 @@ class TmcPresentationReconciliationService:
                 assigned = [
                     agent for agent in assigned if agent != PURCHASE_MANAGER_AGENT_ID
                 ]
+                availability_agent = (
+                    WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+                    if (
+                        case.current_agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+                        or WAREHOUSE_COMPLEX_CHIEF_AGENT_ID in assigned
+                        or (case.case_metadata or {}).get("complex_invoked_at")
+                    )
+                    else WAREHOUSE_PICKER_AGENT_ID
+                )
                 if so_status == "partial":
-                    if WAREHOUSE_PICKER_AGENT_ID not in assigned:
-                        assigned.insert(0, WAREHOUSE_PICKER_AGENT_ID)
+                    if availability_agent not in assigned:
+                        assigned.insert(0, availability_agent)
                 else:
                     assigned = [
-                        agent for agent in assigned if agent != WAREHOUSE_PICKER_AGENT_ID
+                        agent
+                        for agent in assigned
+                        if agent
+                        not in {
+                            WAREHOUSE_PICKER_AGENT_ID,
+                            WAREHOUSE_COMPLEX_CHIEF_AGENT_ID,
+                        }
                     ]
                 if case.current_agent_id == PURCHASE_MANAGER_AGENT_ID:
                     await self._cancel_current_task(case)

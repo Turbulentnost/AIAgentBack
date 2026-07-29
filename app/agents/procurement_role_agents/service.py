@@ -133,6 +133,28 @@ class WarehousePickerAgent(_WaitingProcurementRoleAgent):
 
 
 @agent_registry.register
+class WarehouseComplexChiefAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Начальник складского комплекса: проверяет наличие ТМЦ по заказам материалов "
+        "в производство (кроме МУ №2) и формирует заключение для ОМТО."
+    )
+    allowed_tools = [
+        "onec_get_store_room_stock",
+        "onec_get_production_supply_evidence",
+        "onec_get_free_stock",
+        "onec_get_quality_stock",
+    ]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await WarehousePickerService().run(
+            payload,
+            agent_id=self.agent_id,
+        )
+
+
+@agent_registry.register
 class PurchaseManagerAgent(_WaitingProcurementRoleAgent):
     agent_id = config.PURCHASE_MANAGER_AGENT_ID
     name = config.AGENT_LABELS[agent_id]

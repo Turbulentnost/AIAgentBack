@@ -18,7 +18,14 @@ from app.agents.procurement_agent.mcp_client import (
 )
 from app.agents.procurement_role_agents.config import (
     PURCHASE_MANAGER_AGENT_ID,
+    WAREHOUSE_COMPLEX_CHIEF_AGENT_ID,
     WAREHOUSE_PICKER_AGENT_ID,
+)
+from app.agents.procurement_role_agents.warehouse_availability import (
+    COMPLEX_CHIEF_SPEC,
+    PICKER_SPEC,
+    WarehouseAvailabilitySpec,
+    is_warehouse_availability_case,
 )
 from app.agents.warehouse_picker_agent.department import is_montage_section_2_department
 from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
@@ -95,8 +102,11 @@ class SupplierOrderReconciliationService:
         cases = [
             case
             for case in cases
-            if is_montage_section_2_department(case.department_name)
+            if is_warehouse_availability_case(case, PICKER_SPEC)
+            or is_warehouse_availability_case(case, COMPLEX_CHIEF_SPEC)
+            or is_montage_section_2_department(case.department_name)
             or bool((case.case_metadata or {}).get("picker_invoked_at"))
+            or bool((case.case_metadata or {}).get("complex_invoked_at"))
         ]
         if not cases:
             return {"status": "success", "cases_seen": 0, "cases_changed": 0}
@@ -451,9 +461,18 @@ class SupplierOrderReconciliationService:
                 metadata["purchase_manager_workspace_status"] = "archived"
                 metadata.setdefault("purchase_manager_workspace_archived_at", now.isoformat())
 
-        picker_output = metadata.get("warehouse_picker_output")
-        if isinstance(picker_output, dict) and coverage_status in {"partial", "full"}:
-            updated_output = dict(picker_output)
+        availability_spec = self._availability_spec_for_case(case)
+        agent_output = (
+            metadata.get(availability_spec.output_key)
+            if availability_spec is not None
+            else None
+        )
+        if (
+            availability_spec is not None
+            and isinstance(agent_output, dict)
+            and coverage_status in {"partial", "full"}
+        ):
+            updated_output = dict(agent_output)
             output_positions = (
                 list(updated_output["positions"])
                 if isinstance(updated_output.get("positions"), list)
@@ -525,54 +544,61 @@ class SupplierOrderReconciliationService:
                 updated_output["positions"] = merged_positions
             if coverage_status == "full":
                 updated_output["summary"] = (
-                    "Закупка у комплектовщика не требуется: все позиции уже в заказах поставщику."
+                    "Закупка по складскому наличию не требуется: "
+                    "все позиции уже в заказах поставщику."
                 )
                 updated_output["recommended_next_step"] = (
                     "Контролировать исполнение заказов поставщику."
                 )
                 updated_output["decision_kind"] = "none"
-                metadata["picker_decision_kind"] = "none"
-            metadata["warehouse_picker_output"] = updated_output
+                metadata[availability_spec.key("decision_kind")] = "none"
+            metadata[availability_spec.output_key] = updated_output
 
-        if coverage_status == "full":
-            # All positions are in supplier orders: close picker, continue with purchase manager only.
-            metadata["picker_workspace_status"] = "archived"
-            metadata["picker_workspace_archived_at"] = now.isoformat()
-            metadata["picker_archived_bucket"] = "success"
-            metadata["picker_auto_archived_reason"] = "all_positions_in_supplier_orders"
-            metadata["picker_procurement_status"] = "covered"
+        if availability_spec is not None and coverage_status == "full":
+            # All positions are in supplier orders: close availability agent, keep PM.
+            metadata[availability_spec.key("workspace_status")] = "archived"
+            metadata[availability_spec.key("workspace_archived_at")] = now.isoformat()
+            metadata[availability_spec.key("archived_bucket")] = "success"
+            metadata[availability_spec.key("auto_archived_reason")] = (
+                "all_positions_in_supplier_orders"
+            )
+            metadata[availability_spec.key("procurement_status")] = "covered"
             case.status = ProcurementCaseStatus.ORDERED.value
             case.control_point = "purchase"
             case.requested_operation = "monitor_supplier_orders"
-            if case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID:
+            if case.current_agent_id == availability_spec.agent_id:
                 await self._cancel_current_task(case)
             case.current_agent_id = PURCHASE_MANAGER_AGENT_ID
             assigned = [
-                agent for agent in assigned if agent != WAREHOUSE_PICKER_AGENT_ID
+                agent for agent in assigned if agent != availability_spec.agent_id
             ]
             if PURCHASE_MANAGER_AGENT_ID not in assigned:
                 assigned.append(PURCHASE_MANAGER_AGENT_ID)
-        elif previous_status == "full" and coverage_status != "full":
+        elif (
+            availability_spec is not None
+            and previous_status == "full"
+            and coverage_status != "full"
+        ):
             case.status = ProcurementCaseStatus.AGENT_WAITING.value
             case.control_point = "coverage"
             case.requested_operation = "assess_need"
-            case.current_agent_id = WAREHOUSE_PICKER_AGENT_ID
-            if WAREHOUSE_PICKER_AGENT_ID not in assigned:
-                assigned.insert(0, WAREHOUSE_PICKER_AGENT_ID)
-            metadata["picker_workspace_status"] = "awaiting_action"
-            metadata.pop("picker_workspace_archived_at", None)
-            metadata.pop("picker_archived_bucket", None)
-            metadata.pop("picker_auto_archived_reason", None)
-            metadata.pop("picker_procurement_status", None)
-        elif coverage_status == "partial":
-            # Partial coverage: picker stays open for uncovered deficit, manager in parallel.
-            metadata["picker_workspace_status"] = "awaiting_action"
-            metadata.pop("picker_workspace_archived_at", None)
-            metadata.pop("picker_archived_bucket", None)
-            metadata.pop("picker_auto_archived_reason", None)
-            metadata["picker_procurement_status"] = "partial"
-            if WAREHOUSE_PICKER_AGENT_ID not in assigned:
-                assigned.insert(0, WAREHOUSE_PICKER_AGENT_ID)
+            case.current_agent_id = availability_spec.agent_id
+            if availability_spec.agent_id not in assigned:
+                assigned.insert(0, availability_spec.agent_id)
+            metadata[availability_spec.key("workspace_status")] = "awaiting_action"
+            metadata.pop(availability_spec.key("workspace_archived_at"), None)
+            metadata.pop(availability_spec.key("archived_bucket"), None)
+            metadata.pop(availability_spec.key("auto_archived_reason"), None)
+            metadata.pop(availability_spec.key("procurement_status"), None)
+        elif availability_spec is not None and coverage_status == "partial":
+            # Partial coverage: availability agent stays open, manager in parallel.
+            metadata[availability_spec.key("workspace_status")] = "awaiting_action"
+            metadata.pop(availability_spec.key("workspace_archived_at"), None)
+            metadata.pop(availability_spec.key("archived_bucket"), None)
+            metadata.pop(availability_spec.key("auto_archived_reason"), None)
+            metadata[availability_spec.key("procurement_status")] = "partial"
+            if availability_spec.agent_id not in assigned:
+                assigned.insert(0, availability_spec.agent_id)
             if PURCHASE_MANAGER_AGENT_ID not in assigned:
                 assigned.append(PURCHASE_MANAGER_AGENT_ID)
 
@@ -609,14 +635,43 @@ class SupplierOrderReconciliationService:
                 idempotency_key=f"purchase-manager-assigned:{case.id}:{fingerprint}"[:255],
                 payload={"coverage_status": coverage_status},
             )
-        if coverage_status == "full" and previous_status != "full":
+        if (
+            availability_spec is not None
+            and coverage_status == "full"
+            and previous_status != "full"
+        ):
             await self._append_event(
                 case,
-                event_type="picker_auto_archived",
-                idempotency_key=f"picker-auto-archived:{case.id}:{fingerprint}"[:255],
+                event_type=availability_spec.auto_archive_event,
+                idempotency_key=(
+                    f"{availability_spec.prefix}-auto-archived:{case.id}:{fingerprint}"
+                )[:255],
                 payload={"reason": "all_positions_in_supplier_orders"},
             )
         return True
+
+    @staticmethod
+    def _availability_spec_for_case(
+        case: ProcurementCase,
+    ) -> WarehouseAvailabilitySpec | None:
+        metadata = case.case_metadata or {}
+        # Explicit picker markers win over "non-MU2" department fallback.
+        if (
+            case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+            or metadata.get("picker_invoked_at")
+            or is_montage_section_2_department(case.department_name)
+        ):
+            return PICKER_SPEC
+        if (
+            case.current_agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+            or metadata.get("complex_invoked_at")
+            or (
+                case.source_type == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value
+                and not is_montage_section_2_department(case.department_name)
+            )
+        ):
+            return COMPLEX_CHIEF_SPEC
+        return None
 
     async def _cancel_current_task(self, case: ProcurementCase) -> None:
         if case.current_task_id is None:

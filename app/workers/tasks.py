@@ -1248,6 +1248,7 @@ def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
                 tmc_summary = await TmcPresentationReconciliationService(db).reconcile()
                 orchestrator = ProcurementOrchestratorService(db, enqueue_case=True)
                 picker_sync = await orchestrator.ensure_picker_agent_work()
+                complex_sync = await orchestrator.ensure_complex_chief_agent_work()
                 await db.commit()
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
@@ -1267,6 +1268,7 @@ def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
             dispatched += 1
         summary["tmc_presentation"] = tmc_summary
         summary["picker_sync"] = picker_sync
+        summary["complex_sync"] = complex_sync
         summary["picker_dispatched"] = dispatched
         summary["celery_task_id"] = self.request.id
         summary["task_name"] = "reconcile_procurement_supplier_orders"

@@ -28,6 +28,8 @@ alembic/versions/*.py
 !alembic/versions/0056_warehouse_picker_agent.py
 !alembic/versions/0060_legal_specialist_agent.py
 !alembic/versions/0064_supplier_order_reconciliation.py
+!alembic/versions/0065_archive_stub_agents.py
+!alembic/versions/0066_warehouse_complex_chief_agent.py
 !alembic/versions/20260722_protocol_draft.py
 
 # Build / coverage

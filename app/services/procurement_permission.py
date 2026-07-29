@@ -4,12 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
-from app.models.user import User
+from app.models.user import Department, User
 from app.services.permission_service import PermissionService
 
 PRODUCTION_PREPARATION_ENGINEER_AGENT_SLUG = "production_preparation_engineer_agent"
 PRODUCTION_DISPATCHER_AGENT_SLUG = "production_dispatcher_agent"
 WAREHOUSE_PICKER_AGENT_SLUG = "warehouse_picker_agent"
+WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG = "warehouse_complex_chief_agent"
 PURCHASE_MANAGER_AGENT_SLUG = "purchase_manager_agent"
 OMTO_SUPPORT_MANAGER_AGENT_SLUG = "omto_support_manager_agent"
 OTK_HEAD_AGENT_SLUG = "otk_head_agent"
@@ -29,6 +30,9 @@ _PICKER_POSITION_MARKERS = (
     "кладовщик-комплектовщик",
     "кладовщик комплектовщик",
 )
+_COMPLEX_CHIEF_EXACT_POSITION = "начальник складского комплекса"
+_WAREHOUSE_HEAD_POSITION = "начальник склада"
+_WAREHOUSE_COMPLEX_DEPARTMENT_MARKER = "складской комплекс"
 _PURCHASE_MANAGER_POSITION_MARKERS = (
     "менеджер по закупкам",
     "менеджер закупок",
@@ -86,6 +90,39 @@ def is_warehouse_picker_position(position: str | None) -> bool:
     return any(
         marker.replace("-", " ") in normalized for marker in _PICKER_POSITION_MARKERS
     )
+
+
+def is_warehouse_complex_chief_position(position: str | None) -> bool:
+    normalized = _normalize_position(position)
+    return normalized == _COMPLEX_CHIEF_EXACT_POSITION
+
+
+def is_warehouse_head_position(position: str | None) -> bool:
+    normalized = _normalize_position(position)
+    if not normalized:
+        return False
+    if is_warehouse_complex_chief_position(position):
+        return False
+    return _WAREHOUSE_HEAD_POSITION in normalized
+
+
+def is_warehouse_complex_department_name(name: str | None) -> bool:
+    if not name:
+        return False
+    normalized = _normalize_position(name)
+    return _WAREHOUSE_COMPLEX_DEPARTMENT_MARKER in normalized
+
+
+async def user_in_warehouse_complex_department(
+    db: AsyncSession,
+    user: User,
+) -> bool:
+    if user.department_id is None:
+        return False
+    department = await db.get(Department, user.department_id)
+    if department is None:
+        return False
+    return is_warehouse_complex_department_name(department.name)
 
 
 def is_purchase_manager_position(position: str | None) -> bool:
@@ -330,6 +367,39 @@ async def append_warehouse_picker_agent(
     return sorted([*agents, agent], key=lambda item: item.name)
 
 
+async def can_access_warehouse_complex_chief(
+    db: AsyncSession,
+    user: User,
+) -> bool:
+    if user.is_superuser or is_warehouse_complex_chief_position(user.position):
+        return True
+    if is_warehouse_head_position(user.position) and await user_in_warehouse_complex_department(
+        db, user
+    ):
+        return True
+    agent = await db.scalar(
+        select(Agent).where(Agent.slug == WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG)
+    )
+    if agent is None:
+        return False
+    return await PermissionService(db).can_access_agent(user, agent.id, action="run")
+
+
+async def append_warehouse_complex_chief_agent(
+    db: AsyncSession,
+    user: User,
+    agents: list,
+) -> list:
+    if not await can_access_warehouse_complex_chief(db, user):
+        return agents
+    agent = await db.scalar(
+        select(Agent).where(Agent.slug == WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG)
+    )
+    if agent is None or any(item.id == agent.id for item in agents):
+        return agents
+    return sorted([*agents, agent], key=lambda item: item.name)
+
+
 async def can_access_purchase_manager(db: AsyncSession, user: User) -> bool:
     if user.is_superuser or is_purchase_manager_position(user.position):
         return True
@@ -361,6 +431,7 @@ __all__ = [
     "QUALITY_DEPUTY_DIRECTOR_AGENT_SLUG",
     "QUALITY_ENGINEER_AGENT_SLUG",
     "QUALITY_KPI_AGENT_SLUG",
+    "WAREHOUSE_COMPLEX_CHIEF_AGENT_SLUG",
     "WAREHOUSE_PICKER_AGENT_SLUG",
     "append_omto_support_manager_agent",
     "append_otk_head_agent",
@@ -370,6 +441,7 @@ __all__ = [
     "append_quality_deputy_director_agent",
     "append_quality_engineer_agent",
     "append_quality_kpi_agent",
+    "append_warehouse_complex_chief_agent",
     "append_warehouse_picker_agent",
     "can_access_omto_support_manager",
     "can_access_otk_head",
@@ -380,6 +452,7 @@ __all__ = [
     "can_access_quality_deputy_director",
     "can_access_quality_engineer",
     "can_access_quality_kpi",
+    "can_access_warehouse_complex_chief",
     "can_access_warehouse_picker",
     "can_refresh_procurement_orchestrator",
     "is_omto_support_manager_position",
@@ -389,5 +462,9 @@ __all__ = [
     "is_purchase_manager_position",
     "is_quality_deputy_director_position",
     "is_quality_engineer_position",
+    "is_warehouse_complex_chief_position",
+    "is_warehouse_complex_department_name",
+    "is_warehouse_head_position",
     "is_warehouse_picker_position",
+    "user_in_warehouse_complex_department",
 ]

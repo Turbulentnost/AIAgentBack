@@ -29,6 +29,7 @@ from app.services.procurement_permission import (
     append_production_dispatcher_agent,
     append_purchase_manager_agent,
     append_quality_engineer_agent,
+    append_warehouse_complex_chief_agent,
     append_warehouse_picker_agent,
 )
 from app.services.profile_image_service import AvatarValidationError
@@ -45,6 +46,9 @@ async def _agent_read(db: DbSession, agent) -> AgentRead:
 async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessRead:
     data = (await _agent_read(db, agent)).model_dump()
     if agent.slug == "procurement_logistics_agent":
+        data["name"] = "ИИ-агент по закупкам"
+    if agent.slug == "warehouse_complex_chief_agent":
+        # DB name is unique; UI brand matches the admin orchestrator title.
         data["name"] = "ИИ-агент по закупкам"
     if agent.slug == "production_dispatcher_agent":
         data["name"] = "Агент диспетчера производства"
@@ -73,6 +77,7 @@ async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await append_meeting_agent_for_office_management(db, current_user, agents)
     agents = await append_production_dispatcher_agent(db, current_user, agents)
     agents = await append_warehouse_picker_agent(db, current_user, agents)
+    agents = await append_warehouse_complex_chief_agent(db, current_user, agents)
     agents = await append_purchase_manager_agent(db, current_user, agents)
     agents = await append_omto_support_manager_agent(db, current_user, agents)
     agents = await append_quality_engineer_agent(db, current_user, agents)
