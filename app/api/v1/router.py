@@ -20,6 +20,7 @@ from app.api.v1.endpoints import (
     porucheniya,
     positions,
     procurement,
+    procurement_manager,
     roles,
     tasks,
     users,
@@ -39,6 +40,9 @@ api_router.include_router(knowledge_bases.router)
 api_router.include_router(meetings.router)
 api_router.include_router(notifications.router)
 api_router.include_router(porucheniya.router)
+# Static manager routes must be registered before parameterized /role-agents/{agent_id}.
+api_router.include_router(procurement_manager.router)
+api_router.include_router(procurement_manager.operations_router)
 api_router.include_router(procurement.router)
 api_router.include_router(otk.router)
 api_router.include_router(knowledge_base_indexing_ws.router)

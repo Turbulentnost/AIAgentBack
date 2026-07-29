@@ -455,6 +455,14 @@ class SupplierOrderReconciliationService:
             metadata["purchase_manager_workspace_status"] = "awaiting_action"
             metadata.pop("purchase_manager_workspace_archived_at", None)
             metadata["purchase_manager_output"] = snapshot
+            # Seed rich manager workspace (Jalko) without overriding existing search/PO state.
+            manager_workspace = dict(metadata.get("procurement_manager") or {})
+            manager_workspace.setdefault("lifecycle_state", "handoff_received")
+            manager_workspace.setdefault("handoff_received_at", now.isoformat())
+            manager_workspace.setdefault("payment_document_draft", None)
+            manager_workspace.setdefault("recommendation_audit", [])
+            manager_workspace.setdefault("purchase_order_drafts", [])
+            metadata["procurement_manager"] = manager_workspace
         else:
             assigned = [agent for agent in assigned if agent != PURCHASE_MANAGER_AGENT_ID]
             if metadata.get("purchase_manager_invoked_at"):

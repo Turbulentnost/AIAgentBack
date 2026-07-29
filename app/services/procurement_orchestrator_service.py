@@ -1667,6 +1667,38 @@ class ProcurementOrchestratorService:
         result["migrated"] = migrated
         return result
 
+    async def _ensure_procurement_manager_agent_running(
+        self,
+        case: ProcurementCase,
+    ) -> None:
+        """Start rich manager agent_run when handoff already pointed at purchase manager."""
+        metadata = dict(case.case_metadata or {})
+        manager_ws = dict(metadata.get("procurement_manager") or {})
+        manager_ws["lifecycle_state"] = manager_ws.get("lifecycle_state") or "agent_running"
+        metadata["procurement_manager"] = manager_ws
+        case.case_metadata = metadata
+
+        if manager_ws.get("agent_stage") or manager_ws.get("agent_run_idempotency_key"):
+            return
+
+        from app.agents.procurement_manager_agent.schemas import AgentRunRequest
+        from app.agents.procurement_manager_agent.service import ProcurementManagerService
+
+        try:
+            await ProcurementManagerService(self.db).agent_run(
+                case.id,
+                AgentRunRequest(
+                    idempotency_key=f"orchestrator-agent-run:{case.id}"[:255],
+                    allow_web_fallback=True,
+                ),
+            )
+        except Exception:  # noqa: BLE001 — handoff must remain successful
+            manager_ws = dict((case.case_metadata or {}).get("procurement_manager") or {})
+            manager_ws["lifecycle_state"] = "agent_running"
+            metadata = dict(case.case_metadata or {})
+            metadata["procurement_manager"] = manager_ws
+            case.case_metadata = metadata
+
     async def _migrate_undecided_engineer_cases_to_complex_chief(self) -> int:
         """Перевести активные кейсы инженера без принятого решения на нового агента."""
         if not self.enqueue_case:

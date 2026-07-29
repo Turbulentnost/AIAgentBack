@@ -1,0 +1,62 @@
+{
+  "mcpServers": {
+    "supplier-read": {
+      "command": "${PROCUREMENT_SUPPLIER_MCP_PYTHON:-py}",
+      "args": [
+        "-m",
+        "app.agents.procurement_manager_agent.supplier_mcp_server"
+      ],
+      "capabilityMap": {
+        "read_supplier_search": "supplier_search_internal",
+        "read_supplier_get": "supplier_get_profile",
+        "read_supplier_contracts": "supplier_get_contracts",
+        "read_supplier_purchase_history": "supplier_get_purchase_history",
+        "read_supplier_quality_history": "supplier_get_quality_history",
+        "read_supplier_open_orders": "supplier_get_open_orders",
+        "read_supplier_goods_in_transit": "supplier_get_goods_in_transit",
+        "search_supplier_web": "supplier_search_web",
+        "fetch_supplier_page": "supplier_fetch_page",
+        "parse_quote": "quote_parse",
+        "compare_quotes": "quote_compare",
+        "render_rfq": "rfq_render",
+        "send_rfq_draft": "rfq_send_draft",
+        "select_supplier": "supplier_select",
+        "create_purchase_order_draft": "purchase_order_create_draft"
+      },
+      "env": {
+        "PYTHONUTF8": "1",
+        "PROCUREMENT_WEB_SEARCH_PROVIDER": "${PROCUREMENT_WEB_SEARCH_PROVIDER:-auto}",
+        "PROCUREMENT_WEB_SEARCH_ENGINE": "${PROCUREMENT_WEB_SEARCH_ENGINE:-bing}",
+        "PROCUREMENT_WEB_BROWSER_PREFER": "${PROCUREMENT_WEB_BROWSER_PREFER:-edge}",
+        "PROCUREMENT_WEB_BROWSER_PATH": "${PROCUREMENT_WEB_BROWSER_PATH:-}",
+        "PROCUREMENT_WEB_BROWSER_TIMEOUT_SECONDS": "${PROCUREMENT_WEB_BROWSER_TIMEOUT_SECONDS:-45}",
+        "PROCUREMENT_WEB_BROWSER_MAX_RESULTS": "${PROCUREMENT_WEB_BROWSER_MAX_RESULTS:-20}"
+      }
+    },
+    "1c-supplier-upstream": {
+      "command": "${ONEC_MCP_NODE_COMMAND:-node}",
+      "args": [
+        "${ONEC_MCP_ENTRYPOINT:-/app/MCP/vendor/1c-odata-mcp/dist/index.js}"
+      ],
+      "capabilityMap": {
+        "read_supplier_search": "read_reference_search_suppliers",
+        "read_supplier_get": "read_reference_get_suppliers",
+        "read_supplier_history": "read_procurement_get_supplier_history",
+        "read_procurement_get_supplier_history": "read_procurement_get_supplier_history",
+        "read_procurement_chain_purchase_orders": "read_document_get_documents",
+        "read_procurement_chain_cash_requests": "read_document_get_documents",
+        "read_procurement_chain_otk_presentations": "read_document_get_documents",
+        "read_procurement_chain_purchase_receipts": "read_document_get_documents",
+        "read_procurement_chain_goods_receipt_orders": "read_document_get_documents"
+      },
+      "env": {
+        "ODATA_BASE_URL": "${ODATA_BASE_URL}",
+        "ODATA_USERNAME": "${ODATA_USERNAME}",
+        "ODATA_PASSWORD": "${ODATA_PASSWORD}",
+        "ODATA_TIMEOUT_MS": "${ODATA_TIMEOUT_MS:-120000}",
+        "ODATA_RETRIES": "${ODATA_RETRIES:-2}",
+        "READ_ONLY": "true"
+      }
+    }
+  }
+}

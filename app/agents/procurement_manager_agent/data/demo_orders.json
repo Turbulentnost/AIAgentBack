@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "tag": "procurement_manager_demo_v1",
+  "demo_case_id": "685dbc88-3ee6-4f0d-8dd8-347ad930e89e",
+  "ui_url": "http://127.0.0.1:5173/agents/procurement-manager?case=685dbc88-3ee6-4f0d-8dd8-347ad930e89e",
+  "orders_count": 0,
+  "orders": [],
+  "disabled": true,
+  "note": "Demo orders disabled; manager queue uses real 1C-synced cases only."
+}

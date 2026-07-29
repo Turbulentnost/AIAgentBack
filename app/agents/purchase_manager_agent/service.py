@@ -4,15 +4,17 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agents.procurement_manager_agent.service import ProcurementManagerService
 from app.agents.procurement_role_agents.schemas import (
     ProcurementRoleAgentRequest,
     ProcurementRoleAgentResult,
 )
+from app.db.session import AsyncSessionLocal
 from app.models.enums import ConfidenceLevel, ProcurementSourceType
 
 
 class PurchaseManagerService:
-    """Build a read-only manager snapshot from orchestrator reconciliation data."""
+    """Delegate role-agent runs to the rich procurement manager from Jalko."""
 
     async def run(
         self,
@@ -47,47 +49,35 @@ class PurchaseManagerService:
                 output_data={"validation_errors": [{"field": "source_type"}]},
             )
 
+        async with AsyncSessionLocal() as db:
+            result = await ProcurementManagerService(db).run_role(payload)
+            await db.commit()
+
+        # Orchestrator maps purchase_manager + waiting_external → ORDERED.
+        # Keep HITL flags from run_role while preserving purchase/order lifecycle.
+        output = dict(result.output_data or {})
         snapshot = request.source_data.get("supplier_order_coverage")
-        if not isinstance(snapshot, dict):
-            snapshot = {}
-        coverage_status = str(snapshot.get("coverage_status") or "none")
-        positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
-        orders = (
-            snapshot.get("supplier_orders")
-            if isinstance(snapshot.get("supplier_orders"), list)
-            else []
-        )
-        summary = {
-            "full": "Все позиции «К обеспечению» найдены в связанных заказах поставщику.",
-            "partial": "Часть позиций уже закупается; остальные остаются на контроле.",
-            "none": "Связанные заказы поставщику пока не найдены.",
-        }.get(coverage_status, "Сверка заказов поставщику выполнена.")
-        output = {
-            "schema_version": "1.0",
-            "summary": summary,
-            "recommended_next_step": snapshot.get("recommended_next_step")
-            or "Контролировать исполнение связанных заказов поставщику.",
-            "decision_kind": "none",
-            "coverage_status": coverage_status,
-            "supplier_orders": orders,
-            "positions": positions,
-            "covered_positions": int(snapshot.get("covered_positions") or 0),
-            "positions_count": int(snapshot.get("positions_count") or len(positions)),
-            "checked_at": snapshot.get("checked_at"),
-            "calculated_at": snapshot.get("calculated_at") or snapshot.get("checked_at"),
-            "source_number": request.source_number,
-            "source_1c_ref": request.source_1c_ref,
-        }
+        if isinstance(snapshot, dict):
+            output.setdefault("coverage_status", snapshot.get("coverage_status"))
+            output.setdefault("supplier_orders", snapshot.get("supplier_orders") or [])
+            output.setdefault("positions", snapshot.get("positions") or [])
+            output.setdefault("covered_positions", snapshot.get("covered_positions") or 0)
+            output.setdefault(
+                "positions_count",
+                snapshot.get("positions_count") or len(snapshot.get("positions") or []),
+            )
+            output.setdefault("checked_at", snapshot.get("checked_at"))
         return ProcurementRoleAgentResult(
             agent_id=agent_id,
             status="waiting_external",
-            summary=summary,
-            data_confidence=ConfidenceLevel.HIGH,
-            requires_human_review=False,
+            summary=result.summary,
+            data_confidence=result.data_confidence,
+            requires_human_review=bool(result.requires_human_review),
             case_id=request.case_id,
             correlation_id=request.correlation_id,
             role_status="waiting_external",
-            wait_reason="Контроль исполнения связанных заказов поставщику.",
+            wait_reason=result.wait_reason
+            or "Контроль исполнения и сопровождение закупки менеджером.",
             output_data=output,
         )
 

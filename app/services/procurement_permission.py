@@ -423,6 +423,11 @@ async def can_access_purchase_manager(db: AsyncSession, user: User) -> bool:
     return await PermissionService(db).can_access_agent(user, agent.id, action="run")
 
 
+async def can_access_procurement_manager(db: AsyncSession, user: User) -> bool:
+    """Alias for rich manager API imported from Jalko (same slug/permissions)."""
+    return await can_access_purchase_manager(db, user)
+
+
 async def append_purchase_manager_agent(
     db: AsyncSession,
     user: User,
@@ -462,6 +467,7 @@ __all__ = [
     "can_access_production_dispatcher",
     "can_access_production_preparation_engineer",
     "can_access_procurement_orchestrator",
+    "can_access_procurement_manager",
     "can_access_purchase_manager",
     "can_access_quality_deputy_director",
     "can_access_quality_engineer",
