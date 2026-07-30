@@ -3,8 +3,10 @@
 - Создаёт коллекции и payload-индексы
 - Если departments/contractors пусты — seed из routing_rules + демо-контрагенты
 - Если spam_learning пуст — resync из spam_learning_patterns.json
+- Если onec_corrections пуст — resync из routing_rules.json
 
-Запуск вручную:  python scripts/init_qdrant.py
+Полная синхронизация вручную:  python scripts/sync_rag_to_qdrant.py
+Запуск init:  python scripts/init_qdrant.py
 """
 
 from __future__ import annotations
@@ -38,6 +40,14 @@ from agent_pochta.services.routing_departments import (  # noqa: E402
     load_routing_rules,
 )
 from agent_pochta.services.spam_learning_rag_qdrant import ensure_spam_learning_indexes  # noqa: E402
+from agent_pochta.services.onec_corrections_rag_qdrant import (  # noqa: E402
+    ONEC_CORRECTIONS_COLLECTION,
+    ensure_onec_corrections_indexes,
+)
+from agent_pochta.routing.onec_corrections import (  # noqa: E402
+    load_onec_corrections,
+    resync_onec_corrections_to_qdrant,
+)
 
 _WAIT_SEC = 60
 _POLL_SEC = 2
@@ -81,14 +91,17 @@ def main() -> None:
     # Коллекции + индексы contractors / departments
     QdrantRAGService(url)
     ensure_spam_learning_indexes(url)
+    ensure_onec_corrections_indexes(url)
 
     contractors_n = _collection_points(url, CONTRACTORS_COLLECTION)
     departments_n = _collection_points(url, DEPARTMENTS_COLLECTION)
     spam_n = _collection_points(url, SPAM_LEARNING_COLLECTION)
+    onec_n = _collection_points(url, ONEC_CORRECTIONS_COLLECTION)
 
     print(
         f"[init_qdrant] before seed: contractors={contractors_n}, "
-        f"departments={departments_n}, spam_learning={spam_n}"
+        f"departments={departments_n}, spam_learning={spam_n}, "
+        f"onec_corrections={onec_n}"
     )
 
     if departments_n == 0:
@@ -117,9 +130,16 @@ def main() -> None:
         print(f"[init_qdrant] spam resync: {result}")
         spam_n = _collection_points(url, SPAM_LEARNING_COLLECTION)
 
+    onec_json = len(load_onec_corrections().get("entries") or [])
+    if onec_n == 0 and onec_json > 0:
+        result = resync_onec_corrections_to_qdrant()
+        print(f"[init_qdrant] onec_corrections resync: {result}")
+        onec_n = _collection_points(url, ONEC_CORRECTIONS_COLLECTION)
+
     print(
         f"[init_qdrant] done: contractors={contractors_n}, "
-        f"departments={departments_n}, spam_learning={spam_n}"
+        f"departments={departments_n}, spam_learning={spam_n}, "
+        f"onec_corrections={onec_n}"
     )
 
 

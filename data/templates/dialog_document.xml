@@ -1,0 +1,32 @@
+<!--
+  Шаблон XML для категории «Диалог» (dormant).
+
+  Письмо — переписка компании и партнёра без явного поручения.
+  В 1С не регистрируется, пока не сработают activation_markers из data/dialog_rules.json.
+
+  При активации (слова-действия в тексте):
+  - status → done (или error при сбое ERP)
+  - theme → «Запрос:/Рассмотреть:/…» + subject (см. xml_builder.infer_theme_action)
+  - register_erp → true, очередь 1С
+  - process → рассмотрение | исполнение по activation_process_type_map
+-->
+<document>
+  <organization>НП</organization>
+  <theme>Диалог: Re: тема переписки</theme>
+  <направление>ПР</направление>
+  <claim>false</claim>
+  <partner>ООО «Партнёр»</partner>
+  <services>
+    <service>
+      <name>00-000066</name>
+      <title>Управление делами</title>
+      <process>ознакомление</process>
+      <reasoning>dialog_dormant</reasoning>
+    </service>
+  </services>
+  <email_sender>partner@example.ru</email_sender>
+  <email_recipient>info@turbo-don.ru</email_recipient>
+  <mail_datetime>2026-07-20T12:00:00</mail_datetime>
+  <process>ознакомление</process>
+  <dialog_mode>dormant</dialog_mode>
+</document>

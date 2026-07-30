@@ -16,8 +16,11 @@ from agent_pochta.routing.normalize import contains_claim_marker
 from agent_pochta.routing.xml_builder import (
     RESERVE_DEPARTMENT_CODE,
     SPAM_DEPARTMENT_CODE,
+    _format_mail_datetime_for_xml,
     build_stub_xml_theme,
+    build_subject_xml_theme,
     build_xml_document,
+    email_subject_theme,
     format_partner,
     normalize_xml_theme,
     sanitize_theme,
@@ -100,6 +103,13 @@ def test_parse_document_xml_invalid_returns_none():
     assert parse_document_xml("") is None
     assert parse_document_xml("<broken") is None
     assert parse_document_xml("<other><x>1</x></other>") is None
+
+
+def test_format_mail_datetime_for_xml_uses_moscow_time():
+    utc = datetime(2026, 7, 22, 7, 37, 41, tzinfo=timezone.utc)
+    assert _format_mail_datetime_for_xml(utc) == "2026-07-22 10:37:41"
+    naive_utc = utc.replace(tzinfo=None)
+    assert _format_mail_datetime_for_xml(naive_utc) == "2026-07-22 10:37:41"
 
 
 def test_build_and_validate_roundtrip():
@@ -434,7 +444,7 @@ def test_rebuild_xml_document_resets_org_derived_direction():
     parsed = parse_document_xml(xml)
     assert parsed is not None
     assert parsed["organization"] == "НП"
-    assert parsed["direction"] == "КС"
+    assert parsed["direction"] == "ПР"
 
 
 def test_repository_clear_xml_document():
@@ -560,11 +570,11 @@ def test_normalize_xml_theme_adds_key_phrase():
         "Необходимо предоставить распиновку кабеля",
         subject="Распиновка кабеля",
     )
-    assert " - " in theme
-    assert "Запрос на" in theme
+    assert theme.startswith("Запрос:")
+    assert "Распиновка кабеля" in theme
 
 
-def test_xml_theme_llm_format_in_document():
+def test_xml_theme_uses_action_prefix_not_llm_description():
     email = EmailMessage(
         message_id="<theme@test>",
         mailbox="info@turbo-don.ru",
@@ -584,10 +594,64 @@ def test_xml_theme_llm_format_in_document():
     )
     parsed = parse_document_xml(build_xml_document(email, recipient="info@turbo-don.ru", decision=decision))
     assert parsed is not None
-    assert parsed["theme"] == llm_theme
-    assert " - " in parsed["theme"]
-    assert parsed["theme"].endswith("специалиста")
+    assert parsed["theme"] == "Запрос: Распиновка кабеля"
     assert parsed["services"][0]["reasoning"] == "Распиновка кабеля"
+
+
+def test_email_subject_theme_ignores_body_text():
+    email = EmailMessage(
+        message_id="<ol@test>",
+        mailbox="info@turbo-don.ru",
+        sender_email="vendor@lan-service.ru",
+        subject="ОЛ 31222, 31240 в работу",
+        body_text="Добрый день!ОЛ 31222, 31340 отправлены в просчет.",
+        received_at=datetime.now(timezone.utc),
+    )
+    assert email_subject_theme(email) == "Отправить в просчёт: ОЛ 31222, 31240 в работу"
+    assert build_subject_xml_theme(email.subject or "") == "Запрос: ОЛ 31222, 31240 в работу"
+
+
+def test_build_subject_xml_theme_action_prefixes():
+    assert build_subject_xml_theme("Заказ") == "Запрос: Заказ"
+    assert build_subject_xml_theme("ОЛ 31222, 31240 в работу") == "Запрос: ОЛ 31222, 31240 в работу"
+    assert build_subject_xml_theme("Счёт") == "Запрос: Счёт"
+    assert build_subject_xml_theme("RE: неподписанные УПД") == "Проверить: неподписанные УПД"
+    assert (
+        build_subject_xml_theme(
+            "ОЛ 31222 в работу",
+            combined_text="ОЛ отправлены в просчет.",
+        )
+        == "Отправить в просчёт: ОЛ 31222 в работу"
+    )
+
+
+def test_lan_service_xml_partner_from_signature():
+    body = (
+        "Добрый день! ОЛ 31222, 31340 отправлены в просчет.\n\n"
+        "С уважением,\n"
+        "Менеджер\n"
+        "ООО ЛАН-Сервис"
+    )
+    email = EmailMessage(
+        message_id="<lan@test>",
+        mailbox="info@turbo-don.ru",
+        sender_email="sales@lan-service.ru",
+        sender_name="Lan Service",
+        subject="ОЛ 31222, 31240 в работу",
+        body_text=body,
+        received_at=datetime.now(timezone.utc),
+    )
+    decision = RoutingDecision(
+        services=[ServiceRoute(code="00-000076", name="ОРКК")],
+        confidence_level=ConfidenceLevel.HIGH,
+        theme="ОЛ 31222, 31240 в работу",
+        partner="ООО ЛАН-Сервис",
+    )
+    parsed = parse_document_xml(build_xml_document(email, recipient="info@turbo-don.ru", decision=decision))
+    assert parsed is not None
+    assert parsed["theme"] == "Запрос: ОЛ 31222, 31240 в работу"
+    assert parsed["partner"] == "ООО ЛАН-Сервис"
+    assert parsed["partner"] != "Lan Service"
 
 
 def test_human_correction_preserves_xml_theme():
@@ -628,7 +692,7 @@ def test_human_correction_preserves_xml_theme():
     assert xml is not None
     parsed = parse_document_xml(xml)
     assert parsed is not None
-    assert parsed["theme"] == llm_theme
+    assert parsed["theme"] == "Запрос: Распиновка"
 
 
 def test_keyword_in_text_avoids_risk_and_exception():

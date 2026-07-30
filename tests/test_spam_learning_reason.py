@@ -46,6 +46,17 @@ def test_resolve_human_spam_reason_rejects_llm_not_spam_text():
     assert resolve_human_spam_reason("Рекламная рассылка") == "Рекламная рассылка"
 
 
+def test_resolve_human_spam_reason_rejects_routing_escalation_text():
+    assert (
+        resolve_human_spam_reason("Низкая уверенность маршрута (НИЗКАЯ, score=45)")
+        == "Отмечено офис-менеджером"
+    )
+    assert (
+        resolve_human_spam_reason("Конфликт нескольких правил маршрутизации")
+        == "Отмечено офис-менеджером"
+    )
+
+
 def test_save_spam_pattern_sanitizes_contradictory_reason(
     learning_file: Path,
     monkeypatch: pytest.MonkeyPatch,

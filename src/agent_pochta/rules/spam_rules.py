@@ -26,6 +26,15 @@ APPENDIX_A_MARKERS: tuple[str, ...] = (
     "предложение о приобретении",
     "unsubscribe",
     "отписаться от рассылки",
+    # Высокочастотный шум из IMAP bulk (marketing/CFO/курсы)
+    "только в выходные",
+    "металлообработк",
+    "изготовление деталей",
+    "курсон",
+    "cfo-russia",
+    "cfo russia",
+    "бесплатный вебинар",
+    "зарегистрируйтесь на вебинар",
 )
 
 # Управляемые списки (в проде — из БД / API платформы)
@@ -55,6 +64,15 @@ FREE_MAIL_DOMAINS: set[str] = {
     "outlook.com",
     "hotmail.com",
 }
+
+_COMMERCIAL_CONTEXT_MARKERS: tuple[str, ...] = (
+    "ткп",
+    "коммерческ",
+    "счет",
+    "счёт",
+    "заказ",
+    "поставк",
+)
 
 
 def _email_domain(address: str) -> str:
@@ -94,6 +112,12 @@ def check_rule_spam(email: EmailMessage) -> SpamResult | None:
 
     for marker in APPENDIX_A_MARKERS:
         if marker in text:
+            # «Скидка» в переписке по ТКП/заказу — обычные коммерческие
+            # переговоры, а не самостоятельный признак рекламной рассылки.
+            if marker == "скидк" and any(
+                context in text for context in _COMMERCIAL_CONTEXT_MARKERS
+            ):
+                continue
             return SpamResult(
                 is_spam=True,
                 confidence=0.95,

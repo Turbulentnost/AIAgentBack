@@ -10,11 +10,16 @@ from pydantic import BaseModel, Field
 
 
 class Priority(StrEnum):
-    """Приоритет по СТО-34-238 п. 6.2."""
+    """Приоритет по таблице G.1 типового справочника (+ СТО-34-238 п. 6.2).
 
-    URGENT = "urgent"   # госорганы (суд, ФНС, ПФР, трудовая инспекция)
-    HIGH = "high"       # претензионные письма
-    NORMAL = "normal"   # расчётные документы, прочее
+    urgent — немедленно (госорганы, суды, надзор);
+    high — 1-я очередь / в день поступления (претензии, обязательства, срок ответа);
+    normal — в день регистрации / в течение раб. дня / 2-я очередь (учёт без обязательств).
+    """
+
+    URGENT = "urgent"
+    HIGH = "high"
+    NORMAL = "normal"
 
 
 class ProcessingStatus(StrEnum):
@@ -23,6 +28,7 @@ class ProcessingStatus(StrEnum):
     SPAM = "spam"
     ERROR = "error"
     AWAITING_HUMAN = "awaiting_human"
+    DIALOG = "dialog"
 
 
 class Attachment(BaseModel):
@@ -104,6 +110,9 @@ class RoutingResult(BaseModel):
     confidence: float
     reasoning: str
     priority: Priority = Priority.NORMAL
+    document_kind: str | None = None
+    queue_tier: int = 1
+    register_erp: bool = True
 
 
 class ErpTaskResult(BaseModel):

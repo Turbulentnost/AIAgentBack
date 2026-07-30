@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from agent_pochta.routing.models import RoutingDecision, ServiceRoute
+from agent_pochta.routing.organizations import DIRECTION_DEFAULT
 from agent_pochta.schemas import EmailMessage, SpamResult
 
 _DEPT_CODE_RE = re.compile(r"^00-\d{6}$")
 _THEME_MAX_LEN = 200
 RESERVE_DEPARTMENT_CODE = "00-000066"
 SPAM_DEPARTMENT_CODE = "00-999999"
+_MSK = ZoneInfo("Europe/Moscow")
 _INTERNAL_KEYWORD_SOURCES = frozenset(
     {
         "exact_email",
@@ -23,7 +26,14 @@ _INTERNAL_KEYWORD_SOURCES = frozenset(
         "sales_odp",
         "reserve",
         "human_correction",
+        "info_strict",
+        "info_strict_unclear",
+        "gazprom_np_reply",
     }
+)
+
+_ACTION_THEME_RE = re.compile(
+    r"^([А-Яа-яA-Za-z][А-Яа-яA-Za-z\s]{0,30}):\s*(.+)$",
 )
 
 
@@ -43,6 +53,203 @@ def resolve_service_code(
         if _DEPT_CODE_RE.match(value):
             return value
     return fallback
+
+
+def _theme_context(subject: str = "", combined_text: str = "") -> str:
+    return f"{subject} {combined_text}".lower()
+
+
+def key_phrase_to_action(key_phrase: str) -> str | None:
+    """Преобразует ключевую фразу (от LLM или эвристики) в префикс действия."""
+    phrase = (key_phrase or "").strip().lower()
+    if not phrase:
+        return None
+    if phrase.startswith(("претенз", "исков")):
+        return "Решить"
+    if "оплат" in phrase:
+        return "Оплатить"
+    if "провер" in phrase:
+        return "Проверить"
+    if "соглас" in phrase or "утверд" in phrase:
+        return "Согласовать"
+    if "ознаком" in phrase or "уведом" in phrase:
+        return "Ознакомиться"
+    if phrase.startswith("рассмотр"):
+        return "Рассмотреть"
+    if phrase.startswith("запрос"):
+        return "Запрос"
+    return None
+
+
+def infer_theme_action(
+    subject: str = "",
+    combined_text: str = "",
+    *,
+    process_type: str = "",
+    claim: bool = False,
+    key_phrase: str = "",
+) -> str:
+    """Определяет требуемое действие для темы 1С по subject/ключевым словам/process_type."""
+    from_key = key_phrase_to_action(key_phrase)
+    if from_key:
+        return from_key
+
+    if (key_phrase or "").strip().lower().startswith("диалог"):
+        return "Диалог"
+
+    combined = _theme_context(subject, combined_text)
+    subj = sanitize_theme(subject, max_len=80)
+    subj_lower = subj.lower() if subj != "Без темы" else subject.lower()
+
+    if claim or "претенз" in combined:
+        return "Решить"
+    if "иск" in combined and "риск" not in combined and "исключ" not in combined:
+        return "Решить"
+    if any(
+        marker in combined
+        for marker in ("проверить", "проверка", "неподписан", "подписать в эдо", "в эдо")
+    ):
+        return "Проверить"
+    if any(marker in combined for marker in ("согласова", "на согласован", "утвердить", "утвержден")):
+        return "Согласовать"
+    if "оплат" in combined and ("счёт" in combined or "счет" in combined):
+        return "Оплатить"
+    if any(
+        marker in combined
+        for marker in (
+            "уведомлен",
+            "информ",
+            "для сведения",
+            "к сведению",
+            "ознаком",
+            "статус отгруз",
+            "сроки отгруз",
+        )
+    ):
+        return "Ознакомиться"
+    if "просч" in combined and ("ол " in combined or "ол," in subj_lower):
+        return "Отправить в просчёт"
+    if any(marker in combined for marker in ("рассмотреть", "рассмотрение", "требует решения")):
+        return "Рассмотреть"
+
+    process = (process_type or "").strip().lower()
+    if process == "ознакомление":
+        return "Ознакомиться"
+    if process == "рассмотрение":
+        return "Решить" if claim else "Рассмотреть"
+    return "Запрос"
+
+
+def format_action_theme(action: str, subject: str) -> str:
+    """Формат «Действие требуемое в письме: краткая тема» без тела и LLM-описания."""
+    cleaned = sanitize_theme(subject)
+    if cleaned == "Без темы":
+        return cleaned
+    action = (action or "Запрос").strip()
+    match = _ACTION_THEME_RE.match(cleaned)
+    if match and match.group(1).strip().lower() == action.lower():
+        return sanitize_theme(cleaned)
+    if match:
+        cleaned = match.group(2).strip()
+    return sanitize_theme(f"{action}: {cleaned}")
+
+
+def build_action_xml_theme(
+    subject: str,
+    *,
+    combined_text: str = "",
+    process_type: str = "",
+    claim: bool = False,
+    key_phrase: str = "",
+) -> str:
+    """Theme для XML/1С: префикс требуемого действия + subject, без тела письма."""
+    action = infer_theme_action(
+        subject,
+        combined_text,
+        process_type=process_type,
+        claim=claim,
+        key_phrase=key_phrase,
+    )
+    return format_action_theme(action, subject)
+
+
+def _subject_matches_theme_part(theme_part: str, subject: str) -> bool:
+    theme_part = sanitize_theme(theme_part)
+    subject_clean = sanitize_theme(subject)
+    if theme_part == "Без темы" or subject_clean == "Без темы":
+        return False
+    return theme_part.lower() == subject_clean.lower()
+
+
+def is_corrupted_theme(theme: str, subject: str) -> bool:
+    """Тема с телом письма, приклеенным к subject (старый баг)."""
+    cleaned = sanitize_theme(theme)
+    subject_clean = sanitize_theme(subject)
+    if cleaned == "Без темы" or subject_clean == "Без темы":
+        return False
+    match = _ACTION_THEME_RE.match(cleaned)
+    if match:
+        cleaned = match.group(2).strip()
+    if cleaned.startswith(subject_clean) and len(cleaned) > len(subject_clean) + 5:
+        rest = cleaned[len(subject_clean) :].strip()
+        return bool(rest) and not rest.startswith(":")
+    return False
+
+
+def resolve_document_theme(
+    email: EmailMessage,
+    *,
+    explicit_theme: str = "",
+    combined_text: str = "",
+    process_type: str = "",
+    claim: bool = False,
+) -> str:
+    """Единая тема для XML и OData: действие + subject, без тела письма."""
+    text = combined_text if combined_text is not None else (email.body_text or "")
+    explicit = sanitize_theme(explicit_theme)
+    if explicit != "Без темы" and not is_corrupted_theme(explicit, email.subject or ""):
+        match = _ACTION_THEME_RE.match(explicit)
+        if match and _subject_matches_theme_part(match.group(2), email.subject or ""):
+            return explicit
+    return build_action_xml_theme(
+        email.subject or "",
+        combined_text=text,
+        process_type=process_type,
+        claim=claim,
+    )
+
+
+def email_subject_theme(
+    email: EmailMessage,
+    *,
+    fallback: str = "",
+    combined_text: str = "",
+    process_type: str = "",
+    claim: bool = False,
+) -> str:
+    """Тема для XML/1С: действие + subject, без тела и LLM-описания."""
+    return build_action_xml_theme(
+        email.subject or fallback,
+        combined_text=combined_text or email.body_text or "",
+        process_type=process_type,
+        claim=claim,
+    )
+
+
+def build_subject_xml_theme(
+    subject: str,
+    *,
+    combined_text: str = "",
+    process_type: str = "",
+    claim: bool = False,
+) -> str:
+    """Theme для XML из subject: префикс действия без тела письма."""
+    return build_action_xml_theme(
+        subject,
+        combined_text=combined_text,
+        process_type=process_type,
+        claim=claim,
+    )
 
 
 def sanitize_theme(theme: str, *, max_len: int = _THEME_MAX_LEN) -> str:
@@ -119,15 +326,37 @@ def build_stub_xml_theme(subject: str, combined_text: str = "") -> str:
     return sanitize_theme(f"{description} - {key_phrase}")
 
 
-def normalize_xml_theme(raw: str, *, subject: str = "", combined_text: str = "") -> str:
-    """Нормализует xml_theme от LLM; при отсутствии « - » дополняет ключевой фразой."""
+def normalize_xml_theme(
+    raw: str,
+    *,
+    subject: str = "",
+    combined_text: str = "",
+    process_type: str = "",
+    claim: bool = False,
+) -> str:
+    """Нормализует xml_theme от LLM в формат «Действие требуемое: subject» без тела письма."""
     theme = sanitize_theme(raw)
     if theme == "Без темы":
-        return build_stub_xml_theme(subject, combined_text)
-    if " - " not in theme:
-        key_phrase = categorize_theme_key_phrase(subject or theme, combined_text)
-        theme = sanitize_theme(f"{theme} - {key_phrase}")
-    return theme
+        return build_action_xml_theme(
+            subject,
+            combined_text=combined_text,
+            process_type=process_type,
+            claim=claim,
+        )
+
+    key_phrase = ""
+    if " - " in theme:
+        _, key_phrase = theme.rsplit(" - ", 1)
+    elif _ACTION_THEME_RE.match(theme):
+        return theme
+
+    return build_action_xml_theme(
+        subject or theme,
+        combined_text=combined_text,
+        process_type=process_type,
+        claim=claim,
+        key_phrase=key_phrase or categorize_theme_key_phrase(subject, combined_text),
+    )
 
 
 def format_partner(partner: str | None) -> str:
@@ -183,6 +412,17 @@ def _ensure_service_routes(
     return services
 
 
+def _format_mail_datetime_for_xml(received_at: datetime) -> str:
+    """mail_datetime в XML: received_at (UTC) в Europe/Moscow без tz suffix."""
+    dt = received_at
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    msk = dt.astimezone(_MSK)
+    return msk.replace(tzinfo=None, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _service_title_block(service_code: str, department_name: str) -> str:
     title = (department_name or "").strip()
     if not title or title == service_code or _DEPT_CODE_RE.match(title):
@@ -217,17 +457,32 @@ def build_xml_document(
             "</service>"
         )
 
-    mail_dt = email.received_at.strftime("%Y-%m-%d %H:%M:%S")
-    theme = sanitize_theme(decision.theme or email.subject or "")
-    partner = format_partner(decision.partner)
-
-    organization = (decision.organization or "НП").strip() or "НП"
-    direction = (decision.direction or "КС").strip() or "КС"
+    mail_dt = _format_mail_datetime_for_xml(email.received_at)
     document_process = (
         (decision.process or "").strip()
         or (services[0].process if services else "")
         or "исполнение"
     )
+    if decision.theme:
+        theme = resolve_document_theme(
+            email,
+            explicit_theme=decision.theme,
+            process_type=document_process,
+            claim=decision.claim,
+        )
+    else:
+        theme = build_subject_xml_theme(
+            email.subject or "",
+            process_type=document_process,
+            claim=decision.claim,
+        )
+    partner = format_partner(decision.partner)
+
+    organization = (decision.organization or "НП").strip() or "НП"
+    direction = (decision.direction or DIRECTION_DEFAULT).strip() or DIRECTION_DEFAULT
+    dialog_block = ""
+    if decision.dialog_mode:
+        dialog_block = f"<dialog_mode>{_esc(decision.dialog_mode)}</dialog_mode>"
 
     return (
         "<document>"
@@ -241,6 +496,7 @@ def build_xml_document(
         f"<email_recipient>{_esc(recipient)}</email_recipient>"
         f"<mail_datetime>{mail_dt}</mail_datetime>"
         f"<process>{_esc(document_process)}</process>"
+        f"{dialog_block}"
         "</document>"
     )
 

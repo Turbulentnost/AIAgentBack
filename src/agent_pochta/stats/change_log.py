@@ -9,6 +9,10 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from agent_pochta.db.models import ChangeEventRow
+from agent_pochta.stats.classification_log import (
+    log_operator_department_event,
+    log_operator_spam_event,
+)
 from agent_pochta.db.session import get_session_factory
 
 EVENT_TYPES = frozenset(
@@ -54,6 +58,7 @@ def log_field_change(
     actor: str = "operator",
     source: str = "system",
     created_at: datetime | None = None,
+    force_changed: bool = False,
 ) -> ChangeEventRow | None:
     """Записывает одно событие изменения в change_events."""
     if event_type not in EVENT_TYPES:
@@ -75,7 +80,29 @@ def log_field_change(
     )
     session.add(row)
     session.flush()
+    if event_type in {"department_change", "routing_approve"}:
+        _mirror_department_to_classification(
+            session,
+            row=row,
+            force_changed=force_changed or event_type == "department_change",
+        )
     return row
+
+
+def _mirror_department_to_classification(session: Session, *, row: ChangeEventRow, force_changed: bool = False) -> None:
+    old_parts = str(row.old_value or "").split(" — ", 1)
+    new_parts = str(row.new_value or "").split(" — ", 1)
+    log_operator_department_event(
+        session,
+        message_id=row.message_id,
+        email_id=row.email_id,
+        original_department_id=old_parts[0] if old_parts else None,
+        original_department_name=old_parts[1] if len(old_parts) > 1 else None,
+        department_id=new_parts[0] if new_parts else "",
+        department_name=new_parts[1] if len(new_parts) > 1 else None,
+        source=row.source,
+        force_changed=force_changed or row.event_type == "department_change",
+    )
 
 
 def _log_with_optional_session(
@@ -105,13 +132,20 @@ def log_routing_correction(
     department_name: str | None = None,
     actor: str = "operator",
     source: str = "learning:routing",
+    force_changed: bool = False,
 ) -> ChangeEventRow | None:
-    """department_change или routing_approve по сравнению отделов."""
+    """department_change или routing_approve по сравнению отделов / ключевых полей."""
 
     def _write(db_session: Session) -> ChangeEventRow | None:
         old_dept = _normalize_value(original_department_id)
         new_dept = _normalize_value(department_id)
-        if old_dept and new_dept and old_dept != new_dept:
+        dept_changed = bool(old_dept and new_dept and old_dept != new_dept)
+        old_label = f"{original_department_id or department_id} — {original_department_name or department_name or ''}".strip(
+            " —"
+        )
+        new_label = f"{department_id} — {department_name or department_id}".strip(" —")
+
+        if dept_changed:
             return log_field_change(
                 db_session,
                 message_id=message_id,
@@ -119,22 +153,38 @@ def log_routing_correction(
                 event_type="department_change",
                 field="department_id",
                 old_value=f"{original_department_id} — {original_department_name or ''}".strip(" —"),
-                new_value=f"{department_id} — {department_name or department_id}".strip(" —"),
+                new_value=new_label,
                 actor=actor,
                 source=source,
+                force_changed=True,
             )
+
+        if force_changed:
+            # Отдел тот же, но partner/organization изменены — только classification_events.
+            log_operator_department_event(
+                db_session,
+                message_id=message_id,
+                email_id=email_id,
+                original_department_id=original_department_id,
+                original_department_name=original_department_name,
+                department_id=department_id,
+                department_name=department_name,
+                source=source,
+                force_changed=True,
+            )
+            return None
+
         return log_field_change(
             db_session,
             message_id=message_id,
             email_id=email_id,
             event_type="routing_approve",
             field="routing",
-            old_value=f"{original_department_id or department_id} — {original_department_name or department_name or ''}".strip(
-                " —"
-            ),
-            new_value=f"{department_id} — {department_name or department_id}".strip(" —"),
+            old_value=old_label,
+            new_value=new_label,
             actor=actor,
             source=source,
+            force_changed=False,
         )
 
     return _log_with_optional_session(session, _write, commit=session is None)
@@ -147,6 +197,7 @@ def log_spam_decision(
     email_id: uuid.UUID | None = None,
     decision: str,
     reason: str | None = None,
+    old_is_spam: bool | None = None,
     actor: str = "operator",
     source: str = "api:resolve-human",
 ) -> ChangeEventRow | None:
@@ -164,7 +215,7 @@ def log_spam_decision(
             event_type = "not_spam_mark"
             old_value, new_value = "spam", "not_spam"
 
-        return log_field_change(
+        row = log_field_change(
             db_session,
             message_id=message_id,
             email_id=email_id,
@@ -175,6 +226,17 @@ def log_spam_decision(
             actor=actor,
             source=source,
         )
+        if row is not None:
+            log_operator_spam_event(
+                db_session,
+                message_id=message_id,
+                email_id=email_id,
+                decision=decision,
+                reason=reason,
+                old_is_spam=old_is_spam,
+                source=source,
+            )
+        return row
 
     return _log_with_optional_session(session, _write, commit=session is None)
 
@@ -187,7 +249,7 @@ def log_restore_from_spam(
     actor: str = "operator",
     source: str = "api:restore-from-spam",
 ) -> ChangeEventRow | None:
-    return log_field_change(
+    row = log_field_change(
         session,
         message_id=message_id,
         email_id=email_id,
@@ -198,6 +260,17 @@ def log_restore_from_spam(
         actor=actor,
         source=source,
     )
+    if row is not None:
+        log_operator_spam_event(
+            session,
+            message_id=message_id,
+            email_id=email_id,
+            decision="mark_not_spam",
+            reason="восстановлено из спама",
+            old_is_spam=True,
+            source=source,
+        )
+    return row
 
 
 def log_department_resolution(
@@ -211,6 +284,7 @@ def log_department_resolution(
     department_name: str | None,
     actor: str = "operator",
     source: str = "api:resolve-human",
+    force_changed: bool = False,
 ) -> ChangeEventRow | None:
     return log_routing_correction(
         session,
@@ -222,6 +296,7 @@ def log_department_resolution(
         department_name=department_name,
         actor=actor,
         source=source,
+        force_changed=force_changed,
     )
 
 

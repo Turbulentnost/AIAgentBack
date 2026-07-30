@@ -11,6 +11,7 @@ import pytest
 from agent_pochta.routing.learning import (
     collect_department_learning_keywords,
     enrich_department_in_qdrant,
+    enrich_hitl_contractor_in_qdrant,
     learn_from_not_spam,
     learn_from_routing_correction,
     learn_from_spam_mark,
@@ -138,6 +139,20 @@ def test_learn_from_routing_correction_enriches_qdrant(
     assert append_mock.call_args.args[1] == "00-000002"
 
 
+def test_enrich_hitl_contractor_stub_skips(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("RAG_BACKEND", "stub")
+    from agent_pochta.config import reset_settings
+
+    reset_settings()
+    result = enrich_hitl_contractor_in_qdrant(
+        contractor_id="email:a@b.ru",
+        name="Partner",
+        email="a@b.ru",
+    )
+    assert result["upserted"] == 0
+    assert result["reason"] == "stub_backend"
+
+
 def test_enrich_department_in_qdrant_stub_backend(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("RAG_BACKEND", "stub")
     from agent_pochta.config import reset_settings
@@ -206,3 +221,30 @@ def test_learn_from_spam_mark_returns_qdrant_flag(
     assert result["spam_pattern_saved"] is True
     assert result["spam_pattern_id"]
     assert result["qdrant_synced"] is False
+
+
+def test_learn_from_spam_mark_syncs_qdrant(
+    learning_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SPAM_LEARNING_PATH", str(learning_file))
+    monkeypatch.setenv("RAG_BACKEND", "qdrant")
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
+    from agent_pochta.config import reset_settings
+
+    reset_settings()
+
+    with patch(
+        "agent_pochta.services.spam_learning_rag_qdrant.upsert_spam_learning_entry"
+    ) as upsert_mock:
+        result = learn_from_spam_mark(
+            message_id="<spam@example>",
+            sender_email="promo@spam-offers.xyz",
+            subject="Вебинар",
+            body="Рекламная рассылка",
+            spam_reason="Реклама",
+            path=learning_file,
+        )
+
+    assert result["qdrant_synced"] is True
+    upsert_mock.assert_called_once()

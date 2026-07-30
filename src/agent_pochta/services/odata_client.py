@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import httpx
 
@@ -44,6 +45,40 @@ class ODataClient:
                 url = urljoin(self._base_url, next_link) if next_link else None
         return rows
 
+    def fetch_filtered(
+        self,
+        entity: str,
+        *,
+        filter_expr: str,
+        page_size: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Читает записи сущности OData с $filter."""
+        entity = entity.strip("/")
+        filter_expr = (filter_expr or "").strip()
+        if not filter_expr:
+            return self.fetch_all(entity, page_size=page_size)
+        url: str | None = (
+            f"{self._base_url}{entity}?$format=json"
+            f"&$filter={quote(filter_expr, safe='')}"
+            f"&$top={page_size}"
+        )
+        rows: list[dict[str, Any]] = []
+
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            while url:
+                response = client.get(url)
+                response.raise_for_status()
+                payload = response.json()
+                batch = payload.get("value")
+                if batch is None and isinstance(payload, list):
+                    batch = payload
+                if not isinstance(batch, list):
+                    break
+                rows.extend(item for item in batch if isinstance(item, dict))
+                next_link = payload.get("@odata.nextLink") or payload.get("odata.nextLink")
+                url = urljoin(self._base_url, next_link) if next_link else None
+        return rows
+
     def create_entity(self, entity: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Создаёт запись сущности OData (POST). Возвращает тело ответа 1С."""
         entity = entity.strip("/")
@@ -54,8 +89,180 @@ class ODataClient:
                 json=payload,
                 headers={"Accept": "application/json", "Content-Type": "application/json"},
             )
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData POST {entity} failed ({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
             response.raise_for_status()
             data = response.json()
             if isinstance(data, dict):
                 return data
             raise ValueError(f"Unexpected OData POST response type: {type(data)!r}")
+
+    def get_by_key(self, entity: str, ref_key: str) -> dict[str, Any] | None:
+        """Читает одну запись по Ref_Key. None, если 404."""
+        entity = entity.strip("/")
+        key = (ref_key or "").strip()
+        if not key:
+            return None
+        url = f"{self._base_url}{entity}(guid'{key}')?$format=json"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.get(url, headers={"Accept": "application/json"})
+            if response.status_code == 404:
+                return None
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData GET {entity}(guid'{key}') failed ({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, dict) else None
+
+    def patch_entity(self, entity: str, ref_key: str, payload: dict[str, Any]) -> None:
+        """Обновляет запись OData (PATCH). Для документов 1С — If-Match: *."""
+        entity = entity.strip("/")
+        key = (ref_key or "").strip()
+        if not key:
+            raise ValueError("ref_key is required for OData PATCH")
+        url = f"{self._base_url}{entity}(guid'{key}')?$format=json"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.patch(
+                url,
+                json=payload,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "If-Match": "*",
+                },
+            )
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData PATCH {entity}(guid'{key}') failed ({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()
+
+    def delete_entity(self, entity: str, ref_key: str) -> None:
+        """Удаляет запись OData (DELETE). Для документов 1С — If-Match: *."""
+        entity = entity.strip("/")
+        key = (ref_key or "").strip()
+        if not key:
+            raise ValueError("ref_key is required for OData DELETE")
+        url = f"{self._base_url}{entity}(guid'{key}')"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.delete(url, headers={"If-Match": "*"})
+            if response.status_code == 404:
+                return
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData DELETE {entity}(guid'{key}') failed "
+                                f"({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()
+
+    def get_entity_stream(
+        self,
+        entity: str,
+        ref_key: str,
+        stream_property: str,
+    ) -> bytes:
+        """Читает двоичные данные из Edm.Stream-свойства сущности OData (GET)."""
+        entity = entity.strip("/")
+        stream_property = stream_property.strip()
+        key = (ref_key or "").strip()
+        if not key:
+            raise ValueError("ref_key is required for OData stream GET")
+        url = f"{self._base_url}{entity}(guid'{key}')/{stream_property}"
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.get(url)
+            if response.status_code == 404:
+                return b""
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData GET stream {entity}/{stream_property} failed "
+                                f"({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()
+            return response.content or b""
+
+    def put_entity_stream(
+        self,
+        entity: str,
+        ref_key: str,
+        stream_property: str,
+        content: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        if_match: str | None = "*",
+    ) -> None:
+        """Записывает двоичные данные в Edm.Stream-свойство сущности OData (PUT)."""
+        entity = entity.strip("/")
+        stream_property = stream_property.strip()
+        key = (ref_key or "").strip()
+        if not key:
+            raise ValueError("ref_key is required for OData stream PUT")
+        if not content:
+            raise ValueError("stream content is empty")
+        url = f"{self._base_url}{entity}(guid'{key}')/{stream_property}"
+        headers: dict[str, str] = {"Content-Type": content_type}
+        if if_match:
+            headers["If-Match"] = if_match
+        with httpx.Client(timeout=self._timeout, auth=self._auth) as client:
+            response = client.put(
+                url,
+                content=content,
+                headers=headers,
+            )
+            if response.status_code >= 400:
+                try:
+                    err_body = response.json()
+                    odata_err = err_body.get("odata.error") if isinstance(err_body, dict) else None
+                    if isinstance(odata_err, dict):
+                        msg = (odata_err.get("message") or {}).get("value")
+                        if msg:
+                            raise ValueError(
+                                f"OData PUT stream {entity}/{stream_property} failed "
+                                f"({response.status_code}): {msg}"
+                            )
+                except json.JSONDecodeError:
+                    pass
+            response.raise_for_status()

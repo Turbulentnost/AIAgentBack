@@ -45,10 +45,10 @@ def contains_claim_marker(text: str) -> bool:
     if re.search(r"(?<![а-яёa-z0-9])суд(?![а-яёa-z0-9])", normalized):
         return True
 
-    if "претенз" in normalized and not re.search(r"без претенз", normalized):
+    if "претенз" in normalized and not re.search(r"без(?:\s+\w+){0,4}\s+претенз", normalized):
         return True
 
-    if "требован" in normalized and not re.search(r"без требован", normalized):
+    if "требован" in normalized and not re.search(r"без(?:\s+\w+){0,4}\s+требован", normalized):
         return True
 
     return False

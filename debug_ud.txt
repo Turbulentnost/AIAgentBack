@@ -1,0 +1,4 @@
+agent storage: 'ВИнформационнойБазе'
+other storage: 'ВТомахНаДиске'
+other volume: 21886495-364e-11ea-82f2-ac1f6b05524c
+other path: 20180417\МГ00-0056.msg

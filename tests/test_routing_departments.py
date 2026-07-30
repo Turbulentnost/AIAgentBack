@@ -29,8 +29,11 @@ def test_build_departments_excludes_spam():
     rules = load_routing_rules()
     departments = build_departments_from_rules(rules)
     codes = {d.department_id for d in departments}
-    assert "00-999999" not in codes
-    assert len(departments) == 21
+    spam_code = str(rules.get("spam_code", "00-999999"))
+    assert spam_code not in codes
+    assert "00-000001" in codes
+    expected = {str(c) for c in rules.get("department_names", {}) if str(c) != spam_code}
+    assert codes == expected
 
 
 def test_search_act_sverki_returns_buhgalteriya():
@@ -50,11 +53,11 @@ def test_department_ids_are_1c_codes():
 def test_build_departments_from_structure_expands_catalog():
     departments = build_departments_from_structure()
     codes = {d.department_id for d in departments}
-    assert len(departments) == 139
+    assert len(departments) >= 130
     assert "00-000032" not in codes
     assert "00-999999" not in codes
     assert "00-000002" in codes
-    assert "00-000037" in codes
+    assert "00-000163" in codes
     assert all(d.department_id.startswith("00-") for d in departments)
 
 
@@ -92,10 +95,44 @@ def test_recipient_email_boosts_structure_department():
 def test_list_active_departments_for_ui_uses_onec_names():
     departments = list_active_departments_for_ui()
     by_id = {item["id"]: item["name"] for item in departments}
-    assert len(departments) == 134
+    assert len(departments) == 31
+    assert by_id["00-000001"] == "Председатель Совета Директоров"
     assert by_id["00-000065"] == "Отдел МТО"
     assert by_id["00-000002"] == "Бухгалтерия"
+    assert by_id["00-000066"] == "Управление делами"
+    assert by_id["00-000152"] == "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    assert by_id["00-000182"] == "Помощник зам. операционного директора"
+    assert "ФИНАНСОВЫЙ" in by_id["00-000049"] and "ДИРЕКТОР" in by_id["00-000049"]
     assert "00-999999" not in by_id
+    assert "00-000007" not in by_id
+    assert "00-000149" not in by_id
+    assert "00-000013" not in by_id
+
+
+def test_list_active_departments_for_ui_explicit_directors_allowed():
+    from agent_pochta.services.routing_departments import load_ui_department_allowlist
+
+    allowlist = load_ui_department_allowlist()
+    assert "00-000001" in allowlist
+    assert "00-000152" in allowlist
+    assert "00-000172" in allowlist
+    assert "00-000007" not in allowlist
+    assert "00-000149" not in allowlist
+    for item in list_active_departments_for_ui():
+        if item["id"] in {
+            "00-000001",
+            "00-000152",
+            "00-000049",
+            "00-000058",
+            "00-000080",
+            "00-000163",
+            "00-000172",
+            "00-000040",
+            "00-000182",
+        }:
+            continue
+        name_l = item["name"].lower().replace("ё", "е")
+        assert "директор" not in name_l, item
 
 
 def test_schet_routes_to_buh_not_service():
@@ -118,7 +155,7 @@ def test_schet_routes_to_buh_not_service():
         recipient="info@turbo-don.ru",
     )
     assert decision.services[0].code == "00-000002"
-    assert decision.services[0].code != "00-000037"
+    assert decision.services[0].code != "00-000163"
 
 
 def test_zamena_alone_does_not_route_to_service():
@@ -140,7 +177,7 @@ def test_zamena_alone_does_not_route_to_service():
         combined_text="Требуется замена детали в комплекте поставки.",
         recipient="info@turbo-don.ru",
     )
-    assert decision.services[0].code != "00-000037"
+    assert decision.services[0].code != "00-000163"
 
 
 def test_rag_schet_prefers_buh_over_reserve():

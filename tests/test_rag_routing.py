@@ -52,6 +52,8 @@ def test_needs_rag_fallback_skipped_for_exact_email():
 
 def test_rag_fallback_picks_department_from_keywords(monkeypatch):
     monkeypatch.setenv("RAG_DEPARTMENT_ENABLED", "true")
+    monkeypatch.setenv("RAG_BACKEND", "stub")
+    monkeypatch.setenv("USE_STUBS", "true")
     from agent_pochta.config import reset_settings
 
     reset_settings()
@@ -66,7 +68,7 @@ def test_rag_fallback_picks_department_from_keywords(monkeypatch):
         }
     )
     assert "route_department_rag" in res["trace"]
-    assert res["routing"].department_id == "SALES"
+    assert res["routing"].department_id == "00-000155"
     assert (res.get("meta") or {}).get("rag_fallback") is True
 
 
@@ -74,32 +76,36 @@ def test_rag_respects_sender_allowed_departments(monkeypatch):
     monkeypatch.setenv("RAG_DEPARTMENT_ENABLED", "true")
     from agent_pochta.config import reset_settings
     from agent_pochta.schemas import Contractor, SenderIdentity
+    from agent_pochta.services.rag import StubRAGService
 
     reset_settings()
     container = build_container()
+    container.rag = StubRAGService()
+    # keyword StubRAG: «претензия» (не «претензию» — substring match)
+    body = "Направляем претензия по срокам поставки и требование от госоргана."
     state = {
         "email": _email(
-            subject="Претензия",
-            body_text="Направляем претензию по срокам поставки.",
+            subject="Обращение",
+            body_text=body,
         ),
-        "combined_text": "Направляем претензию по срокам поставки.",
+        "combined_text": body,
         "sender": SenderIdentity(
             found=True,
             contractor=Contractor(
                 contractor_id="C-GOV-01",
                 name="ИФНС",
                 emails=["info@nalog.gov.ru"],
-                department_codes=["LEGAL"],
+                department_codes=["00-000044"],
                 contractor_type="госорган",
             ),
-            allowed_departments=["LEGAL"],
+            allowed_departments=["00-000044"],
         ),
         "trace": [],
     }
     from agent_pochta.nodes.n5_route_department import node_route_department
 
     res = node_route_department(state, container)
-    assert res["routing"].department_id == "LEGAL"
+    assert res["routing"].department_id == "00-000044"
     assert "route_department_rag" in res["trace"]
 
 
@@ -175,6 +181,42 @@ def test_rag_search_prefers_recipient_local_part():
     assert with_recipient > opmu_with_jurist_recipient
 
 
+def test_score_ignores_hyphen_and_stopword_keywords():
+    """Substring-matching «-» / «и» / «info» / «turbo» не должен поднимать отделы на каждом @turbo-don.ru."""
+    from agent_pochta.schemas import Department
+    from agent_pochta.services.rag import score_department_keywords
+
+    noisy = Department(
+        department_id="NOISE",
+        department_name="Шум",
+        head_name="—",
+        responsibility="",
+        keywords=["-", "и", "по", "info", "на", "turbo", "омто"],
+    )
+    clean = Department(
+        department_id="CLEAN",
+        department_name="Чистый",
+        head_name="—",
+        responsibility="",
+        keywords=["акт сверки", "бухгалтерия"],
+    )
+    text = build_routing_search_text(
+        recipient="info@turbo-don.ru",
+        subject="Вопрос",
+        body="Добрый день.",
+    )
+    assert score_department_keywords(noisy, text, recipient="info@turbo-don.ru") == 0
+    assert score_department_keywords(clean, text, recipient="info@turbo-don.ru") == 0
+    assert (
+        score_department_keywords(
+            clean,
+            "Просьба прислать акт сверки.",
+            recipient="info@turbo-don.ru",
+        )
+        >= 1
+    )
+
+
 def test_rag_fallback_routes_by_recipient_when_body_generic(monkeypatch):
     from agent_pochta.schemas import Department
     from agent_pochta.services.rag import score_department_keywords
@@ -191,7 +233,7 @@ def test_rag_fallback_routes_by_recipient_when_body_generic(monkeypatch):
                 for d in self._departments.values()
             ]
             scored.sort(key=lambda item: item[0], reverse=True)
-            ranked = [dept for score, dept in scored if score > 0] or [dept for _, dept in scored]
+            ranked = [dept for score, dept in scored if score > 0]
             return ranked[:top_k]
 
         def find_contractor_by_email(self, email):  # noqa: ARG002
@@ -210,3 +252,31 @@ def test_rag_fallback_routes_by_recipient_when_body_generic(monkeypatch):
         subject="Вопрос",
     )
     assert candidates[0]["department_id"] == "00-000074"
+    assert all("head_name" not in c for c in candidates)
+    assert all({"department_id", "department_name"} <= set(c) for c in candidates)
+
+
+def test_llm_zero_dept_confidence_falls_back_to_rule_score():
+    from agent_pochta.nodes.n5_route_department import _with_fallback_confidence
+    from agent_pochta.schemas import RoutingResult
+
+    llm = RoutingResult(
+        department_id="00-000065",
+        department_name="ОМТО",
+        confidence=0.0,
+        reasoning="LLM без score",
+    )
+    rules = RoutingResult(
+        department_id="00-000066",
+        department_name="Резерв",
+        confidence=0.45,
+        reasoning="rule",
+    )
+    merged = _with_fallback_confidence(
+        llm,
+        fallback=rules,
+        decision_score=45,
+        decision_level=ConfidenceLevel.LOW,
+    )
+    assert merged.department_id == "00-000065"
+    assert merged.confidence == pytest.approx(0.45)

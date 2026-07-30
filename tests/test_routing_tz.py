@@ -9,7 +9,13 @@ import pytest
 from agent_pochta.graph import build_graph
 from agent_pochta.routing import RouteEngine, route_email
 from agent_pochta.routing.models import ConfidenceLevel
-from agent_pochta.routing.recipients import routing_message_id, split_routing_recipients
+from agent_pochta.routing.organizations import DIRECTION_UNCLEAR
+from agent_pochta.routing.recipients import (
+    normalize_routing_email,
+    parse_routing_message_id,
+    routing_message_id,
+    split_routing_recipients,
+)
 from agent_pochta.routing.xml_builder import validate_xml_document
 from agent_pochta.schemas import EmailMessage, ProcessingStatus
 
@@ -40,7 +46,7 @@ def test_t01_exact_tender_email(engine):
         engine=engine,
     )
     assert decision.services[0].code == "00-000054"
-    assert decision.direction == "КС"
+    assert decision.direction == "ПР"
     assert decision.confidence_level in {ConfidenceLevel.HIGH, ConfidenceLevel.MEDIUM}
     assert decision.xml_document
     assert validate_xml_document(decision.xml_document)
@@ -63,8 +69,14 @@ def test_t03_info_mailbox_tkp_by_content(engine):
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code != "00-000066" or decision.match_source == "content"
-    assert "ткп" in " ".join(decision.matching_keywords).lower() or decision.match_source == "content"
+    assert decision.services[0].code != "00-000066"
+    assert decision.match_source in {
+        "content",
+        "det_sales_industrial",
+        "det_sales_orkk_request",
+        "sales_odp",
+        "sales_orkk",
+    }
 
 
 def test_t04_noreply_spam():
@@ -112,6 +124,7 @@ def test_t07_legal_claim(engine):
     )
     assert decision.services[0].code == "00-000044"
     assert decision.claim is True
+    assert decision.direction == DIRECTION_UNCLEAR
 
 
 def test_t08_service_repair(engine):
@@ -121,7 +134,7 @@ def test_t08_service_repair(engine):
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000037"
+    assert decision.services[0].code == "00-000163"
     assert decision.direction == "СС"
 
 
@@ -143,7 +156,8 @@ def test_t10_bmi_direction(engine):
         engine=engine,
     )
     assert decision.direction == "БМ"
-    assert decision.services[0].code == "00-000109"
+    assert decision.services[0].code == "00-000163"
+    assert decision.match_source == "det_product_bmi_equipment"
 
 
 def test_t11_orkk_holding(engine):
@@ -153,7 +167,7 @@ def test_t11_orkk_holding(engine):
         recipient="info@turbo-don.ru",
         engine=engine,
     )
-    assert decision.services[0].code == "00-000076"
+    assert decision.services[0].code == "00-000042"
 
 
 def test_t13_multiple_recipients():
@@ -181,6 +195,22 @@ def test_split_routing_recipients_to_only_when_cc_duplicates_to():
         cc=["tender@turbo-don.ru"],
     )
     assert split_routing_recipients(email) == ["tender@turbo-don.ru"]
+
+
+def test_parse_routing_message_id_strips_duplicate_suffix():
+    base = "<msg@test>"
+    double = f"{base}#tender@turbo-don.ru#tender@turbo-don.ru"
+    assert parse_routing_message_id(double) == (base, "tender@turbo-don.ru")
+    assert parse_routing_message_id(f"{base}#tender@turbo-don.ru") == (base, "tender@turbo-don.ru")
+    assert parse_routing_message_id(base) == (base, None)
+
+
+def test_normalize_routing_email_from_composite_id():
+    email = _email(message_id="<msg@test>#tender@turbo-don.ru#tender@turbo-don.ru")
+    normalized = normalize_routing_email(email)
+    assert normalized.message_id == "<msg@test>"
+    assert normalized.routing_recipient == "tender@turbo-don.ru"
+    assert routing_message_id(normalized.message_id, "tender@turbo-don.ru") == "<msg@test>#tender@turbo-don.ru"
 
 
 def test_t14_low_confidence_reserve(engine):

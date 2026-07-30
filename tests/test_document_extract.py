@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from agent_pochta.schemas import Attachment
+from agent_pochta.attachments.extract import extract_pdf
 from agent_pochta.services.document_extract import (
     extract_attachment_text,
     extract_plain_text,
@@ -68,6 +69,55 @@ def test_local_document_service_pdf():
     assert result.ocr_used is False
 
 
+def test_extract_pdf_text_layer_skips_ocr(monkeypatch):
+    pymupdf = pytest.importorskip("fitz")
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Invoice 4521 payment required")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    def fail_ocr(*args, **kwargs):
+        raise AssertionError("OCR should not be called for text-layer PDF")
+
+    monkeypatch.setattr(
+        "agent_pochta.attachments.extract._ocr_pil_image",
+        fail_ocr,
+    )
+
+    text, ocr_used = extract_pdf(pdf_bytes)
+    assert ocr_used is False
+    assert "4521" in text
+
+
+def test_extract_pdf_ocr_fallback_when_no_text_layer(monkeypatch):
+    pymupdf = pytest.importorskip("fitz")
+    doc = pymupdf.open()
+    doc.new_page()
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    monkeypatch.setattr(
+        "agent_pochta.attachments.extract._ocr_pil_image",
+        lambda image: "Сканированный счёт № 12345",
+    )
+
+    text, ocr_used = extract_pdf(pdf_bytes)
+    assert ocr_used is True
+    assert "12345" in text
+
+    att = Attachment(
+        filename="scan.pdf",
+        mime_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+        content=pdf_bytes,
+    )
+    attachment_text, attachment_ocr = extract_attachment_text(att, max_chars=1000)
+    assert attachment_ocr is True
+    assert attachment_text is not None
+    assert "12345" in attachment_text
+
+
 def test_local_document_service_docx():
     pytest.importorskip("docx")
     from docx import Document
@@ -129,4 +179,5 @@ def test_process_content_includes_attachment_in_combined_text():
     state = node_process_content({"email": email, "trace": []}, container=container)
     combined = state["combined_text"]
     assert "согласование договора" in combined
-    assert "[Вложение dogovor.txt]" in combined
+    assert "=== ВЛОЖЕНИЯ (1) — извлечённый текст ===" in combined
+    assert "--- dogovor.txt (text/plain) ---" in combined

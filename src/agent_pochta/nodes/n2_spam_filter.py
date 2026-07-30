@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from agent_pochta.config import get_settings
+from agent_pochta.rules.ministry_not_spam import check_ministry_not_spam
 from agent_pochta.rules.spam_learning import check_learned_spam_decision
 from agent_pochta.rules.spam_rules import check_rule_spam
 from agent_pochta.rules.spam_context import trusted_sender_pass
@@ -23,6 +24,12 @@ def node_spam_filter(state: AgentState, container: ServiceContainer) -> AgentSta
 
     if meta.get("restored_from_spam"):
         return {"trace": trace + ["restored_from_spam_skip"]}
+    if meta.get("reanalyze"):
+        return {"trace": trace + ["reanalyze_skip"]}
+
+    ministry_pass = check_ministry_not_spam(state["email"])
+    if ministry_pass is not None:
+        return {"spam": ministry_pass, "trace": trace + ["ministry_not_spam"]}
 
     rule_result = check_rule_spam(state["email"])
     if rule_result is not None:

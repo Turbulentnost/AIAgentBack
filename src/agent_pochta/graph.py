@@ -5,7 +5,8 @@
   spam_filter   ─ SPAM → finalize
                 └ иначе → identify_sender → process_content → route_department
   route_department — RuleRouter; при низкой уверенности RAG departments + LLM
-                   ─ SPAM / серая зона / низкая уверенность → finalize
+                   ─ SPAM / серая зона / низкая уверенность / Диалог (dormant) → finalize
+                   ─ skip_erp (G.1, 2-я очередь без обязательства) → finalize
                    └ ок → create_erp_task → finalize
 """
 
@@ -30,7 +31,16 @@ def _route_after_spam(state: AgentState) -> str:
 
 def _route_after_department(state: AgentState) -> str:
     status = state.get("status")
-    if status in (ProcessingStatus.SPAM, ProcessingStatus.AWAITING_HUMAN):
+    if status in (
+        ProcessingStatus.SPAM,
+        ProcessingStatus.AWAITING_HUMAN,
+        ProcessingStatus.DIALOG,
+    ):
+        return "finalize"
+    routing = state.get("routing")
+    meta = state.get("meta") or {}
+    # G.1: 2-я очередь учётных без обязательства — не создавать входящую в 1С ERP.
+    if meta.get("skip_erp") or (routing is not None and not routing.register_erp):
         return "finalize"
     return "create_erp_task"
 
