@@ -3451,6 +3451,16 @@ class ProcurementOrchestratorService:
             if spec.agent_id == WAREHOUSE_PICKER_AGENT_ID
             else "начальника складского комплекса"
         )
+        if metadata.get(spec.key("auto_archived_reason")) == (
+            "tmc_presentation_journal_full"
+        ) or (
+            metadata.get(spec.key("workspace_archived_at"))
+            and metadata.get("otk_handed_off_at")
+        ):
+            return (
+                "success",
+                "Передано ОТК по журналу предъявления ТМЦ.",
+            )
         if (
             coverage_status == "full"
             or metadata.get(spec.key("auto_archived_reason"))
@@ -3459,8 +3469,8 @@ class ProcurementOrchestratorService:
         ):
             return (
                 "success",
-                f"Работа {actor} завершена: все позиции перекрыты "
-                "и переданы менеджеру по закупкам.",
+                f"Работа {actor} завершена: все позиции перекрыты; "
+                "контроль исполнения закупок и перемещений у менеджера по закупкам.",
             )
         if (
             coverage_status == "partial"
@@ -3488,13 +3498,21 @@ class ProcurementOrchestratorService:
             return str(archived_bucket), str(closed_label)
         archived_bucket = metadata.get(spec.key("archived_bucket"))
         if archived_bucket in {"success", "attention", "critical"}:
+            if metadata.get(spec.key("auto_archived_reason")) == (
+                "tmc_presentation_journal_full"
+            ):
+                return (
+                    "success",
+                    "Передано ОТК по журналу предъявления ТМЦ.",
+                )
             if (
                 metadata.get(spec.key("auto_archived_reason"))
                 in {"all_positions_in_supplier_orders", "all_positions_covered"}
             ):
                 return (
                     "success",
-                    f"Работа {actor} завершена: все позиции переданы менеджеру по закупкам.",
+                    f"Работа {actor} завершена: все позиции перекрыты; "
+                    "контроль исполнения закупок и перемещений у менеджера по закупкам.",
                 )
             return str(archived_bucket), "Состояние сохранено при передаче начальнику ОМТО."
         result = case.latest_result or {}

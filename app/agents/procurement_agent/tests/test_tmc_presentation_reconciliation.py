@@ -21,10 +21,54 @@ from app.models.procurement import (
 from app.services.tmc_presentation_reconciliation_service import (
     TmcPresentationReconciliationService,
     build_otk_presentations_for_case,
+    purchased_positions_covered_by_tmc,
 )
 
 
-def _case(*, coverage_status: str = "full") -> ProcurementCase:
+def _case(
+    *,
+    coverage_status: str = "full",
+    positions: list[dict] | None = None,
+    picker_completed: bool = False,
+) -> ProcurementCase:
+    coverage_positions = positions or [
+        {
+            "nomenclature_id": "nom-1",
+            "nomenclature_name": "Позиция 1",
+            "purchasing": True,
+            "coverage_source": "supplier_order",
+            "supplier_orders": [
+                {
+                    "supplier_order_1c_ref": (
+                        "22222222-2222-2222-2222-222222222222"
+                    )
+                }
+            ],
+        }
+    ]
+    metadata = {
+        "purchase_manager_invoked_at": datetime.now(UTC).isoformat(),
+        "purchase_manager_workspace_status": "awaiting_action",
+        "picker_invoked_at": datetime.now(UTC).isoformat(),
+        "supplier_order_coverage": {
+            "coverage_status": coverage_status,
+            "positions": coverage_positions,
+        },
+        "material_order_coverage": {
+            "coverage_status": coverage_status,
+            "positions": coverage_positions,
+        },
+    }
+    if picker_completed:
+        metadata.update(
+            {
+                "picker_workspace_status": "completed",
+                "picker_archived_bucket": "success",
+                "picker_auto_archived_reason": "all_positions_covered",
+                "picker_coverage_completed_at": datetime.now(UTC).isoformat(),
+                "picker_procurement_status": "covered",
+            }
+        )
     case = ProcurementCase(
         id=uuid.uuid4(),
         correlation_id="tmc-reconciliation-test",
@@ -37,20 +81,7 @@ def _case(*, coverage_status: str = "full") -> ProcurementCase:
         current_agent_id=PURCHASE_MANAGER_AGENT_ID,
         requested_operation="monitor_supplier_orders",
         idempotency_key="tmc-reconciliation-test",
-        case_metadata={
-            "purchase_manager_invoked_at": datetime.now(UTC).isoformat(),
-            "purchase_manager_workspace_status": "awaiting_action",
-            "supplier_order_coverage": {
-                "coverage_status": coverage_status,
-                "positions": [
-                    {
-                        "nomenclature_id": "nom-1",
-                        "nomenclature_name": "Позиция 1",
-                        "purchasing": True,
-                    }
-                ],
-            },
-        },
+        case_metadata=metadata,
     )
     case.positions = [
         ProcurementCasePosition(
@@ -142,7 +173,7 @@ async def test_partial_journal_starts_otk_keeps_purchase_manager() -> None:
 
 @pytest.mark.asyncio
 async def test_full_journal_handoff_to_otk_keeps_picker_on_partial_coverage() -> None:
-    case = _case(coverage_status="partial")
+    case = _case(coverage_status="partial", picker_completed=False)
     case.assigned_agents = [WAREHOUSE_PICKER_AGENT_ID, PURCHASE_MANAGER_AGENT_ID]
     db = AsyncMock()
     db.get = AsyncMock(return_value=None)
@@ -166,6 +197,105 @@ async def test_full_journal_handoff_to_otk_keeps_picker_on_partial_coverage() ->
     assert PURCHASE_MANAGER_AGENT_ID not in (case.assigned_agents or [])
     assert QUALITY_ENGINEER_AGENT_ID in (case.assigned_agents or [])
     assert len(case.case_metadata["otk_presentations"]) == 2
+    assert not case.case_metadata.get("picker_workspace_archived_at")
+
+
+@pytest.mark.asyncio
+async def test_full_journal_archives_picker_workspace() -> None:
+    case = _case(coverage_status="full", picker_completed=True)
+    case.assigned_agents = [PURCHASE_MANAGER_AGENT_ID]
+    # One supplier-order link is enough when positions reference it.
+    case.supplier_order_links = case.supplier_order_links[:1]
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    svc = TmcPresentationReconciliationService(db, enqueue_case=False)
+    svc._append_event = AsyncMock()  # type: ignore[method-assign]
+    journal = {
+        "22222222-2222-2222-2222-222222222222": _journal(
+            "22222222-2222-2222-2222-222222222222", "000026462"
+        ),
+    }
+    result = await svc._apply_case(case, journal)
+    assert result["handed_off"] is True
+    assert case.case_metadata["otk_handed_off_at"]
+    assert case.case_metadata["picker_workspace_status"] == "archived"
+    assert case.case_metadata.get("picker_workspace_archived_at")
+    assert case.case_metadata["picker_archived_bucket"] == "success"
+    assert case.case_metadata["picker_auto_archived_reason"] == (
+        "tmc_presentation_journal_full"
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_journal_keeps_picker_in_success_completed() -> None:
+    case = _case(coverage_status="full", picker_completed=True)
+    case.assigned_agents = [PURCHASE_MANAGER_AGENT_ID]
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    svc = TmcPresentationReconciliationService(db, enqueue_case=False)
+    svc._append_event = AsyncMock()  # type: ignore[method-assign]
+    journal = {
+        "22222222-2222-2222-2222-222222222222": _journal(
+            "22222222-2222-2222-2222-222222222222", "000026462"
+        ),
+    }
+    result = await svc._apply_case(case, journal)
+    assert result["handed_off"] is False
+    assert case.case_metadata["tmc_presentation_coverage"]["status"] == "partial"
+    assert case.case_metadata["picker_workspace_status"] == "completed"
+    assert not case.case_metadata.get("picker_workspace_archived_at")
+
+
+def test_transfer_only_position_does_not_block_tmc_coverage() -> None:
+    metadata = {
+        "material_order_coverage": {
+            "coverage_status": "full",
+            "positions": [
+                {
+                    "nomenclature_id": "nom-buy",
+                    "purchasing": True,
+                    "coverage_source": "supplier_order",
+                    "supplier_orders": [
+                        {
+                            "supplier_order_1c_ref": (
+                                "22222222-2222-2222-2222-222222222222"
+                            )
+                        }
+                    ],
+                },
+                {
+                    "nomenclature_id": "nom-transfer",
+                    "purchasing": False,
+                    "transferring": True,
+                    "coverage_source": "transfer_order",
+                },
+            ],
+        }
+    }
+    journal = {
+        "22222222-2222-2222-2222-222222222222": _journal(
+            "22222222-2222-2222-2222-222222222222", "000026462"
+        )
+    }
+    # Journal line is nom-1 in helper — override for this check.
+    journal["22222222-2222-2222-2222-222222222222"]["lines"] = [
+        {"nomenclatureRef": "nom-buy", "quantity": 1}
+    ]
+    assert (
+        purchased_positions_covered_by_tmc(
+            metadata,
+            journal_by_order=journal,
+            order_rows=[
+                {
+                    "supplier_order_1c_ref": (
+                        "22222222-2222-2222-2222-222222222222"
+                    ),
+                    "found": True,
+                }
+            ],
+        )
+        is True
+    )
 
 
 def test_build_otk_presentations_maps_journal_fields() -> None:

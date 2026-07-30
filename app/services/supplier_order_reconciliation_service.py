@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -37,9 +37,13 @@ from app.models.procurement import (
     ProcurementSupplierOrderLink,
 )
 from app.models.task import Task
-from app.services.material_order_coverage import (
-    COVERAGE_ARCHIVE_AFTER_DAYS,
-    build_material_order_coverage,
+from app.services.material_order_coverage import build_material_order_coverage
+
+_PREMATURE_ARCHIVE_REASONS = frozenset(
+    {
+        "all_positions_covered",
+        "all_positions_in_supplier_orders",
+    }
 )
 
 
@@ -187,7 +191,7 @@ class SupplierOrderReconciliationService:
                     metadata["last_actualized_at"] = datetime.now(UTC).isoformat()
                     case.case_metadata = metadata
                     flag_modified(case, "case_metadata")
-                    await self._archive_completed_workspace_if_due(case)
+                    self._repair_premature_warehouse_archive(case)
                     changed += 1
                     continue
                 case_orders = [
@@ -252,9 +256,17 @@ class SupplierOrderReconciliationService:
                     ]
                 if await self._apply_case(case, case_orders, case_transfers):
                     changed += 1
-                if await self._archive_completed_workspace_if_due(case):
+                elif self._repair_premature_warehouse_archive(case):
                     changed += 1
         await self.db.flush()
+        try:
+            from app.agents.procurement_manager_agent.service import (
+                invalidate_allocation_cache,
+            )
+
+            invalidate_allocation_cache()
+        except Exception:
+            pass
         return {
             "status": "partial" if errors else "success",
             "cases_seen": len(cases),
@@ -675,15 +687,35 @@ class SupplierOrderReconciliationService:
             metadata[availability_spec.output_key] = updated_output
 
         if availability_spec is not None and coverage_status == "full":
-            # Complete the role workspace now; archive it only after seven days.
-            if metadata.get(availability_spec.key("workspace_archived_at")):
+            # Keep the warehouse role in «Успешные» until TMC journal / OTK handoff.
+            tmc = (
+                metadata.get("tmc_presentation_coverage")
+                if isinstance(metadata.get("tmc_presentation_coverage"), dict)
+                else {}
+            )
+            archived_by_tmc = (
+                metadata.get("otk_handed_off_at")
+                or _text(tmc.get("status")) == "full"
+                or metadata.get(availability_spec.key("auto_archived_reason"))
+                == "tmc_presentation_journal_full"
+            )
+            if archived_by_tmc and metadata.get(
+                availability_spec.key("workspace_archived_at")
+            ):
                 metadata[availability_spec.key("workspace_status")] = "archived"
             else:
                 metadata[availability_spec.key("workspace_status")] = "completed"
+                reason = metadata.get(availability_spec.key("auto_archived_reason"))
+                if (
+                    metadata.get(availability_spec.key("workspace_archived_at"))
+                    and reason in _PREMATURE_ARCHIVE_REASONS
+                ):
+                    metadata.pop(availability_spec.key("workspace_archived_at"), None)
             metadata[availability_spec.key("archived_bucket")] = "success"
-            metadata[availability_spec.key("auto_archived_reason")] = (
-                "all_positions_covered"
-            )
+            if not archived_by_tmc:
+                metadata[availability_spec.key("auto_archived_reason")] = (
+                    "all_positions_covered"
+                )
             metadata[availability_spec.key("procurement_status")] = "covered"
             metadata.setdefault(
                 availability_spec.key("coverage_completed_at"),
@@ -791,43 +823,39 @@ class SupplierOrderReconciliationService:
             )
         return True
 
-    async def _archive_completed_workspace_if_due(
-        self,
-        case: ProcurementCase,
-        *,
-        now: datetime | None = None,
-    ) -> bool:
+    def _repair_premature_warehouse_archive(self, case: ProcurementCase) -> bool:
+        """Undo legacy archive-on-coverage / 7-day archive before TMC/OTK."""
         spec = self._availability_spec_for_case(case)
         if spec is None:
             return False
         metadata = dict(case.case_metadata or {})
-        completed_at = _parse_datetime(
-            metadata.get(spec.key("coverage_completed_at"))
-        )
-        if (
-            completed_at is None
-            or metadata.get(spec.key("workspace_archived_at"))
-            or (now or datetime.now(UTC))
-            < completed_at + timedelta(days=COVERAGE_ARCHIVE_AFTER_DAYS)
+        if not metadata.get(spec.key("workspace_archived_at")):
+            return False
+        reason = _text(metadata.get(spec.key("auto_archived_reason")))
+        if reason == "tmc_presentation_journal_full" or metadata.get(
+            "otk_handed_off_at"
         ):
             return False
-        archived_at = now or datetime.now(UTC)
-        metadata[spec.key("workspace_status")] = "archived"
-        metadata[spec.key("workspace_archived_at")] = archived_at.isoformat()
-        metadata[spec.key("archived_bucket")] = "success"
-        case.case_metadata = metadata
-        await self._append_event(
-            case,
-            event_type=spec.auto_archive_event,
-            idempotency_key=(
-                f"{spec.prefix}-workspace-archived:{case.id}:"
-                f"{completed_at.isoformat()}"
-            )[:255],
-            payload={
-                "reason": "all_positions_covered",
-                "coverage_completed_at": completed_at.isoformat(),
-            },
+        tmc = (
+            metadata.get("tmc_presentation_coverage")
+            if isinstance(metadata.get("tmc_presentation_coverage"), dict)
+            else {}
         )
+        if _text(tmc.get("status")) == "full":
+            return False
+        if reason and reason not in _PREMATURE_ARCHIVE_REASONS:
+            # Unknown archive reason: only repair when coverage is completed.
+            if metadata.get(spec.key("workspace_status")) != "archived":
+                return False
+            if not metadata.get(spec.key("coverage_completed_at")):
+                return False
+        metadata[spec.key("workspace_status")] = "completed"
+        metadata.pop(spec.key("workspace_archived_at"), None)
+        metadata[spec.key("archived_bucket")] = "success"
+        if not reason or reason in _PREMATURE_ARCHIVE_REASONS:
+            metadata[spec.key("auto_archived_reason")] = "all_positions_covered"
+        case.case_metadata = metadata
+        flag_modified(case, "case_metadata")
         return True
 
     @staticmethod

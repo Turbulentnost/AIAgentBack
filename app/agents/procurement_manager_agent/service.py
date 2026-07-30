@@ -27,6 +27,11 @@ from app.agents.procurement_manager_agent.fulfillment import (
     FULFILLMENT_LABELS,
     fulfillment_payload,
 )
+from app.agents.procurement_manager_agent.orchestrator_coverage import (
+    coverage_snapshot_from_metadata,
+    merge_order_coverage_with_orchestrator,
+    search_fields_from_coverage,
+)
 from app.agents.procurement_manager_agent.graph import build_graph
 from app.agents.procurement_manager_agent.material_bank import get_material_bank
 from app.agents.procurement_manager_agent.operations import MutationGate
@@ -360,7 +365,7 @@ class ProcurementManagerService:
                     NomenclatureSupplierResult(
                         nomenclature_id=item.nomenclature_id,
                         nomenclature_name=item.nomenclature_name,
-                        query=(item.query or item.nomenclature_name or "поставщик"),
+                        query=self._clean_supplier_search_query(item.query or item.nomenclature_name) or (item.query or item.nomenclature_name or "поставщик"),
                         suppliers=item.existing_suppliers[: request.limit],
                         sources_used=["existing"],
                         web_fallback_used=False,
@@ -2179,16 +2184,20 @@ class ProcurementManagerService:
         allocation = await self.allocate_coverage()
         case_coverage = (allocation.get("case_index") or {}).get(str(case_id))
         payload["coverage"] = case_coverage
-        payload["order_coverage"] = (
+        base_order_coverage = (
             {
                 "tone": case_coverage.get("tone"),
                 "label": case_coverage.get("label"),
                 "covered_count": case_coverage.get("covered_count") or 0,
                 "positions_count": case_coverage.get("positions_count") or 0,
-                "uncovered_positions_count": case_coverage.get("uncovered_positions_count") or 0,
+                "uncovered_positions_count": case_coverage.get(
+                    "uncovered_positions_count"
+                )
+                or 0,
                 "has_suppliers": any(
                     Decimal(str(line.get("from_supplier") or 0)) > 0
-                    or line.get("coverage_source") in {"supplier", "mixed"}
+                    or line.get("coverage_source")
+                    in {"supplier", "mixed", "supplier_order"}
                     for line in case_coverage.get("lines") or []
                 ),
                 "lines": case_coverage.get("lines") or [],
@@ -2204,7 +2213,25 @@ class ProcurementManagerService:
                 "lines": [],
             }
         )
+        order_coverage = merge_order_coverage_with_orchestrator(
+            base_order_coverage,
+            metadata=meta,
+            bucket_reason=(
+                meta.get("purchase_manager_bucket_reason")
+                if isinstance(meta.get("purchase_manager_bucket_reason"), str)
+                else None
+            ),
+        )
+        payload["order_coverage"] = order_coverage
+        payload["coverage"] = order_coverage
+        payload["supplier_orders"] = list(order_coverage.get("supplier_orders") or [])
         payload["material_allocation"] = {"summary": allocation.get("summary")}
+        search = search_fields_from_coverage(
+            source_number=getattr(case, "source_number", None),
+            order_coverage=order_coverage,
+            positions=list(case.positions or []),
+        )
+        payload.update(search)
         cov_lines = list((payload.get("order_coverage") or {}).get("lines") or [])
         prev_batches = workspace.get("batches")
         batches = sync_batches_workspace(
@@ -2218,9 +2245,19 @@ class ProcurementManagerService:
             await self.db.flush()
         payload["batches"] = batches
         payload["line_schedules"] = dict(workspace.get("line_schedules") or {})
-        ful = fulfillment_payload(case_status=str(case.status or ""), workspace=workspace)
+        ful_workspace = {
+            **workspace,
+            "supplier_orders": payload["supplier_orders"],
+            "order_coverage": order_coverage,
+        }
+        ful = fulfillment_payload(
+            case_status=str(case.status or ""),
+            workspace=ful_workspace,
+        )
         payload.update(ful)
         payload["fulfillment_status"] = ful["fulfillment_status"]
+        if not payload.get("summary"):
+            payload["summary"] = order_coverage.get("label")
         return payload
 
     async def update_fulfillment_status(
@@ -2698,8 +2735,17 @@ class ProcurementManagerService:
 
     async def enrich_dashboard_cases(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Attach deadline-based coverage status to dashboard case cards."""
-        allocation = await self.allocate_coverage()
+        queue = await self._manager_cases()
+        allocation = await self.allocate_coverage(cases=queue)
         case_index = allocation.get("case_index") or {}
+        meta_by_id = {
+            str(case.id).casefold(): dict(case.case_metadata or {})
+            for case in queue
+        }
+        positions_by_id = {
+            str(case.id).casefold(): list(case.positions or [])
+            for case in queue
+        }
         for group in payload.get("groups", []):
             for item in group.get("cases") or []:
                 case_id = str(item.get("id") or "").strip().casefold()
@@ -2714,30 +2760,36 @@ class ProcurementManagerService:
                 )
                 if coverage is None:
                     # Unknown allocation → attention if there are positions, not false uncovered.
-                    order_coverage = {
+                    base_order_coverage = {
                         "tone": "attention" if positions_count > 0 else "uncovered",
                         "label": (
-                            "Требуют внимания" if positions_count > 0 else "Полностью необеспечен"
+                            "Требуют внимания"
+                            if positions_count > 0
+                            else "Полностью необеспечен"
                         ),
                         "covered_count": 0,
                         "positions_count": positions_count,
                         "uncovered_positions_count": positions_count,
                         "has_suppliers": False,
+                        "lines": [],
                     }
                 else:
-                    order_coverage = {
+                    base_order_coverage = {
                         "tone": coverage.get("tone"),
                         "label": coverage.get("label"),
                         "covered_count": coverage.get("covered_count") or 0,
                         "positions_count": coverage.get("positions_count") or 0,
-                        "uncovered_positions_count": coverage.get("uncovered_positions_count")
+                        "uncovered_positions_count": coverage.get(
+                            "uncovered_positions_count"
+                        )
                         or 0,
                         "has_suppliers": any(
                             (
                                 line.get("from_supplier")
                                 and Decimal(str(line["from_supplier"])) > 0
                             )
-                            or line.get("coverage_source") in {"supplier", "mixed"}
+                            or line.get("coverage_source")
+                            in {"supplier", "mixed", "supplier_order"}
                             for line in coverage.get("lines") or []
                         ),
                         "needed_quantity": coverage.get("needed_quantity"),
@@ -2745,8 +2797,37 @@ class ProcurementManagerService:
                         "deficit_quantity": coverage.get("deficit_quantity"),
                         "lines": coverage.get("lines") or [],
                     }
+                pm_meta = meta_by_id.get(case_id) or (
+                    item.get("case_metadata")
+                    if isinstance(item.get("case_metadata"), dict)
+                    else {}
+                )
+                snap = coverage_snapshot_from_metadata(pm_meta)
+                if not snap:
+                    snap = {
+                        "coverage_status": item.get("supplier_coverage_status"),
+                        "positions": [],
+                        "supplier_orders": item.get("supplier_orders") or [],
+                    }
+                order_coverage = merge_order_coverage_with_orchestrator(
+                    base_order_coverage,
+                    snapshot=snap,
+                    metadata=pm_meta,
+                    bucket_reason=item.get("purchase_manager_bucket_reason"),
+                )
                 item["order_coverage"] = order_coverage
                 item["coverage"] = order_coverage
+                item["supplier_orders"] = list(
+                    order_coverage.get("supplier_orders") or []
+                )
+                search = search_fields_from_coverage(
+                    source_number=item.get("source_number"),
+                    order_coverage=order_coverage,
+                    positions=positions_by_id.get(case_id) or item.get("positions") or [],
+                )
+                item.update(search)
+                if not item.get("summary"):
+                    item["summary"] = order_coverage.get("label")
                 # Surface earliest line deadline when case-level required_date is empty.
                 if not item.get("required_date"):
                     line_dates = [
@@ -2759,6 +2840,7 @@ class ProcurementManagerService:
                 # Nested copy so clients reading procurement_manager.* still see bank tone.
                 pm = dict(item.get("procurement_manager") or {})
                 pm["order_coverage"] = order_coverage
+                pm["supplier_orders"] = item["supplier_orders"]
                 ful = fulfillment_payload(
                     case_status=str(item.get("status") or ""),
                     workspace=pm,
@@ -3287,6 +3369,22 @@ class ProcurementManagerService:
         }
         return payload
 
+
+    @staticmethod
+    def _clean_supplier_search_query(raw: str | None) -> str:
+        """Tighten web/SERP query: drop designation noise, keep searchable name."""
+        import re
+
+        value = str(raw or "").strip()
+        if not value:
+            return ""
+        # Strip trailing stock markers like (П), (М).
+        value = re.sub(r"\s*[\(（]\s*[ПпMmМм]\s*[\)）]\s*$", "", value)
+        value = re.sub(r"\s+", " ", value).strip(" -·,;")
+        if len(value) > 90:
+            value = value[:90].rstrip()
+        return value[:500]
+
     @staticmethod
     def _supplier_query_from_case(case: ProcurementCase) -> str:
         values = [
@@ -3321,7 +3419,7 @@ class ProcurementManagerService:
                 continue
             nom_id = str(position.nomenclature_id or "").strip()
             nom_name = str(position.nomenclature_name or nom_id or "").strip()
-            query = nom_name or nom_id
+            query = self._clean_supplier_search_query(nom_name) or nom_name or nom_id
             if len(query) < 2:
                 continue
             key = (nom_id or nom_name).casefold()

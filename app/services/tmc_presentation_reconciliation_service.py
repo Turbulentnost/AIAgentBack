@@ -34,6 +34,138 @@ def _norm_ref(value: Any) -> str:
     return _text(value).replace("{", "").replace("}", "").lower()
 
 
+def _coverage_snapshot(metadata: dict[str, Any]) -> dict[str, Any]:
+    material = metadata.get("material_order_coverage")
+    if isinstance(material, dict):
+        return material
+    supplier = metadata.get("supplier_order_coverage")
+    if isinstance(supplier, dict):
+        return supplier
+    return {}
+
+
+def _journal_nomenclature_ids(
+    journal_by_order: dict[str, dict[str, Any]],
+) -> set[str]:
+    covered: set[str] = set()
+    for journal in journal_by_order.values():
+        lines = journal.get("lines") if isinstance(journal.get("lines"), list) else []
+        for line in lines:
+            if not isinstance(line, dict):
+                continue
+            nom = _norm_ref(
+                line.get("nomenclatureRef")
+                or line.get("nomenclature_id")
+                or line.get("nomenclature_ref")
+            )
+            if nom:
+                covered.add(nom)
+    return covered
+
+
+def purchased_positions_covered_by_tmc(
+    metadata: dict[str, Any],
+    *,
+    journal_by_order: dict[str, dict[str, Any]],
+    order_rows: list[dict[str, Any]] | None = None,
+) -> bool:
+    """True when every purchased (non-transfer-only) nomenclature is in TMC journal."""
+    coverage = _coverage_snapshot(metadata)
+    positions = coverage.get("positions") if isinstance(coverage.get("positions"), list) else []
+    if not positions:
+        rows = order_rows or []
+        return bool(rows) and all(bool(row.get("found")) for row in rows)
+
+    journal_noms = _journal_nomenclature_ids(journal_by_order)
+    found_order_refs = {
+        _norm_ref(row.get("supplier_order_1c_ref") or row.get("supplier_order_ref"))
+        for row in (order_rows or [])
+        if isinstance(row, dict) and row.get("found")
+    }
+    for position in positions:
+        if not isinstance(position, dict):
+            continue
+        source = _text(position.get("coverage_source"))
+        purchasing = bool(position.get("purchasing"))
+        # Transfer-only coverage does not require TMC presentation journal.
+        if source == "transfer_order":
+            continue
+        if not purchasing and source not in {"supplier_order", "mixed"}:
+            continue
+        nom = _norm_ref(position.get("nomenclature_id") or position.get("nomenclature_ref"))
+        if nom and nom in journal_noms:
+            continue
+        order_refs = {
+            _norm_ref(
+                doc.get("supplier_order_1c_ref") or doc.get("supplier_order_ref")
+            )
+            for doc in (position.get("supplier_orders") or [])
+            if isinstance(doc, dict)
+        }
+        if order_refs and order_refs.issubset(found_order_refs):
+            continue
+        return False
+    # No purchased positions (transfer-only) → TMC is not a warehouse gate.
+    return True
+
+
+def _warehouse_availability_prefix(case: ProcurementCase, assigned: list[str]) -> str:
+    metadata = case.case_metadata or {}
+    if (
+        case.current_agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+        or WAREHOUSE_COMPLEX_CHIEF_AGENT_ID in assigned
+        or metadata.get("complex_invoked_at")
+        or (
+            metadata.get("complex_coverage_completed_at")
+            and not metadata.get("picker_coverage_completed_at")
+        )
+    ):
+        return "complex"
+    return "picker"
+
+
+def _archive_warehouse_workspace_after_tmc(
+    case: ProcurementCase,
+    metadata: dict[str, Any],
+    *,
+    assigned: list[str],
+    now: datetime,
+    journal_by_order: dict[str, dict[str, Any]],
+    order_rows: list[dict[str, Any]],
+    so_status: str,
+) -> tuple[dict[str, Any], list[str], str | None]:
+    """Archive picker/complex workspace after full TMC + OTK handoff.
+
+    Returns (metadata, assigned, archived_prefix_or_None).
+    """
+    if so_status == "partial":
+        return metadata, assigned, None
+    if not purchased_positions_covered_by_tmc(
+        metadata,
+        journal_by_order=journal_by_order,
+        order_rows=order_rows,
+    ):
+        return metadata, assigned, None
+    prefix = _warehouse_availability_prefix(case, assigned)
+    archived_key = f"{prefix}_workspace_archived_at"
+    if metadata.get(archived_key):
+        return metadata, assigned, None
+    metadata[f"{prefix}_workspace_status"] = "archived"
+    metadata[archived_key] = now.isoformat()
+    metadata[f"{prefix}_archived_bucket"] = "success"
+    metadata[f"{prefix}_auto_archived_reason"] = "tmc_presentation_journal_full"
+    assigned = [
+        agent
+        for agent in assigned
+        if agent
+        not in {
+            WAREHOUSE_PICKER_AGENT_ID,
+            WAREHOUSE_COMPLEX_CHIEF_AGENT_ID,
+        }
+    ]
+    return metadata, assigned, prefix
+
+
 def build_otk_presentations_for_case(
     case: ProcurementCase,
     *,
@@ -330,11 +462,7 @@ class TmcPresentationReconciliationService:
         changed = previous_status != coverage_status or previous.get("orders") != order_rows
 
         handed_off = False
-        so_coverage = (
-            metadata.get("supplier_order_coverage")
-            if isinstance(metadata.get("supplier_order_coverage"), dict)
-            else {}
-        )
+        so_coverage = _coverage_snapshot(metadata)
         so_status = _text(so_coverage.get("coverage_status"))
         assigned = list(case.assigned_agents or [])
 
@@ -421,15 +549,30 @@ class TmcPresentationReconciliationService:
                     if availability_agent not in assigned:
                         assigned.insert(0, availability_agent)
                 else:
-                    assigned = [
-                        agent
-                        for agent in assigned
-                        if agent
-                        not in {
-                            WAREHOUSE_PICKER_AGENT_ID,
-                            WAREHOUSE_COMPLEX_CHIEF_AGENT_ID,
-                        }
-                    ]
+                    metadata, assigned, warehouse_prefix = (
+                        _archive_warehouse_workspace_after_tmc(
+                            case,
+                            metadata,
+                            assigned=assigned,
+                            now=now,
+                            journal_by_order=journal_by_order,
+                            order_rows=order_rows,
+                            so_status=so_status,
+                        )
+                    )
+                    if warehouse_prefix:
+                        await self._append_event(
+                            case,
+                            event_type=f"{warehouse_prefix}_auto_archived",
+                            idempotency_key=(
+                                f"warehouse-archived-tmc:{case.id}:"
+                                f"{snapshot['checked_at']}"
+                            )[:255],
+                            payload={
+                                "reason": "tmc_presentation_journal_full",
+                                "orders": order_rows,
+                            },
+                        )
                 if case.current_agent_id == PURCHASE_MANAGER_AGENT_ID:
                     await self._cancel_current_task(case)
                 case.status = ProcurementCaseStatus.QUALITY_ASSIGNED.value
@@ -456,6 +599,37 @@ class TmcPresentationReconciliationService:
                     await orch._enqueue_role_agent(case)
                 handed_off = True
                 changed = True
+            elif (
+                coverage_status == "full"
+                and metadata.get("otk_handed_off_at")
+                and so_status != "partial"
+            ):
+                metadata, assigned, warehouse_prefix = (
+                    _archive_warehouse_workspace_after_tmc(
+                        case,
+                        metadata,
+                        assigned=assigned,
+                        now=now,
+                        journal_by_order=journal_by_order,
+                        order_rows=order_rows,
+                        so_status=so_status,
+                    )
+                )
+                if warehouse_prefix:
+                    await self._append_event(
+                        case,
+                        event_type=f"{warehouse_prefix}_auto_archived",
+                        idempotency_key=(
+                            f"warehouse-archived-tmc:{case.id}:"
+                            f"{snapshot['checked_at']}"
+                        )[:255],
+                        payload={
+                            "reason": "tmc_presentation_journal_full",
+                            "orders": order_rows,
+                        },
+                    )
+                    case.assigned_agents = assigned
+                    changed = True
             elif coverage_status == "partial":
                 # Keep picker on coverage; surface quality stage only when PM is current.
                 if case.current_agent_id == PURCHASE_MANAGER_AGENT_ID:

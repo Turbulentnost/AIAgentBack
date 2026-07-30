@@ -41,8 +41,40 @@ _CASE_STATUS_MAP: dict[str, FulfillmentStatus] = {
 }
 
 
+def _has_1c_supplier_orders(workspace: dict[str, Any] | None) -> bool:
+    ws = workspace or {}
+    orders = ws.get("supplier_orders") or (ws.get("order_coverage") or {}).get(
+        "supplier_orders"
+    )
+    if isinstance(orders, list) and any(
+        isinstance(item, dict)
+        and (
+            item.get("supplier_order_1c_ref")
+            or item.get("supplier_order_number")
+            or item.get("is_definite")
+        )
+        for item in orders
+    ):
+        return True
+    coverage = ws.get("order_coverage") if isinstance(ws.get("order_coverage"), dict) else {}
+    status = str(coverage.get("orchestrator_coverage_status") or "").casefold()
+    if status in {"partial", "full"}:
+        return True
+    for line in coverage.get("lines") or []:
+        if not isinstance(line, dict):
+            continue
+        source = str(line.get("coverage_source") or "").casefold()
+        if source in {"supplier", "supplier_order", "mixed", "transfer_order"}:
+            return True
+        if line.get("supplier_orders"):
+            return True
+    return False
+
+
 def _has_supplier_selection(workspace: dict[str, Any] | None) -> bool:
     ws = workspace or {}
+    if _has_1c_supplier_orders(ws):
+        return True
     drafts = ws.get("purchase_order_drafts") or []
     for item in drafts:
         draft = item.get("draft") if isinstance(item, dict) and "draft" in item else item
@@ -51,7 +83,10 @@ def _has_supplier_selection(workspace: dict[str, Any] | None) -> bool:
         if draft.get("supplier_id") or draft.get("supplier_name"):
             return True
         lines = draft.get("lines") or []
-        if any(isinstance(line, dict) and (line.get("supplier_id") or line.get("unit_price")) for line in lines):
+        if any(
+            isinstance(line, dict) and (line.get("supplier_id") or line.get("unit_price"))
+            for line in lines
+        ):
             return True
     rec = ws.get("recommendation") or {}
     if isinstance(rec, dict) and (rec.get("supplier_id") or rec.get("selected_supplier_id")):
@@ -84,11 +119,26 @@ def derive_fulfillment_status(
         return mapped
     if stored and str(stored) in FULFILLMENT_LABELS:
         return str(stored)  # type: ignore[return-value]
+    # Real 1C supplier orders mean purchasing already started → delivery.
+    if _has_1c_supplier_orders(ws):
+        lifecycle = str(ws.get("lifecycle_state") or "").casefold()
+        if "payment" in lifecycle:
+            return "payment"
+        if lifecycle in {"received", "receiving"}:
+            return "otk_presentation"
+        if "post" in lifecycle:
+            return "posting"
+        return "delivery"
     if not _has_supplier_selection(ws):
         return "no_supplier"
     # PO/supplier exists but payment/delivery not started yet → still no_supplier until payment.
     lifecycle = str(ws.get("lifecycle_state") or "").casefold()
-    if lifecycle in {"purchase_order_draft", "approval_required", "rfq_draft", "quotes_received"}:
+    if lifecycle in {
+        "purchase_order_draft",
+        "approval_required",
+        "rfq_draft",
+        "quotes_received",
+    }:
         return "no_supplier"
     if "payment" in lifecycle:
         return "payment"

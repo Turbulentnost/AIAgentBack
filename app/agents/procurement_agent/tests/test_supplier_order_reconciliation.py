@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
@@ -160,7 +160,7 @@ async def test_cancelled_supplier_line_does_not_cover_position() -> None:
 
 
 @pytest.mark.asyncio
-async def test_completed_picker_workspace_archives_after_seven_days() -> None:
+async def test_full_coverage_does_not_set_workspace_archived_at() -> None:
     db = MagicMock()
     db.flush = AsyncMock()
     db.scalar = AsyncMock(return_value=None)
@@ -169,29 +169,40 @@ async def test_completed_picker_workspace_archives_after_seven_days() -> None:
     service = SupplierOrderReconciliationService(db, mcp_client=MagicMock())
 
     await service._apply_case(case, [_order("nom-1", "nom-2")])
-    completed_at = datetime.fromisoformat(
-        (case.case_metadata or {})["picker_coverage_completed_at"]
-    )
 
-    assert (
-        await service._archive_completed_workspace_if_due(
-            case,
-            now=completed_at + timedelta(days=6, hours=23),
-        )
-        is False
-    )
-    assert not (case.case_metadata or {}).get("picker_workspace_archived_at")
-
-    assert (
-        await service._archive_completed_workspace_if_due(
-            case,
-            now=completed_at + timedelta(days=7),
-        )
-        is True
-    )
-    assert (case.case_metadata or {})["picker_workspace_status"] == "archived"
-    assert (case.case_metadata or {}).get("picker_workspace_archived_at")
+    metadata = case.case_metadata or {}
+    assert metadata["picker_workspace_status"] == "completed"
+    assert metadata["picker_archived_bucket"] == "success"
+    assert not metadata.get("picker_workspace_archived_at")
     assert case.status == ProcurementCaseStatus.ORDERED.value
+
+
+@pytest.mark.asyncio
+async def test_legacy_premature_archive_restored_to_completed() -> None:
+    db = MagicMock()
+    db.flush = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    db.get = AsyncMock(return_value=None)
+    case = _case()
+    service = SupplierOrderReconciliationService(db, mcp_client=MagicMock())
+
+    await service._apply_case(case, [_order("nom-1", "nom-2")])
+    metadata = dict(case.case_metadata or {})
+    metadata["picker_workspace_status"] = "archived"
+    metadata["picker_workspace_archived_at"] = datetime.now(UTC).isoformat()
+    metadata["picker_auto_archived_reason"] = "all_positions_covered"
+    case.case_metadata = metadata
+
+    assert service._repair_premature_warehouse_archive(case) is True
+    restored = case.case_metadata or {}
+    assert restored["picker_workspace_status"] == "completed"
+    assert not restored.get("picker_workspace_archived_at")
+    assert restored["picker_archived_bucket"] == "success"
+
+    # Re-apply full coverage keeps completed without archive.
+    await service._apply_case(case, [_order("nom-1", "nom-2")])
+    assert (case.case_metadata or {})["picker_workspace_status"] == "completed"
+    assert not (case.case_metadata or {}).get("picker_workspace_archived_at")
 
 
 @pytest.mark.asyncio
@@ -205,14 +216,6 @@ async def test_full_to_partial_reopens_picker_workspace() -> None:
 
     await service._apply_case(case, [_order("nom-1", "nom-2")])
     assert (case.case_metadata or {})["picker_workspace_status"] == "completed"
-    completed_at = datetime.fromisoformat(
-        (case.case_metadata or {})["picker_coverage_completed_at"]
-    )
-    await service._archive_completed_workspace_if_due(
-        case,
-        now=completed_at + timedelta(days=7),
-    )
-    assert (case.case_metadata or {})["picker_workspace_status"] == "archived"
 
     await service._apply_case(case, [_order("nom-1")])
 
