@@ -8,7 +8,6 @@ from agent_pochta.config import Settings, reset_settings
 def test_deepseek_provider_from_api_key(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "auto")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
-    monkeypatch.delenv("GIGACHAT_API_PERS", raising=False)
     reset_settings()
     settings = Settings()
     assert settings.effective_llm_provider == "deepseek"

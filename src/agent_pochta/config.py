@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Корень репозитория (…/agent-pochta), не зависит от cwd процесса Celery
@@ -162,7 +162,7 @@ class Settings(BaseSettings):
     )
 
     # Внешние сервисы платформы (при use_stubs=false)
-    # openai_compat | gigachat | deepseek | auto
+    # openai_compat | deepseek | auto
     llm_provider: str = Field(default="auto", alias="LLM_PROVIDER")
     llm_gateway_url: str = Field(default="", alias="LLM_GATEWAY_URL")
     llm_gateway_api_key: str = Field(default="", alias="LLM_GATEWAY_API_KEY")
@@ -172,20 +172,6 @@ class Settings(BaseSettings):
         default="https://api.deepseek.com/v1",
         alias="DEEPSEEK_BASE_URL",
     )
-    gigachat_credentials: str = Field(
-        default="",
-        validation_alias=AliasChoices("GIGACHAT_API_PERS", "GIGACHAT_CREDENTIALS"),
-    )
-    gigachat_scope: str = Field(default="GIGACHAT_API_PERS", alias="GIGACHAT_SCOPE")
-    gigachat_auth_url: str = Field(
-        default="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-        alias="GIGACHAT_AUTH_URL",
-    )
-    gigachat_base_url: str = Field(
-        default="https://gigachat.devices.sberbank.ru/api/v1",
-        alias="GIGACHAT_BASE_URL",
-    )
-    gigachat_verify_ssl: bool = Field(default=False, alias="GIGACHAT_VERIFY_SSL")
     document_service_url: str = Field(default="", alias="DOCUMENT_SERVICE_URL")
     integration_service_url: str = Field(default="", alias="INTEGRATION_SERVICE_URL")
     vault_addr: str = Field(default="", alias="VAULT_ADDR")
@@ -229,28 +215,18 @@ class Settings(BaseSettings):
 
     @property
     def effective_llm_provider(self) -> str:
-        """gigachat | deepseek | openai_compat."""
+        """deepseek | openai_compat."""
         explicit = (self.llm_provider or "auto").strip().lower()
-        if explicit in {"gigachat", "openai_compat", "deepseek"}:
+        if explicit in {"openai_compat", "deepseek"}:
             return explicit
         if self.deepseek_api_key:
             return "deepseek"
-        if self.gigachat_credentials:
-            return "gigachat"
-        if "gigachat.devices.sberbank.ru" in (self.llm_gateway_url or "").lower():
-            return "gigachat"
         return "openai_compat"
-
-    @property
-    def effective_gigachat_credentials(self) -> str:
-        return (self.gigachat_credentials or "").strip()
 
     @property
     def effective_llm_api_key(self) -> str:
         if self.effective_llm_provider == "deepseek":
             return (self.deepseek_api_key or self.llm_gateway_api_key).strip()
-        if self.effective_llm_provider == "gigachat":
-            return self.effective_gigachat_credentials
         return (self.llm_gateway_api_key or "").strip()
 
     @property
@@ -261,17 +237,13 @@ class Settings(BaseSettings):
                 or self.llm_gateway_url
                 or "https://api.deepseek.com/v1"
             ).rstrip("/")
-        if self.effective_llm_provider == "gigachat":
-            return self.gigachat_base_url or self.llm_gateway_url
         return self.llm_gateway_url
 
     @property
     def llm_configured(self) -> bool:
-        """Есть реальный LLM (DeepSeek / GigaChat / OpenAI-compatible URL)."""
+        """Есть реальный LLM (DeepSeek / OpenAI-compatible URL)."""
         if self.effective_llm_provider == "deepseek":
             return bool(self.effective_llm_api_key)
-        if self.effective_llm_provider == "gigachat":
-            return bool(self.effective_gigachat_credentials)
         return bool(self.llm_gateway_url)
 
     @property
@@ -307,8 +279,6 @@ class Settings(BaseSettings):
         llm_url = self.effective_llm_base_url
         if self.effective_llm_provider == "deepseek" and self.effective_llm_api_key:
             llm_label = f"deepseek({llm_url}, model={self.llm_default_model})"
-        elif self.effective_llm_provider == "gigachat" and self.effective_gigachat_credentials:
-            llm_label = f"gigachat({llm_url}, scope={self.gigachat_scope})"
         elif llm_url:
             llm_label = f"real({llm_url})"
         else:
