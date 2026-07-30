@@ -28,21 +28,21 @@ _beat_schedule["recover-stale-knowledge-base-indexing-jobs"] = {
     "options": {"queue": "indexing"},
 }
 if settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
-    _beat_schedule["poll-procurement-sources"] = {
-        "task": "poll_procurement_sources",
+    _beat_schedule["sync-procurement-material-orders"] = {
+        "task": "sync_procurement_material_orders",
         "schedule": float(settings.PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS),
-        "options": {"queue": "procurement_poll"},
+        "options": {
+            "queue": "procurement_poll",
+            "expires": settings.PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS,
+        },
     }
     _beat_schedule["poll-procurement-reorder-points"] = {
         "task": "poll_procurement_reorder_points",
         "schedule": float(settings.PROCUREMENT_ORCHESTRATOR_REORDER_INTERVAL_SECONDS),
-        "options": {"queue": "procurement_poll"},
-    }
-if settings.PROCUREMENT_SUPPLIER_RECONCILIATION_ENABLED:
-    _beat_schedule["reconcile-procurement-supplier-orders"] = {
-        "task": "reconcile_procurement_supplier_orders",
-        "schedule": float(settings.PROCUREMENT_SUPPLIER_RECONCILIATION_INTERVAL_SECONDS),
-        "options": {"queue": "procurement_poll"},
+        "options": {
+            "queue": "procurement_poll",
+            "expires": settings.PROCUREMENT_ORCHESTRATOR_REORDER_INTERVAL_SECONDS,
+        },
     }
 if settings.SCHEDULED_MEETINGS_ARCHIVE_ENABLED:
     _beat_schedule["archive-expired-scheduled-meetings"] = {
@@ -115,6 +115,7 @@ celery_app.conf.update(
         "poll_procurement_sources": {"queue": "procurement_poll"},
         "poll_procurement_reorder_points": {"queue": "procurement_poll"},
         "reconcile_procurement_supplier_orders": {"queue": "procurement_poll"},
+        "sync_procurement_material_orders": {"queue": "procurement_poll"},
         "run_procurement_case_task": {"queue": "agents"},
     },
     task_serializer="json",

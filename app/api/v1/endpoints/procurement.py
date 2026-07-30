@@ -919,9 +919,14 @@ async def refresh_procurement_sources(
     if not await can_refresh_procurement_orchestrator(db, current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
 
-    from app.workers.tasks import poll_procurement_reorder_points, poll_procurement_sources
+    from app.workers.tasks import (
+        poll_procurement_reorder_points,
+        sync_procurement_material_orders,
+    )
 
-    sources_result = poll_procurement_sources.apply_async(queue="procurement_poll")
+    sources_result = sync_procurement_material_orders.apply_async(
+        queue="procurement_poll"
+    )
     reorder_result = poll_procurement_reorder_points.apply_async(queue="procurement_poll")
     return ProcurementRefreshResult(
         status="accepted",

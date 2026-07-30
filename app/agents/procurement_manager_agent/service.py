@@ -107,7 +107,7 @@ from app.core.logging import get_logger
 from app.models.enums import ConfidenceLevel, ProcurementCaseStatus, TaskStatus
 from app.models.procurement import ProcurementCase, ProcurementCaseEvent
 from app.models.task import Task
-from app.services.procurement_orchestrator_service import ACTIVE_CASE_STATUSES
+from app.services.procurement_case_statuses import ACTIVE_CASE_STATUSES
 
 logger = get_logger(__name__)
 

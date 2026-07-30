@@ -16,12 +16,13 @@ from app.agents.procurement_role_agents.config import (
     PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     PURCHASE_MANAGER_AGENT_ID,
+    QUALITY_ENGINEER_AGENT_ID,
     SOURCE_AGENT_MAP,
     WAREHOUSE_COMPLEX_CHIEF_AGENT_ID,
     WAREHOUSE_PICKER_AGENT_ID,
 )
 from app.db.base import Base
-from app.models.enums import ProcurementSourceType, TaskStatus
+from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
 from app.models.procurement import (
     ProcurementCase,
     ProcurementCaseEvent,
@@ -683,6 +684,58 @@ async def test_engineer_dispatch_claims_only_five_cases(db_session: AsyncSession
         bool((task.task_metadata or {}).get("dispatch_claimed"))
         for task in tasks
     ) == 5
+
+
+@pytest.mark.asyncio
+async def test_final_otk_release_closes_case_without_poll_reactivation(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=False)
+    source_ref = str(uuid.uuid4())
+    document = _document(
+        source_ref,
+        "v1",
+        source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+    )
+    await service._upsert_case_from_document(document)
+    case = await db_session.scalar(
+        select(ProcurementCase).where(ProcurementCase.source_1c_ref == source_ref)
+    )
+    assert case is not None
+    task = Task(
+        title="ОТК",
+        status=TaskStatus.RUNNING,
+        task_type="procurement_role_agent",
+        input_payload={"case_id": str(case.id)},
+        task_metadata={
+            "agent_slug": QUALITY_ENGINEER_AGENT_ID,
+            "procurement_case_id": str(case.id),
+        },
+    )
+    db_session.add(task)
+    await db_session.flush()
+    case.current_task_id = task.id
+    case.current_agent_id = QUALITY_ENGINEER_AGENT_ID
+
+    await service._apply_role_agent_result(
+        case,
+        task,
+        {
+            "role_status": "completed",
+            "agent_id": QUALITY_ENGINEER_AGENT_ID,
+            "summary": "Контроль завершён",
+            "output_data": {
+                "next_status": ProcurementCaseStatus.QUALITY_RELEASED.value
+            },
+        },
+        event_type="quality_agent_completed",
+    )
+
+    assert case.status == ProcurementCaseStatus.CLOSED.value
+    assert case.closed_reason == "quality_released"
+    assert case.closed_at is not None
+    assert await service._upsert_case_from_document(document) == "skipped"
+    assert case.status == ProcurementCaseStatus.CLOSED.value
 
 
 @pytest.mark.asyncio

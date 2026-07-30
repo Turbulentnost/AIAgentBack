@@ -399,10 +399,9 @@ async def sync_from_1c(
             "summary": result,
         }
     if await can_refresh_procurement_orchestrator(db, current_user):
-        from app.workers.tasks import poll_procurement_sources
+        from app.workers.tasks import sync_procurement_material_orders
 
-        async_result = poll_procurement_sources.apply_async(
-            kwargs={"force": True},
+        async_result = sync_procurement_material_orders.apply_async(
             queue="procurement_poll",
         )
         return {

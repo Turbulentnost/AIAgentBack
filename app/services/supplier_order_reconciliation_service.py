@@ -3,13 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.agents.procurement_agent.mcp_client import (
     MCPCallError,
@@ -36,6 +37,10 @@ from app.models.procurement import (
     ProcurementSupplierOrderLink,
 )
 from app.models.task import Task
+from app.services.material_order_coverage import (
+    COVERAGE_ARCHIVE_AFTER_DAYS,
+    build_material_order_coverage,
+)
 
 
 def _text(value: Any) -> str:
@@ -117,31 +122,74 @@ class SupplierOrderReconciliationService:
 
         changed = 0
         orders_seen = 0
+        transfer_orders_seen = 0
         errors: list[str] = []
         for database, database_cases in by_database.items():
+            orders: list[dict[str, Any]] = []
+            supplier_evidence_fresh = False
             try:
                 response = await self.mcp.call_capability(
                     "read_procurement_list_supplier_orders",
                     {
                         "database": database,
                         "maxBasisDepth": 8,
-                        "documentLimit": 20000,
-                        "lineLimit": 100000,
+                        "documentLimit": 5000,
+                        "lineLimit": 50000,
                     },
                 )
             except (MCPUnavailableError, MCPCallError) as exc:
                 errors.append(f"{database}: {exc}")
-                continue
+                response = {}
             if response.get("status") == "capability_unavailable":
                 errors.append(
                     f"{database}: "
                     f"{response.get('reason') or 'supplier order capability unavailable'}"
                 )
-                continue
-            raw_orders = response.get("orders") or response.get("items") or []
-            orders = [item for item in raw_orders if isinstance(item, dict)]
+            else:
+                raw_orders = response.get("orders") or response.get("items") or []
+                orders = [item for item in raw_orders if isinstance(item, dict)]
+                supplier_evidence_fresh = bool(response)
             orders_seen += len(orders)
+            transfer_orders: list[dict[str, Any]] = []
+            transfer_evidence_fresh = False
+            try:
+                transfer_response = await self.mcp.call_capability(
+                    "read_procurement_list_transfer_orders",
+                    {
+                        "database": database,
+                        "maxBasisDepth": 8,
+                        "documentLimit": 5000,
+                        "lineLimit": 50000,
+                    },
+                )
+                if transfer_response.get("status") != "capability_unavailable":
+                    raw_transfers = (
+                        transfer_response.get("orders")
+                        or transfer_response.get("items")
+                        or []
+                    )
+                    transfer_orders = [
+                        item for item in raw_transfers if isinstance(item, dict)
+                    ]
+                    transfer_orders_seen += len(transfer_orders)
+                    transfer_evidence_fresh = True
+                else:
+                    errors.append(
+                        f"{database}: "
+                        f"{transfer_response.get('reason') or 'transfer capability unavailable'}"
+                    )
+            except (MCPUnavailableError, MCPCallError) as exc:
+                errors.append(f"{database} transfers: {exc}")
             for case in database_cases:
+                if not supplier_evidence_fresh and not transfer_evidence_fresh:
+                    # Cycle still ran: keep «Обновлён» moving even when 1C MCP is down.
+                    metadata = dict(case.case_metadata or {})
+                    metadata["last_actualized_at"] = datetime.now(UTC).isoformat()
+                    case.case_metadata = metadata
+                    flag_modified(case, "case_metadata")
+                    await self._archive_completed_workspace_if_due(case)
+                    changed += 1
+                    continue
                 case_orders = [
                     order
                     for order in orders
@@ -162,7 +210,49 @@ class SupplierOrderReconciliationService:
                         == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value
                     )
                 ]
-                if await self._apply_case(case, case_orders):
+                previous_coverage = (
+                    (case.case_metadata or {}).get("material_order_coverage")
+                    if isinstance(
+                        (case.case_metadata or {}).get("material_order_coverage"),
+                        dict,
+                    )
+                    else {}
+                )
+                if not supplier_evidence_fresh:
+                    case_orders = [
+                        item
+                        for item in (previous_coverage.get("supplier_orders") or [])
+                        if isinstance(item, dict)
+                    ]
+                case_transfers = [
+                    order
+                    for order in transfer_orders
+                    if _text(
+                        order.get("root_source_1c_ref")
+                        or order.get("rootSourceRef")
+                        or order.get("source_ref")
+                        or (
+                            (order.get("basisResolution") or {}).get("sourceRef")
+                            if isinstance(order.get("basisResolution"), dict)
+                            else None
+                        )
+                    ).lower()
+                    == case.source_1c_ref.lower()
+                    and (
+                        not isinstance(order.get("basisResolution"), dict)
+                        or (order.get("basisResolution") or {}).get("sourceType")
+                        == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value
+                    )
+                ]
+                if not transfer_evidence_fresh:
+                    case_transfers = [
+                        item
+                        for item in (previous_coverage.get("transfer_orders") or [])
+                        if isinstance(item, dict)
+                    ]
+                if await self._apply_case(case, case_orders, case_transfers):
+                    changed += 1
+                if await self._archive_completed_workspace_if_due(case):
                     changed += 1
         await self.db.flush()
         return {
@@ -170,6 +260,7 @@ class SupplierOrderReconciliationService:
             "cases_seen": len(cases),
             "cases_changed": changed,
             "orders_seen": orders_seen,
+            "transfer_orders_seen": transfer_orders_seen,
             "errors": errors,
         }
 
@@ -196,6 +287,7 @@ class SupplierOrderReconciliationService:
         self,
         case: ProcurementCase,
         orders: list[dict[str, Any]],
+        transfer_orders: list[dict[str, Any]] | None = None,
     ) -> bool:
         now = datetime.now(UTC)
         order_by_ref = {
@@ -213,7 +305,6 @@ class SupplierOrderReconciliationService:
             link.active = False
 
         normalized_orders: list[dict[str, Any]] = []
-        coverage_by_nomenclature: dict[str, list[dict[str, Any]]] = {}
         for order_ref, order in order_by_ref.items():
             link = existing.get(order_ref)
             basis = order.get("basis") if isinstance(order.get("basis"), dict) else {}
@@ -337,21 +428,6 @@ class SupplierOrderReconciliationService:
                         "quantity": str(line.quantity),
                     }
                 )
-                coverage_by_nomenclature.setdefault(nomenclature_id, []).append(
-                    {
-                        "supplier_order_1c_ref": order_ref,
-                        "supplier_order_number": link.supplier_order_number or order_ref,
-                        "order_date": (
-                            link.order_date.isoformat() if link.order_date else None
-                        ),
-                        "order_status": link.order_status,
-                        "supplier_name": supplier_name,
-                        "arrival_date": (
-                            arrival_date.isoformat() if arrival_date else None
-                        ),
-                        "quantity": str(line.quantity),
-                    }
-                )
             for line_id, line in existing_lines.items():
                 if line_id not in seen_line_ids:
                     line.cancelled = True
@@ -369,68 +445,28 @@ class SupplierOrderReconciliationService:
             )
 
         normalized_orders.sort(key=lambda item: _text(item.get("supplier_order_1c_ref")))
-        for linked_orders in coverage_by_nomenclature.values():
-            linked_orders.sort(
-                key=lambda item: (
-                    _text(item.get("supplier_order_number")),
-                    _text(item.get("supplier_order_1c_ref")),
-                )
-            )
-        positions: list[dict[str, Any]] = []
-        for position in case.positions:
-            if position.cancelled:
-                continue
-            linked_orders = coverage_by_nomenclature.get(position.nomenclature_id, [])
-            positions.append(
+        snapshot = build_material_order_coverage(
+            positions=[
                 {
                     "line_id": position.line_id,
                     "nomenclature_id": position.nomenclature_id,
                     "nomenclature_name": position.nomenclature_name,
-                    "requested_quantity": str(position.quantity),
-                    "purchasing": bool(linked_orders),
-                    "is_reconciled": bool(linked_orders),
-                    "ordered_quantity": (
-                        str(position.quantity) if linked_orders else "0"
-                    ),
-                    "remaining_quantity": (
-                        "0" if linked_orders else str(position.quantity)
-                    ),
-                    "supplier_orders": linked_orders,
+                    "characteristic_id": position.characteristic_id,
+                    "quantity": position.quantity,
+                    "cancelled": position.cancelled,
                 }
-            )
-        covered = sum(1 for position in positions if position["purchasing"])
-        coverage_status = (
-            "full"
-            if positions and covered == len(positions)
-            else "partial"
-            if covered
-            else "none"
+                for position in case.positions
+            ],
+            supplier_orders=orders,
+            transfer_orders=transfer_orders or [],
+            checked_at=now.isoformat(),
         )
-        snapshot = {
-            "schema_version": "1.0",
-            "coverage_status": coverage_status,
-            "covered_positions": covered,
-            "positions_count": len(positions),
-            "positions": positions,
-            "supplier_orders": normalized_orders,
-            "checked_at": now.isoformat(),
-            "calculated_at": now.isoformat(),
-            "summary": (
-                "Все позиции присутствуют в связанных заказах поставщику."
-                if coverage_status == "full"
-                else "Часть позиций уже присутствует в связанных заказах поставщику."
-                if coverage_status == "partial"
-                else "Связанные заказы поставщику не найдены."
-            ),
-            "recommended_next_step": (
-                "Контролировать исполнение заказов поставщику."
-                if coverage_status == "full"
-                else "Создать заказы поставщику для непокрытых позиций."
-                if coverage_status == "partial"
-                else "Продолжить обеспечение заказа материалов."
-            ),
-            "decision_kind": "none",
-        }
+        # Persist the normalized supplier-order representation built above while
+        # retaining raw lineage only in the individual position documents.
+        snapshot["supplier_orders"] = normalized_orders
+        positions = list(snapshot["positions"])
+        covered = int(snapshot["covered_positions"])
+        coverage_status = str(snapshot["coverage_status"])
         stable_snapshot = {
             key: value
             for key, value in snapshot.items()
@@ -439,13 +475,47 @@ class SupplierOrderReconciliationService:
         fingerprint = _coverage_hash(stable_snapshot)
         metadata = dict(case.case_metadata or {})
         previous_fingerprint = _text(metadata.get("supplier_order_coverage_fingerprint"))
-        previous_status = _text(
-            (metadata.get("supplier_order_coverage") or {}).get("coverage_status")
+        previous_coverage = (
+            metadata.get("material_order_coverage")
+            if isinstance(metadata.get("material_order_coverage"), dict)
+            else metadata.get("supplier_order_coverage")
             if isinstance(metadata.get("supplier_order_coverage"), dict)
-            else ""
+            else {}
         )
+        previous_status = _text(previous_coverage.get("coverage_status"))
+        transfer_refs = sorted(
+            {
+                _text(
+                    order.get("transfer_order_1c_ref")
+                    or order.get("ref")
+                    or order.get("Ref_Key")
+                )
+                for order in (transfer_orders or [])
+                if isinstance(order, dict)
+                and _text(
+                    order.get("transfer_order_1c_ref")
+                    or order.get("ref")
+                    or order.get("Ref_Key")
+                )
+            }
+        )
+        previous_transfer_refs = {
+            _text(
+                order.get("transfer_order_1c_ref")
+                or order.get("ref")
+                or order.get("Ref_Key")
+            )
+            for order in (previous_coverage.get("transfer_orders") or [])
+            if isinstance(order, dict)
+        }
+        newly_detected_transfer_refs = sorted(
+            set(transfer_refs) - previous_transfer_refs
+        )
+        metadata["material_order_coverage"] = snapshot
+        metadata["last_actualized_at"] = now.isoformat()
         metadata["supplier_order_coverage"] = snapshot
         metadata["supplier_order_coverage_fingerprint"] = fingerprint
+        # Ensure JSONB mutation is persisted even when only timestamp changed.
 
         assigned = list(dict.fromkeys(case.assigned_agents or []))
         if coverage_status in {"partial", "full"}:
@@ -504,7 +574,10 @@ class SupplierOrderReconciliationService:
                 covered_position = coverage_by_line.get(line_id) or (
                     coverage_position_by_nomenclature.get(nomenclature_id)
                 )
-                if covered_position and covered_position.get("purchasing"):
+                if covered_position and (
+                    covered_position.get("purchasing")
+                    or covered_position.get("transferring")
+                ):
                     order_numbers = [
                         _text(order.get("supplier_order_number"))
                         for order in (covered_position.get("supplier_orders") or [])
@@ -534,43 +607,88 @@ class SupplierOrderReconciliationService:
                         for order in (covered_position.get("supplier_orders") or [])
                         if isinstance(order, dict) and _text(order.get("arrival_date"))
                     ]
-                    position["already_being_purchased"] = True
+                    transfer_orders_for_position = (
+                        covered_position.get("transfer_orders") or []
+                    )
+                    transfer_numbers = [
+                        _text(order.get("transfer_order_number"))
+                        for order in transfer_orders_for_position
+                        if isinstance(order, dict)
+                        and _text(order.get("transfer_order_number"))
+                    ]
+                    position["already_being_purchased"] = bool(
+                        covered_position.get("purchasing")
+                    )
+                    position["already_being_transferred"] = bool(
+                        covered_position.get("transferring")
+                    )
                     position["supplier_order_numbers"] = list(dict.fromkeys(order_numbers))
                     position["ordered_quantity"] = format(ordered_qty.normalize(), "f")
                     position["supplier_name"] = next(iter(dict.fromkeys(supplier_names)), None)
                     position["arrival_date"] = next(iter(dict.fromkeys(arrival_dates)), None)
                     position["supplier_orders"] = covered_position.get("supplier_orders") or []
-                    if coverage_status == "full":
+                    position["transfer_order_numbers"] = list(
+                        dict.fromkeys(transfer_numbers)
+                    )
+                    position["transfer_ordered_quantity"] = covered_position.get(
+                        "transfer_ordered_quantity"
+                    )
+                    position["transfer_orders"] = transfer_orders_for_position
+                    position["coverage_source"] = covered_position.get("coverage_source")
+                    position["coverage_remaining_quantity"] = covered_position.get(
+                        "remaining_quantity"
+                    )
+                    if covered_position.get("fully_covered"):
                         position["quantity_to_purchase"] = "0"
                         position["confirmed_deficit"] = "0"
-                        position["outcome"] = "covered_by_supplier_order"
-                        position["recommendation"] = "Ведется закупка по заказу поставщику."
+                        source = _text(covered_position.get("coverage_source"))
+                        position["outcome"] = (
+                            "covered_by_transfer_order"
+                            if source == "transfer_order"
+                            else "covered_by_mixed_orders"
+                            if source == "mixed"
+                            else "covered_by_supplier_order"
+                        )
+                        position["recommendation"] = (
+                            "Позиция перекрыта заказом на перемещение."
+                            if source == "transfer_order"
+                            else "Позиция перекрыта заказом поставщику и перемещением."
+                            if source == "mixed"
+                            else "Ведется закупка по заказу поставщику."
+                        )
                 else:
                     position["already_being_purchased"] = False
+                    position["already_being_transferred"] = False
                 merged_positions.append(position)
             if merged_positions:
                 updated_output["positions"] = merged_positions
             if coverage_status == "full":
                 updated_output["summary"] = (
-                    "Закупка по складскому наличию не требуется: "
-                    "все позиции уже в заказах поставщику."
+                    "Все позиции перекрыты заказами поставщику "
+                    "и/или заказами на перемещение."
                 )
                 updated_output["recommended_next_step"] = (
-                    "Контролировать исполнение заказов поставщику."
+                    "Контролировать исполнение закупок и перемещений."
                 )
                 updated_output["decision_kind"] = "none"
                 metadata[availability_spec.key("decision_kind")] = "none"
             metadata[availability_spec.output_key] = updated_output
 
         if availability_spec is not None and coverage_status == "full":
-            # All positions are in supplier orders: close availability agent, keep PM.
-            metadata[availability_spec.key("workspace_status")] = "archived"
-            metadata[availability_spec.key("workspace_archived_at")] = now.isoformat()
+            # Complete the role workspace now; archive it only after seven days.
+            if metadata.get(availability_spec.key("workspace_archived_at")):
+                metadata[availability_spec.key("workspace_status")] = "archived"
+            else:
+                metadata[availability_spec.key("workspace_status")] = "completed"
             metadata[availability_spec.key("archived_bucket")] = "success"
             metadata[availability_spec.key("auto_archived_reason")] = (
-                "all_positions_in_supplier_orders"
+                "all_positions_covered"
             )
             metadata[availability_spec.key("procurement_status")] = "covered"
+            metadata.setdefault(
+                availability_spec.key("coverage_completed_at"),
+                now.isoformat(),
+            )
             case.status = ProcurementCaseStatus.ORDERED.value
             case.control_point = "purchase"
             case.requested_operation = "monitor_supplier_orders"
@@ -598,6 +716,7 @@ class SupplierOrderReconciliationService:
             metadata.pop(availability_spec.key("archived_bucket"), None)
             metadata.pop(availability_spec.key("auto_archived_reason"), None)
             metadata.pop(availability_spec.key("procurement_status"), None)
+            metadata.pop(availability_spec.key("coverage_completed_at"), None)
         elif availability_spec is not None and coverage_status == "partial":
             # Partial coverage: availability agent stays open, manager in parallel.
             metadata[availability_spec.key("workspace_status")] = "awaiting_action"
@@ -605,6 +724,7 @@ class SupplierOrderReconciliationService:
             metadata.pop(availability_spec.key("archived_bucket"), None)
             metadata.pop(availability_spec.key("auto_archived_reason"), None)
             metadata[availability_spec.key("procurement_status")] = "partial"
+            metadata.pop(availability_spec.key("coverage_completed_at"), None)
             if availability_spec.agent_id not in assigned:
                 assigned.insert(0, availability_spec.agent_id)
             if PURCHASE_MANAGER_AGENT_ID not in assigned:
@@ -612,7 +732,9 @@ class SupplierOrderReconciliationService:
 
         case.assigned_agents = assigned
         case.case_metadata = metadata
+        flag_modified(case, "case_metadata")
         if previous_fingerprint == fingerprint:
+            # Coverage unchanged. last_actualized_at is stamped by the sync cycle.
             return False
         if newly_detected_refs:
             await self._append_event(
@@ -624,6 +746,16 @@ class SupplierOrderReconciliationService:
                 )[:255],
                 payload={"supplier_order_refs": newly_detected_refs},
             )
+        if newly_detected_transfer_refs:
+            await self._append_event(
+                case,
+                event_type="transfer_order_detected",
+                idempotency_key=(
+                    f"transfer-order-detected:{case.id}:"
+                    f"{_coverage_hash({'refs': newly_detected_transfer_refs})}"
+                )[:255],
+                payload={"transfer_order_refs": newly_detected_transfer_refs},
+            )
         await self._append_event(
             case,
             event_type="supplier_coverage_changed",
@@ -634,6 +766,7 @@ class SupplierOrderReconciliationService:
                 "covered_positions": covered,
                 "positions_count": len(positions),
                 "supplier_order_refs": sorted(order_by_ref),
+                "transfer_order_refs": transfer_refs,
             },
         )
         if coverage_status in {"partial", "full"} and previous_status == "none":
@@ -650,12 +783,51 @@ class SupplierOrderReconciliationService:
         ):
             await self._append_event(
                 case,
-                event_type=availability_spec.auto_archive_event,
+                event_type=f"{availability_spec.prefix}_coverage_completed",
                 idempotency_key=(
-                    f"{availability_spec.prefix}-auto-archived:{case.id}:{fingerprint}"
+                    f"{availability_spec.prefix}-coverage-completed:{case.id}:{fingerprint}"
                 )[:255],
-                payload={"reason": "all_positions_in_supplier_orders"},
+                payload={"reason": "all_positions_covered"},
             )
+        return True
+
+    async def _archive_completed_workspace_if_due(
+        self,
+        case: ProcurementCase,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        spec = self._availability_spec_for_case(case)
+        if spec is None:
+            return False
+        metadata = dict(case.case_metadata or {})
+        completed_at = _parse_datetime(
+            metadata.get(spec.key("coverage_completed_at"))
+        )
+        if (
+            completed_at is None
+            or metadata.get(spec.key("workspace_archived_at"))
+            or (now or datetime.now(UTC))
+            < completed_at + timedelta(days=COVERAGE_ARCHIVE_AFTER_DAYS)
+        ):
+            return False
+        archived_at = now or datetime.now(UTC)
+        metadata[spec.key("workspace_status")] = "archived"
+        metadata[spec.key("workspace_archived_at")] = archived_at.isoformat()
+        metadata[spec.key("archived_bucket")] = "success"
+        case.case_metadata = metadata
+        await self._append_event(
+            case,
+            event_type=spec.auto_archive_event,
+            idempotency_key=(
+                f"{spec.prefix}-workspace-archived:{case.id}:"
+                f"{completed_at.isoformat()}"
+            )[:255],
+            payload={
+                "reason": "all_positions_covered",
+                "coverage_completed_at": completed_at.isoformat(),
+            },
+        )
         return True
 
     @staticmethod
@@ -692,7 +864,9 @@ class SupplierOrderReconciliationService:
         }:
             task.status = TaskStatus.CANCELLED
             task.finished_at = datetime.now(UTC)
-            task.error_message = "Все позиции уже присутствуют в заказах поставщику."
+            task.error_message = (
+                "Все позиции перекрыты заказами поставщику и/или перемещениями."
+            )
         case.current_task_id = None
 
     async def _append_event(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
@@ -79,8 +79,7 @@ def _order(*nomenclature_refs: str) -> dict:
             {
                 "lineNumber": index,
                 "nomenclatureRef": nomenclature_ref,
-                # Coverage is presence-only: even a tiny quantity covers the position.
-                "quantity": 0.001,
+                "quantity": 100 if nomenclature_ref == "nom-1" else 200,
                 "cancelled": False,
             }
             for index, nomenclature_ref in enumerate(nomenclature_refs, start=1)
@@ -113,7 +112,7 @@ async def test_partial_presence_coverage_keeps_both_workspaces() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_presence_coverage_closes_picker_and_is_idempotent() -> None:
+async def test_full_quantity_coverage_completes_picker_and_is_idempotent() -> None:
     db = MagicMock()
     db.flush = AsyncMock()
     db.scalar = AsyncMock(return_value=None)
@@ -130,12 +129,14 @@ async def test_full_presence_coverage_closes_picker_and_is_idempotent() -> None:
     assert case.status == ProcurementCaseStatus.ORDERED.value
     assert case.current_agent_id == PURCHASE_MANAGER_AGENT_ID
     assert case.assigned_agents == [PURCHASE_MANAGER_AGENT_ID]
-    assert (case.case_metadata or {})["picker_workspace_status"] == "archived"
-    assert (case.case_metadata or {}).get("picker_workspace_archived_at")
+    assert (case.case_metadata or {})["picker_workspace_status"] == "completed"
+    assert not (case.case_metadata or {}).get("picker_workspace_archived_at")
     assert (case.case_metadata or {})["picker_auto_archived_reason"] == (
-        "all_positions_in_supplier_orders"
+        "all_positions_covered"
     )
+    assert (case.case_metadata or {}).get("picker_coverage_completed_at")
     assert (case.case_metadata or {})["picker_procurement_status"] == "covered"
+    assert (case.case_metadata or {})["material_order_coverage"]["coverage_status"] == "full"
     assert (case.case_metadata or {})["supplier_order_coverage"]["coverage_status"] == "full"
 
 
@@ -156,3 +157,70 @@ async def test_cancelled_supplier_line_does_not_cover_position() -> None:
     assert snapshot["coverage_status"] == "none"
     assert snapshot["covered_positions"] == 0
     assert case.assigned_agents == [WAREHOUSE_PICKER_AGENT_ID]
+
+
+@pytest.mark.asyncio
+async def test_completed_picker_workspace_archives_after_seven_days() -> None:
+    db = MagicMock()
+    db.flush = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    db.get = AsyncMock(return_value=None)
+    case = _case()
+    service = SupplierOrderReconciliationService(db, mcp_client=MagicMock())
+
+    await service._apply_case(case, [_order("nom-1", "nom-2")])
+    completed_at = datetime.fromisoformat(
+        (case.case_metadata or {})["picker_coverage_completed_at"]
+    )
+
+    assert (
+        await service._archive_completed_workspace_if_due(
+            case,
+            now=completed_at + timedelta(days=6, hours=23),
+        )
+        is False
+    )
+    assert not (case.case_metadata or {}).get("picker_workspace_archived_at")
+
+    assert (
+        await service._archive_completed_workspace_if_due(
+            case,
+            now=completed_at + timedelta(days=7),
+        )
+        is True
+    )
+    assert (case.case_metadata or {})["picker_workspace_status"] == "archived"
+    assert (case.case_metadata or {}).get("picker_workspace_archived_at")
+    assert case.status == ProcurementCaseStatus.ORDERED.value
+
+
+@pytest.mark.asyncio
+async def test_full_to_partial_reopens_picker_workspace() -> None:
+    db = MagicMock()
+    db.flush = AsyncMock()
+    db.scalar = AsyncMock(return_value=None)
+    db.get = AsyncMock(return_value=None)
+    case = _case()
+    service = SupplierOrderReconciliationService(db, mcp_client=MagicMock())
+
+    await service._apply_case(case, [_order("nom-1", "nom-2")])
+    assert (case.case_metadata or {})["picker_workspace_status"] == "completed"
+    completed_at = datetime.fromisoformat(
+        (case.case_metadata or {})["picker_coverage_completed_at"]
+    )
+    await service._archive_completed_workspace_if_due(
+        case,
+        now=completed_at + timedelta(days=7),
+    )
+    assert (case.case_metadata or {})["picker_workspace_status"] == "archived"
+
+    await service._apply_case(case, [_order("nom-1")])
+
+    metadata = case.case_metadata or {}
+    assert case.status == ProcurementCaseStatus.AGENT_WAITING.value
+    assert case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+    assert metadata["picker_workspace_status"] == "awaiting_action"
+    assert not metadata.get("picker_coverage_completed_at")
+    assert not metadata.get("picker_workspace_archived_at")
+    assert WAREHOUSE_PICKER_AGENT_ID in (case.assigned_agents or [])
+    assert PURCHASE_MANAGER_AGENT_ID in (case.assigned_agents or [])

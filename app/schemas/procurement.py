@@ -99,7 +99,10 @@ class ProcurementCaseSummary(BaseModel):
     required_date: datetime | None = None
     deadline_at: datetime | None = None
     positions_count: int = 0
+    created_at: datetime | None = None
     updated_at: datetime | None = None
+    coverage_checked_at: datetime | None = None
+    last_actualized_at: datetime | None = None
     summary: str | None = None
     requires_human_review: bool = False
     closed_at: datetime | None = None
@@ -149,6 +152,22 @@ class ProcurementCaseSummary(BaseModel):
     picker_workspace_archived_at: datetime | None = None
     picker_action_at: datetime | None = None
     picker_critical_acknowledged_at: datetime | None = None
+    complex_bucket: Literal["success", "attention", "critical"] | None = None
+    complex_bucket_reason: str | None = None
+    complex_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    complex_decision_kind: Literal[
+        "none",
+        "stock_confirmation",
+        "deficit_confirmation",
+        "discrepancy_return",
+        "critical_acknowledgement",
+    ] | None = None
+    complex_invoked_at: datetime | None = None
+    complex_workspace_archived_at: datetime | None = None
+    complex_action_at: datetime | None = None
+    complex_critical_acknowledged_at: datetime | None = None
     purchase_manager_work_status: Literal[
         "processing", "awaiting_action", "completed", "archived"
     ] | None = None
@@ -157,6 +176,7 @@ class ProcurementCaseSummary(BaseModel):
     purchase_manager_invoked_at: datetime | None = None
     purchase_manager_workspace_archived_at: datetime | None = None
     supplier_coverage_status: Literal["none", "partial", "full"] | None = None
+    coverage_sources: list[str] = Field(default_factory=list)
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):

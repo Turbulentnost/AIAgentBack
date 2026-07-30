@@ -67,6 +67,10 @@ NEED_ENTITY_SETS: dict[str, ChainEntitySpec] = {
             "СкладОтправитель_Key",
             "СкладПолучатель_Key",
             "Статус",
+            "Основание",
+            "Основание_Type",
+            "ДокументОснование",
+            "ДокументОснование_Type",
         ],
         "line_fields": [
             "Ref_Key",

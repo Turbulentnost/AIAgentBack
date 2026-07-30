@@ -12,6 +12,7 @@
           "read_schema_describe_entity": "read.schema.describe_entity",
           "read_procurement_get_active_document_refs": "read.procurement.get_active_document_refs",
           "read_procurement_list_supplier_orders": "read.procurement.list_supplier_orders",
+          "read_procurement_list_transfer_orders": "read.procurement.list_transfer_orders",
           "read_procurement_list_tmc_presentations": "read.procurement.list_tmc_presentations",
           "read_document_get_documents": "read.document.get_document",
           "read_document_search_documents": "read.document.search_documents",

@@ -54,32 +54,13 @@ from app.models.procurement import (
     ProcurementSourceSyncState,
 )
 from app.models.task import Task
+from app.services.procurement_case_statuses import (
+    ACTIVE_CASE_STATUSES,
+    SOURCE_MONITORED_CASE_STATUSES,
+)
 
 logger = get_logger(__name__)
 
-ACTIVE_CASE_STATUSES = frozenset(
-    {
-        ProcurementCaseStatus.NEW.value,
-        ProcurementCaseStatus.AGENT_WAITING.value,
-        ProcurementCaseStatus.DATA_CHECK.value,
-        ProcurementCaseStatus.COVERAGE_CHECK.value,
-        ProcurementCaseStatus.HUMAN_REQUIRED.value,
-        ProcurementCaseStatus.BLOCKED.value,
-        ProcurementCaseStatus.QUALITY_QUEUED.value,
-        ProcurementCaseStatus.QUALITY_ASSIGNED.value,
-        ProcurementCaseStatus.QUALITY_DOC_CHECK.value,
-        ProcurementCaseStatus.QUALITY_INSPECTION.value,
-        ProcurementCaseStatus.QUALITY_DECISION.value,
-        ProcurementCaseStatus.ISOLATED.value,
-        ProcurementCaseStatus.NONCONFORMITY.value,
-        ProcurementCaseStatus.REWORK.value,
-        ProcurementCaseStatus.REINSPECTION.value,
-        ProcurementCaseStatus.QUALITY_RELEASED.value,
-    }
-)
-SOURCE_MONITORED_CASE_STATUSES = ACTIVE_CASE_STATUSES | {
-    ProcurementCaseStatus.ORDERED.value,
-}
 # Оркестратор держит кейсы в закупке (ordered) во «В работе»,
 # иначе они пропадают из поиска и рассинхронизируются с ролевыми агентами.
 ORCHESTRATOR_PROCESSING_CASE_STATUSES = SOURCE_MONITORED_CASE_STATUSES
@@ -136,6 +117,7 @@ CLOSED_REASON_LABELS = {
     "terminal_status": "Документ закрыт или завершён в 1С",
     "inactive_supply_action_or_cancelled": "Основание больше не актуально в 1С",
     "source_too_old": "Документ старше двух календарных месяцев",
+    "quality_released": "ОТК завершил проверку, материалы разрешены к использованию",
 }
 DEFAULT_ROUTE_STAGES = [
     {"stage_id": "basis", "label": "Основание", "order": 1},
@@ -192,6 +174,7 @@ class ProcurementOrchestratorService:
         self,
         *,
         source_types: set[ProcurementSourceType] | frozenset[ProcurementSourceType] | None = None,
+        run_agent_maintenance: bool = True,
     ) -> dict[str, Any]:
         started = datetime.now(UTC)
         summary: dict[str, Any] = {
@@ -233,27 +216,63 @@ class ProcurementOrchestratorService:
                     summary["errors"].append(
                         f"{capability.source_type.value}:{source_summary['error']}"
                     )
-        picker_sync = await self.ensure_picker_agent_work()
-        summary["picker_status_reported"] = picker_sync["reported"]
-        summary["picker_enqueued"] = picker_sync["enqueued"]
-        summary["picker_redispatched"] = picker_sync["redispatched"]
-        complex_sync = await self.ensure_complex_chief_agent_work()
-        summary["complex_status_reported"] = complex_sync["reported"]
-        summary["complex_enqueued"] = complex_sync["enqueued"]
-        summary["complex_redispatched"] = complex_sync["redispatched"]
-        summary["complex_migrated"] = complex_sync.get("migrated", 0)
-        purchase_manager_sync = await self.ensure_purchase_manager_work()
-        summary["purchase_manager_status_reported"] = purchase_manager_sync["reported"]
-        summary["purchase_manager_enqueued"] = purchase_manager_sync["enqueued"]
-        summary["purchase_manager_redispatched"] = purchase_manager_sync["redispatched"]
-        summary["purchase_manager_assigned"] = purchase_manager_sync["assigned"]
-        backfilled = await self.ensure_active_case_assignments()
-        summary["backfilled"] = backfilled
-        summary["enqueued"] += backfilled
-        claimed = await self.claim_engineer_dispatches(limit=5)
-        summary["engineer_dispatched"] = claimed
+        if run_agent_maintenance:
+            picker_sync = await self.ensure_picker_agent_work()
+            summary["picker_status_reported"] = picker_sync["reported"]
+            summary["picker_enqueued"] = picker_sync["enqueued"]
+            summary["picker_redispatched"] = picker_sync["redispatched"]
+            complex_sync = await self.ensure_complex_chief_agent_work()
+            summary["complex_status_reported"] = complex_sync["reported"]
+            summary["complex_enqueued"] = complex_sync["enqueued"]
+            summary["complex_redispatched"] = complex_sync["redispatched"]
+            summary["complex_migrated"] = complex_sync.get("migrated", 0)
+            purchase_manager_sync = await self.ensure_purchase_manager_work()
+            summary["purchase_manager_status_reported"] = purchase_manager_sync[
+                "reported"
+            ]
+            summary["purchase_manager_enqueued"] = purchase_manager_sync["enqueued"]
+            summary["purchase_manager_redispatched"] = purchase_manager_sync[
+                "redispatched"
+            ]
+            summary["purchase_manager_assigned"] = purchase_manager_sync["assigned"]
+            backfilled = await self.ensure_active_case_assignments()
+            summary["backfilled"] = backfilled
+            summary["enqueued"] += backfilled
+            claimed = await self.claim_engineer_dispatches(limit=5)
+            summary["engineer_dispatched"] = claimed
         summary["finished_at"] = datetime.now(UTC).isoformat()
         return summary
+
+    async def mark_material_cases_actualized(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> int:
+        """Stamp last_actualized_at for every active material-order case.
+
+        UI field «Обновлён» must move on every successful 30-minute cycle even
+        when coverage fingerprint is unchanged.
+        """
+        stamped_at = (now or datetime.now(UTC)).isoformat()
+        cases = (
+            await self.db.execute(
+                select(ProcurementCase).where(
+                    ProcurementCase.source_type
+                    == ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value,
+                    ProcurementCase.status.notin_(list(TERMINAL_CASE_STATUSES)),
+                )
+            )
+        ).scalars().all()
+        stamped = 0
+        from sqlalchemy.orm.attributes import flag_modified
+
+        for case in cases:
+            metadata = dict(case.case_metadata or {})
+            metadata["last_actualized_at"] = stamped_at
+            case.case_metadata = metadata
+            flag_modified(case, "case_metadata")
+            stamped += 1
+        return stamped
 
     async def _resolve_databases(self, health: dict[str, Any]) -> list[str]:
         default_name = str(health.get("database") or "default")
@@ -1027,6 +1046,14 @@ class ProcurementOrchestratorService:
             enqueued = await self._enqueue_role_agent(case)
             return "enqueued" if enqueued else "created"
 
+        if (
+            case.status == ProcurementCaseStatus.CLOSED.value
+            and case.closed_reason == "quality_released"
+        ):
+            # Fulfilment is complete. A still-active source document must not
+            # reopen a case that successfully passed the final OTK stage.
+            return "skipped"
+
         was_terminal = case.status in TERMINAL_CASE_STATUSES
         unchanged = (
             case.source_data_version == document.data_version
@@ -1403,6 +1430,7 @@ class ProcurementOrchestratorService:
             ),
             "stock_growth_coefficient": metadata.get("stock_growth_coefficient"),
             "supplier_order_coverage": metadata.get("supplier_order_coverage"),
+            "material_order_coverage": metadata.get("material_order_coverage"),
         }
 
     async def _enqueue_role_agent(self, case: ProcurementCase) -> bool:
@@ -2238,6 +2266,14 @@ class ProcurementOrchestratorService:
                 case.status = str(next_quality_status)
             else:
                 case.status = ProcurementCaseStatus.NEW.value
+            if (
+                result_agent_id in QUALITY_ROLE_AGENT_IDS
+                and str(next_quality_status or "")
+                == ProcurementCaseStatus.QUALITY_RELEASED.value
+            ):
+                case.status = ProcurementCaseStatus.CLOSED.value
+                case.closed_at = datetime.now(UTC)
+                case.closed_reason = "quality_released"
             case.deviation_summary = None
             metadata = dict(case.case_metadata or {})
             metadata["role_agent_completion_key"] = (task.task_metadata or {}).get(
@@ -3403,7 +3439,9 @@ class ProcurementOrchestratorService:
         if not is_warehouse_availability_case(case, spec):
             return None, None
         supplier_coverage = (
-            metadata.get("supplier_order_coverage")
+            metadata.get("material_order_coverage")
+            if isinstance(metadata.get("material_order_coverage"), dict)
+            else metadata.get("supplier_order_coverage")
             if isinstance(metadata.get("supplier_order_coverage"), dict)
             else {}
         )
@@ -3416,12 +3454,13 @@ class ProcurementOrchestratorService:
         if (
             coverage_status == "full"
             or metadata.get(spec.key("auto_archived_reason"))
-            == "all_positions_in_supplier_orders"
+            in {"all_positions_in_supplier_orders", "all_positions_covered"}
             or metadata.get(spec.key("procurement_status")) == "covered"
         ):
             return (
                 "success",
-                f"Работа {actor} завершена: все позиции переданы менеджеру по закупкам.",
+                f"Работа {actor} завершена: все позиции перекрыты "
+                "и переданы менеджеру по закупкам.",
             )
         if (
             coverage_status == "partial"
@@ -3451,7 +3490,7 @@ class ProcurementOrchestratorService:
         if archived_bucket in {"success", "attention", "critical"}:
             if (
                 metadata.get(spec.key("auto_archived_reason"))
-                == "all_positions_in_supplier_orders"
+                in {"all_positions_in_supplier_orders", "all_positions_covered"}
             ):
                 return (
                     "success",
@@ -3500,7 +3539,9 @@ class ProcurementOrchestratorService:
         role_status = str((case.latest_result or {}).get("role_status") or "")
         metadata = case.case_metadata or {}
         supplier_coverage = (
-            metadata.get("supplier_order_coverage")
+            metadata.get("material_order_coverage")
+            if isinstance(metadata.get("material_order_coverage"), dict)
+            else metadata.get("supplier_order_coverage")
             if isinstance(metadata.get("supplier_order_coverage"), dict)
             else {}
         )
@@ -3549,11 +3590,7 @@ class ProcurementOrchestratorService:
             dispatcher_work_status = "completed"
         else:
             dispatcher_work_status = "awaiting_action"
-        supplier_coverage_for_picker = (
-            metadata.get("supplier_order_coverage")
-            if isinstance(metadata.get("supplier_order_coverage"), dict)
-            else {}
-        )
+        supplier_coverage_for_picker = supplier_coverage
         if picker_bucket is None:
             picker_work_status = None
         elif metadata.get("picker_workspace_archived_at") or (
@@ -3561,12 +3598,13 @@ class ProcurementOrchestratorService:
         ):
             picker_work_status = "archived"
         elif (
-            supplier_coverage_for_picker.get("coverage_status") == "full"
-            or metadata.get("picker_auto_archived_reason")
-            == "all_positions_in_supplier_orders"
-            or metadata.get("picker_procurement_status") == "covered"
+            metadata.get("picker_workspace_status") == "completed"
+            or (
+                supplier_coverage_for_picker.get("coverage_status") == "full"
+                and not metadata.get("picker_workspace_archived_at")
+            )
         ):
-            picker_work_status = "archived"
+            picker_work_status = "completed"
         elif (
             case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
             and role_status in {"waiting_human", "waiting_external", "failed"}
@@ -3589,12 +3627,13 @@ class ProcurementOrchestratorService:
         ):
             complex_work_status = "archived"
         elif (
-            supplier_coverage_for_picker.get("coverage_status") == "full"
-            or metadata.get("complex_auto_archived_reason")
-            == "all_positions_in_supplier_orders"
-            or metadata.get("complex_procurement_status") == "covered"
+            metadata.get("complex_workspace_status") == "completed"
+            or (
+                supplier_coverage_for_picker.get("coverage_status") == "full"
+                and not metadata.get("complex_workspace_archived_at")
+            )
         ):
-            complex_work_status = "archived"
+            complex_work_status = "completed"
         elif (
             case.current_agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
             and role_status in {"waiting_human", "waiting_external", "failed"}
@@ -3638,7 +3677,15 @@ class ProcurementOrchestratorService:
             "required_date": case.required_date.isoformat() if case.required_date else None,
             "deadline_at": case.deadline_at.isoformat() if case.deadline_at else None,
             "positions_count": len(case.positions or []),
+            "created_at": case.created_at.isoformat() if case.created_at else None,
             "updated_at": case.updated_at.isoformat() if case.updated_at else None,
+            "coverage_checked_at": supplier_coverage.get("checked_at"),
+            "last_actualized_at": _latest_iso_timestamp(
+                metadata.get("last_actualized_at"),
+                supplier_coverage.get("checked_at"),
+                case.source_synced_at.isoformat() if case.source_synced_at else None,
+                case.updated_at.isoformat() if case.updated_at else None,
+            ),
             "summary": (case.latest_result or {}).get("summary") or case.deviation_summary,
             "requires_human_review": bool((case.latest_result or {}).get("requires_human_review")),
             "closed_at": case.closed_at.isoformat() if case.closed_at else None,
@@ -3709,9 +3756,9 @@ class ProcurementOrchestratorService:
             ),
             "purchase_manager_bucket": purchase_manager_bucket,
             "purchase_manager_bucket_reason": (
-                "Все позиции уже присутствуют в заказах поставщику."
+                "Все позиции перекрыты заказами поставщику и/или перемещениями."
                 if supplier_coverage_status == "full"
-                else "Часть позиций ещё не покрыта заказами поставщику."
+                else "Часть позиций ещё не покрыта закупками или перемещениями."
                 if supplier_coverage_status == "partial"
                 else "Связанные активные заказы поставщику не найдены."
                 if purchase_manager_bucket
@@ -3722,6 +3769,15 @@ class ProcurementOrchestratorService:
                 "purchase_manager_workspace_archived_at"
             ),
             "supplier_coverage_status": supplier_coverage_status,
+            "coverage_sources": sorted(
+                {
+                    str(position.get("coverage_source"))
+                    for position in (supplier_coverage.get("positions") or [])
+                    if isinstance(position, dict)
+                    and position.get("coverage_source")
+                    and position.get("coverage_source") != "none"
+                }
+            ),
         }
 
     def _serialize_case_detail(self, case: ProcurementCase) -> dict[str, Any]:
@@ -4006,6 +4062,27 @@ def build_poll_lock_key(scope: str = "all") -> str:
         :12
     ]
     return f"procurement:orchestrator:poll:{scope}:{digest}"
+
+
+def _latest_iso_timestamp(*values: Any) -> str | None:
+    latest: datetime | None = None
+    latest_raw: str | None = None
+    for value in values:
+        if value is None or value == "":
+            continue
+        raw = value.isoformat() if isinstance(value, datetime) else str(value)
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            if latest_raw is None:
+                latest_raw = raw
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        if latest is None or parsed > latest:
+            latest = parsed
+            latest_raw = raw
+    return latest_raw
 
 
 __all__ = ["ProcurementOrchestratorService", "build_poll_lock_key"]
