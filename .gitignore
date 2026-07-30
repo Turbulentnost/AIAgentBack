@@ -10,6 +10,7 @@ dist/
 
 # Окружение и секреты
 .env
+.env.Jalko
 *.local
 ОТ ПОЧТЫ*.txt
 *ДАННЫЕ*.txt
@@ -49,11 +50,14 @@ data/*
 !data/rag_department_keywords.json
 !data/tz_department_topics.json
 !data/spam_learning_patterns.json
+!data/spam_learning_not_spam_seed.json
+!data/rag_catalog.example.json
+!data/enterprise_positions.json
+!data/ui_department_allowlist.json
 !data/templates/
 !data/templates/**
 
 # Устаревшие/лишние RAG-артефакты (не используются коллекциями departments/spam_learning)
-data/rag_catalog.example.json
 data/spam_patterns.json
 
 # Импорты, выгрузки, runtime-обучение и отчёты в data/
@@ -63,8 +67,6 @@ data/*.xlsx
 data/*.xls
 data/*.docx
 data/*.xml
-data/routing_corrections.json
-data/enterprise_positions.json
 data/*_report*.json
 data/*_comparison*.json
 data/*_mapping*.xlsx

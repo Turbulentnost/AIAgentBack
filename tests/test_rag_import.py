@@ -39,7 +39,7 @@ def test_load_example_catalog():
 
 def test_merge_keywords():
     dept = parse_department(
-        {"department_id": "SALES", "department_name": "Отдел продаж", "keywords": ["заказ"]}
+        {"department_id": "00-000002", "department_name": "Бухгалтерия", "keywords": ["заказ"]}
     )
     assert dept is not None
     extra = load_department_keywords(ROOT / "data" / "rag_department_keywords.json")

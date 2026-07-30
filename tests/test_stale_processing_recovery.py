@@ -60,6 +60,7 @@ def test_recover_stale_processing_reenqueues_old_rows():
         received_at=row.received_at,
     )
     repo.load_email_from_row = MagicMock(return_value=email)
+    repo.get_by_message_id = MagicMock(return_value=None)
 
     factory = MagicMock()
     factory.return_value.__enter__.return_value = session

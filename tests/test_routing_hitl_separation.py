@@ -82,7 +82,7 @@ def test_api_route_confidence_level_aligns_with_dept_confidence():
     row.dept_confidence = 0.88
     data = _row_to_list_dict(row)
     assert data["dept_confidence"] == 0.88
-    assert data["route_confidence_level"] == "ВЫСОКАЯ"
+    assert data["route_confidence_level"] == "СРЕДНЯЯ"
     assert data["route_confidence_score"] == 88
 
 

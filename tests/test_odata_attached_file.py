@@ -174,11 +174,11 @@ def test_build_attached_file_payload_database_mode_by_default():
     assert payload["Description"] == "АЛ00-000762"
     assert payload["Расширение"] == "msg"
     assert payload["ВладелецФайла_Key"] == DOC_KEY
-    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
-    assert payload["Том_Key"] == "21886495-364e-11ea-82f2-ac1f6b05524c"
-    assert "ПутьКФайлу" in payload
-    assert "ФайлХранилище_Base64Data" not in payload  # stream PUT после POST
-    assert payload["ФайлХранилище_Type"] == "application/xml+xdto"
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert "Том_Key" not in payload
+    assert "ПутьКФайлу" not in payload
+    assert payload["ФайлХранилище_Base64Data"]
+    assert payload["ФайлХранилище_Type"] == "application/octet-stream"
     assert payload["Размер"] == 68
     assert "Изменил_Key" not in payload
     assert "Автор_Key" not in payload
@@ -376,9 +376,9 @@ def test_odata_integration_attach_files_minimal_payload_without_author():
     )
     _entity, payload = service._client.create_entity.call_args[0]
     assert "Автор_Key" not in payload
-    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
-    assert "ФайлХранилище_Base64Data" not in payload
-    service._client.put_entity_stream.assert_called()
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert "ФайлХранилище_Base64Data" in payload
+    service._client.put_entity_stream.assert_not_called()
     assert "ДатаСоздания" in payload
 
 
@@ -800,18 +800,15 @@ def test_odata_integration_attach_files_delegates_to_client():
     assert "Автор_Key" not in payload  # minimal
     assert "Редактирует_Key" not in payload
     assert payload["Description"] == "НП00-003877"
-    assert "ФайлХранилище_Base64Data" not in payload
-    assert payload["ТипХраненияФайла"] == "ВТомахНаДиске"
-    assert "ПутьКФайлу" in payload
-    service._client.patch_entity.assert_called()
-    patch_calls = service._client.patch_entity.call_args_list
-    assert not any("Автор_Key" in call.args[2] for call in patch_calls)
-    assert any(
-        call.args[2].get("Редактирует_Key") == "00000000-0000-0000-0000-000000000000"
-        for call in patch_calls
-    )
-    assert not any("Изменил_Key" in call.args[2] for call in patch_calls)
-    service._client.put_entity_stream.assert_called()
+    assert "ФайлХранилище_Base64Data" in payload
+    assert payload["ТипХраненияФайла"] == "ВИнформационнойБазе"
+    assert "ПутьКФайлу" not in payload
+    service._client.patch_entity.assert_called_once()
+    patch_payload = service._client.patch_entity.call_args[0][2]
+    assert patch_payload.get("Редактирует_Key") == "00000000-0000-0000-0000-000000000000"
+    assert "Автор_Key" not in patch_payload
+    assert "Изменил_Key" not in patch_payload
+    service._client.put_entity_stream.assert_not_called()
 
 
 def test_verify_attached_file_storage_accepts_volume_with_zero_stream():

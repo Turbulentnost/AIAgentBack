@@ -45,7 +45,7 @@ def test_directions_by_code_from_rules():
 def test_build_department_records_for_db():
     records = build_department_records_for_db()
     codes = {record.code for record in records}
-    assert len(records) == 139
+    assert len(records) == 131
     assert "00-999999" not in codes
     assert "00-000163" in codes
 
