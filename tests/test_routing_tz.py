@@ -70,7 +70,13 @@ def test_t03_info_mailbox_tkp_by_content(engine):
         engine=engine,
     )
     assert decision.services[0].code != "00-000066"
-    assert decision.match_source in {"content", "det_sales_industrial", "sales_odp", "sales_orkk"}
+    assert decision.match_source in {
+        "content",
+        "det_sales_industrial",
+        "det_sales_orkk_request",
+        "sales_odp",
+        "sales_orkk",
+    }
 
 
 def test_t04_noreply_spam():

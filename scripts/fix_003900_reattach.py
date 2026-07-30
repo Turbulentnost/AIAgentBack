@@ -27,16 +27,14 @@ from agent_pochta.services.erp_attachments import (  # noqa: E402
 from agent_pochta.services.odata_attached_file import (  # noqa: E402
     AttachedFileInput,
     attach_file_to_incoming_document,
+    build_attached_file_payload,
+    delete_attached_file_refs,
     list_attached_files_for_document,
     now_attached_file_processed_at,
     read_attached_file_storage_bytes,
-    replace_attached_files_for_document,
 )
 from agent_pochta.services.odata_client import ODataClient  # noqa: E402
-from agent_pochta.services.odata_integration import (  # noqa: E402
-    ODataIntegrationService,
-    resolve_attached_file_author_key,
-)
+from agent_pochta.services.odata_integration import ODataIntegrationService  # noqa: E402
 from agent_pochta.services.vault import StubVaultClient  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
@@ -89,6 +87,17 @@ def build_field_map(settings) -> dict:
     return svc._attached_file_field_map
 
 
+def agent_attachment_refs(existing: list[dict]) -> list[str]:
+    """Ref_Key только агентских вложений (по имени документа), не ручных."""
+    refs: list[str] = []
+    for item in existing:
+        ref = str(item.get("Ref_Key") or "").strip()
+        desc = str(item.get("Description") or "").strip()
+        if ref and desc == DOC_NUMBER:
+            refs.append(ref)
+    return refs
+
+
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -116,11 +125,6 @@ def main() -> None:
         password=settings.odata_password,
         timeout_sec=max(settings.odata_timeout_sec, 120),
     )
-    author = resolve_attached_file_author_key(
-        explicit_key=settings.odata_file_author_key or "",
-        incoming_defaults_file=settings.odata_incoming_defaults_file,
-    )
-
     ref760 = client.get_by_key(entity, REF_760_OK) or {}
     existing_before = list_attached_files_for_document(
         client, document_ref_key=doc_ref, field_map=fm
@@ -128,35 +132,27 @@ def main() -> None:
     file_input = AttachedFileInput(
         filename=msg_filename,
         content=msg_bytes,
-        author_key=author or None,
         processed_at=now_attached_file_processed_at(),
     )
+    _entity, post_payload = build_attached_file_payload(
+        document_ref_key=doc_ref,
+        file_input=file_input,
+        field_map=fm,
+    )
 
-    if existing_before:
-        replace_result = replace_attached_files_for_document(
-            client,
-            document_ref_key=doc_ref,
-            files=[file_input],
-            field_map=fm,
-            verify_owner_exists=True,
-            document_number=DOC_NUMBER,
-            message_id=email.message_id,
-        )
-        result = replace_result.attached[0]
-        deleted = list(replace_result.deleted_old_refs)
-        strategy = "database (transactional replace)"
-    else:
-        result = attach_file_to_incoming_document(
-            client,
-            document_ref_key=doc_ref,
-            file_input=file_input,
-            field_map=fm,
-            verify_owner_exists=True,
-            document_number=DOC_NUMBER,
-            message_id=email.message_id,
-        )
-        deleted = []
-        strategy = "database (attach only, doc was empty)"
+    result = attach_file_to_incoming_document(
+        client,
+        document_ref_key=doc_ref,
+        file_input=file_input,
+        field_map=fm,
+        verify_owner_exists=True,
+        document_number=DOC_NUMBER,
+        message_id=email.message_id,
+    )
+    refs_to_delete = agent_attachment_refs(existing_before)
+    refs_to_delete = [r for r in refs_to_delete if r != result.ref_key]
+    deleted = delete_attached_file_refs(client, ref_keys=refs_to_delete, field_map=fm)
+    strategy = "database (minimal payload, agent file only)"
 
     odata_bytes = read_attached_file_storage_bytes(
         client, entity=entity, ref_key=result.ref_key, field_map=fm
@@ -171,6 +167,7 @@ def main() -> None:
         "existing_before_count": len(existing_before),
         "deleted_old_refs": deleted,
         "new_ref_key": result.ref_key,
+        "post_payload_keys": sorted(post_payload.keys()),
         "bytes_match": odata_bytes == msg_bytes,
         "msg_size": len(msg_bytes),
         "odata_size": len(odata_bytes),

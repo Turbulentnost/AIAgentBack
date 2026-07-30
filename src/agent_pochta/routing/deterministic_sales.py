@@ -140,9 +140,67 @@ def _is_foreign(
     ):
         if not _is_domestic_domain(domain, exclude):
             foreign_domains.append(domain)
+        elif _has_hard_foreign_tld(domain, rules) and domain not in exclude:
+            # TLD из справочника, если домен ошибочно попал в domestic.
+            foreign_domains.append(domain)
     if foreign_domains:
         return True, foreign_domains
     return False, []
+
+
+def _has_hard_foreign_tld(domain: str, rules: dict) -> bool:
+    """Проверка TLD из foreign_hard_tlds (например .de, .cn) — hard foreign."""
+    tlds = [str(t).lower().lstrip(".") for t in (rules.get("foreign_hard_tlds") or []) if str(t).strip()]
+    if not tlds or not domain:
+        return False
+    host = domain.lower().strip(".")
+    for tld in tlds:
+        if host == tld or host.endswith("." + tld):
+            # Не считать .com.ru и т.п. зарубежными — они уже в domestic suffixes.
+            if _is_domestic_domain(host, set()):
+                return False
+            return True
+    return False
+
+
+def foreign_confirm_markers_in_text(text: str, rules: dict | None = None) -> list[str]:
+    """Маркеры foreign_markers — только подтверждение hard foreign, не самостоятельный route."""
+    cfg = rules if rules is not None else load_deterministic_sales_rules()
+    if not cfg:
+        return []
+    return _hits_in_text(list(cfg.get("foreign_markers") or []), normalize_text(text))
+
+
+def is_domestic_sender_domain(sender_email: str, rules: dict | None = None) -> bool:
+    cfg = rules if rules is not None else load_deterministic_sales_rules()
+    exclude = {d.lower() for d in (cfg.get("foreign_exclude_domains") or [])}
+    if "@" not in (sender_email or ""):
+        return True
+    domain = _normalize_domain(sender_email)
+    return _is_domestic_domain(domain, exclude)
+
+
+def commercial_markers_in_text(text: str, rules: dict | None = None) -> list[str]:
+    cfg = rules if rules is not None else load_deterministic_sales_rules()
+    if not cfg:
+        return []
+    markers = list(cfg.get("sales_context_markers") or [])
+    markers.extend(list(cfg.get("dealer_markers") or [])[:20])
+    return _hits_in_text(markers, normalize_text(text))
+
+
+def is_commercial_ru_context(
+    *,
+    subject: str,
+    body: str,
+    sender_email: str = "",
+    rules: dict | None = None,
+) -> bool:
+    """Коммерческие маркеры при РФ/СНГ домене отправителя — штраф для ВЭД."""
+    cfg = rules if rules is not None else load_deterministic_sales_rules()
+    if not is_domestic_sender_domain(sender_email, cfg):
+        return False
+    return bool(commercial_markers_in_text(f"{subject} {body}", cfg))
 
 
 def match_foreign_domain_route(
@@ -262,6 +320,7 @@ def match_deterministic_sales(
     industrial_hits = _hits_in_text(list(cfg.get("industrial_markers") or []), text)
     gazprom_hits = _hits_in_text(list(cfg.get("gazprom_markers") or []), text)
     orkk_hits = _hits_in_text(list(cfg.get("orkk_holdings") or []), text)
+    orkk_request_hits = _hits_in_text(list(cfg.get("orkk_request_markers") or []), text)
     spu_hits = _hits_in_text(
         ["спу", "стационарная поверочная", "поверочная установка", "spu-5", "spu 5"],
         text,
@@ -280,6 +339,7 @@ def match_deterministic_sales(
         or dealer_hits
         or gazprom_hits
         or orkk_hits
+        or orkk_request_hits
         or spu_hits
         or chair_hits
     )
@@ -341,6 +401,18 @@ def match_deterministic_sales(
                 source="det_sales_dealer",
                 reasoning="Гранд / UFG-H → ОДП",
                 matched_keywords=dealer_hits,
+            )
+        )
+
+    if orkk_request_hits:
+        return _accept(
+            DeterministicHit(
+                code=str(cfg["orkk_department_id"]),
+                name=str(cfg.get("orkk_department_name") or "ОРКК"),
+                direction=DIRECTION_COMMERCIAL,
+                source="det_sales_orkk_request",
+                reasoning="ТКП / запрос поставки → ОРКК",
+                matched_keywords=orkk_request_hits,
             )
         )
 

@@ -52,6 +52,8 @@ def test_needs_rag_fallback_skipped_for_exact_email():
 
 def test_rag_fallback_picks_department_from_keywords(monkeypatch):
     monkeypatch.setenv("RAG_DEPARTMENT_ENABLED", "true")
+    monkeypatch.setenv("RAG_BACKEND", "stub")
+    monkeypatch.setenv("USE_STUBS", "true")
     from agent_pochta.config import reset_settings
 
     reset_settings()
@@ -66,7 +68,7 @@ def test_rag_fallback_picks_department_from_keywords(monkeypatch):
         }
     )
     assert "route_department_rag" in res["trace"]
-    assert res["routing"].department_id == "SALES"
+    assert res["routing"].department_id == "00-000155"
     assert (res.get("meta") or {}).get("rag_fallback") is True
 
 
@@ -93,17 +95,17 @@ def test_rag_respects_sender_allowed_departments(monkeypatch):
                 contractor_id="C-GOV-01",
                 name="ИФНС",
                 emails=["info@nalog.gov.ru"],
-                department_codes=["LEGAL"],
+                department_codes=["00-000044"],
                 contractor_type="госорган",
             ),
-            allowed_departments=["LEGAL"],
+            allowed_departments=["00-000044"],
         ),
         "trace": [],
     }
     from agent_pochta.nodes.n5_route_department import node_route_department
 
     res = node_route_department(state, container)
-    assert res["routing"].department_id == "LEGAL"
+    assert res["routing"].department_id == "00-000044"
     assert "route_department_rag" in res["trace"]
 
 

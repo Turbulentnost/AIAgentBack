@@ -13,6 +13,15 @@ from agent_pochta.routing import RouteEngine, route_email
 from agent_pochta.routing.engine import rebuild_decision_xml
 from agent_pochta.routing.recipients import build_routing_search_text
 from agent_pochta.routing.models import ConfidenceLevel
+from agent_pochta.routing.evidence import (
+    VED_DEPARTMENT_CODE,
+    department_confidence_accepted,
+)
+from agent_pochta.routing.deterministic_sales import (
+    is_commercial_ru_context,
+    load_deterministic_sales_rules,
+    match_foreign_domain_route,
+)
 from agent_pochta.routing.xml_builder import build_subject_xml_theme, sanitize_theme
 from agent_pochta.schemas import ProcessingStatus, RoutingResult, SenderIdentity, SpamResult
 from agent_pochta.services import ServiceContainer
@@ -101,7 +110,127 @@ def _needs_rag_fallback(decision) -> bool:
         return True
     if decision.match_source == "reserve":
         return True
+    # Leadership/VED не прошли gate — нужен fallback или HITL.
+    accepted, _ = department_confidence_accepted(
+        department_code=(decision.services[0].code if decision.services else ""),
+        score=decision.confidence_score,
+        hard_count=getattr(decision, "hard_signal_count", 0) or 0,
+        adaptive_count=getattr(decision, "adaptive_signal_count", 0) or 0,
+        hard_foreign=bool(getattr(decision, "hard_foreign", False)),
+        has_conflict=decision.has_conflict,
+    )
+    if decision.services and not accepted:
+        code = decision.services[0].code
+        if code in {VED_DEPARTMENT_CODE, "00-000001", "00-000152"}:
+            return True
     return False
+
+
+def _has_hard_foreign_evidence(
+    *,
+    decision,
+    email,
+    text: str,
+) -> bool:
+    if getattr(decision, "hard_foreign", False):
+        return True
+    if decision.match_source == "det_foreign_domain":
+        return True
+    hit = match_foreign_domain_route(
+        subject=email.subject or "",
+        body=text or email.body_text or "",
+        sender_email=email.sender_email or "",
+        to_addresses=list(getattr(email, "to_addresses", None) or []),
+        cc_addresses=list(getattr(email, "cc_addresses", None) or []),
+        reply_to=getattr(email, "reply_to", None),
+    )
+    return hit is not None
+
+
+def _reject_ved_without_hard_foreign(
+    routing: RoutingResult,
+    *,
+    decision,
+    email,
+    text: str,
+    fallback: RoutingResult,
+    trace: list[str],
+) -> tuple[RoutingResult, list[str]]:
+    """LLM/RAG не могут выбрать ВЭД без hard foreign (домен/TLD)."""
+    if routing.department_id != VED_DEPARTMENT_CODE:
+        return routing, trace
+    if _has_hard_foreign_evidence(decision=decision, email=email, text=text):
+        return routing, trace
+    # Штраф: коммерция с РФ-домена → не ВЭД.
+    det = load_deterministic_sales_rules()
+    commercial_ru = is_commercial_ru_context(
+        subject=email.subject or "",
+        body=text or email.body_text or "",
+        sender_email=email.sender_email or "",
+        rules=det,
+    )
+    reason = "ved_blocked_no_hard_foreign"
+    if commercial_ru:
+        reason = "ved_blocked_commercial_ru"
+    if fallback.department_id and fallback.department_id != VED_DEPARTMENT_CODE:
+        return (
+            fallback.model_copy(
+                update={
+                    "reasoning": f"{fallback.reasoning}; {reason}",
+                }
+            ),
+            trace + [reason],
+        )
+    # Нет безопасного fallback — оставляем rule routing, но с нулевой уверенностью к HITL.
+    return (
+        routing.model_copy(
+            update={
+                "department_id": fallback.department_id or routing.department_id,
+                "department_name": fallback.department_name or routing.department_name,
+                "confidence": min(routing.confidence, 0.49),
+                "reasoning": f"{routing.reasoning}; {reason}",
+            }
+        ),
+        trace + [reason],
+    )
+
+
+def _apply_dept_confidence_gate(
+    routing: RoutingResult,
+    *,
+    decision,
+    settings,
+    hard_foreign: bool,
+) -> tuple[RoutingResult, bool, str]:
+    """Проверка per-dept порогов; при fail — HITL."""
+    code = routing.department_id or ""
+    score = max(round(routing.confidence * 100), int(decision.confidence_score or 0))
+    hard_count = int(getattr(decision, "hard_signal_count", 0) or 0)
+    adaptive_count = int(getattr(decision, "adaptive_signal_count", 0) or 0)
+
+    if code == "00-000001":
+        default_min = settings.dept_confidence_chairman_min
+    elif code == "00-000152":
+        default_min = settings.dept_confidence_od_min
+    elif code == VED_DEPARTMENT_CODE:
+        default_min = settings.dept_confidence_ved_min
+    else:
+        default_min = settings.dept_confidence_min
+
+    accepted, reason = department_confidence_accepted(
+        department_code=code,
+        score=score,
+        hard_count=hard_count,
+        adaptive_count=adaptive_count,
+        hard_foreign=hard_foreign if code == VED_DEPARTMENT_CODE else bool(
+            getattr(decision, "hard_foreign", False)
+        ),
+        has_conflict=decision.has_conflict,
+        default_min=default_min,
+    )
+    if accepted:
+        return routing, False, ""
+    return routing, True, f"Порог уверенности отдела не выполнен ({reason})"
 
 
 def _rag_department_candidates(
@@ -330,6 +459,21 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             claim=decision.claim,
         )
 
+    # Антиложный ВЭД: запрет LLM/RAG без hard foreign.
+    hard_foreign = _has_hard_foreign_evidence(
+        decision=decision, email=email, text=text
+    )
+    if hard_foreign and not getattr(decision, "hard_foreign", False):
+        decision = decision.model_copy(update={"hard_foreign": True})
+    routing, trace = _reject_ved_without_hard_foreign(
+        routing,
+        decision=decision,
+        email=email,
+        text=text,
+        fallback=rule_routing,
+        trace=trace,
+    )
+
     decision = decision.model_copy(update={"process": resolved_process})
     decision = decision.model_copy(
         update={
@@ -463,6 +607,15 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
         trace = trace + [dialog_trace]
 
     human, reason = _needs_human_review(decision, settings, rag_used=rag_used, routing=routing)
+    _, gate_hitl, gate_reason = _apply_dept_confidence_gate(
+        routing,
+        decision=decision,
+        settings=settings,
+        hard_foreign=hard_foreign,
+    )
+    if gate_hitl:
+        human = True
+        reason = gate_reason or reason
 
     from agent_pochta.routing.confidence import score_to_level
 
@@ -490,6 +643,10 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
                 "register_erp": routing.register_erp,
                 "has_obligation": priority_decision.has_obligation,
                 "priority_reasoning": priority_decision.reasoning,
+                "hard_signal_count": getattr(decision, "hard_signal_count", 0),
+                "adaptive_signal_count": getattr(decision, "adaptive_signal_count", 0),
+                "hard_foreign": hard_foreign,
+                "evidence_notes": list(getattr(decision, "evidence_notes", None) or []),
             },
             "xml_document": decision.xml_document,
             "routing_recipient": recipient,

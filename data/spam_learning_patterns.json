@@ -5174,6 +5174,154 @@
       ],
       "label": "spam",
       "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "755291af-fbc6-46cf-8602-f28bbf8fe018",
+      "created_at": "2026-07-23T07:13:02.690246+00:00",
+      "message_id": "<115116.20646938930.info=turbo-don.ru@academiagoz.org>#info@turbo-don.ru",
+      "sender_email": "info@academiagoz.org",
+      "keywords": [
+        "методология ценообразования в",
+        "ценообразования в гоз"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "3f0b32b4-96a5-443e-bd16-053438ff33c2",
+      "created_at": "2026-07-23T07:13:14.721781+00:00",
+      "message_id": "<ArgqThNte4UZVrFtW7AOFuHtGxP7X87duVaTHBx1M@consult-cct.ru>#info@turbo-don.ru",
+      "sender_email": "info@npcsb.ru",
+      "keywords": [
+        "spam сст новости",
+        "сст новости страхования",
+        "новости страхования от",
+        "страхования от 22.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "b28953a4-3e74-4d35-88a5-c0557dbd59ac",
+      "created_at": "2026-07-24T07:21:41.372047+00:00",
+      "message_id": "<HjkwELaGv8UpOkFW2tZK8bvfH0L10VCVJy54Dsg8i8w@job.job.mailing-7c76956697-ps5w5>#info@turbo-don.ru",
+      "sender_email": "notice@roseltorg.ru",
+      "keywords": [
+        "уведомление о поступлении",
+        "о поступлении проекта",
+        "поступлении проекта договора",
+        "проекта договора 32616184179",
+        "договора 32616184179 лот",
+        "notice"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "ed904e02-43f4-460b-92bc-482d6ad5eaba",
+      "created_at": "2026-07-27T05:42:28.853754+00:00",
+      "message_id": "<20260727040529.22a1177d4ad70c56@doculite.online>#info@turbo-don.ru",
+      "sender_email": "noreply@doculite.online",
+      "keywords": [
+        "документ получен организацией",
+        "получен организацией республиканское",
+        "организацией республиканское государственное",
+        "республиканское государственное предприятие",
+        "государственное предприятие на",
+        "предприятие на праве"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
+    },
+    {
+      "id": "9cc0fba7-bba1-4d2f-989a-a56ccb90e8e4",
+      "created_at": "2026-07-27T05:42:40.293834+00:00",
+      "message_id": "<1049317502.52026.1785129575768@api.renins.com>#info@turbo-don.ru",
+      "sender_email": "no-answer@renins.com",
+      "keywords": [
+        "претензия по объекту",
+        "по объекту страхования",
+        "объекту страхования 26-00871020478",
+        "страхования 26-00871020478 ооо",
+        "26-00871020478 ооо деловые",
+        "ооо деловые линии",
+        "no-answer"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "88d3bee4-8d22-4101-b3a8-e9252335a3da",
+      "created_at": "2026-07-28T13:45:29.789578+00:00",
+      "message_id": "<744f14d84017494aaa28e177a2722255@gazprombank.ru>#npo_buh5@turbo-don.ru",
+      "sender_email": "anna.uvarova@gazprombank.ru",
+      "keywords": [
+        "гпб_мониторинг_2 кв 26_запрос",
+        "кв 26_запрос документов_турбулентность-дон",
+        "anna.uvarova"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "cddc2484-ee33-490a-b857-9aa69f117522",
+      "created_at": "2026-07-28T13:45:30.225657+00:00",
+      "message_id": "<744f14d84017494aaa28e177a2722255@gazprombank.ru>#npo_buh5@turbo-don.ru",
+      "sender_email": "anna.uvarova@gazprombank.ru",
+      "keywords": [
+        "гпб_мониторинг_2 кв 26_запрос",
+        "кв 26_запрос документов_турбулентность-дон",
+        "anna.uvarova"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "2c8fc0cd-31de-490f-853d-3ac1c65b2f59",
+      "created_at": "2026-07-28T13:47:24.694128+00:00",
+      "message_id": "<8661a093c4ed47d8ac5cda9aafd64bc7@tmk-group.com>#uk_omto11@turbo-don.ru",
+      "sender_email": "kseniya.alabina@tmk-group.com",
+      "keywords": [
+        "пао тмк",
+        "хорошо тогда",
+        "тогда завтра",
+        "завтра не",
+        "не ждем",
+        "ждем вас",
+        "kseniya.alabina"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "34950340-dea8-4ebb-828c-013df12c43ae",
+      "created_at": "2026-07-29T07:58:59.181870+00:00",
+      "message_id": "<bbee7d8a3b82453ba13ce786fe24d8ef@MBX2.snos.ru>#info@turbo-don.ru",
+      "sender_email": "06sep@snos.ru",
+      "keywords": [
+        "запрос 34123",
+        "прошу вас",
+        "вас сообщить",
+        "сообщить в",
+        "06sep"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "a1193032-76e1-403c-9fb4-4882af9c2cf6",
+      "created_at": "2026-07-29T07:58:59.500517+00:00",
+      "message_id": "<bbee7d8a3b82453ba13ce786fe24d8ef@MBX2.snos.ru>#info@turbo-don.ru",
+      "sender_email": "06sep@snos.ru",
+      "keywords": [
+        "запрос 34123",
+        "прошу вас",
+        "вас сообщить",
+        "сообщить в",
+        "06sep"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
     }
   ]
 }

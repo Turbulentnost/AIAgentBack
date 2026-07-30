@@ -10,6 +10,7 @@ from agent_pochta.routing.organizations import DIRECTION_DEFAULT, DIRECTION_UNCL
 
 
 class ConfidenceLevel(StrEnum):
+    CRITICAL = "КРИТИЧЕСКАЯ"
     HIGH = "ВЫСОКАЯ"
     MEDIUM = "СРЕДНЯЯ"
     LOW = "НИЗКАЯ"
@@ -38,3 +39,7 @@ class RoutingDecision(BaseModel):
     match_source: str = ""
     dialog_mode: str | None = None
     xml_document: str | None = None
+    hard_signal_count: int = 0
+    adaptive_signal_count: int = 0
+    hard_foreign: bool = False
+    evidence_notes: list[str] = Field(default_factory=list)

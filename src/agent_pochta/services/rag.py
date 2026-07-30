@@ -36,36 +36,36 @@ _DEMO_CONTRACTORS = [
         contractor_id="C-001",
         name="ООО «Ромашка»",
         emails=["zakaz@romashka.ru"],
-        department_codes=["SALES"],
+        department_codes=["00-000155"],
         contractor_type="клиент",
     ),
     Contractor(
         contractor_id="C-GOV-01",
         name="ИФНС России №1",
         emails=["info@nalog.gov.ru"],
-        department_codes=["LEGAL", "FINANCE"],
+        department_codes=["00-000044", "00-000002"],
         contractor_type="госорган",
     ),
 ]
 
 _DEMO_DEPARTMENTS = [
     Department(
-        department_id="SALES",
-        department_name="Отдел продаж",
+        department_id="00-000155",
+        department_name="Отдел дилерских продаж",
         head_name="Иванов И.И.",
         responsibility="Заказы, коммерческие предложения, договоры поставки",
         keywords=["заказ", "поставка", "счёт", "коммерческое предложение", "договор"],
     ),
     Department(
-        department_id="LEGAL",
+        department_id="00-000044",
         department_name="Юридический отдел",
         head_name="Петрова П.П.",
         responsibility="Претензии, суды, запросы госорганов",
         keywords=["претензия", "иск", "суд", "фнс", "требование", "запрос"],
     ),
     Department(
-        department_id="FINANCE",
-        department_name="Финансовый отдел",
+        department_id="00-000002",
+        department_name="Бухгалтерия",
         head_name="Сидоров С.С.",
         responsibility="Расчётные документы, акты сверки, платежи",
         keywords=["акт", "сверка", "платёж", "оплата", "бухгалтерия"],

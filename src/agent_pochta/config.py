@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     trusted_sender_domains: str = Field(default="", alias="TRUSTED_SENDER_DOMAINS")
     spam_skip_llm_for_trusted: bool = Field(default=True, alias="SPAM_SKIP_LLM_FOR_TRUSTED")
     dept_confidence_min: float = Field(default=0.70, alias="DEPT_CONFIDENCE_MIN")
+    dept_confidence_chairman_min: float = Field(
+        default=0.98, alias="DEPT_CONFIDENCE_CHAIRMAN_MIN"
+    )
+    dept_confidence_od_min: float = Field(default=0.95, alias="DEPT_CONFIDENCE_OD_MIN")
+    dept_confidence_ved_min: float = Field(default=0.90, alias="DEPT_CONFIDENCE_VED_MIN")
     max_attachment_mb: int = Field(default=25, alias="MAX_ATTACHMENT_MB")
     # Таймаут IMAP при on-demand скачивании вложений (полный RFC822 может быть большим).
     imap_download_timeout_sec: int = Field(default=120, alias="IMAP_DOWNLOAD_TIMEOUT_SEC")

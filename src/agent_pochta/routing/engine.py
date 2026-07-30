@@ -7,13 +7,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_pochta.config import PROJECT_ROOT
-from agent_pochta.routing.confidence import calculate_confidence
 from agent_pochta.routing.corrections import find_correction_match
 from agent_pochta.routing.deterministic_sales import (
+    foreign_confirm_markers_in_text,
+    is_commercial_ru_context,
+    load_deterministic_sales_rules,
     match_deterministic_sales,
     match_foreign_domain_route,
 )
-from agent_pochta.routing.models import ConfidenceLevel, RoutingDecision, ServiceRoute
+from agent_pochta.routing.evidence import evaluate_route_confidence
+from agent_pochta.routing.models import RoutingDecision, ServiceRoute
 from agent_pochta.routing.normalize import (
     contains_claim_marker,
     keyword_in_text,
@@ -804,26 +807,46 @@ class RouteEngine:
             and not any(c.source == "content" for c in candidates)
         )
 
-        score, level = calculate_confidence(
-            exact_email=primary.source in {
-                "exact_email",
-                "human_correction",
-                "info_strict",
-                "institution_chairman",
-                "institution_operational_director",
-                "ud_transfer",
-                "gazprom_np_reply",
-            }
-            or primary.source.startswith("det_"),
-            topic_matches=primary.topic_hits,
-            email_keyword=primary.source in {"email_keyword", "info_strict_unclear"},
-            content_keyword_hits=primary.content_hits,
+        det_rules = load_deterministic_sales_rules()
+        foreign_confirms = foreign_confirm_markers_in_text(
+            f"{subject} {body}", det_rules
+        )
+        commercial_ru = is_commercial_ru_context(
+            subject=subject,
+            body=body,
+            sender_email=email.sender_email or "",
+            rules=det_rules,
+        )
+        sender_domain_confirm = False
+        if primary.source in {
+            "info_strict",
+            "institution_chairman",
+            "institution_operational_director",
+            "gazprom_np_reply",
+        }:
+            # Домен/орг уже в matched_keywords правила — считаем confirm.
+            sender_domain_confirm = any(
+                "." in (kw or "") or "gazprom" in (kw or "").lower()
+                for kw in (primary.matched_keywords or [])
+            )
+
+        evidence = evaluate_route_confidence(
+            match_source=primary.source,
+            department_code=primary.code,
+            topic_hits=primary.topic_hits,
+            content_hits=primary.content_hits,
+            matched_keywords=list(primary.matched_keywords or []),
             org_confirmed=organization != "НП",
-            holding_found=primary.source.startswith(("sales", "det_")),
             has_conflict=has_conflict and primary.source != "human_correction",
             info_mailbox_no_topic=info_no_topic,
             unknown_route=primary.source == "reserve",
+            foreign_confirm_markers=foreign_confirms
+            if primary.source == "det_foreign_domain" or primary.code == "00-000015"
+            else None,
+            sender_domain_confirm=sender_domain_confirm,
+            commercial_ru_vs_ved=commercial_ru and primary.code == "00-000015",
         )
+        score, level = evidence.score, evidence.level
 
         keywords = self._collect_matching_keywords(candidates)
 
@@ -852,6 +875,10 @@ class RouteEngine:
             theme=sanitize_theme(subject),
             has_conflict=has_conflict,
             match_source=primary.source,
+            hard_signal_count=evidence.hard_count,
+            adaptive_signal_count=evidence.adaptive_count,
+            hard_foreign=evidence.hard_foreign,
+            evidence_notes=list(evidence.notes),
         )
 
         xml = build_xml_document(email, recipient=recipient, decision=decision)

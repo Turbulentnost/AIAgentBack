@@ -250,7 +250,7 @@ def test_attachment_text_in_combined_text_triggers_product_rule(engine):
 
     assert decision.services[0].code == "00-000128"
     assert decision.match_source == "det_product_bmi"
-    assert decision.confidence_level == ConfidenceLevel.HIGH
+    assert decision.confidence_level in {ConfidenceLevel.HIGH, ConfidenceLevel.CRITICAL}
     assert not _needs_rag_fallback(decision)
 
 
