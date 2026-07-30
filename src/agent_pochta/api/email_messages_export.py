@@ -1,4 +1,4 @@
-"""Excel-отчёт для режима «Таняфикация» (summary + detail по периоду)."""
+"""Excel-отчёт для режима «Вид 1С» (summary + detail по периоду)."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def export_filename(period: ExportPeriod, *, now: datetime | None = None) -> str
         suffix = date_from.isoformat()
     else:
         suffix = f"{date_from.isoformat()}_{date_to.isoformat()}"
-    return f"tanyafication_report_{period}_{suffix}.xlsx"
+    return f"vid_1c_report_{period}_{suffix}.xlsx"
 
 
 def _format_msk_datetime(value: str | None) -> str:
@@ -223,7 +223,7 @@ def build_export_xlsx(
     ws_summary = wb.active
     ws_summary.title = "Сводка"
 
-    ws_summary["A1"] = "Отчёт «Таняфикация»"
+    ws_summary["A1"] = "Отчёт «Вид 1С»"
     ws_summary["A1"].font = Font(bold=True, size=14)
     ws_summary["A2"] = f"Сформировано: {datetime.now(_MSK).strftime('%d.%m.%Y %H:%M')} MSK"
 

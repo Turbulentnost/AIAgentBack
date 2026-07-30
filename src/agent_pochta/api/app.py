@@ -504,7 +504,7 @@ def classification_events_summary(
 def export_email_messages_report(
     period: str = Query(default="day", pattern="^(day|week|month)$"),
 ) -> Response:
-    """Excel-отчёт для «Таняфикации»: сводка + детализация писем за период (MSK)."""
+    """Excel-отчёт для «Вид 1С»: сводка + детализация писем за период (MSK)."""
     with get_session_factory()() as session:
         content, filename = collect_export_data(
             session,
