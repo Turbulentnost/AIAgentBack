@@ -369,6 +369,24 @@ def test_email_eligible_for_erp_rejects_td_sales():
     ) is False
 
 
+def test_email_eligible_for_erp_accepts_info_routing_in_multi_to():
+    assert email_eligible_for_erp(
+        mailbox=TEST_II_MAILBOX,
+        to=[INFO_MAILBOX, TENDER_MAILBOX],
+        cc=[],
+        routing_recipient=INFO_MAILBOX,
+    ) is True
+
+
+def test_email_eligible_for_erp_accepts_info_to_test_ii_chain():
+    assert email_eligible_for_erp(
+        mailbox=TEST_II_MAILBOX,
+        to=[INFO_MAILBOX],
+        cc=[],
+        routing_recipient=TEST_II_MAILBOX,
+    ) is True
+
+
 def test_recipient_display_value_prefers_routing_recipient():
     payload = {
         "routing_recipient": "tender@turbo-don.ru",

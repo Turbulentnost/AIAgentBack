@@ -163,7 +163,7 @@ def email_eligible_for_erp(
     routing_recipient: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> bool:
-    """Регистрация входящей в 1С ERP только для info@turbo-don.ru."""
+    """Регистрация входящей в 1С ERP для маршрута info@ (в т.ч. test_ii@ ← info@)."""
     if payload is None:
         payload = email_info_filter_payload(
             mailbox=mailbox,
@@ -171,7 +171,17 @@ def email_eligible_for_erp(
             cc=cc,
             routing_recipient=routing_recipient,
         )
-    return is_only_info_to(mailbox=mailbox, payload=payload)
+    if is_only_info_to(mailbox=mailbox, payload=payload):
+        return True
+    if is_info_to_test_ii_routing(mailbox=mailbox, payload=payload):
+        return True
+    # Multi-recipient split: routing-попытка info@ при нескольких адресах в To.
+    to_list, cc_list = payload_recipient_lists(payload)
+    if cc_list:
+        return False
+    routing_raw = payload.get("routing_recipient")
+    routing = normalize_email_address(str(routing_raw)) if routing_raw else ""
+    return routing == INFO_MAILBOX and INFO_MAILBOX in to_list
 
 
 def is_only_info_to(*, mailbox: str, payload: dict[str, Any] | None) -> bool:
