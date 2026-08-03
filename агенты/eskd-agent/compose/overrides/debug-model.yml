@@ -1,7 +1,0 @@
-# Debug model: publish port to host, verbose flag.
-services:
-  model:
-    ports:
-      - "${BIND_ADDRESS:-0.0.0.0}:${MODEL_PORT:-8765}:8765"
-    environment:
-      MODEL_DEBUG: "1"

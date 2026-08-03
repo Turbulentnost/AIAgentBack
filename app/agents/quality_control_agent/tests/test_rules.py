@@ -52,6 +52,7 @@ def test_scrap_no_analog() -> None:
 def test_sample_rule_for_delivery_lot() -> None:
     from app.agents.quality_control_agent.rules_registry import build_sample_rule
 
+    # Прил. Б п.5: металлопрокат — 100%
     rule = build_sample_rule(
         "metal",
         lot_qty=100,
@@ -59,9 +60,9 @@ def test_sample_rule_for_delivery_lot() -> None:
         nomenclature_ref="NOM-1",
         supplier_ref="SUP-9",
     )
-    assert rule.sample_size == 10
-    assert rule.sample_pct == 10.0
-    assert rule.sample_basis == "10pct"
+    assert rule.sample_size == 100
+    assert rule.sample_pct == 100.0
+    assert rule.sample_basis == "100pct"
     assert rule.lot_qty == 100
     assert rule.presentation_ref == "PRES-42"
     assert "PRES-42" in rule.sample_note
@@ -75,19 +76,61 @@ def test_sample_rule_max_rating_one_percent() -> None:
     assert rule.sample_basis == "1pct_rating"
 
 
-def test_sample_rule_fasteners_per_package() -> None:
+def test_sample_rule_fasteners_tiers_and_each_box() -> None:
     from app.agents.quality_control_agent.rules_registry import build_sample_rule
 
+    # Прил. Б п.7: >100 → 3%; п. 6.6.3 — из каждой коробки
     rule = build_sample_rule("fasteners", lot_qty=500, presentation_ref="BOX-1")
-    assert rule.sample_size is None
-    assert rule.sample_basis == "per_package"
-    assert "тары" in rule.sample_note.lower() or "коробки" in rule.sample_note.lower()
+    assert rule.sample_pct == 3.0
+    assert rule.sample_size == 15
+    assert rule.sample_basis == "3pct"
+    assert "коробк" in rule.sample_note.lower()
 
 
 def test_sample_rule_second_sample() -> None:
     from app.agents.quality_control_agent.rules_registry import build_sample_rule
 
-    rule = build_sample_rule("electronics", lot_qty=50, require_second_sample=True)
+    rule = build_sample_rule("metal", lot_qty=50, require_second_sample=True)
     assert rule.require_second_sample is True
-    assert rule.second_sample_size == rule.sample_size == 5
+    assert rule.second_sample_size == rule.sample_size == 50
 
+
+def test_sample_rule_depends_on_category_pct() -> None:
+    from app.agents.quality_control_agent.rules_registry import build_sample_rule
+
+    electronics_small = build_sample_rule("electronics", lot_qty=50)
+    electronics_mid = build_sample_rule("electronics", lot_qty=100)
+    electronics_large = build_sample_rule("electronics", lot_qty=200)
+    drawing = build_sample_rule("drawing_parts", lot_qty=100)
+    gaskets = build_sample_rule("gaskets", lot_qty=40)
+    pipes = build_sample_rule("pipes", lot_qty=100, supplier_quality_rating=40)
+    metal = build_sample_rule("metal", lot_qty=100)
+    metal_rated = build_sample_rule("metal", lot_qty=100, supplier_quality_rating=40)
+
+    # Прил. Б п.1: 100 / 50 / 10
+    assert electronics_small.sample_pct == 100.0
+    assert electronics_small.sample_size == 50
+    assert electronics_small.sample_basis == "100pct"
+    assert electronics_mid.sample_pct == 50.0
+    assert electronics_mid.sample_size == 50
+    assert electronics_large.sample_pct == 10.0
+    assert electronics_large.sample_size == 20
+
+    # Прил. Б п.3: 100 / 50 / 10 → партия 100 → 50%
+    assert drawing.sample_pct == 50.0
+    assert drawing.sample_size == 50
+    assert drawing.sample_basis == "50pct"
+
+    # Прил. Б п.4 РТИ: 30 / 20 / 10
+    assert gaskets.sample_pct == 30.0
+    assert gaskets.sample_size == 12
+
+    # трубы: 100%, без скидки 1% по рейтингу (п. 6.7.4)
+    assert pipes.sample_pct == 100.0
+    assert pipes.sample_size == 100
+    assert pipes.sample_basis == "100pct"
+
+    assert metal.sample_pct == 100.0
+    assert metal.sample_basis == "100pct"
+    assert metal_rated.sample_basis == "1pct_rating"
+    assert metal_rated.sample_pct == 1.0

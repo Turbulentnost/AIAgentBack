@@ -25,6 +25,7 @@ alembic/versions/*.py
 !alembic/versions/0054_omto_support_manager_agent.py
 !alembic/versions/0055_production_dispatcher_agent.py
 !alembic/versions/0055_quality_agents.py
+!alembic/versions/0056_procurement_manager_agent.py
 !alembic/versions/0056_warehouse_picker_agent.py
 !alembic/versions/0060_legal_specialist_agent.py
 !alembic/versions/0064_supplier_order_reconciliation.py
@@ -32,6 +33,7 @@ alembic/versions/*.py
 !alembic/versions/0066_warehouse_complex_chief_agent.py
 !alembic/versions/0067_purchase_manager_rich_agent.py
 !alembic/versions/0068_eskd_agent.py
+!alembic/versions/0069_turbo_smk_modules.py
 !alembic/versions/006_classification_events_table.py
 !alembic/versions/007_is_info_recipient_column.py
 !alembic/versions/20260722_protocol_draft.py
@@ -101,3 +103,6 @@ src/agent_pochta/routing/data/routing_rules.json
 
 # Local backups (secrets, DB dumps)
 backup/
+
+# Автономные агенты с отдельным Docker-стеком (см. агенты/README.md)
+агенты/

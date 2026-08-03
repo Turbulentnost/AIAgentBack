@@ -4,7 +4,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import CurrentUser, DbSession, oauth2_scheme
+from app.api.deps import (
+    CurrentUser,
+    DbSession,
+    _dev_auto_login_allowed,
+    _resolve_dev_bypass_user,
+    oauth2_scheme,
+)
 from app.core.security import create_access_token, decode_access_token
 from app.models.user import User
 from app.schemas.auth import (
@@ -21,6 +27,23 @@ from app.services.onec_auth_service import OneCAuthService, OneCSessionExpiredEr
 from app.services.profile_image_service import ProfileImageService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/dev-auto-login", response_model=Token)
+async def dev_auto_login(db: DbSession, request: Request) -> Token:
+    """Issue a real JWT for the local bypass user (dev/test only)."""
+    if not _dev_auto_login_allowed():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dev auto-login выключен (DEV_AUTO_LOGIN + ENVIRONMENT=dev|test)",
+        )
+    user = await _resolve_dev_bypass_user(db)
+    return await AuthService(db).issue_session(
+        user,
+        action="auth.dev_auto_login",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
 
 
 @router.post("/login", response_model=Token)

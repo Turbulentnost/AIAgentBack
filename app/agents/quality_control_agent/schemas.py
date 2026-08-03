@@ -83,7 +83,14 @@ class QualitySampleRule(BaseModel):
     # Алгоритм
     sample_pct: float | None = None
     sample_basis: Literal[
+        "3pct",
+        "5pct",
         "10pct",
+        "15pct",
+        "20pct",
+        "30pct",
+        "50pct",
+        "100pct",
         "1pct_rating",
         "per_package",
         "second_sample",
@@ -101,7 +108,7 @@ class QualityControlPayload(BaseModel):
     nomenclature_ref: str | None = None
     item_group: TmcCategory | str | None = None
     supplier_ref: str | None = None
-    supplier_quality_rating: str | None = None
+    supplier_quality_rating: str | float | int | None = None
     control_rule_ids: list[str] = Field(default_factory=list)
     mandatory_documents: list[QualityDocumentRequirement] = Field(default_factory=list)
     sample_rule: QualitySampleRule | None = None

@@ -1,4 +1,4 @@
-"""Deterministic Rule Registry (Прил. В) — versioned dict, not LLM-only."""
+"""Deterministic Rule Registry (СТО-10-095 версия 05, Прил. А–В)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from app.agents.quality_control_agent.schemas import (
     QualitySampleRule,
 )
 
-RULES_VERSION = "1.0.0-sto-10-095"
+RULES_VERSION = "1.0.0-sto-10-095-v05"
 
-# Mandatory documents by ТМЦ category (Прил. В.3 MVP subset).
+# Mandatory documents by ТМЦ category (Прил. В.3 MVP subset + п. 6.7).
 CATEGORY_DOCUMENTS: dict[str, list[dict[str, Any]]] = {
     "electronics": [
         {"doc_type": "origin_confirmation", "label": "Подтверждение происхождения от официального поставщика"},
@@ -47,7 +47,7 @@ CATEGORY_DOCUMENTS: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
-# Industrial control deadlines in working days from presentation (Прил. В.2).
+# Industrial control deadlines in working days from presentation (Прил. В).
 CATEGORY_DEADLINES_WD: dict[str, int] = {
     "metal": 2,
     "pipes": 1,
@@ -61,6 +61,102 @@ CATEGORY_DEADLINES_WD: dict[str, int] = {
 }
 
 SCRAP_THRESHOLD_PCT = 15.0
+
+# Lot-size brackets from Прил. Б header: 0–50 / 51–100 / от 100 шт.
+# At exactly 100 шт. use the middle column (51–100).
+_LOT_TIER_BOUNDARIES = (50.0, 100.0)
+
+
+def _lot_tier(qty: float) -> int:
+    if qty <= _LOT_TIER_BOUNDARIES[0]:
+        return 0
+    if qty <= _LOT_TIER_BOUNDARIES[1]:
+        return 1
+    return 2
+
+
+# Category → sampling policy from СТО-10-095 v05 Прил. Б (инструментальный /
+# выборочный объём) + п. 6.6.3 / 6.7.4.
+# tiers: [0–50, 51–100, >100] %; flat_pct: fixed % for all lots.
+# sample_from_each_package: п. 6.6.3 (метизы — из каждой коробки).
+# allow_max_rating_1pct: п. 6.7.4 (исключение — фланцы и трубы).
+_CATEGORY_SAMPLE_POLICY: dict[str, dict[str, Any]] = {
+    # Прил. Б п.1 Радиоэлементы — инструментальный контроль параметров
+    "electronics": {
+        "tiers": (100.0, 50.0, 10.0),
+        "allow_max_rating_1pct": True,
+        "sto_ref": "Прил. Б п.1 Радиоэлементы",
+    },
+    # Прил. Б п.3 Детали литьём/мехобработкой (искл. трубы, фланцы)
+    "drawing_parts": {
+        "tiers": (100.0, 50.0, 10.0),
+        "allow_max_rating_1pct": True,
+        "sto_ref": "Прил. Б п.3 Детали литьём/мехобработкой",
+    },
+    # Прил. Б п.4 Резинотехнические изделия
+    "gaskets": {
+        "tiers": (30.0, 20.0, 10.0),
+        "allow_max_rating_1pct": True,
+        "sto_ref": "Прил. Б п.4 РТИ",
+    },
+    # Прил. Б п.5 Металлопрокат, трубы, листовой металл, фланцы — 100%
+    "metal": {
+        "flat_pct": 100.0,
+        "allow_max_rating_1pct": True,
+        "sto_ref": "Прил. Б п.5 Металлопрокат",
+    },
+    "pipes": {
+        "flat_pct": 100.0,
+        "allow_max_rating_1pct": False,
+        "sto_ref": "Прил. Б п.5 Трубы; п. 6.7.4 исключение рейтинга",
+    },
+    "flanges": {
+        "flat_pct": 100.0,
+        "allow_max_rating_1pct": False,
+        "sto_ref": "Прил. Б п.5 Фланцы; п. 6.7.4 исключение рейтинга",
+    },
+    # Прил. Б п.7 Метизы + п. 6.6.3 из каждой коробки
+    "fasteners": {
+        "tiers": (10.0, 5.0, 3.0),
+        "allow_max_rating_1pct": True,
+        "sample_from_each_package": True,
+        "sto_ref": "Прил. Б п.7 Метизы; п. 6.6.3",
+    },
+    # Кабель не выделен отдельной строкой Прил. Б; п. 6.7.2 — контроль
+    # целостности/маркировки/паспорта (как визуальные 100% в Прил. Б).
+    "cable": {
+        "flat_pct": 100.0,
+        "allow_max_rating_1pct": True,
+        "sto_ref": "п. 6.7.2 (кабель; % в Прил. Б не задан → 100% целостность)",
+    },
+    # Прил. Б п.12 СИЗ — 10%; «все остальные ТМЦ» в Прил. Б без % выборки.
+    "other": {
+        "flat_pct": 10.0,
+        "allow_max_rating_1pct": True,
+        "sto_ref": "Прил. Б п.12 СИЗ / прочее по умолчанию 10%",
+    },
+}
+
+
+def _sample_basis_for_pct(pct: float) -> str:
+    mapping = {
+        3.0: "3pct",
+        5.0: "5pct",
+        10.0: "10pct",
+        15.0: "15pct",
+        20.0: "20pct",
+        30.0: "30pct",
+        50.0: "50pct",
+        100.0: "100pct",
+    }
+    return mapping.get(float(pct), "category_default")
+
+
+def _base_pct_for_policy(policy: dict[str, Any], qty: float) -> float:
+    if "flat_pct" in policy:
+        return float(policy["flat_pct"])
+    tiers = policy["tiers"]
+    return float(tiers[_lot_tier(qty)])
 
 
 def normalize_category(raw: str | None) -> str:
@@ -144,7 +240,7 @@ def evaluate_document_completeness(
 
 
 def _is_max_supplier_rating(rating: str | float | int | None) -> bool:
-    """Прил. В: промышленный поставщик с макс. рейтингом → выборка 1%."""
+    """п. 6.7.4: макс. рейтинг 40 → выборка 1% (кроме труб/фланцев)."""
     if rating is None or rating == "":
         return False
     try:
@@ -165,9 +261,11 @@ def build_sample_rule(
     supplier_quality_rating: str | float | int | None = None,
     require_second_sample: bool = False,
 ) -> QualitySampleRule:
-    """Рассчитать объём выборки для конкретной поставки (Прил. В)."""
+    """Рассчитать объём выборки для конкретной поставки (СТО-10-095 Прил. Б)."""
     cat = normalize_category(category)
-    note_parts = [f"Правила выборки для группы «{cat}» (Прил. В / СТО-10-095)."]
+    policy = _CATEGORY_SAMPLE_POLICY.get(cat, _CATEGORY_SAMPLE_POLICY["other"])
+    sto_ref = str(policy.get("sto_ref", "СТО-10-095"))
+    note_parts = [f"Правила выборки для группы «{cat}» ({sto_ref} / СТО-10-095 v05)."]
     sample_size: int | None = None
     sample_pct: float | None = None
     sample_basis: str | None = "category_default"
@@ -192,13 +290,9 @@ def build_sample_rule(
             "Объём партии не указан — для числовой выборки задайте lot_qty / quantity поставки."
         )
 
-    if cat == "fasteners":
-        note_parts.append("Крепёж (метизы): выборка из каждой тары / коробки.")
-        sample_size = None
-        sample_pct = None
-        sample_basis = "per_package"
-    elif qty is not None and qty > 0:
-        if _is_max_supplier_rating(supplier_quality_rating):
+    if qty is not None and qty > 0:
+        allow_1pct = bool(policy.get("allow_max_rating_1pct", True))
+        if allow_1pct and _is_max_supplier_rating(supplier_quality_rating):
             sample_pct = 1.0
             sample_basis = "1pct_rating"
             sample_size = max(1, int(round(qty * 0.01)))
@@ -206,10 +300,29 @@ def build_sample_rule(
                 f"Максимальный рейтинг поставщика — выборка 1% партии ({sample_size} шт.)."
             )
         else:
-            sample_pct = 10.0
-            sample_basis = "10pct"
-            sample_size = max(1, int(round(qty * 0.1)))
-            note_parts.append(f"Базовая выборка ≈ 10% партии ({sample_size} шт.).")
+            base_pct = _base_pct_for_policy(policy, qty)
+            sample_pct = base_pct
+            sample_basis = _sample_basis_for_pct(base_pct)
+            if base_pct >= 100.0:
+                sample_size = max(1, int(round(qty)))
+            else:
+                sample_size = max(1, int(round(qty * (base_pct / 100.0))))
+            if "tiers" in policy:
+                note_parts.append(
+                    f"Выборка по Прил. Б (партия → ступень 0–50/51–100/>100): "
+                    f"{sample_pct:g}% ({sample_size} шт.)."
+                )
+            else:
+                note_parts.append(
+                    f"Базовая выборка {sample_pct:g}% партии ({sample_size} шт.)."
+                )
+
+    if policy.get("sample_from_each_package"):
+        note_parts.append(
+            "Метизы: при нескольких коробках выборку проводить из каждой коробки (п. 6.6.3)."
+        )
+        if sample_basis not in {"1pct_rating", "second_sample"} and sample_pct is None:
+            sample_basis = "per_package"
 
     if analog_in_nomenclature is False:
         note_parts.append("Аналог отсутствует в номенклатуре → партия в брак.")

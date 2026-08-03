@@ -38,7 +38,9 @@ from app.models.nd_change import (
     NdChangeResult,
     NdChangeTargetLocation,
 )
+from app.models.nd_acknowledgement import NdAcknowledgementAssignment
 from app.models.nd_change_journal import NdChangeJournalEntry
+from app.models.nd_development_request import NdDevelopmentRequest
 from app.models.nd_control_analysis import DepartmentAnalysisRun
 from app.models.nd_control_registry import (
     NdControlDepartment,

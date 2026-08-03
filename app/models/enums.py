@@ -270,10 +270,21 @@ class QmsLevel(str, enum.Enum):
 
 
 class DocumentCardStatus(str, enum.Enum):
+    """Статусы карточки НД по ТЗ «Турбо СМК» п. 5.1.5."""
+
+    PROJECT = "project"
+    UNDER_REVIEW = "under_review"
+    UNDER_APPROVAL = "under_approval"
+    PENDING_APPROVAL = "pending_approval"
     ACTIVE = "active"
-    DRAFT = "draft"
-    ARCHIVED = "archived"
+    NEEDS_UPDATE = "needs_update"
+    CHANGING = "changing"
+    SUPERSEDED = "superseded"
     CANCELLED = "cancelled"
+    ARCHIVED = "archived"
+    REJECTED = "rejected"
+    RETURNED_FOR_REVISION = "returned_for_revision"
+    DRAFT = "draft"  # legacy alias → project
 
 
 class ConfidentialityLevel(str, enum.Enum):
@@ -386,6 +397,67 @@ class NdChangeJournalSource(str, enum.Enum):
     MANUAL = "manual"
     SYSTEM = "system"
     ND_CHANGE_WORKFLOW = "nd_change_workflow"
+
+
+class NdDevelopmentRequestKind(str, enum.Enum):
+    NEW_DOCUMENT = "new_document"
+    NEW_VERSION = "new_version"
+
+
+class NdDevelopmentRequestStatus(str, enum.Enum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    DUPLICATE_CHECK = "duplicate_check"
+    PACKAGE_REVIEW = "package_review"
+    UNDER_APPROVAL = "under_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+
+
+class NdValidationStandard(str, enum.Enum):
+    STO_34_003 = "sto_34_003"
+    ISO_9001 = "iso_9001"
+    STO_GAZPROM_9001 = "sto_gazprom_9001"
+    TEMPLATE = "template"
+
+
+class NdValidationSeverity(str, enum.Enum):
+    INFO = "info"
+    WARNING = "warning"
+    MAJOR = "major"
+    CRITICAL = "critical"
+
+
+class NdAcknowledgementStatus(str, enum.Enum):
+    PENDING = "pending"
+    VIEWED = "viewed"
+    ACKNOWLEDGED = "acknowledged"
+    OVERDUE = "overdue"
+    EXEMPT = "exempt"
+
+
+class NdReportKind(str, enum.Enum):
+    ACTIVE_REGISTRY = "active_registry"
+    ARCHIVE_REGISTRY = "archive_registry"
+    NEEDS_UPDATE_REGISTRY = "needs_update_registry"
+    CHANGE_NOTICE_REGISTRY = "change_notice_registry"
+    NEW_VERSION_REGISTRY = "new_version_registry"
+    OVERDUE_APPROVALS = "overdue_approvals"
+    OVERDUE_ACKNOWLEDGEMENT = "overdue_acknowledgement"
+    DEPARTMENT_ACK_GAPS = "department_ack_gaps"
+    DOCS_WITHOUT_OWNER = "docs_without_owner"
+    DOCS_WITHOUT_DIAGRAM = "docs_without_diagram"
+    DOCS_WITH_STALE_REFS = "docs_with_stale_refs"
+    DUPLICATE_REQUIREMENTS = "duplicate_requirements"
+    DMI_EFFECTIVENESS = "dmi_effectiveness"
+    DOCUMENT_QUALITY = "document_quality"
+    EXECUTION_DISCIPLINE = "execution_discipline"
+    SPU_REMARKS = "spu_remarks"
+    RETURNED_FOR_REVISION = "returned_for_revision"
+    CROSS_PROCESS_CHANGES = "cross_process_changes"
+    IMPLEMENTATION_RISKS = "implementation_risks"
+    MANAGEMENT_REVIEW = "management_review"
 
 
 class NdQmsLevel(str, enum.Enum):

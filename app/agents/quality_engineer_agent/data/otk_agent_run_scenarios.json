@@ -1,0 +1,698 @@
+{
+  "otk_head_queued": {
+    "task_id": "task-otk-head-queued",
+    "case_id": "case-otk-ЗП-0001247",
+    "correlation_id": "corr-otk-head-queued",
+    "source_type": "production_material_order",
+    "source_1c_ref": "Catalog_ЗаказыПоставщику/ЗП-0001247",
+    "source_number": "ЗП-0001247",
+    "idempotency_key": "otk-mock-head-queued",
+    "caller_agent_id": "procurement_orchestrator",
+    "source_data": {
+      "quality": {
+        "item_group": "metal",
+        "category": "metal",
+        "presentation_ref": "УПД-45821",
+        "nomenclature_ref": "10.01.00125",
+        "supplier_ref": "ООО «МеталлСервис»",
+        "supplier_quality_rating": 72,
+        "lot_qty": 120,
+        "present_docs": [
+          "certificate_or_passport"
+        ]
+      },
+      "presentation": {
+        "id": "pres-001",
+        "invoice_number": "УПД-45821",
+        "purchase_order": "ЗП-0001247",
+        "lines_count": 5,
+        "project_code": "PRJ-ТД-2026-01",
+        "project_name": "Модернизация стенда турбоагрегатов"
+      },
+      "lines": [
+        {
+          "line_id": "l1",
+          "nomenclature_id": "10.01.00125",
+          "category": "metal",
+          "qty_ordered": 120
+        },
+        {
+          "line_id": "l2",
+          "nomenclature_id": "10.01.00402",
+          "category": "pipes",
+          "qty_ordered": 48
+        },
+        {
+          "line_id": "l6",
+          "nomenclature_id": "10.04.00018",
+          "category": "flanges",
+          "qty_ordered": 24
+        },
+        {
+          "line_id": "l7",
+          "nomenclature_id": "10.05.00009",
+          "category": "gaskets",
+          "qty_ordered": 48
+        },
+        {
+          "line_id": "l8",
+          "nomenclature_id": "10.02.00010",
+          "category": "metal",
+          "qty_ordered": 36
+        }
+      ],
+      "products": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "category": "metal"
+        },
+        {
+          "nomenclature_id": "10.01.00402",
+          "nomenclature_name": "Труба бесшовная Ø57×3,5",
+          "category": "pipes"
+        }
+      ],
+      "coverage": {
+        "uncovered_orders_count": 1,
+        "active_suppliers_count": 10,
+        "products_total": 70,
+        "coverage_ratio_avg": 0.9917,
+        "orders_total": 30,
+        "projects_total": 7,
+        "projects": [
+          {
+            "project_code": "PRJ-ТД-2026-01",
+            "project_name": "Модернизация стенда турбоагрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-02",
+            "project_name": "Линия сборки насосных агрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-03",
+            "project_name": "Реконструкция цеха механообработки"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-04",
+            "project_name": "Система АСУ ТП компрессорной"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-05",
+            "project_name": "Производство корпусов редукторов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-06",
+            "project_name": "Капитальный ремонт испытательного полигона"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-07",
+            "project_name": "Электроснабжение производственного корпуса"
+          }
+        ]
+      }
+    },
+    "role_context": {
+      "quality_stage": "queued"
+    }
+  },
+  "otk_head_assign": {
+    "task_id": "task-otk-head-assign",
+    "case_id": "case-otk-ЗП-0001247",
+    "correlation_id": "corr-otk-head-assign",
+    "source_type": "production_material_order",
+    "source_1c_ref": "Catalog_ЗаказыПоставщику/ЗП-0001247",
+    "source_number": "ЗП-0001247",
+    "idempotency_key": "otk-mock-head-assign",
+    "caller_agent_id": "procurement_orchestrator",
+    "source_data": {
+      "quality": {
+        "item_group": "metal",
+        "category": "metal",
+        "presentation_ref": "УПД-45821",
+        "nomenclature_ref": "10.01.00125",
+        "supplier_ref": "ООО «МеталлСервис»",
+        "supplier_quality_rating": 72,
+        "lot_qty": 120,
+        "present_docs": [
+          "certificate_or_passport"
+        ],
+        "inspector_id": "otk-w-1",
+        "inspector_name": "Иванова А.С."
+      },
+      "lines": [
+        {
+          "line_id": "l1",
+          "nomenclature_id": "10.01.00125",
+          "category": "metal",
+          "qty_ordered": 120
+        },
+        {
+          "line_id": "l2",
+          "nomenclature_id": "10.01.00402",
+          "category": "pipes",
+          "qty_ordered": 48
+        }
+      ],
+      "products": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "category": "metal"
+        }
+      ],
+      "coverage": {
+        "uncovered_orders_count": 1,
+        "active_suppliers_count": 10,
+        "products_total": 70,
+        "orders_total": 30,
+        "projects_total": 7,
+        "projects": [
+          {
+            "project_code": "PRJ-ТД-2026-01",
+            "project_name": "Модернизация стенда турбоагрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-02",
+            "project_name": "Линия сборки насосных агрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-03",
+            "project_name": "Реконструкция цеха механообработки"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-04",
+            "project_name": "Система АСУ ТП компрессорной"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-05",
+            "project_name": "Производство корпусов редукторов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-06",
+            "project_name": "Капитальный ремонт испытательного полигона"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-07",
+            "project_name": "Электроснабжение производственного корпуса"
+          }
+        ]
+      }
+    },
+    "role_context": {
+      "quality_stage": "queued"
+    }
+  },
+  "quality_engineer_doc_check": {
+    "task_id": "task-otk-qi-doc",
+    "case_id": "case-otk-ЗП-0001302",
+    "correlation_id": "corr-otk-qi-doc",
+    "source_type": "production_material_order",
+    "source_1c_ref": "Catalog_ЗаказыПоставщику/ЗП-0001302",
+    "source_number": "ЗП-0001302",
+    "idempotency_key": "otk-mock-qi-doc-check",
+    "caller_agent_id": "otk_head_agent",
+    "source_data": {
+      "quality": {
+        "item_group": "cable",
+        "category": "cable",
+        "presentation_ref": "УПД-11209",
+        "nomenclature_ref": "20.05.00088",
+        "supplier_ref": "АО «КабельПром»",
+        "supplier_quality_rating": 40,
+        "lot_qty": 498,
+        "present_docs": [],
+        "inspector_id": "otk-w-2",
+        "inspector_name": "Петров Д.И."
+      },
+      "presentation": {
+        "id": "pres-002",
+        "invoice_number": "УПД-11209",
+        "lines_count": 5
+      },
+      "lines": [
+        {
+          "line_id": "l3",
+          "nomenclature_id": "20.05.00088",
+          "category": "cable",
+          "qty_ordered": 500,
+          "qty_received": 498
+        },
+        {
+          "line_id": "l4",
+          "nomenclature_id": "30.02.00015",
+          "category": "fasteners",
+          "qty_ordered": 2000
+        },
+        {
+          "line_id": "l9",
+          "nomenclature_id": "30.01.00007",
+          "category": "fasteners",
+          "qty_ordered": 2000
+        },
+        {
+          "line_id": "l10",
+          "nomenclature_id": "30.03.00021",
+          "category": "fasteners",
+          "qty_ordered": 4000
+        },
+        {
+          "line_id": "l11",
+          "nomenclature_id": "20.06.00041",
+          "category": "cable",
+          "qty_ordered": 120
+        }
+      ],
+      "products": [
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "category": "cable"
+        },
+        {
+          "nomenclature_id": "30.02.00015",
+          "nomenclature_name": "Болт М8×40 DIN 933",
+          "category": "fasteners"
+        }
+      ],
+      "coverage": {
+        "uncovered_orders_count": 1,
+        "active_suppliers_count": 10,
+        "products_total": 70,
+        "positions_total": 5,
+        "orders_total": 30,
+        "projects_total": 7,
+        "projects": [
+          {
+            "project_code": "PRJ-ТД-2026-01",
+            "project_name": "Модернизация стенда турбоагрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-02",
+            "project_name": "Линия сборки насосных агрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-03",
+            "project_name": "Реконструкция цеха механообработки"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-04",
+            "project_name": "Система АСУ ТП компрессорной"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-05",
+            "project_name": "Производство корпусов редукторов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-06",
+            "project_name": "Капитальный ремонт испытательного полигона"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-07",
+            "project_name": "Электроснабжение производственного корпуса"
+          }
+        ]
+      }
+    },
+    "role_context": {
+      "quality_stage": "assigned"
+    }
+  },
+  "quality_engineer_program": {
+    "$ref_note": "Full happy-path payload lives in otk_agent_run_payload.json",
+    "use_file": "otk_agent_run_payload.json"
+  },
+  "quality_engineer_inspection": {
+    "task_id": "task-otk-qi-insp",
+    "case_id": "case-otk-ЗП-0001247",
+    "correlation_id": "corr-otk-qi-insp",
+    "source_type": "production_material_order",
+    "source_1c_ref": "Catalog_ЗаказыПоставщику/ЗП-0001247",
+    "source_number": "ЗП-0001247",
+    "idempotency_key": "otk-mock-qi-inspection",
+    "caller_agent_id": "quality_engineer_agent",
+    "source_data": {
+      "quality": {
+        "item_group": "metal",
+        "category": "metal",
+        "presentation_ref": "УПД-45821",
+        "nomenclature_ref": "10.01.00125",
+        "supplier_ref": "ООО «МеталлСервис»",
+        "supplier_quality_rating": 72,
+        "lot_qty": 120,
+        "present_docs": [
+          "certificate_or_passport"
+        ],
+        "inspector_id": "otk-w-1",
+        "inspector_name": "Иванова А.С.",
+        "inspection_complete": false,
+        "measured_results": [],
+        "instrument_refs": [],
+        "evidence_refs": []
+      },
+      "lines": [
+        {
+          "line_id": "l1",
+          "nomenclature_id": "10.01.00125",
+          "category": "metal",
+          "qty_ordered": 120
+        }
+      ],
+      "products": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "category": "metal"
+        }
+      ],
+      "coverage": {
+        "uncovered_orders_count": 1,
+        "products_total": 70,
+        "orders_total": 30,
+        "projects_total": 7,
+        "projects": [
+          {
+            "project_code": "PRJ-ТД-2026-01",
+            "project_name": "Модернизация стенда турбоагрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-02",
+            "project_name": "Линия сборки насосных агрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-03",
+            "project_name": "Реконструкция цеха механообработки"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-04",
+            "project_name": "Система АСУ ТП компрессорной"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-05",
+            "project_name": "Производство корпусов редукторов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-06",
+            "project_name": "Капитальный ремонт испытательного полигона"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-07",
+            "project_name": "Электроснабжение производственного корпуса"
+          }
+        ]
+      }
+    },
+    "role_context": {
+      "quality_stage": "inspection"
+    }
+  },
+  "quality_engineer_release": {
+    "task_id": "task-otk-qi-release",
+    "case_id": "case-otk-ЗП-0001247",
+    "correlation_id": "corr-otk-qi-release",
+    "source_type": "production_material_order",
+    "source_1c_ref": "Catalog_ЗаказыПоставщику/ЗП-0001247",
+    "source_number": "ЗП-0001247",
+    "idempotency_key": "otk-mock-qi-release",
+    "caller_agent_id": "quality_engineer_agent",
+    "source_data": {
+      "quality": {
+        "item_group": "metal",
+        "category": "metal",
+        "presentation_ref": "УПД-45821",
+        "nomenclature_ref": "10.01.00125",
+        "supplier_ref": "ООО «МеталлСервис»",
+        "supplier_quality_rating": 72,
+        "lot_qty": 120,
+        "present_docs": [
+          "certificate_or_passport"
+        ],
+        "inspector_id": "otk-w-1",
+        "inspector_name": "Иванова А.С.",
+        "inspection_complete": true,
+        "fitness_status": "fit",
+        "scrap_pct": 0,
+        "analog_in_nomenclature": true,
+        "measured_results": [
+          {
+            "param": "thickness_mm",
+            "value": 3.0,
+            "tol": 0.1,
+            "ok": true
+          },
+          {
+            "param": "surface",
+            "value": "ok",
+            "ok": true
+          }
+        ],
+        "instrument_refs": [
+          "МИ-штангенциркуль-12",
+          "МИ-толщиномер-03"
+        ],
+        "evidence_refs": [
+          "photo://pres-001/l1/1",
+          "protocol://Ф-10-12/45821"
+        ]
+      },
+      "lines": [
+        {
+          "line_id": "l1",
+          "nomenclature_id": "10.01.00125",
+          "category": "metal",
+          "qty_ordered": 120,
+          "coverage_ratio": 1.0
+        }
+      ],
+      "products": [
+        {
+          "nomenclature_id": "10.01.00125",
+          "nomenclature_name": "Лист стальной 3 мм Ст3",
+          "category": "metal"
+        }
+      ],
+      "coverage": {
+        "uncovered_orders_count": 0,
+        "products_total": 70,
+        "coverage_ratio_avg": 1.0,
+        "orders_total": 30,
+        "projects_total": 7,
+        "projects": [
+          {
+            "project_code": "PRJ-ТД-2026-01",
+            "project_name": "Модернизация стенда турбоагрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-02",
+            "project_name": "Линия сборки насосных агрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-03",
+            "project_name": "Реконструкция цеха механообработки"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-04",
+            "project_name": "Система АСУ ТП компрессорной"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-05",
+            "project_name": "Производство корпусов редукторов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-06",
+            "project_name": "Капитальный ремонт испытательного полигона"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-07",
+            "project_name": "Электроснабжение производственного корпуса"
+          }
+        ]
+      }
+    },
+    "role_context": {
+      "quality_stage": "decision"
+    }
+  },
+  "quality_engineer_nc_act": {
+    "task_id": "task-otk-qi-nc",
+    "case_id": "case-otk-ЗП-0001302",
+    "correlation_id": "corr-otk-qi-nc",
+    "source_type": "production_material_order",
+    "source_1c_ref": "Catalog_ЗаказыПоставщику/ЗП-0001302",
+    "source_number": "ЗП-0001302",
+    "idempotency_key": "otk-mock-qi-nc-act",
+    "caller_agent_id": "quality_engineer_agent",
+    "source_data": {
+      "quality": {
+        "item_group": "cable",
+        "category": "cable",
+        "presentation_ref": "УПД-11209",
+        "nomenclature_ref": "20.05.00088",
+        "supplier_ref": "АО «КабельПром»",
+        "supplier_quality_rating": 40,
+        "lot_qty": 498,
+        "present_docs": [
+          "passport",
+          "marking"
+        ],
+        "inspector_id": "otk-w-2",
+        "inspector_name": "Петров Д.И.",
+        "inspection_complete": true,
+        "fitness_status": "unfit",
+        "scrap_pct": 18,
+        "analog_in_nomenclature": true,
+        "measured_results": [
+          {
+            "param": "section_mm2",
+            "value": 2.3,
+            "tol": 0.1,
+            "ok": false
+          }
+        ],
+        "instrument_refs": [
+          "МИ-микрометр-07"
+        ],
+        "evidence_refs": [
+          "photo://pres-002/l3/defect"
+        ]
+      },
+      "lines": [
+        {
+          "line_id": "l3",
+          "nomenclature_id": "20.05.00088",
+          "category": "cable",
+          "qty_ordered": 500,
+          "qty_received": 498
+        }
+      ],
+      "products": [
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "category": "cable"
+        }
+      ],
+      "coverage": {
+        "uncovered_orders_count": 1,
+        "products_total": 70,
+        "orders_total": 30,
+        "projects_total": 7,
+        "projects": [
+          {
+            "project_code": "PRJ-ТД-2026-01",
+            "project_name": "Модернизация стенда турбоагрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-02",
+            "project_name": "Линия сборки насосных агрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-03",
+            "project_name": "Реконструкция цеха механообработки"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-04",
+            "project_name": "Система АСУ ТП компрессорной"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-05",
+            "project_name": "Производство корпусов редукторов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-06",
+            "project_name": "Капитальный ремонт испытательного полигона"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-07",
+            "project_name": "Электроснабжение производственного корпуса"
+          }
+        ]
+      }
+    },
+    "role_context": {
+      "quality_stage": "decision"
+    }
+  },
+  "otk_head_confirm_nc": {
+    "task_id": "task-otk-head-nc",
+    "case_id": "case-otk-ЗП-0001302",
+    "correlation_id": "corr-otk-head-nc",
+    "source_type": "production_material_order",
+    "source_1c_ref": "Catalog_ЗаказыПоставщику/ЗП-0001302",
+    "source_number": "ЗП-0001302",
+    "idempotency_key": "otk-mock-head-confirm-nc",
+    "caller_agent_id": "quality_engineer_agent",
+    "source_data": {
+      "quality": {
+        "item_group": "cable",
+        "category": "cable",
+        "presentation_ref": "УПД-11209",
+        "nomenclature_ref": "20.05.00088",
+        "supplier_ref": "АО «КабельПром»",
+        "lot_qty": 498,
+        "present_docs": [
+          "passport",
+          "marking"
+        ],
+        "act_ref": "Ф-10-15/case-otk-ЗП-0001302",
+        "act_decision": "confirm",
+        "scrap_pct": 18
+      },
+      "lines": [
+        {
+          "line_id": "l3",
+          "nomenclature_id": "20.05.00088",
+          "category": "cable",
+          "qty_ordered": 500
+        }
+      ],
+      "products": [
+        {
+          "nomenclature_id": "20.05.00088",
+          "nomenclature_name": "Кабель ВВГнг 3×2,5",
+          "category": "cable"
+        }
+      ],
+      "coverage": {
+        "uncovered_orders_count": 1,
+        "products_total": 70,
+        "orders_total": 30,
+        "projects_total": 7,
+        "projects": [
+          {
+            "project_code": "PRJ-ТД-2026-01",
+            "project_name": "Модернизация стенда турбоагрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-02",
+            "project_name": "Линия сборки насосных агрегатов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-03",
+            "project_name": "Реконструкция цеха механообработки"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-04",
+            "project_name": "Система АСУ ТП компрессорной"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-05",
+            "project_name": "Производство корпусов редукторов"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-06",
+            "project_name": "Капитальный ремонт испытательного полигона"
+          },
+          {
+            "project_code": "PRJ-ТД-2026-07",
+            "project_name": "Электроснабжение производственного корпуса"
+          }
+        ]
+      }
+    },
+    "role_context": {
+      "quality_stage": "nonconformity",
+      "act_decision": "confirm"
+    }
+  }
+}

@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     AUTH_DISABLED: bool = False
     # Optional email of the user to impersonate when AUTH_DISABLED (else first active superuser).
     AUTH_DISABLED_USER_EMAIL: str = ""
+    # Local/dev only: POST /auth/dev-auto-login issues a real JWT for the bypass user.
+    # Ignored unless ENVIRONMENT is "dev" or "test" (never enable in ope/prod).
+    DEV_AUTO_LOGIN: bool = False
     SQLALCHEMY_ECHO: bool = False
     SECRET_KEY: str = "change_me"
     ALGORITHM: str = "HS256"
@@ -107,14 +110,32 @@ class Settings(BaseSettings):
         "image/webp"
     )
 
-    # Общий LLM-шлюз (прочие задачи платформы).
+    # Общий LLM-шлюз (прочие задачи платформы / LM Studio OpenAI-compatible).
+    # LLM_GATEWAY_URL из .env тоже читается (alias) через env — см. web_qwen.resolve_qwen_gateway_url.
     LLM_GATEWAY_BASE_URL: str = ""
     LLM_GATEWAY_API_KEY: str | None = None
     CLAUDE_API_KEY: str | None = None
     OPENAI_API_KEY_CLAUDE: str | None = None
     OPENAI_API_KEY: str | None = None
-    LLM_DEFAULT_MODEL: str = ""
+    LLM_DEFAULT_MODEL: str = "qwen/qwen3.5-9b"
     LLM_EMBEDDING_MODEL: str = ""
+    # Procurement manager: Qwen extracts price/city from real fetched product pages.
+    PROCUREMENT_WEB_USE_QWEN: bool = True
+    PROCUREMENT_WEB_QWEN_REFINE_QUERY: bool = False
+    PROCUREMENT_WEB_QWEN_TIMEOUT_SECONDS: float = 25.0
+    PROCUREMENT_WEB_QWEN_MODEL: str = ""
+    # Qwen browse agent after SERP for «Найти поставщиков» (force_web), incl. multi-item.
+    PROCUREMENT_WEB_QWEN_AGENT: bool = True
+    PROCUREMENT_WEB_QWEN_AGENT_SELECT_URLS: bool = True
+    PROCUREMENT_WEB_QWEN_AGENT_MAX_PAGES: int = 3
+    PROCUREMENT_WEB_QWEN_AGENT_CONCURRENCY: int = 2
+    # Hard budget per nomenclature for browse+extract; on expiry return SERP cards.
+    PROCUREMENT_WEB_QWEN_AGENT_BUDGET_SECONDS: float = 45.0
+    # auto|agent|full|light|skip — auto + agent=on → browse agent for force_web.
+    PROCUREMENT_WEB_ENRICH_ON_MANUAL_SEARCH: str = "auto"
+    # Outer asyncio.wait_for for manual force_web (settings/.env; not only os.environ).
+    PROCUREMENT_MANAGER_SEARCH_TIMEOUT_SECONDS: float = 180.0
+    PROCUREMENT_MANAGER_WEB_SEARCH_TIMEOUT_SECONDS: float = 300.0
     # Конструктор агентов: Claude → fallback в LM Studio (отдельно от OCR).
     AGENT_BUILDER_CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
     AGENT_BUILDER_FALLBACK_BASE_URL: str = ""
@@ -139,10 +160,11 @@ class Settings(BaseSettings):
     PROCUREMENT_WEB_ENRICH_ON_MANUAL_SEARCH: str = "auto"
     PROCUREMENT_MANAGER_SEARCH_TIMEOUT_SECONDS: float = 180.0
     PROCUREMENT_MANAGER_WEB_SEARCH_TIMEOUT_SECONDS: float = 300.0
-    # Procurement orchestrator Level 0 polling.
+    # Procurement orchestrator Level 0 polling (auto ≤ 1/day; manual uses force=true).
     PROCUREMENT_ORCHESTRATOR_ENABLED: bool = True
     PROCUREMENT_ORCHESTRATOR_PLANNING_ENABLED: bool = False
     PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS: int = 1800
+    PROCUREMENT_ORCHESTRATOR_MIN_INTERVAL_SECONDS: int = 86400
     PROCUREMENT_ORCHESTRATOR_REORDER_INTERVAL_SECONDS: int = 300
     PROCUREMENT_ORCHESTRATOR_LOOKBACK_DAYS: int = 14
     PROCUREMENT_ORCHESTRATOR_PAGE_LIMIT: int = 50

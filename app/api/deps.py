@@ -18,6 +18,10 @@ def _auth_disabled_allowed() -> bool:
     return settings.AUTH_DISABLED and settings.ENVIRONMENT in ("dev", "test")
 
 
+def _dev_auto_login_allowed() -> bool:
+    return settings.DEV_AUTO_LOGIN and settings.ENVIRONMENT in ("dev", "test")
+
+
 async def _resolve_dev_bypass_user(db: AsyncSession) -> User:
     """Pick a real DB user for AUTH_DISABLED (FK-safe, superuser preferred)."""
     email = (settings.AUTH_DISABLED_USER_EMAIL or "").strip()

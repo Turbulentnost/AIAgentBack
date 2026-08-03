@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.agents.quality_engineer_agent.otk_schemas import (
     OtkPresentationCardRead,
+    OtkPresentationCreate,
     OtkPresentationListResponse,
     OtkPresentationUpdate,
     OtkShipmentLineCreate,
@@ -44,6 +45,20 @@ async def list_otk_presentations(
 ) -> OtkPresentationListResponse:
     await _require_otk_worker(db, current_user)
     return await _service(db).list_presentations()
+
+
+@router.post(
+    "/presentations",
+    response_model=OtkPresentationCardRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_otk_presentation(
+    payload: OtkPresentationCreate,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> OtkPresentationCardRead:
+    await _require_otk_worker(db, current_user)
+    return _service().create_presentation(payload.model_dump(mode="json"))
 
 
 @router.get("/presentations/{presentation_id}", response_model=OtkPresentationCardRead)

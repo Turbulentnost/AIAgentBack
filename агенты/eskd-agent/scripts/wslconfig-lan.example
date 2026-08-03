@@ -1,8 +1,0 @@
-# Скопируйте в Windows:  %UserProfile%\.wslconfig
-# Затем:  wsl --shutdown  и снова откройте WSL
-#
-# mirrored — порты WSL сразу видны в LAN на IP Windows (Win11 22H2+)
-[wsl2]
-networkingMode=mirrored
-firewall=true
-autoProxy=true
