@@ -76,6 +76,7 @@ from app.services.nd_control_template_service import (
 )
 from app.services.nd_process_uml_service import NdProcessUmlService, NdProcessUmlServiceError
 from app.api.v1.endpoints.nd_control_eskd import router as eskd_router
+from app.api.v1.endpoints.nd_control_turbo_smk import router as turbo_smk_router
 from app.models.enums import (
     NdChangeJournalEventType,
     NdChangeJournalSource,
@@ -87,6 +88,7 @@ from app.workers.tasks import classify_template_document
 
 router = APIRouter(prefix="/nd-control", tags=["nd-control"])
 router.include_router(eskd_router)
+router.include_router(turbo_smk_router)
 
 
 async def _require_agent_access(db: DbSession, user: CurrentUser) -> None:

@@ -1,8 +1,0 @@
-# Model runs on host (WSL). Backend uses host.docker.internal:8765.
-services:
-  model:
-    profiles: [never]
-
-  backend:
-    environment:
-      MODEL_SERVICE_URL: ${MODEL_SERVICE_URL:-http://host.docker.internal:8765}

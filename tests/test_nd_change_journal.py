@@ -95,6 +95,8 @@ async def test_process_specialist_can_view_change_journal(monkeypatch) -> None:
     page = await nd_control.list_nd_change_journal(
         _db(),
         _user(position="Специалист по процессному управлению"),
+        page=1,
+        size=50,
     )
 
     assert page.total == 0
