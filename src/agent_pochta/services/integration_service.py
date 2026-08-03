@@ -20,11 +20,38 @@ class IntegrationService(ABC):
         *,
         xml_document: str | None = None,
     ) -> dict:
-        """Создаёт документ «Входящая корреспонденция» + процесс «Исполнение».
+        """Создаёт документ «Входящая корреспонденция» в 1С (OData POST).
 
-        Возвращает: {erp_document_number, erp_task_id}. Бросает исключение при сбое
-        (повторные попытки — ответственность вызывающего узла, см. раздел 5.2).
+        Задачи в Документообороте не создаются — только карточка документа.
+        Возвращает: {erp_document_number, erp_document_id, erp_task_id}.
+        Бросает исключение при сбое (повтор — узел 7 / Celery retry_erp).
         """
+
+    def attach_files_to_incoming_correspondence(
+        self,
+        *,
+        document_ref_key: str,
+        files: list,
+        document_number: str | None = None,
+        message_id: str | None = None,
+    ) -> list[dict]:
+        """Прикрепляет файлы к уже созданному Document_ТД_ВходящаяКорреспонденция.
+
+        По умолчанию не реализовано (заглушка / HTTP-режим). OData — в подклассе.
+        """
+        raise NotImplementedError("attach_files_to_incoming_correspondence is not configured")
+
+    def update_incoming_correspondence(
+        self,
+        document_ref_key: str,
+        email: EmailMessage,
+        routing: RoutingResult,
+        summary_ru: str,
+        *,
+        xml_document: str | None = None,
+    ) -> dict:
+        """PATCH полей существующего документа «Входящая корреспонденция» в 1С."""
+        raise NotImplementedError("update_incoming_correspondence is not configured")
 
 
 class StubIntegrationService(IntegrationService):
@@ -46,6 +73,7 @@ class StubIntegrationService(IntegrationService):
         return {
             "erp_document_number": f"ВК-СТУБ-{n:06d}",
             "erp_task_id": f"TASK-STUB-{n:06d}",
+            "erp_document_id": f"11111111-1111-1111-1111-{n:012d}"[:36],
             "fields": {
                 "Дата": email.received_at.isoformat(),
                 "Автор": "ИИ-агент (системная УЗ)",
@@ -57,5 +85,47 @@ class StubIntegrationService(IntegrationService):
                 "Приоритет": routing.priority.value,
                 "Статус": "Передано на исполнение",
                 "XMLРезультат": xml_document or "",
+            },
+        }
+
+    def attach_files_to_incoming_correspondence(
+        self,
+        *,
+        document_ref_key: str,
+        files: list,
+        document_number: str | None = None,
+        message_id: str | None = None,
+    ) -> list[dict]:
+        StubIntegrationService._counter += 1
+        base = StubIntegrationService._counter
+        results: list[dict] = []
+        for index, item in enumerate(files, start=1):
+            filename = getattr(item, "filename", None) or f"file-{index}"
+            size = len(getattr(item, "content", b"") or b"")
+            results.append(
+                {
+                    "ref_key": f"00000000-0000-0000-0000-{base:012d}{index:04d}"[-36:],
+                    "filename": filename,
+                    "size_bytes": size,
+                    "entity": "Catalog_ТД_ВходящаяКорреспонденцияПрисоединенныеФайлы",
+                }
+            )
+        return results
+
+    def update_incoming_correspondence(
+        self,
+        document_ref_key: str,
+        email: EmailMessage,
+        routing: RoutingResult,
+        summary_ru: str,
+        *,
+        xml_document: str | None = None,
+    ) -> dict:
+        return {
+            "updated": True,
+            "erp_document_id": document_ref_key,
+            "fields": {
+                "Кому": routing.department_id,
+                "Партнер": "",
             },
         }

@@ -1,18 +1,15 @@
-"""Расчёт уровня уверенности (ТЗ §11)."""
+"""Расчёт уровня уверенности (ТЗ §11 + балльная модель evidence)."""
 
 from __future__ import annotations
 
+from agent_pochta.routing.evidence import (
+    accumulate_confidence,
+    evaluate_route_confidence,
+    score_to_level,
+)
 from agent_pochta.routing.models import ConfidenceLevel
 
-
-def score_to_level(score: int) -> ConfidenceLevel:
-    if score >= 80:
-        return ConfidenceLevel.HIGH
-    if score >= 50:
-        return ConfidenceLevel.MEDIUM
-    return ConfidenceLevel.LOW
-
-
+# Обратная совместимость: старый API calculate_confidence → evidence.
 def calculate_confidence(
     *,
     exact_email: bool = False,
@@ -25,22 +22,38 @@ def calculate_confidence(
     info_mailbox_no_topic: bool = False,
     unknown_route: bool = False,
 ) -> tuple[int, ConfidenceLevel]:
-    score = 0
+    """Legacy wrapper: эмулирует старые флаги через evaluate_route_confidence."""
     if exact_email:
-        score += 70
-    score += min(topic_matches * 10, 20)
-    if email_keyword:
-        score += 45
-    score += min(content_keyword_hits * 5, 25)
-    if org_confirmed:
-        score += 10
-    if holding_found:
-        score += 15
-    if has_conflict:
-        score -= 25
-    if info_mailbox_no_topic:
-        score -= 20
-    if unknown_route:
-        score -= 40
-    score = max(0, min(100, score))
-    return score, score_to_level(score)
+        source = "exact_email"
+    elif email_keyword:
+        source = "email_keyword"
+    elif holding_found:
+        source = "det_sales_gazprom"
+    elif content_keyword_hits:
+        source = "content"
+    elif unknown_route:
+        source = "reserve"
+    else:
+        source = "content"
+
+    result = evaluate_route_confidence(
+        match_source=source,
+        department_code="",
+        topic_hits=topic_matches,
+        content_hits=content_keyword_hits,
+        org_confirmed=org_confirmed,
+        has_conflict=has_conflict,
+        info_mailbox_no_topic=info_mailbox_no_topic,
+        unknown_route=unknown_route,
+        apply_floor=False,
+    )
+    return result.score, result.level
+
+
+__all__ = [
+    "accumulate_confidence",
+    "calculate_confidence",
+    "evaluate_route_confidence",
+    "score_to_level",
+    "ConfidenceLevel",
+]

@@ -1,0 +1,7 @@
+.panel {
+  display: block;
+}
+
+.panelHidden {
+  display: none;
+}

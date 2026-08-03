@@ -149,7 +149,10 @@ async def dashboard(
     view: Literal["active", "processing", "archive"] = Query(default="processing"),
 ) -> dict[str, Any]:
     await _require_access(db, current_user)
-    payload = await ProcurementOrchestratorService(db, enqueue_case=False).list_dashboard(view=view)
+    payload = await ProcurementOrchestratorService(db, enqueue_case=False).list_dashboard(
+        view=view,
+        purchase_manager_workspace=True,
+    )
     for group in payload.get("groups", []):
         cases = [
             item
@@ -157,6 +160,8 @@ async def dashboard(
             if case_in_manager_queue(
                 current_agent_id=item.get("current_agent_id"),
                 status=item.get("status"),
+                purchase_manager_invoked_at=item.get("purchase_manager_invoked_at"),
+                supplier_coverage_status=item.get("supplier_coverage_status"),
             )
         ]
         group["cases"] = cases
@@ -394,10 +399,9 @@ async def sync_from_1c(
             "summary": result,
         }
     if await can_refresh_procurement_orchestrator(db, current_user):
-        from app.workers.tasks import poll_procurement_sources
+        from app.workers.tasks import sync_procurement_material_orders
 
-        async_result = poll_procurement_sources.apply_async(
-            kwargs={"force": True},
+        async_result = sync_procurement_material_orders.apply_async(
             queue="procurement_poll",
         )
         return {

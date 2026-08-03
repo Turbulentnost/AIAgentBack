@@ -11,12 +11,15 @@ from app.agents.procurement_role_agents.schemas import (
 )
 from app.agents.omto_support_manager_agent.service import OmtoSupportManagerService
 from app.agents.otk_head_agent.service import OtkHeadService
+from app.agents.production_dispatcher_agent.service import ProductionDispatcherService
 from app.agents.production_preparation_engineer_agent.service import (
     ProductionPreparationEngineerService,
 )
+from app.agents.purchase_manager_agent.service import PurchaseManagerService
 from app.agents.quality_deputy_director_agent.service import QualityDeputyDirectorService
 from app.agents.quality_engineer_agent.service import QualityEngineerService
 from app.agents.quality_kpi_agent.service import QualityKpiService
+from app.agents.warehouse_picker_agent.service import WarehousePickerService
 from app.models.enums import ConfidenceLevel
 
 
@@ -62,7 +65,24 @@ class _WaitingProcurementRoleAgent(BaseAgent):
 class ProductionDispatcherAgent(_WaitingProcurementRoleAgent):
     agent_id = config.PRODUCTION_DISPATCHER_AGENT_ID
     name = config.AGENT_LABELS[agent_id]
-    purpose = "Обработка закупочного кейса по сигналу точки заказа."
+    purpose = (
+        "Проверяет остатки по точкам заказа и кейсам после инженера, "
+        "рассчитывает срочность и рекомендует способ обеспечения."
+    )
+    allowed_tools = [
+        "onec_get_production_supply_evidence",
+        "read_production_get_open_supply_documents",
+        "onec_get_free_stock",
+        "onec_get_open_supplier_orders",
+        "onec_get_goods_in_transit",
+        "onec_get_internal_transfers",
+    ]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await ProductionDispatcherService().run(
+            payload,
+            agent_id=self.agent_id,
+        )
 
 
 @agent_registry.register
@@ -88,6 +108,71 @@ class ProductionPreparationEngineerAgent(_WaitingProcurementRoleAgent):
             payload,
             agent_id=self.agent_id,
         )
+
+
+@agent_registry.register
+class WarehousePickerAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.WAREHOUSE_PICKER_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Проверяет наличие ТМЦ в кладовой монтажного участка №2, "
+        "подтверждает выдачу или дефицит и передаёт заключение оркестратору."
+    )
+    allowed_tools = [
+        "onec_get_store_room_stock",
+        "onec_get_production_supply_evidence",
+        "onec_get_free_stock",
+        "onec_get_quality_stock",
+    ]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await WarehousePickerService().run(
+            payload,
+            agent_id=self.agent_id,
+        )
+
+
+@agent_registry.register
+class WarehouseComplexChiefAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Начальник складского комплекса: проверяет наличие ТМЦ по заказам материалов "
+        "в производство (кроме МУ №2) и формирует заключение для ОМТО."
+    )
+    allowed_tools = [
+        "onec_get_store_room_stock",
+        "onec_get_production_supply_evidence",
+        "onec_get_free_stock",
+        "onec_get_quality_stock",
+    ]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await WarehousePickerService().run(
+            payload,
+            agent_id=self.agent_id,
+        )
+
+
+@agent_registry.register
+class PurchaseManagerAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.PURCHASE_MANAGER_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = (
+        "Контролирует связанные заказы поставщику по заказам материалов "
+        "и показывает покрытие номенклатур."
+    )
+    allowed_tools = ["read_procurement_list_supplier_orders"]
+
+    async def run(self, payload: dict) -> ProcurementRoleAgentResult:
+        return await PurchaseManagerService().run(payload, agent_id=self.agent_id)
+
+
+@agent_registry.register
+class OmtoChiefAgent(_WaitingProcurementRoleAgent):
+    agent_id = config.OMTO_CHIEF_AGENT_ID
+    name = config.AGENT_LABELS[agent_id]
+    purpose = "Обработка заключения кладовщика-комплектовщика по закупке ТМЦ."
 
 
 @agent_registry.register
@@ -167,12 +252,15 @@ class QualityKpiAgent(_WaitingProcurementRoleAgent):
 
 __all__ = [
     "DepartmentInitiatorAgent",
+    "OmtoChiefAgent",
     "OmtoSupportManagerAgent",
     "OtkHeadAgent",
     "ProductionDispatcherAgent",
     "ProductionPreparationEngineerAgent",
+    "PurchaseManagerAgent",
     "QualityDeputyDirectorAgent",
     "QualityEngineerAgent",
     "QualityKpiAgent",
     "WarehouseManagerAgent",
+    "WarehousePickerAgent",
 ]

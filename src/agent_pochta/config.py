@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Корень репозитория (…/agent-pochta), не зависит от cwd процесса Celery
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # dry_run | review | live (ТЗ §6)
     agent_mode: str = Field(default="live", alias="AGENT_MODE")
     routing_rules_path: str = Field(default="", alias="ROUTING_RULES_PATH")
+    dialog_rules_path: str = Field(default="", alias="DIALOG_RULES_PATH")
     routing_corrections_path: str = Field(default="", alias="ROUTING_CORRECTIONS_PATH")
     spam_learning_path: str = Field(default="", alias="SPAM_LEARNING_PATH")
 
@@ -34,7 +35,14 @@ class Settings(BaseSettings):
     trusted_sender_domains: str = Field(default="", alias="TRUSTED_SENDER_DOMAINS")
     spam_skip_llm_for_trusted: bool = Field(default=True, alias="SPAM_SKIP_LLM_FOR_TRUSTED")
     dept_confidence_min: float = Field(default=0.70, alias="DEPT_CONFIDENCE_MIN")
+    dept_confidence_chairman_min: float = Field(
+        default=0.98, alias="DEPT_CONFIDENCE_CHAIRMAN_MIN"
+    )
+    dept_confidence_od_min: float = Field(default=0.95, alias="DEPT_CONFIDENCE_OD_MIN")
+    dept_confidence_ved_min: float = Field(default=0.90, alias="DEPT_CONFIDENCE_VED_MIN")
     max_attachment_mb: int = Field(default=25, alias="MAX_ATTACHMENT_MB")
+    # Таймаут IMAP при on-demand скачивании вложений (полный RFC822 может быть большим).
+    imap_download_timeout_sec: int = Field(default=120, alias="IMAP_DOWNLOAD_TIMEOUT_SEC")
     document_extract_max_chars: int = Field(default=12_000, alias="DOCUMENT_EXTRACT_MAX_CHARS")
     document_extract_total_max_chars: int = Field(
         default=40_000, alias="DOCUMENT_EXTRACT_TOTAL_MAX_CHARS"
@@ -62,6 +70,12 @@ class Settings(BaseSettings):
     imap_connect_timeout_sec: int = Field(default=30, alias="IMAP_CONNECT_TIMEOUT_SEC")
     imap_max_connect_retries: int = Field(default=3, alias="IMAP_MAX_CONNECT_RETRIES")
     imap_connect_retry_delay_sec: int = Field(default=300, alias="IMAP_CONNECT_RETRY_DELAY_SEC")
+    imap_catchup_days: int = Field(default=7, alias="IMAP_CATCHUP_DAYS")
+    imap_fetch_batch_size: int = Field(default=20, alias="IMAP_FETCH_BATCH_SIZE")
+    imap_catchup_max_uids: int = Field(default=50, alias="IMAP_CATCHUP_MAX_UIDS")
+    attachment_cache_ttl_sec: int = Field(default=1800, alias="ATTACHMENT_CACHE_TTL_SEC")
+    attachment_cache_max_mb: int = Field(default=256, alias="ATTACHMENT_CACHE_MAX_MB")
+    attachment_imap_partial_fetch: bool = Field(default=True, alias="ATTACHMENT_IMAP_PARTIAL_FETCH")
 
     # Повторы 1С (раздел 5.2)
     erp_retry_max: int = Field(default=5, alias="ERP_RETRY_MAX")
@@ -89,22 +103,89 @@ class Settings(BaseSettings):
         default="Document_ТД_ВходящаяКорреспонденция",
         alias="ODATA_INCOMING_DOC_ENTITY",
     )
+    odata_business_process_entities: str = Field(
+        default="BusinessProcess_Задание,BusinessProcess_CRM_БизнесПроцесс",
+        alias="ODATA_BUSINESS_PROCESS_ENTITIES",
+    )
     odata_incoming_field_map: str = Field(default="", alias="ODATA_INCOMING_FIELD_MAP")
     odata_incoming_extra_fields: str = Field(default="", alias="ODATA_INCOMING_EXTRA_FIELDS")
+    odata_incoming_defaults_file: str = Field(
+        default="data/odata_incoming_defaults.json",
+        alias="ODATA_INCOMING_DEFAULTS_FILE",
+    )
     odata_organization_keys: str = Field(default="", alias="ODATA_ORGANIZATION_KEYS")
     odata_department_keys: str = Field(default="", alias="ODATA_DEPARTMENT_KEYS")
+    odata_organization_keys_file: str = Field(
+        default="data/odata_organization_keys.json",
+        alias="ODATA_ORGANIZATION_KEYS_FILE",
+    )
+    odata_department_keys_file: str = Field(
+        default="data/odata_department_keys.json",
+        alias="ODATA_DEPARTMENT_KEYS_FILE",
+    )
     odata_routing_rules_path: str = Field(default="", alias="ODATA_ROUTING_RULES_PATH")
+    odata_attached_file_field_map_file: str = Field(
+        default="data/odata_attached_file_field_map.json",
+        alias="ODATA_ATTACHED_FILE_FIELD_MAP_FILE",
+    )
+    odata_attach_files_enabled: bool = Field(default=True, alias="ODATA_ATTACH_FILES_ENABLED")
+    # database — ВИнформационнойБазе + Base64 (шаблон АЛ00-000760); volume — ВТомахНаДиске + stream PUT
+    odata_file_storage_mode: str = Field(default="database", alias="ODATA_FILE_STORAGE_MODE")
+    odata_file_volume_key: str = Field(
+        default="21886495-364e-11ea-82f2-ac1f6b05524c",
+        alias="ODATA_FILE_VOLUME_KEY",
+    )
+    odata_file_author_key: str = Field(default="", alias="ODATA_FILE_AUTHOR_KEY")
+    # UNC/локальный корень тома 1С (fallback: OData Catalog_ТомаХраненияФайлов → ПолныйПутьWindows)
+    odata_file_volume_root: str = Field(default="", alias="ODATA_FILE_VOLUME_ROOT")
+    # Записать байты на том ДО OData POST (как drag-drop Outlook); без этого thick client не открывает .msg
+    odata_file_volume_preupload: bool = Field(
+        default=False, alias="ODATA_FILE_VOLUME_PREUPLOAD"
+    )
+    # Локальный staging перед OData POST: аудит байт и round-trip проверка
+    odata_attach_staging_enabled: bool = Field(
+        default=True, alias="ODATA_ATTACH_STAGING_ENABLED"
+    )
+    odata_attach_staging_dir: str = Field(
+        default="data/temp/erp_attach_staging",
+        alias="ODATA_ATTACH_STAGING_DIR",
+    )
+    odata_attach_staging_delete_after_success: bool = Field(
+        default=True, alias="ODATA_ATTACH_STAGING_DELETE_AFTER_SUCCESS"
+    )
+    odata_attach_staging_keep_on_failure: bool = Field(
+        default=True, alias="ODATA_ATTACH_STAGING_KEEP_ON_FAILURE"
+    )
     odata_timeout_sec: float = Field(default=60.0, alias="ODATA_TIMEOUT_SEC")
     celery_broker_url: str = Field(
         default="amqp://guest:guest@localhost:5672//", alias="CELERY_BROKER_URL"
     )
-    celery_result_backend: str = Field(default="", alias="CELERY_RESULT_BACKEND")
 
     # Внешние сервисы платформы (при use_stubs=false)
+    # openai_compat | gigachat | deepseek | auto
+    llm_provider: str = Field(default="auto", alias="LLM_PROVIDER")
     llm_gateway_url: str = Field(default="", alias="LLM_GATEWAY_URL")
     llm_gateway_api_key: str = Field(default="", alias="LLM_GATEWAY_API_KEY")
     llm_default_model: str = Field(default="qwen/qwen3.5-9b", alias="LLM_DEFAULT_MODEL")
-    llm_gateway_timeout_sec: float = Field(default=120.0, alias="LLM_GATEWAY_TIMEOUT_SEC")
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com/v1",
+        alias="DEEPSEEK_BASE_URL",
+    )
+    gigachat_credentials: str = Field(
+        default="",
+        validation_alias=AliasChoices("GIGACHAT_API_PERS", "GIGACHAT_CREDENTIALS"),
+    )
+    gigachat_scope: str = Field(default="GIGACHAT_API_PERS", alias="GIGACHAT_SCOPE")
+    gigachat_auth_url: str = Field(
+        default="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+        alias="GIGACHAT_AUTH_URL",
+    )
+    gigachat_base_url: str = Field(
+        default="https://gigachat.devices.sberbank.ru/api/v1",
+        alias="GIGACHAT_BASE_URL",
+    )
+    gigachat_verify_ssl: bool = Field(default=False, alias="GIGACHAT_VERIFY_SSL")
     document_service_url: str = Field(default="", alias="DOCUMENT_SERVICE_URL")
     integration_service_url: str = Field(default="", alias="INTEGRATION_SERVICE_URL")
     vault_addr: str = Field(default="", alias="VAULT_ADDR")
@@ -117,6 +198,9 @@ class Settings(BaseSettings):
     stats_start_time: str = Field(default="2026-07-08 08:35:00", alias="STATS_START_TIME")
     stats_timezone: str = Field(default="Europe/Moscow", alias="STATS_TIMEZONE")
     stats_export_interval_sec: int = Field(default=600, alias="STATS_EXPORT_INTERVAL_SEC")
+
+    # Резервная синхронизация JSON / PG → Qdrant (celery-beat)
+    rag_sync_interval_sec: int = Field(default=3600, alias="RAG_SYNC_INTERVAL_SEC")
 
     @property
     def mailbox_list(self) -> list[str]:
@@ -142,6 +226,53 @@ class Settings(BaseSettings):
                 seen.add(domain)
                 merged.append(domain)
         return merged
+
+    @property
+    def effective_llm_provider(self) -> str:
+        """gigachat | deepseek | openai_compat."""
+        explicit = (self.llm_provider or "auto").strip().lower()
+        if explicit in {"gigachat", "openai_compat", "deepseek"}:
+            return explicit
+        if self.deepseek_api_key:
+            return "deepseek"
+        if self.gigachat_credentials:
+            return "gigachat"
+        if "gigachat.devices.sberbank.ru" in (self.llm_gateway_url or "").lower():
+            return "gigachat"
+        return "openai_compat"
+
+    @property
+    def effective_gigachat_credentials(self) -> str:
+        return (self.gigachat_credentials or "").strip()
+
+    @property
+    def effective_llm_api_key(self) -> str:
+        if self.effective_llm_provider == "deepseek":
+            return (self.deepseek_api_key or self.llm_gateway_api_key).strip()
+        if self.effective_llm_provider == "gigachat":
+            return self.effective_gigachat_credentials
+        return (self.llm_gateway_api_key or "").strip()
+
+    @property
+    def effective_llm_base_url(self) -> str:
+        if self.effective_llm_provider == "deepseek":
+            return (
+                self.deepseek_base_url
+                or self.llm_gateway_url
+                or "https://api.deepseek.com/v1"
+            ).rstrip("/")
+        if self.effective_llm_provider == "gigachat":
+            return self.gigachat_base_url or self.llm_gateway_url
+        return self.llm_gateway_url
+
+    @property
+    def llm_configured(self) -> bool:
+        """Есть реальный LLM (DeepSeek / GigaChat / OpenAI-compatible URL)."""
+        if self.effective_llm_provider == "deepseek":
+            return bool(self.effective_llm_api_key)
+        if self.effective_llm_provider == "gigachat":
+            return bool(self.effective_gigachat_credentials)
+        return bool(self.llm_gateway_url)
 
     @property
     def erp_integration_mode(self) -> str:
@@ -173,9 +304,18 @@ class Settings(BaseSettings):
             integration = f"http({self.integration_service_url})"
         else:
             integration = "stub(no ERP URL)"
+        llm_url = self.effective_llm_base_url
+        if self.effective_llm_provider == "deepseek" and self.effective_llm_api_key:
+            llm_label = f"deepseek({llm_url}, model={self.llm_default_model})"
+        elif self.effective_llm_provider == "gigachat" and self.effective_gigachat_credentials:
+            llm_label = f"gigachat({llm_url}, scope={self.gigachat_scope})"
+        elif llm_url:
+            llm_label = f"real({llm_url})"
+        else:
+            llm_label = "stub(no URL)"
         return {
             "mode": "production",
-            "llm": f"real({self.llm_gateway_url})" if self.llm_gateway_url else "stub(no URL)",
+            "llm": llm_label,
             "rag": f"qdrant({self.qdrant_url})" if self.rag_backend == "qdrant" else "stub",
             "documents": f"http({self.document_service_url})"
             if self.document_service_url

@@ -507,6 +507,72 @@ class DepartmentAnalysisRunStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class MeetingRegistryStage(str, enum.Enum):
+    SCHEDULED = "scheduled"
+    INVITATIONS_SENT = "invitations_sent"
+    PROTOCOL_CREATED = "protocol_created"
+    PROTOCOL_CONDUCTED = "protocol_conducted"
+    MEETING_COMPLETED = "meeting_completed"
+    CANCELLED = "cancelled"
+
+
+class MeetingRegistryEventType(str, enum.Enum):
+    INVITATIONS_SENT = "invitations_sent"
+    RESCHEDULED = "rescheduled"
+    CANCELLED = "cancelled"
+    PARTICIPANTS_UPDATED = "participants_updated"
+    STAGE_CHANGED = "stage_changed"
+    OCCURRENCE_ROLLED = "occurrence_rolled"
+    PROTOCOL_DRAFT_SCHEDULED = "protocol_draft_scheduled"
+
+
+class ScheduledMeetingType(str, enum.Enum):
+    PLANNED = "planned"
+    REPORT = "report"
+    SELECTOR = "selector"
+    UNPLANNED = "unplanned"
+
+
+class ScheduledMeetingStatus(str, enum.Enum):
+    PLANNED = "planned"
+    CREATED = "created"
+    ARCHIVE = "archive"
+
+
+class AppNotificationType(str, enum.Enum):
+    TURBO_PROJECT_RG = "turbo_project_rg"
+
+
+class ScheduledMeetingFrequency(str, enum.Enum):
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    YEARLY = "yearly"
+
+
+class ScheduledMeetingMonthlyMode(str, enum.Enum):
+    BY_DAY_OF_MONTH = "by_day_of_month"
+    BY_WEEKDAY_POSITION = "by_weekday_position"
+
+
+class ScheduledMeetingWeekday(str, enum.Enum):
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+    SUNDAY = "sunday"
+
+
+class ScheduledMeetingWeekdayPosition(str, enum.Enum):
+    FIRST = "first"
+    SECOND = "second"
+    THIRD = "third"
+    FOURTH = "fourth"
+    LAST = "last"
+
+
 class DepartmentAnalysisStep(str, enum.Enum):
     INITIALIZING = "initializing"
     LOADING_KNOWLEDGE_BASES = "loading_knowledge_bases"

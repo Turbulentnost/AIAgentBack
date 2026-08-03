@@ -38,7 +38,8 @@ def test_directions_by_code_from_rules():
     rules = load_routing_rules()
     directions = directions_by_code_from_rules(rules)
     assert directions["00-000002"] == "ПР"
-    assert directions["00-000076"] == "КС"
+    assert directions["00-000076"] == "ПР"
+    assert directions["00-000065"] == "ПР"
 
 
 def test_build_department_records_for_db():
@@ -46,7 +47,7 @@ def test_build_department_records_for_db():
     codes = {record.code for record in records}
     assert len(records) == 139
     assert "00-999999" not in codes
-    assert "00-000037" in codes
+    assert "00-000163" in codes
 
     buh = next(record for record in records if record.code == "00-000002")
     assert buh.name == "Бухгалтерия"

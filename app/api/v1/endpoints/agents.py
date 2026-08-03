@@ -26,12 +26,12 @@ from app.services.nd_control_permission import append_nd_control_agent_for_quali
 from app.services.permission_service import PermissionService
 from app.services.procurement_permission import (
     append_omto_support_manager_agent,
-    append_otk_head_agent,
-    append_procurement_manager_agent,
-    append_production_preparation_engineer_agent,
-    append_quality_deputy_director_agent,
+    append_production_dispatcher_agent,
+    append_purchase_manager_agent,
     append_quality_engineer_agent,
-    append_quality_kpi_agent,
+    append_warehouse_complex_chief_agent,
+    append_warehouse_picker_agent,
+    is_warehouse_complex_chief_exclusive_user,
 )
 from app.services.profile_image_service import AvatarValidationError
 
@@ -46,6 +46,19 @@ async def _agent_read(db: DbSession, agent) -> AgentRead:
 
 async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessRead:
     data = (await _agent_read(db, agent)).model_dump()
+    if agent.slug == "procurement_logistics_agent":
+        data["name"] = "ИИ-агент по закупкам"
+    if agent.slug == "warehouse_complex_chief_agent":
+        # DB name is unique; UI brand matches the admin orchestrator title.
+        data["name"] = "ИИ-агент по закупкам"
+    if agent.slug == "production_dispatcher_agent":
+        data["name"] = "Агент диспетчера производства"
+    if agent.slug == "warehouse_picker_agent":
+        data["name"] = "ИИ-агент по закупке"
+    if agent.slug == "purchase_manager_agent":
+        data["name"] = "ИИ-агент менеджера по закупкам"
+    if agent.slug == "quality_engineer_agent":
+        data["name"] = "ИИ-агент работника ОТК"
     data.update(
         {
             "access_level": "full" if current_user.is_superuser else "granted",
@@ -60,16 +73,20 @@ async def _agent_access_read(db: DbSession, agent, current_user) -> AgentAccessR
 
 @router.get("/available", response_model=list[AgentAccessRead])
 async def list_available_agents(db: DbSession, current_user: CurrentUser):
+    # Начальник склада / складского комплекса видит только свой агент по закупкам.
+    if await is_warehouse_complex_chief_exclusive_user(db, current_user):
+        agents = await append_warehouse_complex_chief_agent(db, current_user, [])
+        return [await _agent_access_read(db, agent, current_user) for agent in agents]
+
     agents = await PermissionService(db).list_available_agents(current_user)
     agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
     agents = await append_meeting_agent_for_office_management(db, current_user, agents)
-    agents = await append_production_preparation_engineer_agent(db, current_user, agents)
+    agents = await append_production_dispatcher_agent(db, current_user, agents)
+    agents = await append_warehouse_picker_agent(db, current_user, agents)
+    agents = await append_warehouse_complex_chief_agent(db, current_user, agents)
+    agents = await append_purchase_manager_agent(db, current_user, agents)
     agents = await append_omto_support_manager_agent(db, current_user, agents)
-    agents = await append_otk_head_agent(db, current_user, agents)
     agents = await append_quality_engineer_agent(db, current_user, agents)
-    agents = await append_quality_deputy_director_agent(db, current_user, agents)
-    agents = await append_quality_kpi_agent(db, current_user, agents)
-    agents = await append_procurement_manager_agent(db, current_user, agents)
     return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 

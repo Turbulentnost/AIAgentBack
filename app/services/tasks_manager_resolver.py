@@ -14,6 +14,7 @@ PSD_CHAIRMAN_ASSISTANT_ROLE_CODE = "psd_chairman_assistant"
 PSD_CHAIRMAN_ASSISTANT_ROLE_NAME = "помощник председателя совета директоров"
 PSD_CHAIRMAN_ASSISTANT_ROLE_DISPLAY_NAME = "Помощник Председателя совета директоров"
 PSD_DELEGATED_MANAGER_FIO = "Амураль Игорь Борисович"
+PSD_DELEGATED_MANAGER_EMAIL = "gd@turbo-don.ru"
 
 # Явные code → ФИО (если роль в БД заведена с известным slug)
 DELEGATED_MANAGER_ROLE_CODES: dict[str, str] = {

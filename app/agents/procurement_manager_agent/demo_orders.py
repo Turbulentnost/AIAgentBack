@@ -17,7 +17,7 @@ from typing import Any
 
 from app.agents.procurement_manager_agent.batches import split_meter_pieces
 
-AGENT_ID = "procurement_logistics_agent"
+AGENT_ID = "purchase_manager_agent"
 DEMO_TAG = "procurement_manager_demo_v1"
 DEMO_CASE_1 = uuid.UUID("685dbc88-3ee6-4f0d-8dd8-347ad930e89e")
 DEMO_NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")

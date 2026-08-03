@@ -21,9 +21,20 @@ alembic/versions/*.py
 !alembic/versions/0051_procurement_role_waiting_status.py
 !alembic/versions/0052_procurement_source_synced_at.py
 !alembic/versions/0053_production_preparation_engineer_agent.py
+!alembic/versions/0054_activate_procurement_agents.py
 !alembic/versions/0054_omto_support_manager_agent.py
+!alembic/versions/0055_production_dispatcher_agent.py
 !alembic/versions/0055_quality_agents.py
 !alembic/versions/0056_procurement_manager_agent.py
+!alembic/versions/0056_warehouse_picker_agent.py
+!alembic/versions/0060_legal_specialist_agent.py
+!alembic/versions/0064_supplier_order_reconciliation.py
+!alembic/versions/0065_archive_stub_agents.py
+!alembic/versions/0066_warehouse_complex_chief_agent.py
+!alembic/versions/0067_purchase_manager_rich_agent.py
+!alembic/versions/0068_eskd_agent.py
+!alembic/versions/006_classification_events_table.py
+!alembic/versions/007_is_info_recipient_column.py
 !alembic/versions/20260722_protocol_draft.py
 
 # Build / coverage
@@ -56,3 +67,38 @@ tools/tesseract/
 
 # One-off / scratch scripts
 scripts/_*.py
+
+# Данные agent_pochta: по умолчанию не пушим, только RAG/маршрутизация
+data/*
+!data/routing_rules.json
+!data/dialog_rules.json
+!data/odata_attached_file_field_map.json
+!data/rag_department_keywords.json
+!data/tz_department_topics.json
+!data/spam_learning_patterns.json
+!data/templates/
+!data/templates/**
+
+# Устаревшие/лишние RAG-артефакты
+data/rag_catalog.example.json
+data/spam_patterns.json
+
+# Импорты, выгрузки, runtime-обучение и отчёты в data/
+data/imports/
+data/stats/
+data/*.xlsx
+data/*.xls
+data/*.docx
+data/*.xml
+data/routing_corrections.json
+data/enterprise_positions.json
+data/*_report*.json
+data/*_comparison*.json
+data/*_mapping*.xlsx
+data/deterministic_routing_rules.draft.json
+
+# Демо-заглушка правил в пакете
+src/agent_pochta/routing/data/routing_rules.json
+
+# Local backups (secrets, DB dumps)
+backup/

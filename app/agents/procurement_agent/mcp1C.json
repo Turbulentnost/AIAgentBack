@@ -1,29 +1,36 @@
 {
-  "mcpServers": {
-    "1c-odata": {
-      "command": "${ONEC_MCP_NODE_COMMAND:-node}",
-      "args": [
-        "${ONEC_MCP_ENTRYPOINT:-/app/MCP/vendor/1c-odata-mcp/dist/index.js}"
-      ],
-      "capabilityMap": {
-        "onec_get_free_stock": "read_analytics_get_inventory",
-        "onec_get_active_resource_specifications": "read_production_get_active_resource_specifications",
-        "onec_get_production_supply_evidence": "read_production_get_supply_evidence",
-        "read_procurement_chain_purchase_orders": "read_document_get_documents",
-        "read_procurement_chain_cash_requests": "read_document_get_documents",
-        "read_procurement_chain_otk_presentations": "read_document_get_documents",
-        "read_procurement_chain_purchase_receipts": "read_document_get_documents",
-        "read_procurement_chain_goods_receipt_orders": "read_document_get_documents",
-        "read_procurement_get_supplier_history": "read_procurement_get_supplier_history"
-      },
-      "env": {
-        "ODATA_BASE_URL": "${ODATA_BASE_URL}",
-        "ODATA_USERNAME": "${ODATA_USERNAME}",
-        "ODATA_PASSWORD": "${ODATA_PASSWORD}",
-        "ODATA_TIMEOUT_MS": "${ODATA_TIMEOUT_MS:-600000}",
-        "ODATA_RETRIES": "${ODATA_RETRIES:-2}",
-        "READ_ONLY": "true"
+    "mcpServers": {
+      "1c-odata": {
+        "command": "${ONEC_MCP_NODE_COMMAND:-node}",
+        "args": [
+          "${ONEC_MCP_ENTRYPOINT:-/app/MCP/vendor/1c-odata-mcp/dist/index.js}"
+        ],
+        "capabilityMap": {
+          "read_system_health_check": "read.system.health_check",
+          "read_system_list_databases": "read.system.list_databases",
+          "read_schema_list_entities": "read.schema.list_entities",
+          "read_schema_describe_entity": "read.schema.describe_entity",
+          "read_procurement_get_active_document_refs": "read.procurement.get_active_document_refs",
+          "read_procurement_list_supplier_orders": "read.procurement.list_supplier_orders",
+          "read_procurement_list_transfer_orders": "read.procurement.list_transfer_orders",
+          "read_procurement_list_tmc_presentations": "read.procurement.list_tmc_presentations",
+          "read_document_get_documents": "read.document.get_document",
+          "read_document_search_documents": "read.document.search_documents",
+          "read_reference_get_presentations": "read.reference.get_presentations",
+          "read_production_resolve_material_order_context": "read.production.resolve_material_order_context",
+          "read_production_get_open_supply_documents": "read.production.get_open_supply_documents",
+          "onec_get_free_stock": "read.analytics.get_inventory",
+          "onec_get_active_resource_specifications": "read.production.get_active_resource_specifications",
+          "onec_get_production_supply_evidence": "read.production.get_supply_evidence"
+        },
+        "env": {
+          "ODATA_BASE_URL": "${ODATA_BASE_URL}",
+          "ODATA_USERNAME": "${ODATA_USERNAME}",
+          "ODATA_PASSWORD": "${ODATA_PASSWORD}",
+          "ODATA_TIMEOUT_MS": "${ODATA_TIMEOUT_MS:-600000}",
+          "ODATA_RETRIES": "${ODATA_RETRIES:-2}",
+          "READ_ONLY": "true"
+        }
       }
     }
   }
-}

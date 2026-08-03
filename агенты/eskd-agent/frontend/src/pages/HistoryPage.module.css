@@ -1,0 +1,263 @@
+.header {
+  margin-bottom: 16px;
+}
+
+.header h1 {
+  margin: 0 0 6px;
+  font-size: 1.5rem;
+}
+
+.header p {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.filters input {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.listCard,
+.detailCard {
+  padding: 16px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.table th,
+.table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+.rowActive {
+  background: var(--color-accent-soft);
+}
+
+.rowRunning {
+  background: var(--color-warning-surface);
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.statusRunning {
+  background: var(--color-warning-surface);
+  color: var(--color-warning-dark);
+}
+
+.statusDone {
+  background: var(--color-success-surface);
+  color: var(--color-success-text);
+}
+
+.fileCell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.gostCell {
+  min-width: 180px;
+}
+
+.miniProgress {
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.miniProgressFill {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 0.2s;
+}
+
+.sectionTitle {
+  margin: 16px 0 8px;
+  font-size: 0.95rem;
+}
+
+.progressBlock {
+  margin-bottom: 12px;
+}
+
+.progressBar {
+  height: 8px;
+  background: var(--color-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 0.2s;
+}
+
+.progressMeta {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: var(--color-muted);
+}
+
+.pagesBlock {
+  margin-top: 8px;
+}
+
+.pageCard {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  padding: 0 10px 10px;
+  background: var(--color-surface);
+}
+
+.pageCard > summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pageCard > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pageMeta {
+  font-weight: 400;
+  font-size: 0.82rem;
+  color: var(--color-muted);
+}
+
+.detailCard h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 6px 10px;
+  margin: 0 0 16px;
+  font-size: 0.88rem;
+}
+
+.meta dt {
+  color: var(--color-muted);
+}
+
+.meta dd {
+  margin: 0;
+}
+
+.loading,
+.empty {
+  color: var(--color-muted);
+  padding: 12px 0;
+}
+
+.versionBlock,
+.changesBlock {
+  margin: 16px 0;
+}
+
+.versionBlock h3,
+.changesBlock h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.versionList,
+.changesList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.versionList button {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.changesList li {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: #fafafa;
+  font-size: 0.86rem;
+}
+
+.changeHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+
+.changeType {
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+.changeActor {
+  margin-top: 4px;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}

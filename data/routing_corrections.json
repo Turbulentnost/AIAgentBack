@@ -1,0 +1,4274 @@
+{
+  "version": "1.0",
+  "entries": [
+    {
+      "id": "7efe82a7-f554-41e7-8a59-97e808380a16",
+      "created_at": "2026-07-13T06:55:07.173624+00:00",
+      "sender_email": "lanservicekhv@yandex.ru",
+      "recipient": "td_bmi4@turbo-don.ru",
+      "keywords": [
+        "ол 31222, 31240 в работу",
+        "td_bmi4",
+        "ол 31222 31240"
+      ],
+      "department_id": "00-000128",
+      "department_name": "Отдел продаж БМИ",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами",
+      "subject": "ол 31222, 31240 в работу"
+    },
+    {
+      "id": "6d189ee3-12fc-4ed8-af43-6bae61fdb5be",
+      "created_at": "2026-07-13T07:12:38.128603+00:00",
+      "sender_email": "a.dmitriev@efo.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "keywords": [
+        "оплата по спецификациям 3 и 4 и др",
+        "uk_omto4"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "оплата по спецификациям 3 и 4 и др"
+    },
+    {
+      "id": "14e6df26-a7d2-47ec-a609-f1bfcf6736d0",
+      "created_at": "2026-07-13T07:13:49.396128+00:00",
+      "sender_email": "v.alexeenko@compel.ru",
+      "recipient": "npo_ceh1.12@turbo-don.ru",
+      "keywords": [
+        "неподписанные упд в эдо",
+        "npo_ceh1.12"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "неподписанные упд в эдо"
+    },
+    {
+      "id": "a6c80c5d-925a-4dd3-b3ff-de77b0884e10",
+      "created_at": "2026-07-13T07:14:04.651520+00:00",
+      "sender_email": "grechko@donkrep.com",
+      "recipient": "uk_omto10@turbo-don.ru",
+      "keywords": [
+        "заказ 4745",
+        "uk_omto10"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "заказ 4745"
+    },
+    {
+      "id": "ea6a6e7e-82f0-4ccc-9d30-39c85aaeae93",
+      "created_at": "2026-07-13T07:33:38.207362+00:00",
+      "sender_email": "kryilova.va@dns-shop.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "keywords": [
+        "прошу забрать товар по счету ри2-000103 от 05.05.2026 магазин закрывается",
+        "uk_omto4"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "прошу забрать товар по счету ри2-000103 от 05.05.2026 магазин закрывается"
+    },
+    {
+      "id": "43c507d1-ded5-45aa-a14f-cf038bfffbcc",
+      "created_at": "2026-07-13T09:53:34.045901+00:00",
+      "sender_email": "ural@ekaterinburg-tr.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "keywords": [
+        "отправка: исх. письмо от 13.07.2026 № 007/201-786 в ооо нпо \"турбулентность-дон\" \"о предоставлении обосновывающих документов",
+        "info",
+        "13.07.2026 007/201-786 в",
+        "исх письмо"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "отправка: исх. письмо от 13.07.2026 № 007/201-786 в ооо нпо \"турбулентность-дон\" \"о предоставлении обосновывающих документов"
+    },
+    {
+      "id": "ddc7ab84-d88e-4cae-ad90-238af7295cf0",
+      "created_at": "2026-07-13T10:17:19.432038+00:00",
+      "sender_email": "anna.dmitrieva@vseinstrumenti.ru",
+      "recipient": "uk_omto6@turbo-don.ru",
+      "keywords": [
+        "2607-197229-87367",
+        "uk_omto6"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "2607-197229-87367"
+    },
+    {
+      "id": "ca07781b-46da-4ec3-883d-d4980c0a2af1",
+      "created_at": "2026-07-13T10:18:32.188151+00:00",
+      "sender_email": "anna.dmitrieva@vseinstrumenti.ru",
+      "recipient": "uk_omto6@turbo-don.ru",
+      "keywords": [
+        "№ 2607-121130-59460",
+        "uk_omto6"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "№ 2607-121130-59460"
+    },
+    {
+      "id": "75c91fd7-50b4-45e0-88b6-a1521c9bb626",
+      "created_at": "2026-07-13T10:20:46.057568+00:00",
+      "sender_email": "d.gorbachevskiy@elevel-rst.ru",
+      "recipient": "npo_ceh1.12@turbo-don.ru",
+      "keywords": [
+        "заказ",
+        "npo_ceh1.12"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "заказ"
+    },
+    {
+      "id": "7049d5ce-bf31-4c92-a0b2-e76241777348",
+      "created_at": "2026-07-13T10:23:46.939801+00:00",
+      "sender_email": "uh.ingener@yandex.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "keywords": [
+        "поверка",
+        "opmu"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "поверка"
+    },
+    {
+      "id": "1ce67930-9c99-464a-b5ac-2a77c08ab505",
+      "created_at": "2026-07-13T10:26:22.668092+00:00",
+      "sender_email": "info@pe4atnikov.ru",
+      "recipient": "uk_omto1@turbo-don.ru",
+      "keywords": [
+        "ип газиева г.и",
+        "uk_omto1"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "ип газиева г.и"
+    },
+    {
+      "id": "68f0075b-9f14-4f57-ab21-1c184d6af751",
+      "created_at": "2026-07-13T10:27:13.489550+00:00",
+      "sender_email": "eykalitvanskaya@sberbank.ru",
+      "recipient": "td_buh3@turbo-don.ru",
+      "keywords": [
+        "скан бг",
+        "td_buh3"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия",
+      "subject": "скан бг"
+    },
+    {
+      "id": "d609936f-0ddc-4303-8287-fbccc9cd37e2",
+      "created_at": "2026-07-09T08:09:04.350943+00:00",
+      "sender_email": "nobody@nic.ru",
+      "recipient": "sktb_razvitie2@turbo-don.ru",
+      "keywords": [
+        "ваши бонусы сгорели",
+        "sktb_razvitie2"
+      ],
+      "department_id": "00-000013",
+      "department_name": "Директор по развитию",
+      "original_department_id": "00-000013",
+      "original_department_name": "Директор по развитию",
+      "migrated_from_spam_learning_id": "706af4b6-fdec-4b8a-ba01-5609f9a4fffb",
+      "migration_reason": "Низкая уверенность маршрута (НИЗКАЯ, score=45)",
+      "subject": "ваши бонусы сгорели"
+    },
+    {
+      "id": "6614e317-6f75-49d1-86c0-01bde1624a74",
+      "created_at": "2026-07-13T06:52:56.388489+00:00",
+      "sender_email": "gerasimenko@rd.technoavia.ru",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "keywords": [
+        "вопрос по оплате",
+        "uk_omto11"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "migrated_from_spam_learning_id": "1371a72d-b0cf-4931-871e-94158a843bc5",
+      "migration_reason": "Низкая уверенность маршрута (НИЗКАЯ, score=45)",
+      "subject": "вопрос по оплате"
+    },
+    {
+      "id": "727162a9-a421-4f7a-b4c1-324335ad4d09",
+      "created_at": "2026-07-13T07:31:27.054760+00:00",
+      "sender_email": "info@3d-diy.ru",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "keywords": [
+        "запрос турбулентность-дон",
+        "uk_omto11"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "migrated_from_spam_learning_id": "9d05a734-485f-4d0c-9512-eb7ee4decf12",
+      "migration_reason": "Низкая уверенность маршрута (НИЗКАЯ, score=45)",
+      "subject": "запрос турбулентность-дон"
+    },
+    {
+      "id": "d6726edd-f15a-460f-a75b-7c79ac42b859",
+      "created_at": "2026-07-13T10:39:34.418628+00:00",
+      "sender_email": "kirtyanov@konalink.ru",
+      "recipient": "td_odppo7@turbo-don.ru",
+      "keywords": [
+        "ол 31263 мосгаз дс строй",
+        "td_odppo7"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "ол 31263 мосгаз дс строй"
+    },
+    {
+      "id": "45b036c2-075d-4996-8c20-9dcb999ee8f3",
+      "created_at": "2026-07-13T10:43:05.528781+00:00",
+      "sender_email": "nm@streamparts.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "keywords": [
+        "предложение поставки rx5808 с управлением по spi",
+        "uk_omto4"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "предложение поставки rx5808 с управлением по spi"
+    },
+    {
+      "id": "7aed5594-4dbb-457f-ad59-41097975b1a3",
+      "created_at": "2026-07-13T10:45:28.423209+00:00",
+      "sender_email": "eykalitvanskaya@sberbank.ru",
+      "recipient": "npo_buh5@turbo-don.ru",
+      "keywords": [
+        "скан бг",
+        "npo_buh5"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия",
+      "subject": "скан бг"
+    },
+    {
+      "id": "9d379c8e-cd0b-418e-8d2e-2aa89e113f68",
+      "created_at": "2026-07-13T10:52:48.462015+00:00",
+      "sender_email": "artemenkodstu@mail.ru",
+      "recipient": "npo_bmi7@turbo-don.ru",
+      "keywords": [
+        "заявка-мадп-1-нгдо-го м01 готово.doc",
+        "npo_bmi7"
+      ],
+      "department_id": "00-000128",
+      "department_name": "Отдел продаж БМИ",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "заявка-мадп-1-нгдо-го м01 готово.doc"
+    },
+    {
+      "id": "2dc483eb-5a69-4a3c-86ed-2abf44095792",
+      "created_at": "2026-07-13T10:54:19.366259+00:00",
+      "sender_email": "cool.tkt2012@yandex.ru",
+      "recipient": "k.gaponova@turbo-don.ru",
+      "keywords": [
+        "бдр ооо \"малика\" за январь-июнь 2026 г",
+        "k.gaponova",
+        "бдр ооо малика",
+        "малика за январь-июнь"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО",
+      "subject": "бдр ооо \"малика\" за январь-июнь 2026 г"
+    },
+    {
+      "id": "2922741f-05f6-454f-9817-434ec9a70b30",
+      "created_at": "2026-07-13T11:35:04.842978+00:00",
+      "sender_email": "sam1@camyp.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "ооо самур",
+      "keywords": [
+        "ооо самур",
+        "info"
+      ],
+      "department_id": "00-000159",
+      "department_name": "Сектор сопровождения производства и продаж",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "02836bdf-b5f6-4969-8599-0173677f7af8",
+      "created_at": "2026-07-13T13:17:27.180009+00:00",
+      "sender_email": "nadezhda.grishina@arzge.ru",
+      "recipient": "td_sales2.3@turbo-don.ru",
+      "subject": "запрос акта сверки с ооо таугаз инн 5243041600 + с/ф на аванс",
+      "keywords": [
+        "запрос акта сверки с ооо таугаз инн 5243041600 + с/ф на аванс",
+        "td_sales2.3",
+        "инн 5243041600 с/ф"
+      ],
+      "department_id": "00-000159",
+      "department_name": "Сектор сопровождения производства и продаж",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "abcb75f0-5b6d-4b8f-974b-f2421ab60fac",
+      "created_at": "2026-07-13T13:29:17.695337+00:00",
+      "sender_email": "sss@karbin.ru",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "оплата от 10.07",
+      "keywords": [
+        "оплата от 10.07",
+        "uk_omto11"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "498064ee-da25-4127-98e1-3c1e17fa22b2",
+      "created_at": "2026-07-13T13:55:34.395958+00:00",
+      "sender_email": "kmk-23@yandex.ru",
+      "recipient": "npo_opmu9@turbo-don.ru",
+      "subject": "поверка спу 8333",
+      "keywords": [
+        "поверка спу 8333",
+        "npo_opmu9",
+        "был отправлен",
+        "в данном"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000074",
+      "original_department_name": "Отдел продаж эталонного оборудования и услуг"
+    },
+    {
+      "id": "7ec1604e-4150-47c1-a629-73ffb7617591",
+      "created_at": "2026-07-13T13:56:21.546337+00:00",
+      "sender_email": "zubairovarr@nexteng.ru",
+      "recipient": "d.shamray@turbo-don.ru",
+      "subject": "ткп 328 запрос для новатэк (сикг",
+      "keywords": [
+        "ткп 328 запрос для новатэк (сикг",
+        "d.shamray",
+        "для новатэк сикг"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "4bab2c3c-e2f2-4c10-9395-6fac38fddeb7",
+      "created_at": "2026-07-13T13:57:21.211930+00:00",
+      "sender_email": "iceberg_klimat@mail.ru",
+      "recipient": "uk_omto1@turbo-don.ru",
+      "subject": "счет айсберг климата",
+      "keywords": [
+        "счет айсберг климата",
+        "uk_omto1",
+        "по счету",
+        "товар по",
+        "забрать"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "3f3673fa-8428-4a5a-b4e8-ad05b5f8014b",
+      "created_at": "2026-07-14T05:28:40.296987+00:00",
+      "sender_email": "sgs5365@yandex.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "заказ сгс поверка расходомера-счётчика",
+      "keywords": [
+        "заказ сгс поверка расходомера-счётчика",
+        "opmu"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "55985316-6857-422d-a902-d9a6717627f8",
+      "created_at": "2026-07-14T05:29:49.812181+00:00",
+      "sender_email": "k.postautov@ekaterinburg-tr.gazprom.ru",
+      "recipient": "npo_bmi3@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "npo_bmi3",
+        "from postautov",
+        "july 14",
+        "k.postautov ekaterinburg-tr.gazp",
+        "konstantin mailto",
+        "mailto postautov",
+        "postautov konstantin"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "26dc057f-684f-4c74-813f-4aaa390002f9",
+      "created_at": "2026-07-14T05:30:49.593092+00:00",
+      "sender_email": "brysin.oleg@luis.ru",
+      "recipient": "uk_omto5@turbo-don.ru",
+      "subject": "счёт-договор № рс017642",
+      "keywords": [
+        "счёт-договор № рс017642",
+        "uk_omto5",
+        "счёт-договор рс017642",
+        "luis с",
+        "в приложенном",
+        "в счёт-договоре"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "4749ea17-ed96-4e3d-a361-4a2be1553020",
+      "created_at": "2026-07-14T05:33:03.073654+00:00",
+      "sender_email": "delo.gavril@gtm.gazprom.ru",
+      "recipient": "i.babkin@gtm.gazprom.ru",
+      "subject": "ооо газпром трансгаз москва. от 07.07.2026 № 45-01/948 о запросе т... подписан эп",
+      "keywords": [
+        "ооо газпром трансгаз москва. от 07.07.2026 № 45-01/948 о запросе т... подписан эп",
+        "i.babkin",
+        "07.07.2026 45-01/948 о"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000029",
+      "original_department_name": "Служба ремонта и обслуживания оборудования"
+    },
+    {
+      "id": "707ea851-4628-4acf-8cfe-56b68d8335d0",
+      "created_at": "2026-07-14T07:05:04.806814+00:00",
+      "sender_email": "a.derkunskiy@rezonit.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "subject": "счет n 57213 от 05.06.2026 по заказу: n 2234412(пп",
+      "keywords": [
+        "счет n 57213 от 05.06.2026 по заказу: n 2234412(пп",
+        "uk_omto4",
+        "n 2234412 пп"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "83968390-6669-4139-b4e5-d3cdce505a63",
+      "created_at": "2026-07-14T07:06:21.348602+00:00",
+      "sender_email": "mup-stimul@mail.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "gfg 70109",
+      "keywords": [
+        "gfg 70109",
+        "opmu",
+        "аджигитовой из",
+        "адрес для",
+        "в данном",
+        "гк турбулентность-дон",
+        "готов и"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "2a7289b9-0106-408d-8e69-8cd9b46fb1cb",
+      "created_at": "2026-07-14T07:15:28.271985+00:00",
+      "sender_email": "info@rostov-panel.ru",
+      "recipient": "uk_omto1@turbo-don.ru",
+      "subject": "ростовпанель ооо",
+      "keywords": [
+        "ростовпанель ооо",
+        "uk_omto1",
+        "турбулентность-дон",
+        "а также",
+        "авансовой счет-фактуры",
+        "адрес компании",
+        "акта сверки"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "893d0bb7-7b0d-46fc-a344-68836363e3bc",
+      "created_at": "2026-07-14T07:16:59.025430+00:00",
+      "sender_email": "sam1@camyp.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "ооо самур",
+      "keywords": [
+        "ооо самур",
+        "info",
+        "cmr.00.00.000-01 5",
+        "modbus cmr.00.00.000-01",
+        "qmax раб",
+        "qmin раб",
+        "rs-485 блок"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "e7d065f8-ee90-43d5-ad10-6cc6562d848b",
+      "created_at": "2026-07-14T07:18:05.528209+00:00",
+      "sender_email": "shiloolga1965@gmail.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "счетчик нет показании",
+      "keywords": [
+        "счетчик нет показании",
+        "info",
+        "бы знать",
+        "внешнему телефону"
+      ],
+      "department_id": "00-000066",
+      "department_name": "Управление делами",
+      "original_department_id": "00-000029",
+      "original_department_name": "Служба ремонта и обслуживания оборудования"
+    },
+    {
+      "id": "4f9c42c6-c199-41c6-96e2-2af6850a68c9",
+      "created_at": "2026-07-14T07:18:48.834620+00:00",
+      "sender_email": "top3@venture-mfg.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "печатные платы+компоненты+монтаж",
+      "keywords": [
+        "печатные платы+компоненты+монтаж",
+        "info",
+        "печатные платы компоненты",
+        "платы компоненты монтаж"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "f749cb8a-706a-442f-bda9-0f404546987e",
+      "created_at": "2026-07-14T07:20:08.710223+00:00",
+      "sender_email": "degtyareva.y@spg-gaz.ru",
+      "recipient": "info@foxmetrology.ru",
+      "subject": "на поверку стройпроектгрупп",
+      "keywords": [
+        "на поверку стройпроектгрупп",
+        "info",
+        "flow и",
+        "turbo flow"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000029",
+      "original_department_name": "Служба ремонта и обслуживания оборудования"
+    },
+    {
+      "id": "e33757c8-07c4-4d89-9141-18b7071b41c1",
+      "created_at": "2026-07-14T07:21:04.649902+00:00",
+      "sender_email": "mng665@sm-snab.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "компания смарт снаб предложение для сотрудничества",
+      "keywords": [
+        "компания смарт снаб предложение для сотрудничества",
+        "info"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "a1b95ee2-26b9-4d4f-846e-b872a338f047",
+      "created_at": "2026-07-14T07:22:41.790929+00:00",
+      "sender_email": "kom-bs@bacs.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "нарушение сроков оплаты ооо \"бакс-сервис",
+      "keywords": [
+        "нарушение сроков оплаты ооо \"бакс-сервис",
+        "info",
+        "оплаты ооо бакс-сервис"
+      ],
+      "department_id": "00-000163",
+      "department_name": "ТЕХНИЧЕСКИЙ ДИРЕКТОР",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "240dc78c-823e-4eeb-beb7-3bd19a7f905b",
+      "created_at": "2026-07-14T07:24:21.660152+00:00",
+      "sender_email": "s.pushkarev@adm.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "исх 03422-1164 от 07.07.2026.pdf",
+      "keywords": [
+        "исх 03422-1164 от 07.07.2026.pdf",
+        "info"
+      ],
+      "department_id": "00-000163",
+      "department_name": "ТЕХНИЧЕСКИЙ ДИРЕКТОР",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "8a2001cd-331d-4bfc-87ee-a79cc24472de",
+      "created_at": "2026-07-14T07:25:11.175347+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "05.07 в",
+        "22.06 по",
+        "436-07-12 e-mail",
+        "e-mail ostapenkokata60",
+        "gmail.com сообщение",
+        "ostapenkokata60 gmail.com"
+      ],
+      "department_id": "00-000063",
+      "department_name": "Служба управления персоналом",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "8806454b-b90b-4adb-9528-d5d3f5f21947",
+      "created_at": "2026-07-14T07:38:58.473682+00:00",
+      "sender_email": "delo.gavril@gtm.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "ооо газпром трансгаз москва. от 07.07.2026 № 45-01/948 о запросе т... подписан эп",
+      "keywords": [
+        "ооо газпром трансгаз москва. от 07.07.2026 № 45-01/948 о запросе т... подписан эп",
+        "info",
+        "07.07.2026 45-01/948 о"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000029",
+      "original_department_name": "Служба ремонта и обслуживания оборудования"
+    },
+    {
+      "id": "cd003e61-4d31-4eed-97b5-9ccf49cfb4b6",
+      "created_at": "2026-07-14T07:44:05.612278+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "grand4 установленного",
+        "автор сообщает",
+        "аналогичного оборудования",
+        "анжелики григорьевой",
+        "в письме",
+        "владимировны из"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "04814787-6102-4131-a5c7-ae7d13b3e950",
+      "created_at": "2026-07-14T07:44:42.752111+00:00",
+      "sender_email": "svc-insurer@ingos.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "решение по накладной № 26-01301102137. предмет обращения –просрочка доставки.ооо «деловые линии",
+      "keywords": [
+        "решение по накладной № 26-01301102137. предмет обращения –просрочка доставки.ооо «деловые линии",
+        "info",
+        "26-01301102137 предмет обращения",
+        "доставки.ооо деловые линии",
+        "накладной 26-01301102137"
+      ],
+      "department_id": "00-000111",
+      "department_name": "Транспортная служба",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "0b8b834e-f0d6-4c6c-9a6b-d4fa8ffc86e8",
+      "created_at": "2026-07-14T07:47:58.310171+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "454-24-42 e-mail",
+        "e-mail gavrilovn",
+        "gavrilovn list.ru",
+        "https www.turbo-don.ru",
+        "list.ru сообщение",
+        "васильевич телефон"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000063",
+      "original_department_name": "Служба управления персоналом"
+    },
+    {
+      "id": "302373af-ce02-438f-85cb-64b7af816916",
+      "created_at": "2026-07-14T07:51:57.119560+00:00",
+      "sender_email": "bulashev@mkair.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "ремонт",
+      "keywords": [
+        "ремонт",
+        "info",
+        "flow с",
+        "turbo flow",
+        "а также",
+        "а.н из",
+        "адрес доставки",
+        "булашева а.н"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000029",
+      "original_department_name": "Служба ремонта и обслуживания оборудования"
+    },
+    {
+      "id": "b48f3a29-948f-4bd1-943f-9410f83c891c",
+      "created_at": "2026-07-14T07:53:50.379293+00:00",
+      "sender_email": "po@dellin.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "информация о претензии",
+      "keywords": [
+        "информация о претензии",
+        "info",
+        "06.07.26 срок",
+        "09.07.26 тел"
+      ],
+      "department_id": "00-000111",
+      "department_name": "Транспортная служба",
+      "original_department_id": "00-000159",
+      "original_department_name": "Сектор сопровождения производства и продаж"
+    },
+    {
+      "id": "f12e47a5-4ead-4f6e-944f-ba50842e260c",
+      "created_at": "2026-07-14T07:54:49.177281+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "776-48-27 e-mail",
+        "e-mail stas_volokhov",
+        "mail.ru сообщение",
+        "stas_volokhov mail.ru",
+        "административного зако",
+        "безопасности имеется"
+      ],
+      "department_id": "00-000063",
+      "department_name": "Служба управления персоналом",
+      "original_department_id": "00-000063",
+      "original_department_name": "Служба управления персоналом"
+    },
+    {
+      "id": "4fb14445-dc65-4957-a525-774c39811cd4",
+      "created_at": "2026-07-14T08:12:11.526385+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "776-48-27 e-mail",
+        "e-mail stas_volokhov",
+        "mail.ru сообщение",
+        "stas_volokhov mail.ru",
+        "административного зако",
+        "безопасности имеется"
+      ],
+      "department_id": "00-000063",
+      "department_name": "Служба управления персоналом",
+      "original_department_id": "00-000063",
+      "original_department_name": "Служба управления персоналом"
+    },
+    {
+      "id": "0bf745f3-eb1c-49fa-8716-938de1711470",
+      "created_at": "2026-07-14T08:18:28.476998+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "776-48-27 e-mail",
+        "e-mail stas_volokhov",
+        "mail.ru сообщение",
+        "stas_volokhov mail.ru",
+        "административного зако",
+        "безопасности имеется"
+      ],
+      "department_id": "00-000063",
+      "department_name": "Служба управления персоналом",
+      "original_department_id": "00-000063",
+      "original_department_name": "Служба управления персоналом"
+    },
+    {
+      "id": "6680b331-3f8a-4564-9308-45029beba767",
+      "created_at": "2026-07-14T08:35:03.037286+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "776-48-27 e-mail",
+        "e-mail stas_volokhov",
+        "mail.ru сообщение",
+        "stas_volokhov mail.ru",
+        "административного зако",
+        "безопасности имеется"
+      ],
+      "department_id": "00-000063",
+      "department_name": "Служба управления персоналом",
+      "original_department_id": "00-000063",
+      "original_department_name": "Служба управления персоналом"
+    },
+    {
+      "id": "03a0da5e-2cd2-41e7-a22d-c18cc4930b9a",
+      "created_at": "2026-07-14T08:35:28.042841+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "776-48-27 e-mail",
+        "e-mail stas_volokhov",
+        "mail.ru сообщение",
+        "stas_volokhov mail.ru",
+        "административного зако",
+        "безопасности имеется"
+      ],
+      "department_id": "00-000063",
+      "department_name": "Служба управления персоналом",
+      "original_department_id": "00-000063",
+      "original_department_name": "Служба управления персоналом"
+    },
+    {
+      "id": "1b2f0c6a-239d-4376-a1f2-7f3bda2aa2a0",
+      "created_at": "2026-07-14T08:45:53.606793+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "776-48-27 e-mail",
+        "e-mail stas_volokhov",
+        "mail.ru сообщение",
+        "stas_volokhov mail.ru",
+        "административного зако",
+        "безопасности имеется"
+      ],
+      "department_id": "00-000063",
+      "department_name": "Служба управления персоналом",
+      "original_department_id": "00-000063",
+      "original_department_name": "Служба управления персоналом"
+    },
+    {
+      "id": "0d68692f-680b-42a7-bc12-e8d5a98b43d6",
+      "created_at": "2026-07-14T09:01:53.230010+00:00",
+      "sender_email": "trias09@mail.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "turbo flow ufg-f",
+      "keywords": [
+        "turbo flow ufg-f",
+        "info",
+        "ufg-f ооо"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "cc0fb674-894d-4c33-a3d1-21c2cb4f3faf",
+      "created_at": "2026-07-14T09:47:20.746524+00:00",
+      "sender_email": "p.chesnokov@chzngo.ru",
+      "recipient": "npo_ceh1.12@turbo-don.ru",
+      "subject": "запрос кп в чзно от турбулентность-дон зпр 577 газпром добыча тамбей ооо",
+      "keywords": [
+        "запрос кп в чзно от турбулентность-дон зпр 577 газпром добыча тамбей ооо",
+        "npo_ceh1.12"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "75bc662c-14bf-461f-888c-f132476ce490",
+      "created_at": "2026-07-14T10:12:24.159513+00:00",
+      "sender_email": "m.nekrasov@mrgnn.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "о предоставлении заключения",
+      "keywords": [
+        "о предоставлении заключения",
+        "info",
+        "газпром",
+        "416-07-82 e-mail"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000104",
+      "original_department_name": "Сервисная служба"
+    },
+    {
+      "id": "22b95d51-534a-4767-af1c-9dd945d5e046",
+      "created_at": "2026-07-14T12:31:04.412896+00:00",
+      "sender_email": "verbitskaya@ligato.ru",
+      "recipient": "npo_bmi4@turbo-don.ru",
+      "subject": "о предоставлении информации",
+      "keywords": [
+        "о предоставлении информации",
+        "npo_bmi4",
+        "dwg но",
+        "email автора"
+      ],
+      "department_id": "00-000128",
+      "department_name": "Отдел продаж БМИ",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "45cb9df9-11e8-4744-be87-558799a127b3",
+      "created_at": "2026-07-14T12:34:41.638322+00:00",
+      "sender_email": "popova.yuliya@promelec.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "subject": "запрос 40177",
+      "keywords": [
+        "запрос 40177",
+        "e-mail uk_omto4",
+        "email popova.yuliya",
+        "fw запрос",
+        "https www.turbo-don.ru/"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "1204934a-223f-4dea-869c-e6fac5edb42a",
+      "created_at": "2026-07-14T12:37:19.887103+00:00",
+      "sender_email": "anna.dmitrieva@vseinstrumenti.ru",
+      "recipient": "uk_omto7@turbo-don.ru",
+      "subject": "счет на оплату – автозаказ 2607-403449-33821",
+      "keywords": [
+        "счет на оплату – автозаказ 2607-403449-33821",
+        "uk_omto7",
+        "поставки",
+        "турбулентность-дон",
+        "на оплату автозаказ"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "62f58225-09c3-49db-bb14-dc87707d08b6",
+      "created_at": "2026-07-14T13:01:26.921600+00:00",
+      "sender_email": "kotemako.ev@domz.ru",
+      "recipient": "td_bmi2@turbo-don.ru",
+      "subject": "документация на счётчикам з. dzs260004",
+      "keywords": [
+        "документация на счётчикам з. dzs260004",
+        "td_bmi2",
+        "з dzs260004"
+      ],
+      "department_id": "00-000128",
+      "department_name": "Отдел продаж БМИ",
+      "original_department_id": "00-000128",
+      "original_department_name": "Отдел продаж БМИ"
+    },
+    {
+      "id": "b6ec9029-d1f5-4a8a-a3f7-dca975997e26",
+      "created_at": "2026-07-14T13:13:07.919856+00:00",
+      "sender_email": "naumcevam@eko-term.ru",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "запрос турбулентность-дон",
+      "keywords": [
+        "запрос турбулентность-дон",
+        "uk_omto11",
+        "счет",
+        "203-77-80 доб",
+        "24.06.2026 16",
+        "2шт термочехол"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "7454c4c0-19cf-4bdb-a261-626c649e1f5d",
+      "created_at": "2026-07-14T13:18:19.069691+00:00",
+      "sender_email": "turbopodbor@mail.ru",
+      "recipient": "d.shamray@turbo-don.ru",
+      "subject": "запрос цены: turbo flow ufg-f-v (dn300, 6 луча, 6.3 мпа, 0,5%) (dn300, 2.5 мпа",
+      "keywords": [
+        "запрос цены: turbo flow ufg-f-v (dn300, 6 луча, 6.3 мпа, 0,5%) (dn300, 2.5 мпа",
+        "d.shamray",
+        "6.3 мпа 0",
+        "dn300 2.5 мпа",
+        "dn300 6"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "58f9bc03-3f43-4d7a-bbc7-ed38ed35ac8b",
+      "created_at": "2026-07-14T13:23:38.594671+00:00",
+      "sender_email": "tagstswork@mail.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "ооо стс поверка tfg-s с арендой, таганрог",
+      "keywords": [
+        "ооо стс поверка tfg-s с арендой, таганрог",
+        "opmu",
+        "на поверку",
+        "арендой таганрог"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000074",
+      "original_department_name": "Отдел продаж эталонного оборудования и услуг"
+    },
+    {
+      "id": "97b78462-f2dd-4ab1-923f-c19d64015d92",
+      "created_at": "2026-07-14T13:34:22.212955+00:00",
+      "sender_email": "ask@exportcenter.ru",
+      "recipient": "td_ved8@turbo-don.ru",
+      "subject": "#r524531 - обращение закрыто",
+      "keywords": [
+        "#r524531 - обращение закрыто",
+        "td_ved8",
+        "r524531 обращение закрыто"
+      ],
+      "department_id": "00-000015",
+      "department_name": "Отдел внешнеэкономической деятельности",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "45d7704e-c259-4ef5-be41-265f18659415",
+      "created_at": "2026-07-14T13:35:41.404231+00:00",
+      "sender_email": "info@elermet.ru",
+      "recipient": "uk_omto10@turbo-don.ru",
+      "subject": "заказ 4799",
+      "keywords": [
+        "заказ 4799",
+        "uk_omto10",
+        "счет на",
+        "30шт компания"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "794d70da-5bde-4bd2-b092-f945c8485785",
+      "created_at": "2026-07-14T13:36:33.271533+00:00",
+      "sender_email": "ydv353@mail.ru",
+      "recipient": "sktb_std1@turbo-don.ru",
+      "subject": "ответы на замечания_ответы для газпром инвест.xlsx",
+      "keywords": [
+        "ответы на замечания_ответы для газпром инвест.xlsx",
+        "sktb_std1"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "d8cc0bbd-6fe1-4769-8aa6-d772682be155",
+      "created_at": "2026-07-14T13:37:15.631572+00:00",
+      "sender_email": "dina.vassilyeva@prom-shari.ru",
+      "recipient": "uk_omto7@turbo-don.ru",
+      "subject": "счет-договор",
+      "keywords": [
+        "uk_omto7",
+        "турбулентность-дон",
+        "8-928-176-37-30 все",
+        "dina.vassilyeva prom-shari.ru",
+        "from dina.vassilyeva",
+        "fw счет-договор",
+        "high добрый"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "218c6f2b-e6bd-46ef-ad06-28569f4b91f8",
+      "created_at": "2026-07-15T05:53:06.578044+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "199-48-46 e-mail",
+        "e-mail iratags",
+        "gmail.com сообщение",
+        "https www.turbo-don.ru",
+        "iratags gmail.com",
+        "было это"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000054",
+      "original_department_name": "Тендерный офис"
+    },
+    {
+      "id": "327e8620-1826-4f95-a118-23a5da1131af",
+      "created_at": "2026-07-15T05:54:06.704014+00:00",
+      "sender_email": "anton.evstifeykin@air-lead.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос ткп на узлы коммерческого учёта газа",
+      "keywords": [
+        "запрос ткп на узлы коммерческого учёта газа",
+        "info"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "336eecad-7e5b-4e67-b75f-5c68f3071e45",
+      "created_at": "2026-07-15T05:54:33.323823+00:00",
+      "sender_email": "gerasimenko@rd.technoavia.ru",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "согласованные счета",
+      "keywords": [
+        "согласованные счета",
+        "uk_omto11",
+        "оплате",
+        "ближайшее время",
+        "будет произведена",
+        "в ближайшее"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "99fcbc40-7e27-4ebe-9e14-badfa36e1c81",
+      "created_at": "2026-07-15T05:55:50.263299+00:00",
+      "sender_email": "anna.dmitrieva@vseinstrumenti.ru",
+      "recipient": "uk_omto7@turbo-don.ru",
+      "subject": "счет на оплату – автозаказ 2607-403449-33821",
+      "keywords": [
+        "счет на оплату – автозаказ 2607-403449-33821",
+        "uk_omto7",
+        "турбулентность-дон",
+        "на оплату автозаказ"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "44681976-0bb0-402e-8877-291850e2813f",
+      "created_at": "2026-07-15T07:33:21.314362+00:00",
+      "sender_email": "zzz@armagaz.ru",
+      "recipient": "td_sales1.9@turbo-don.ru",
+      "subject": "заказ поставщику № 3420 от 14 июля 2026 г",
+      "keywords": [
+        "заказ поставщику № 3420 от 14 июля 2026 г",
+        "td_sales1.9",
+        "заказ поставщику 3420"
+      ],
+      "department_id": "00-000159",
+      "department_name": "Сектор сопровождения производства и продаж",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "8868fc24-b357-4f26-a63d-1ddaa4dbfaed",
+      "created_at": "2026-07-15T07:34:29.635087+00:00",
+      "sender_email": "d.gorbachevskiy@elevel-rst.ru",
+      "recipient": "uk_omto5@turbo-don.ru",
+      "subject": "рекламация элевел/pl1950/pl1959",
+      "keywords": [
+        "рекламация элевел/pl1950/pl1959",
+        "uk_omto5",
+        "запрос",
+        "pl1950 а",
+        "pl1950 и",
+        "pl1959 согласно"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "dce1757d-4712-48ee-af4c-206bec57dff7",
+      "created_at": "2026-07-15T07:36:30.193715+00:00",
+      "sender_email": "as_sharonova@samng.rosneft.ru",
+      "recipient": "tender@turbo-don.ru",
+      "subject": "лот 2600128782 газорегуляторный пункт шкафной (ао самаранефтегаз",
+      "keywords": [
+        "лот 2600128782 газорегуляторный пункт шкафной (ао самаранефтегаз",
+        "tender"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "02c17ed4-84c2-4d75-9bb7-cda0cd8e2b80",
+      "created_at": "2026-07-15T07:54:51.537280+00:00",
+      "sender_email": "lykov_v@bacs.ru",
+      "recipient": "uk_omto6@turbo-don.ru",
+      "subject": "объект новатэк-таркосаленефтегаз",
+      "keywords": [
+        "объект новатэк-таркосаленефтегаз",
+        "uk_omto6",
+        "267-38-16 доб.315",
+        "bacs.ru http",
+        "bacs.ru lykov_v",
+        "from кулешова"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "18129635-536a-460a-bfc8-7a9fda695fda",
+      "created_at": "2026-07-15T08:14:23.674243+00:00",
+      "sender_email": "u2610051@mrgeng.ru",
+      "recipient": "npo_otp2@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "npo_otp2",
+        "нпо турбулентность-дон",
+        "ооо нпо",
+        "ооо газпром",
+        "image003.png и"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "64a7944e-16c5-43c0-952a-cb9dfc899741",
+      "created_at": "2026-07-15T08:14:58.571974+00:00",
+      "sender_email": "kvv@redutsb.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "subject": "запрос оборудования",
+      "keywords": [
+        "запрос оборудования",
+        "uk_omto4",
+        "120-56-65 доб.189",
+        "dub-h7/e1a недоступны",
+        "max по",
+        "origo ou2270p/a1a"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "a59e5525-eded-41df-8bb1-cae69d6fd733",
+      "created_at": "2026-07-15T08:16:03.431409+00:00",
+      "sender_email": "u2610051@mrgeng.ru",
+      "recipient": "npo_otp2@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "npo_otp2",
+        "нпо турбулентность-дон",
+        "ооо нпо",
+        "ооо газпром",
+        "image003.png и"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000076",
+      "original_department_name": "Отдел по работе с ПАО Газпром"
+    },
+    {
+      "id": "535ddb7e-99fb-4564-8199-46aca6356677",
+      "created_at": "2026-07-15T08:16:22.926808+00:00",
+      "sender_email": "kvv@redutsb.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "subject": "запрос оборудования",
+      "keywords": [
+        "запрос оборудования",
+        "uk_omto4",
+        "dub-h7/e1a но",
+        "email kvv",
+        "kvv redutsb.ru",
+        "origo ou2270p/a1a"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "0576cd45-dea1-468b-b2f2-3c4d3ac789ca",
+      "created_at": "2026-07-15T08:18:48.561036+00:00",
+      "sender_email": "info@ecogas71.ru",
+      "recipient": "td_odppo7@turbo-don.ru",
+      "subject": "стоимость кубиков",
+      "keywords": [
+        "стоимость кубиков",
+        "td_odppo7",
+        "запрос",
+        "адрес электронной",
+        "благодарность за",
+        "в данном"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "433c8b1d-356e-4688-bda9-20fe49faceb9",
+      "created_at": "2026-07-15T08:23:04.843120+00:00",
+      "sender_email": "lykov_v@bacs.ru",
+      "recipient": "uk_omto6@turbo-don.ru",
+      "subject": "объект новатэк-таркосаленефтегаз",
+      "keywords": [
+        "объект новатэк-таркосаленефтегаз",
+        "uk_omto6",
+        "вопрос",
+        "турбулентность-дон",
+        "александровича лыкова",
+        "анализатор влажности"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "43e2a89a-1d15-43aa-a086-348a45108a98",
+      "created_at": "2026-07-15T09:57:08.277743+00:00",
+      "sender_email": "freza-vil@yandex.ru",
+      "recipient": "uk_omto1@turbo-don.ru",
+      "subject": "вилий е.н ип",
+      "keywords": [
+        "вилий е.н ип",
+        "uk_omto1",
+        "909-441-75-68 елизавета",
+        "918-513-71-24 nbsp",
+        "919-875-59-80 елена"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "2a3c9286-7e24-4519-8e65-664b88586efc",
+      "created_at": "2026-07-15T09:57:14.638435+00:00",
+      "sender_email": "as_sharonova@samng.rosneft.ru",
+      "recipient": "tender@turbo-don.ru",
+      "subject": "лот 2600128782 газорегуляторный пункт шкафной (ао самаранефтегаз",
+      "keywords": [
+        "лот 2600128782 газорегуляторный пункт шкафной (ао самаранефтегаз",
+        "tender"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000054",
+      "original_department_name": "Тендерный офис"
+    },
+    {
+      "id": "52e76add-bf60-48af-b8d1-648c345d02a9",
+      "created_at": "2026-07-15T09:58:44.907969+00:00",
+      "sender_email": "d.gorbachevskiy@elevel-rst.ru",
+      "recipient": "npo_ceh1.12@turbo-don.ru",
+      "subject": "заказ",
+      "keywords": [
+        "заказ",
+        "npo_ceh1.12",
+        "турбулентность-дон",
+        "аналоги товара",
+        "будет выгружен",
+        "был приложен",
+        "в данном",
+        "в личном"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "5c41b304-e12e-46d2-88e6-e70396994aa3",
+      "created_at": "2026-07-15T09:58:55.948627+00:00",
+      "sender_email": "naumcevam@eko-term.ru",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "помощь",
+      "keywords": [
+        "помощь",
+        "uk_omto11",
+        "запрос",
+        "турбулентность-дон",
+        "c-ru.aa71.в.00312/21 и",
+        "ru c-ru.aa71.в.00312/21",
+        "автор письма",
+        "в данном"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "75dd415c-d6cd-44fe-8f83-930285a0eeaf",
+      "created_at": "2026-07-15T10:00:12.810226+00:00",
+      "sender_email": "as_sharonova@samng.rosneft.ru",
+      "recipient": "tender@turbo-don.ru",
+      "subject": "лот 2600128782 газорегуляторный пункт шкафной (ао самаранефтегаз",
+      "keywords": [
+        "лот 2600128782 газорегуляторный пункт шкафной (ао самаранефтегаз",
+        "tender"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000054",
+      "original_department_name": "Тендерный офис"
+    },
+    {
+      "id": "69f0b842-7dd6-48ba-a739-004fb738eb77",
+      "created_at": "2026-07-15T10:01:46.392401+00:00",
+      "sender_email": "a.derkunskiy@rezonit.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "subject": "счет n 23148 от 15.07.2026 по заказу: n 2252593(пп",
+      "keywords": [
+        "счет n 23148 от 15.07.2026 по заказу: n 2252593(пп",
+        "uk_omto4",
+        "на оплату",
+        "запрос",
+        "заказу n"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "4a00deb2-18b2-448a-b371-805cd5973fb1",
+      "created_at": "2026-07-15T10:03:16.639563+00:00",
+      "sender_email": "d.gorbachevskiy@elevel-rst.ru",
+      "recipient": "npo_ceh1.12@turbo-don.ru",
+      "subject": "заказ",
+      "keywords": [
+        "заказ",
+        "npo_ceh1.12",
+        "турбулентность-дон",
+        "аналоги товара",
+        "будет выгружен",
+        "был приложен",
+        "в данном",
+        "в личном"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "b17255a8-6bb5-4ef1-8887-afeb40de51f3",
+      "created_at": "2026-07-15T10:03:38.911174+00:00",
+      "sender_email": "freza-vil@yandex.ru",
+      "recipient": "uk_omto1@turbo-don.ru",
+      "subject": "вилий е.н ип",
+      "keywords": [
+        "вилий е.н ип",
+        "uk_omto1",
+        "909-441-75-68 елизавета",
+        "918-513-71-24 nbsp",
+        "919-875-59-80 елена"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "87e5fa18-bd90-4f21-a40e-7b94496478b6",
+      "created_at": "2026-07-15T10:05:40.727701+00:00",
+      "sender_email": "kipenergogaz@bk.ru",
+      "recipient": "td_odppo7@turbo-don.ru",
+      "subject": "шург г. иваново, 23-я линия, д",
+      "keywords": [
+        "шург г. иваново, 23-я линия, д",
+        "td_odppo7",
+        "23-я линия д",
+        "г иваново 23-я",
+        "иваново 23-я линия"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000155",
+      "original_department_name": "ОДП (промышленное оборудование)"
+    },
+    {
+      "id": "f3f7dac8-f18b-4623-b0a7-bcc1a7de4d2a",
+      "created_at": "2026-07-15T10:25:25.516964+00:00",
+      "sender_email": "trias09@mail.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "turbo flow ufg-f",
+      "keywords": [
+        "turbo flow ufg-f",
+        "info",
+        "газа"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000074",
+      "original_department_name": "Отдел продаж эталонного оборудования и услуг"
+    },
+    {
+      "id": "7c45fbe5-6153-4cff-8f6c-18ad4d1afd1e",
+      "created_at": "2026-07-15T11:02:49.813571+00:00",
+      "sender_email": "ural@ekaterinburg-tr.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "отправка: исх. письмо от 13.07.2026 № 007/201-786 в ооо нпо \"турбулентность-дон\" \"о предоставлении обосновывающих документов",
+      "keywords": [
+        "отправка: исх. письмо от 13.07.2026 № 007/201-786 в ооо нпо \"турбулентность-дон\" \"о предоставлении обосновывающих документов",
+        "info",
+        "13.07.2026 007/201-786 в",
+        "исх письмо"
+      ],
+      "department_id": "00-000163",
+      "department_name": "ТЕХНИЧЕСКИЙ ДИРЕКТОР",
+      "original_department_id": "00-000076",
+      "original_department_name": "Отдел по работе с ПАО Газпром"
+    },
+    {
+      "id": "555e8f3c-c30c-44e1-816f-972dd2f78e1c",
+      "created_at": "2026-07-15T11:04:11.563020+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "199-48-46 e-mail",
+        "e-mail iratags",
+        "gmail.com сообщение",
+        "https www.turbo-don.ru",
+        "iratags gmail.com",
+        "было это"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000054",
+      "original_department_name": "Тендерный офис"
+    },
+    {
+      "id": "4a476872-09c7-4c6a-a132-a415022755e2",
+      "created_at": "2026-07-15T11:04:53.201891+00:00",
+      "sender_email": "info@turbo-don.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "консультация",
+      "keywords": [
+        "консультация",
+        "info",
+        "199-48-46 e-mail",
+        "e-mail iratags",
+        "gmail.com сообщение",
+        "https www.turbo-don.ru",
+        "iratags gmail.com",
+        "владимировна телефон"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000011",
+      "original_department_name": "Отдел по работе с рекламациями"
+    },
+    {
+      "id": "6615ae7b-070d-4964-9424-e62d29a909fb",
+      "created_at": "2026-07-15T11:05:13.382996+00:00",
+      "sender_email": "ural@ekaterinburg-tr.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "отправка: исх. письмо от 13.07.2026 № 007/201-786 в ооо нпо \"турбулентность-дон\" \"о предоставлении обосновывающих документов",
+      "keywords": [
+        "отправка: исх. письмо от 13.07.2026 № 007/201-786 в ооо нпо \"турбулентность-дон\" \"о предоставлении обосновывающих документов",
+        "info",
+        "13.07.2026 007/201-786 в",
+        "исх письмо"
+      ],
+      "department_id": "00-000163",
+      "department_name": "ТЕХНИЧЕСКИЙ ДИРЕКТОР",
+      "original_department_id": "00-000163",
+      "original_department_name": "ТЕХНИЧЕСКИЙ ДИРЕКТОР"
+    },
+    {
+      "id": "db0635a8-af49-4811-b04f-ec94e68b592e",
+      "created_at": "2026-07-15T11:11:14.741968+00:00",
+      "sender_email": "s.kolmanovsky@mail.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос",
+      "keywords": [
+        "запрос",
+        "info",
+        "асу тп",
+        "бар выход",
+        "выход электронный",
+        "газа расход",
+        "давление до"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "54b1a0ed-5486-4523-bed6-31b87fb15d9d",
+      "created_at": "2026-07-15T11:11:36.249971+00:00",
+      "sender_email": "s.kolmanovsky@mail.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос",
+      "keywords": [
+        "запрос",
+        "info",
+        "газа",
+        "автор письма",
+        "банковские реквизиты",
+        "банковскими реквизитами",
+        "в письме",
+        "в сообщении"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "48b907c3-edca-4537-937c-dce2c6c7e9ee",
+      "created_at": "2026-07-15T11:13:26.619685+00:00",
+      "sender_email": "service.rnd@1cbit.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "документы по эдо (ооо \"система учета",
+      "keywords": [
+        "документы по эдо (ооо \"система учета",
+        "info",
+        "ооо система учета",
+        "по эдо ооо"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "0cc2fcca-c187-4e8c-9124-e7538a499191",
+      "created_at": "2026-07-15T11:13:54.699017+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "20.10.2015 418-зс",
+        "418-зс о",
+        "aro-minprom yandex.ru",
+        "yandex.ru согласно",
+        "адрес aro-minprom",
+        "в министерство"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "57ba8bb6-32f3-4ba3-879c-e8bce6b29e31",
+      "created_at": "2026-07-15T11:14:28.987532+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@metall-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "20.10.2015 418-зс",
+        "418-зс о",
+        "aro-minprom yandex.ru",
+        "yandex.ru не"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "4fdcff60-e360-483a-9993-48b9754ef70b",
+      "created_at": "2026-07-15T11:16:08.291566+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@acc.bz",
+      "subject": "",
+      "keywords": [
+        "info",
+        "20.10.2015 418-зс",
+        "418-зс о",
+        "aro-minprom yandex.ru",
+        "yandex.ru не"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "83566400-20c6-4883-820f-c83d72c42444",
+      "created_at": "2026-07-15T11:30:02.474396+00:00",
+      "sender_email": "moskalenko_ilona@yahoo.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "гранд",
+      "keywords": [
+        "гранд",
+        "info",
+        "yahoo почты",
+        "восстановить паспорт",
+        "здравствуйте подскажите",
+        "из yahoo",
+        "как восстановить",
+        "на iphone"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "9877d9fc-18e1-44d1-824a-e5c8167afc83",
+      "created_at": "2026-07-15T11:35:10.636611+00:00",
+      "sender_email": "szs.pto@mail.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "акт подтверждения реализуемости методики измерений расхода и объема газа на счётчик гранд-spi",
+      "keywords": [
+        "акт подтверждения реализуемости методики измерений расхода и объема газа на счётчик гранд-spi",
+        "info"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "6b921cab-4963-403a-ba5b-9c12a7181093",
+      "created_at": "2026-07-15T11:37:36.758754+00:00",
+      "sender_email": "i.poddubnyi@mail.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "188.pdf",
+      "keywords": [
+        "188.pdf",
+        "info",
+        "в сервисный",
+        "зарегистрировать и",
+        "и передать",
+        "игорь поддубный",
+        "отдел с",
+        "передать в"
+      ],
+      "department_id": "00-000104",
+      "department_name": "Сервисная служба",
+      "original_department_id": "00-000066",
+      "original_department_name": "Управление делами"
+    },
+    {
+      "id": "8945a2b2-ab9d-4bf1-809b-b2bb8511669b",
+      "created_at": "2026-07-15T11:44:20.321497+00:00",
+      "sender_email": "info@inpriz.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "информационное письмо ооо \"ин-приз\" (объект грс дорогобуж-2",
+      "keywords": [
+        "информационное письмо ооо \"ин-приз\" (объект грс дорогобуж-2",
+        "info",
+        "ин-приз объект грс"
+      ],
+      "department_id": "00-000066",
+      "department_name": "Управление делами",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "378826cd-7abf-4744-8399-79d28f55db25",
+      "created_at": "2026-07-15T11:46:33.033788+00:00",
+      "sender_email": "somsinpy@gro32.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "ао \"газпром газораспределение брянск",
+      "keywords": [
+        "ао \"газпром газораспределение брянск",
+        "info",
+        "ао газпром газораспределение"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "b20d4edd-499a-4a89-b260-ecebcfd2443b",
+      "created_at": "2026-07-15T13:44:12.072036+00:00",
+      "sender_email": "rgo@gazo.ru",
+      "recipient": "td_marketing2@turbo-don.ru",
+      "subject": "из российского газового общества (приглашение на 12-ую центральноазиатскую нефтегазовую выставку в казахстане",
+      "keywords": [
+        "из российского газового общества (приглашение на 12-ую центральноазиатскую нефтегазовую выставку в казахстане",
+        "td_marketing2"
+      ],
+      "department_id": "00-000013",
+      "department_name": "ДИРЕКТОР ПО РАЗВИТИЮ",
+      "original_department_id": "00-000013",
+      "original_department_name": "ДИРЕКТОР ПО РАЗВИТИЮ"
+    },
+    {
+      "id": "28a6267a-d8b2-4250-bed1-92d3b34c4a7c",
+      "created_at": "2026-07-16T06:51:52.921691+00:00",
+      "sender_email": "s_kondrashova@tez.vniigaz.gazprom.ru",
+      "recipient": "td_asutp@turbo-don.ru",
+      "subject": "договор № 523374 расходомер 12.1-т143.00.09.018 ол_v9 (уирг №2",
+      "keywords": [
+        "договор № 523374 расходомер 12.1-т143.00.09.018 ол_v9 (уирг №2",
+        "td_asutp",
+        "12.1-т143.00.09.018 ол_v9 уирг",
+        "договор 523374 расходомер",
+        "ол_v9 уирг 2"
+      ],
+      "department_id": "00-000119",
+      "department_name": "Сектор разработки ПО и АСУ",
+      "original_department_id": "00-000119",
+      "original_department_name": "Сектор разработки ПО и АСУ"
+    },
+    {
+      "id": "91320b2a-b97f-454b-b455-79cfb8f05477",
+      "created_at": "2026-07-16T06:52:43.498487+00:00",
+      "sender_email": "wf-batch@digtp.com",
+      "recipient": "tender@turbo-don.ru",
+      "subject": "изменены условия процедуры №4523537 - э/свароч,газ",
+      "keywords": [
+        "изменены условия процедуры №4523537 - э/свароч,газ",
+        "tender",
+        "процедуры 4523537 э/свароч",
+        "условия процедуры 4523537"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000054",
+      "original_department_name": "Тендерный офис"
+    },
+    {
+      "id": "2a95067f-56ef-4983-9482-58865899bf4e",
+      "created_at": "2026-07-16T06:53:25.228716+00:00",
+      "sender_email": "fisenko.nikolay@smcru.com",
+      "recipient": "uk_omto1@turbo-don.ru",
+      "subject": "эс эм си пневматик",
+      "keywords": [
+        "эс эм си пневматик",
+        "uk_omto1",
+        "01dc1db3.a3db4500 cid",
+        "01dc1db3.a3db4500 https"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "7fadcdb2-14e6-4c48-8a2b-b1c1eaee5775",
+      "created_at": "2026-07-16T06:53:44.625420+00:00",
+      "sender_email": "gazokomplekt@yandex.ru",
+      "recipient": "sktb_otp3@turbo-don.ru",
+      "subject": "исх.15",
+      "keywords": [
+        "исх.15",
+        "sktb_otp3",
+        "александре кисляковой",
+        "г.уфа запрашивает",
+        "газокомплект плюс",
+        "договора и",
+        "дополнительного соглашения",
+        "запрашивает трек-номер"
+      ],
+      "department_id": "00-000099",
+      "department_name": "Отдел технической поддержки",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "0e38ce68-f53a-430b-b097-faef5492e8b2",
+      "created_at": "2026-07-16T06:54:31.311386+00:00",
+      "sender_email": "magic@huntflow.ru",
+      "recipient": "od@turbo-don.ru",
+      "subject": "есть просроченные вакансии",
+      "keywords": [
+        "есть просроченные вакансии",
+        "od",
+        "вакансий руководитель"
+      ],
+      "department_id": "00-000063",
+      "department_name": "Служба управления персоналом",
+      "original_department_id": "00-000063",
+      "original_department_name": "Служба управления персоналом"
+    },
+    {
+      "id": "b4a99157-a840-4d8b-a89e-b527e577ed14",
+      "created_at": "2026-07-16T06:54:42.367898+00:00",
+      "sender_email": "aamahminov@udn.rosneft.ru",
+      "recipient": "td_sales1.8@turbo-don.ru",
+      "subject": "ол на узпр и жидкости",
+      "keywords": [
+        "ол на узпр и жидкости",
+        "td_sales1.8"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "758aa0ab-3392-46a7-baac-b6a7f5a4a878",
+      "created_at": "2026-07-16T06:55:07.699753+00:00",
+      "sender_email": "s_kondrashova@tez.vniigaz.gazprom.ru",
+      "recipient": "td_asutp@turbo-don.ru",
+      "subject": "договор № 523374 расходомер 12.1-т143.00.09.018 ол_v9 (уирг №2",
+      "keywords": [
+        "договор № 523374 расходомер 12.1-т143.00.09.018 ол_v9 (уирг №2",
+        "td_asutp",
+        "нпо турбулентность-дон",
+        "ооо нпо",
+        "запрос",
+        "12.1-т143.00.09.018 ол_v9 уирг"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000076",
+      "original_department_name": "Отдел по работе с ПАО Газпром"
+    },
+    {
+      "id": "996af086-42ee-4c62-a0c3-011cd6563436",
+      "created_at": "2026-07-16T06:55:43.817953+00:00",
+      "sender_email": "snab@gek32.ru",
+      "recipient": "td_orkk2@turbo-don.ru",
+      "subject": "повторно грс санкт-петербург скрабов",
+      "keywords": [
+        "повторно грс санкт-петербург скрабов",
+        "td_orkk2",
+        "нпо турбулентность-дон",
+        "ооо нпо"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000076",
+      "original_department_name": "Отдел по работе с ПАО Газпром"
+    },
+    {
+      "id": "e76ab4fe-c007-4bb5-9e59-c6f563515e11",
+      "created_at": "2026-07-16T07:02:10.357288+00:00",
+      "sender_email": "alfa.met.01@mail.ru",
+      "recipient": "uk_omto7@turbo-don.ru",
+      "subject": "сварочное оборудование, аргонная сварка, электроды, проволока - сварог, foxweld, deka, esab",
+      "keywords": [
+        "сварочное оборудование, аргонная сварка, электроды, проволока - сварог, foxweld, deka, esab",
+        "uk_omto7",
+        "предложение",
+        "foxweld deka esab",
+        "аргонная сварка электроды"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "24802510-3e56-4a85-bd5d-d514440b3270",
+      "created_at": "2026-07-16T07:04:19.794622+00:00",
+      "sender_email": "lavrentievdyu@priokcsm.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "фбу приокский цсм (тула) tfg №6525 договор+счет",
+      "keywords": [
+        "фбу приокский цсм (тула) tfg №6525 договор+счет",
+        "opmu",
+        "tfg 6525 договор",
+        "договор счет",
+        "приокский цсм тула",
+        "тула tfg"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000074",
+      "original_department_name": "Отдел продаж эталонного оборудования и услуг"
+    },
+    {
+      "id": "e933d6d4-2c2c-435a-92cb-433858ef6fd0",
+      "created_at": "2026-07-16T07:05:31.397246+00:00",
+      "sender_email": "kulkov.vv@tmn.gazprom-neft.ru",
+      "recipient": "npo_bmi5@turbo-don.ru",
+      "subject": "порядок и сроки поставки уирг для гпн-заполярье",
+      "keywords": [
+        "порядок и сроки поставки уирг для гпн-заполярье",
+        "npo_bmi5",
+        "газпром трансгаз",
+        "ооо газпром"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "81482f46-ff69-4430-8b7c-0714246042ea",
+      "created_at": "2026-07-16T07:05:56.010353+00:00",
+      "sender_email": "kulkov.vv@tmn.gazprom-neft.ru",
+      "recipient": "td_bmi1@turbo-don.ru",
+      "subject": "порядок и сроки поставки уирг для гпн-заполярье",
+      "keywords": [
+        "порядок и сроки поставки уирг для гпн-заполярье",
+        "td_bmi1",
+        "газпром добыча"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "30c0bb1d-19c1-4ebd-91e9-e71012ebda8b",
+      "created_at": "2026-07-16T07:06:00.793311+00:00",
+      "sender_email": "kulkov.vv@tmn.gazprom-neft.ru",
+      "recipient": "npo_bmi8@turbo-don.ru",
+      "subject": "порядок и сроки поставки уирг для гпн-заполярье",
+      "keywords": [
+        "порядок и сроки поставки уирг для гпн-заполярье",
+        "npo_bmi8",
+        "газпром добыча"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "e9937401-c12e-4b02-8e9a-04aa4005197d",
+      "created_at": "2026-07-16T07:32:58.994891+00:00",
+      "sender_email": "unp@intecon.spb.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "subject": "отгрузка 27.05",
+      "keywords": [
+        "отгрузка 27.05",
+        "uk_omto4",
+        "предложение",
+        "документы по",
+        "в письме"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "ccd82e55-1231-47d9-bfe0-dc7b7468fc26",
+      "created_at": "2026-07-16T08:01:33.293821+00:00",
+      "sender_email": "t.shumakov@transimperial.ru",
+      "recipient": "uk_omto5@turbo-don.ru",
+      "subject": "изменение текста в счетах // трансимпреиал // 26-12744-tl",
+      "keywords": [
+        "изменение текста в счетах // трансимпреиал // 26-12744-tl",
+        "uk_omto5",
+        "в счетах трансимпреиал",
+        "счетах трансимпреиал 26-12744-tl"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "ff8578a9-b61a-4400-be02-e1ef91529a86",
+      "created_at": "2026-07-16T08:01:59.593732+00:00",
+      "sender_email": "dogovor@st-prog.ru",
+      "recipient": "mgs_metrolog@turbo-don.ru",
+      "subject": "договор тп 224/2026",
+      "keywords": [
+        "договор тп 224/2026",
+        "mgs_metrolog",
+        "1-й километр",
+        "16.07.2026 09"
+      ],
+      "department_id": "00-000025",
+      "department_name": "Отдел метрологии и сертификации",
+      "original_department_id": "00-000025",
+      "original_department_name": "Отдел метрологии и сертификации"
+    },
+    {
+      "id": "15e72d07-591c-4aa4-8bbc-9ea2f0a1bd4c",
+      "created_at": "2026-07-16T08:02:15.542372+00:00",
+      "sender_email": "gerasimenko@rd.technoavia.ru",
+      "recipient": "npo_otitb@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "npo_otitb",
+        "герасименко из",
+        "для подбора",
+        "елена герасименко",
+        "запрашивает паспорт",
+        "защиты необходимо",
+        "и мощность"
+      ],
+      "department_id": "00-000066",
+      "department_name": "Управление делами",
+      "original_department_id": "00-000066",
+      "original_department_name": "Управление делами"
+    },
+    {
+      "id": "a020f288-6ec5-434f-ae05-e90ff392ea23",
+      "created_at": "2026-07-16T08:34:25.205795+00:00",
+      "sender_email": "oebs_r12@mts.ru",
+      "recipient": "tender@turbo-don.ru",
+      "subject": "требуется действие: вы приглашены: зак 229864 (анализатор ethernet",
+      "keywords": [
+        "требуется действие: вы приглашены: зак 229864 (анализатор ethernet",
+        "tender",
+        "вы приглашены зак",
+        "действие вы приглашены"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000054",
+      "original_department_name": "Тендерный офис"
+    },
+    {
+      "id": "55997fcd-d412-4bda-bebe-53a8888ad598",
+      "created_at": "2026-07-17T12:26:18.074110+00:00",
+      "sender_email": "moskalenko_ilona@yahoo.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "гранд",
+      "keywords": [
+        "info",
+        "07.2014 отправлено",
+        "08.2014 0714231411",
+        "yahoo почты",
+        "газовые счетчики",
+        "гранд 1",
+        "гранд 6"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000011",
+      "original_department_name": "Отдел по работе с рекламациями"
+    },
+    {
+      "id": "11048d77-1bd2-4122-a7dc-23f3dc7ccb8a",
+      "created_at": "2026-07-17T12:26:44.441767+00:00",
+      "sender_email": "trias09@mail.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "turbo flow ufg-f",
+      "keywords": [
+        "turbo flow ufg-f",
+        "info",
+        "газа"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "421a8f21-1464-4cff-838b-affd360857d1",
+      "created_at": "2026-07-17T13:18:08.734986+00:00",
+      "sender_email": "363828@mail.ru",
+      "recipient": "uk_omto7@turbo-don.ru",
+      "subject": "оплата",
+      "keywords": [
+        "uk_omto7",
+        "mail.ru по",
+        "re оплата",
+        "бухгалтерии за",
+        "за меня",
+        "закрыть оплату",
+        "ип фрелих"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "706ffc22-29c2-4a37-8976-403241eb4559",
+      "created_at": "2026-07-20T05:34:57.689563+00:00",
+      "sender_email": "contact@rosprommash.com",
+      "recipient": "uk_omto6@turbo-don.ru",
+      "subject": "заказ",
+      "keywords": [
+        "заказ",
+        "uk_omto6",
+        "на оплату",
+        "счет на",
+        "поставки",
+        "431-66-22 contact"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "08f19ccd-024f-4afa-b0ea-bfddcd6f2d80",
+      "created_at": "2026-07-20T07:51:14.565911+00:00",
+      "sender_email": "kinzerskaya@emis-kip.ru",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "fwd[3]: новый запрос турбулентность-дон_189772",
+      "keywords": [
+        "fwd[3]: новый запрос турбулентность-дон_189772",
+        "uk_omto11",
+        "fwd 3 новый"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "853159d4-f3fd-413e-98bb-bd7ccaf76266",
+      "created_at": "2026-07-20T07:54:25.142222+00:00",
+      "sender_email": "eko-nur@mail.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "ремонт gfg №170033",
+      "keywords": [
+        "ремонт gfg №170033",
+        "opmu",
+        "договор",
+        "ремонт gfg 170033"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "d0bdda0f-9bfe-4c9e-b7e4-091a411d7985",
+      "created_at": "2026-07-20T07:57:15.392215+00:00",
+      "sender_email": "moskalenko_ilona@yahoo.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "гранд",
+      "keywords": [
+        "info",
+        "07.2014 отправлено",
+        "08.2014 0714231411",
+        "yahoo почты",
+        "газовые счетчики",
+        "гранд 1",
+        "гранд 6"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000011",
+      "original_department_name": "Отдел по работе с рекламациями"
+    },
+    {
+      "id": "3c1cb20a-3ac7-44eb-a40b-dc4dcd6e0bcc",
+      "created_at": "2026-07-20T08:00:29.720701+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@bast.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "240-16-32факс 240-17-39",
+        "240-17-39 nbsp",
+        "240-18-27 240-16-32факс",
+        "240-51-56 240-18-27",
+        "minprom.donland.ru nbsp",
+        "nbsp nbsp"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "1c5721e8-788c-457e-acf5-3bc72ae3b733",
+      "created_at": "2026-07-20T10:25:53.564176+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@rndgaz.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "240-16-32фак требуется",
+        "240-18-27 240-16-32фак",
+        "240-51-56 240-18-27",
+        "aro-minprom yandex.ru",
+        "minprom.donland.ru nbsp"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "a3416ee6-a3be-4a20-a763-455acf512152",
+      "created_at": "2026-07-20T10:27:54.330004+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@salskselmash.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "требуется",
+        "aro-minprom yandex.ru",
+        "yandex.ru по",
+        "вложений 1",
+        "директор вложений",
+        "минпромэнерго ро"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "03b4aa92-258d-43fa-bf0e-fc4aeb30fe05",
+      "created_at": "2026-07-20T10:40:59.964735+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@rndgaz.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "240-16-32фак требуется",
+        "240-18-27 240-16-32фак",
+        "aro-minprom yandex.ru"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "eb549c55-4e94-424e-a94d-b5c4c63849f2",
+      "created_at": "2026-07-20T10:43:42.023889+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@salskselmash.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "требуется",
+        "aro-minprom yandex.ru",
+        "yandex.ru по",
+        "вложений 1"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "203d2cc9-1895-4e82-8967-35748f63d912",
+      "created_at": "2026-07-20T10:50:26.132879+00:00",
+      "sender_email": "faikf3530@gmail.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "газа",
+        "5.04 n90",
+        "email отправителя",
+        "faikf3530 gmail.com",
+        "gmail.com тема",
+        "image/jpeg текст"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "bb2c3b87-b5d4-40ad-9c59-be3f85633ea4",
+      "created_at": "2026-07-20T10:51:06.155424+00:00",
+      "sender_email": "sales@osca.su",
+      "recipient": "info@turbo-don.ru",
+      "subject": "повторно: вниманию зайцева гордея // оск - ремонт и поставка станков",
+      "keywords": [
+        "повторно: вниманию зайцева гордея // оск - ремонт и поставка станков",
+        "info",
+        "предложение",
+        "поставки",
+        "гордея оск ремонт"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "cbfedb9e-e209-4fc8-922b-2ef6e2799392",
+      "created_at": "2026-07-20T10:51:36.316150+00:00",
+      "sender_email": "kos@aviek-group.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "для отдела снабжения авиэк! надёжный поставщик комплектующих и оборудования",
+      "keywords": [
+        "для отдела снабжения авиэк! надёжный поставщик комплектующих и оборудования",
+        "info",
+        "компания",
+        "оборудование",
+        "авиэк надёжный поставщик"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "b6c2133b-213e-438a-a26e-01aba7c85199",
+      "created_at": "2026-07-20T10:55:16.221295+00:00",
+      "sender_email": "volgina@api-tech.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос 53732/2026",
+      "keywords": [
+        "запрос 53732/2026",
+        "info",
+        "189-66-41 email",
+        "19.07.2026 готовы",
+        "api-tech.ru http",
+        "api-tech.ru сайт"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "b9a80404-b9e4-4e0a-9dac-558d584467eb",
+      "created_at": "2026-07-20T10:56:08.923220+00:00",
+      "sender_email": "sng_upr_admdog@samng.rosneft.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "***зашифровано***] исх №снг 70/3- 2521 от 15.07.26 акцепт для ооо нпо турбулентность-дон (лот 2600128782 грпш",
+      "keywords": [
+        "***зашифровано***] исх №снг 70/3- 2521 от 15.07.26 акцепт для ооо нпо турбулентность-дон (лот 2600128782 грпш",
+        "info",
+        "ао самаранефтегаз"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "4c764499-8258-4c4f-a7fa-aebbdbb462f6",
+      "created_at": "2026-07-20T10:57:41.013841+00:00",
+      "sender_email": "demenkovdv@vtg.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос коммерческого предложения на расходомер",
+      "keywords": [
+        "запрос коммерческого предложения на расходомер",
+        "info"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000074",
+      "original_department_name": "Отдел продаж эталонного оборудования и услуг"
+    },
+    {
+      "id": "13db374d-91aa-4fda-a36e-79f878e19a78",
+      "created_at": "2026-07-20T11:10:38.425817+00:00",
+      "sender_email": "sale5@ist-group.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "счетчики газа гранд",
+      "keywords": [
+        "счетчики газа гранд",
+        "info",
+        "lorawan с"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000074",
+      "original_department_name": "Отдел продаж эталонного оборудования и услуг"
+    },
+    {
+      "id": "2aa03088-3257-4204-bcbf-164aec957ed3",
+      "created_at": "2026-07-20T11:14:49.170532+00:00",
+      "sender_email": "buy@spb-svarka.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "ультразвуковой расходомер для дымовых газов — наличие и цена",
+      "keywords": [
+        "ультразвуковой расходомер для дымовых газов — наличие и цена",
+        "info",
+        "газов наличие и",
+        "дымовых газов наличие"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "be29699b-59c6-491a-98c9-130da1934aee",
+      "created_at": "2026-07-20T11:17:53.161125+00:00",
+      "sender_email": "buy@spb-svarka.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "ультразвуковой расходомер для дымовых газов — наличие и цена",
+      "keywords": [
+        "ультразвуковой расходомер для дымовых газов — наличие и цена",
+        "info",
+        "газов наличие и",
+        "дымовых газов наличие"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "8661a0ee-901c-4938-95ee-2ba7ddd5e124",
+      "created_at": "2026-07-20T11:23:31.746820+00:00",
+      "sender_email": "buh@caspol.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "акт сверки взаимных расчетов № 354 от 14.07.2026.pdf",
+      "keywords": [
+        "акт сверки взаимных расчетов № 354 от 14.07.2026.pdf",
+        "info",
+        "взаимных расчетов 354"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "d5aece13-6dd4-4629-8be7-e728b39f2f41",
+      "created_at": "2026-07-20T11:29:56.926006+00:00",
+      "sender_email": "collection@russianpost.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "уведомление ао \"почта россии\" договор №9.1.1.3-02/1776",
+      "keywords": [
+        "уведомление ао \"почта россии\" договор №9.1.1.3-02/1776",
+        "info",
+        "ао почта россии",
+        "договор 9.1.1.3-02/1776",
+        "почта россии договор"
+      ],
+      "department_id": "00-000066",
+      "department_name": "Управление делами",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "8d6c5482-4cfd-4a4f-9ae4-1fd94288ec09",
+      "created_at": "2026-07-20T11:53:27.321306+00:00",
+      "sender_email": "s.klimko@gas.grodno.by",
+      "recipient": "npo_orik2@turbo-don.ru",
+      "subject": "акт сверки",
+      "keywords": [
+        "акт сверки",
+        "npo_orik2",
+        "pdf-файл акта",
+        "вложение pdf-файл",
+        "гас гродно",
+        "гродно поступил",
+        "данных и"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "85c7c206-1cde-47d7-8db9-477051d5414d",
+      "created_at": "2026-07-20T11:53:52.591476+00:00",
+      "sender_email": "mep@region.komus.net",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "счет клиенту: ооо нпо \"турбулентность-дон\" (0ep/1131451/20699092",
+      "keywords": [
+        "счет клиенту: ооо нпо \"турбулентность-дон\" (0ep/1131451/20699092",
+        "uk_omto11",
+        "клиенту ооо нпо",
+        "нпо турбулентность-дон 0ep/1131451/20699092",
+        "ооо нпо турбулентность-дон"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "ca00d9a0-e7d4-444e-9e73-cd18dbb4cbc6",
+      "created_at": "2026-07-20T11:55:17.621844+00:00",
+      "sender_email": "mep@region.komus.net",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "счет клиенту: ооо нпо \"турбулентность-дон\" (0ep/1131451/20699092",
+      "keywords": [
+        "счет клиенту: ооо нпо \"турбулентность-дон\" (0ep/1131451/20699092",
+        "uk_omto11",
+        "клиенту ооо нпо",
+        "нпо турбулентность-дон 0ep/1131451/20699092",
+        "счет клиенту ооо"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "6f4f0466-f507-4e08-a3a1-51092132a0c7",
+      "created_at": "2026-07-20T11:56:23.494488+00:00",
+      "sender_email": "vasilii.kozlov@arzge.ru",
+      "recipient": "npo_razvitie3@turbo-don.ru",
+      "subject": "вопросы по полученным образцам ufg-fch",
+      "keywords": [
+        "вопросы по полученным образцам ufg-fch",
+        "npo_razvitie3"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "de1d1bc2-0eb2-40ee-968c-73d4e508f7f5",
+      "created_at": "2026-07-20T11:57:56.832785+00:00",
+      "sender_email": "vasilii.kozlov@arzge.ru",
+      "recipient": "od@turbo-don.ru",
+      "subject": "вопросы по полученным образцам ufg-fch",
+      "keywords": [
+        "вопросы по полученным образцам ufg-fch",
+        "od",
+        "требуется"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "06a58514-03ee-4863-b606-d90d12b220ff",
+      "created_at": "2026-07-20T12:01:09.195913+00:00",
+      "sender_email": "rostov@cety-telekom.ru",
+      "recipient": "uk_omto5@turbo-don.ru",
+      "subject": "№ р-1679 пров от 08.07.2026",
+      "keywords": [
+        "№ р-1679 пров от 08.07.2026",
+        "uk_omto5",
+        "товар по",
+        "поставщик"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "a9359149-5244-4bf6-a67e-4e8a4e0cc9dd",
+      "created_at": "2026-07-20T12:02:28.995904+00:00",
+      "sender_email": "north_spec_oper@dpd.ru",
+      "recipient": "td_ved8@turbo-don.ru",
+      "subject": "на: re: прошу проверить снт по ru120456624",
+      "keywords": [
+        "на: re: прошу проверить снт по ru120456624",
+        "td_ved8",
+        "re прошу проверить",
+        "на re прошу"
+      ],
+      "department_id": "00-000015",
+      "department_name": "Отдел внешнеэкономической деятельности",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "53ed2c4d-3bfa-4861-9eb7-8a811e81d93e",
+      "created_at": "2026-07-20T12:02:43.594459+00:00",
+      "sender_email": "anna.dmitrieva@vseinstrumenti.ru",
+      "recipient": "npo_ceh1.12@turbo-don.ru",
+      "subject": "заказ от турбулентность-дон",
+      "keywords": [
+        "заказ от турбулентность-дон",
+        "npo_ceh1.12",
+        "на оплату",
+        "счета"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "374617cb-3e39-4d4f-b921-0464e6ea5677",
+      "created_at": "2026-07-20T12:02:56.912276+00:00",
+      "sender_email": "lmorozova@mosoblgaz.ru",
+      "recipient": "npo_opmu9@turbo-don.ru",
+      "subject": "заявка",
+      "keywords": [
+        "заявка",
+        "npo_opmu9",
+        "поверку",
+        "08.04.2026 во",
+        "20.07.2026 на",
+        "258/00-2026 от",
+        "299/26 от",
+        "pdf-файл заявки"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000074",
+      "original_department_name": "Отдел продаж эталонного оборудования и услуг"
+    },
+    {
+      "id": "c98ca0e3-a6ae-4bfa-b002-6a87587de87a",
+      "created_at": "2026-07-20T12:03:24.746181+00:00",
+      "sender_email": "daniel@vexabaseexport.com",
+      "recipient": "npo_razvitie2@turbo-don.ru",
+      "subject": "крепежные изделия",
+      "keywords": [
+        "крепежные изделия",
+        "npo_razvitie2",
+        "and export",
+        "co ltd",
+        "export trade",
+        "hebei yaoyu"
+      ],
+      "department_id": "00-000015",
+      "department_name": "Отдел внешнеэкономической деятельности",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "995a3e3a-dd60-4526-b581-f02d22d0e042",
+      "created_at": "2026-07-20T12:04:09.398421+00:00",
+      "sender_email": "e.krivorogov@tgk.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "отправка: 2. паспорт вт(v1",
+      "keywords": [
+        "отправка: 2. паспорт вт(v1",
+        "info",
+        "газпром трансгаз",
+        "ооо газпром",
+        "отправка 2 паспорт"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000001",
+      "original_department_name": "Председатель Совета Директоров"
+    },
+    {
+      "id": "9ea385ac-1426-4484-9989-6be4e377b818",
+      "created_at": "2026-07-20T12:04:55.033381+00:00",
+      "sender_email": "107@alfaopt.com",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "счет",
+      "keywords": [
+        "счет",
+        "uk_omto11",
+        "20.07.2026 на",
+        "22.07.2026 необходимо",
+        "альфаснаб исполнительный",
+        "возможность оплаты",
+        "действителен до",
+        "денис мозолевский"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "2d53338e-6f03-47dd-9fdf-bb9443e4c594",
+      "created_at": "2026-07-20T12:06:19.352002+00:00",
+      "sender_email": "tatyana.petrova@dellin.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "автоматическое уведомление.предварительное оповещение об отправлении груза",
+      "keywords": [
+        "автоматическое уведомление.предварительное оповещение об отправлении груза",
+        "opmu"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000074",
+      "original_department_name": "Отдел продаж эталонного оборудования и услуг"
+    },
+    {
+      "id": "abd9c782-8506-4f0d-8ea4-c857bd23fb6c",
+      "created_at": "2026-07-20T12:11:33.415904+00:00",
+      "sender_email": "booking@smartway.today",
+      "recipient": "td_buh3@turbo-don.ru",
+      "subject": "поездка: волгоград (шарова а. а.), 20.07.2026",
+      "keywords": [
+        "поездка: волгоград (шарова а. а.), 20.07.2026",
+        "td_buh3",
+        "а а 20.07.2026",
+        "волгоград шарова а",
+        "поездка волгоград шарова"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "c5517656-9b9c-463b-9419-53a0e9fbe7e5",
+      "created_at": "2026-07-20T12:24:48.661620+00:00",
+      "sender_email": "v.ulyanko@stav.phg.gazprom.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "заявка на производство работ",
+      "keywords": [
+        "заявка на производство работ",
+        "opmu",
+        "поверку",
+        "ооо газпром",
+        "turbo flow"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000076",
+      "original_department_name": "Отдел по работе с ПАО Газпром"
+    },
+    {
+      "id": "809f2d6b-d783-4462-bf55-d4cdd129234f",
+      "created_at": "2026-07-20T12:33:49.050406+00:00",
+      "sender_email": "lawyer0312@bk.ru",
+      "recipient": "td_sales1.9@turbo-don.ru",
+      "subject": "договор итц-турбулентность",
+      "keywords": [
+        "договор итц-турбулентность",
+        "td_sales1.9",
+        "bk.ru кому",
+        "fwd договор",
+        "https trk.mail.ru/c/zzm979",
+        "info ititc.ru"
+      ],
+      "department_id": "00-000130",
+      "department_name": "Заместитель директора",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "b0e759fb-237a-4cec-a920-078c897a3677",
+      "created_at": "2026-07-20T12:37:12.268888+00:00",
+      "sender_email": "mep@region.komus.net",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "счет клиенту: ооо нпо \"турбулентность-дон\" (0ep/1131451/20699092",
+      "keywords": [
+        "счет клиенту: ооо нпо \"турбулентность-дон\" (0ep/1131451/20699092",
+        "uk_omto11",
+        "поставки",
+        "клиенту ооо нпо",
+        "нпо турбулентность-дон"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "6c4b4933-05d9-4795-b0eb-8bf68cf9d6d8",
+      "created_at": "2026-07-20T12:41:28.900329+00:00",
+      "sender_email": "lawyer0312@bk.ru",
+      "recipient": "td_sales1.9@turbo-don.ru",
+      "subject": "договор итц-турбулентность",
+      "keywords": [
+        "договор итц-турбулентность",
+        "td_sales1.9",
+        "bk.ru кому",
+        "fwd договор",
+        "https trk.mail.ru/c/zzm979",
+        "info ititc.ru"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000130",
+      "original_department_name": "Заместитель директора"
+    },
+    {
+      "id": "15541255-33b6-45c1-8304-6f3de047983b",
+      "created_at": "2026-07-20T12:42:55.472503+00:00",
+      "sender_email": "tatyana.stepanchuk@chipdip.ru",
+      "recipient": "uk_omto10@turbo-don.ru",
+      "subject": "заказ 17581174",
+      "keywords": [
+        "заказ 17581174",
+        "uk_omto10",
+        "по заказу",
+        "счет",
+        "24.07.2026 необходимо"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "1a3c38f0-dcd7-48f6-a7a0-8504d8dc4943",
+      "created_at": "2026-07-20T12:46:30.603766+00:00",
+      "sender_email": "shyshkou@belgim.by",
+      "recipient": "mgs_metrolog@turbo-don.ru",
+      "subject": "от итоговое",
+      "keywords": [
+        "от итоговое",
+        "mgs_metrolog",
+        "docx требуется",
+        "turboflow ufg",
+        "ufg на",
+        "андреевич направил",
+        "белгим шишков"
+      ],
+      "department_id": "00-000025",
+      "department_name": "Отдел метрологии и сертификации",
+      "original_department_id": "00-000025",
+      "original_department_name": "Отдел метрологии и сертификации"
+    },
+    {
+      "id": "f2835fd1-a6a0-43d6-bb16-e77715b7c816",
+      "created_at": "2026-07-20T12:56:15.285837+00:00",
+      "sender_email": "manager4@h2o2-komplekt.ru",
+      "recipient": "uk_omto14@turbo-don.ru",
+      "subject": "отводы (в т.ч. 30753 , 22820), фланцы (1 и 2 ряд), краны, задвижки, пэ фитинги",
+      "keywords": [
+        "отводы (в т.ч. 30753 , 22820), фланцы (1 и 2 ряд), краны, задвижки, пэ фитинги",
+        "uk_omto14",
+        "предложение",
+        "поставки",
+        "компания",
+        "в т.ч 30753",
+        "задвижки пэ фитинги"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "09256d68-2f41-4abb-ba0e-26e29f7f35f9",
+      "created_at": "2026-07-20T13:34:27.458733+00:00",
+      "sender_email": "vasilii.kozlov@arzge.ru",
+      "recipient": "dmitriy.kurin@arzge.ru",
+      "subject": "вопросы по полученным образцам ufg-fch",
+      "keywords": [
+        "вопросы по полученным образцам ufg-fch",
+        "dmitriy.kurin",
+        "требуется"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "6d667ff8-53cc-40b8-ba78-c5f8e2d011b7",
+      "created_at": "2026-07-20T13:34:35.758814+00:00",
+      "sender_email": "vasilii.kozlov@arzge.ru",
+      "recipient": "td_odppo1@turbo-don.ru",
+      "subject": "вопросы по полученным образцам ufg-fch",
+      "keywords": [
+        "вопросы по полученным образцам ufg-fch",
+        "td_odppo1"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "b75e8456-806e-46ac-888c-983395db7f65",
+      "created_at": "2026-07-20T13:38:04.604227+00:00",
+      "sender_email": "andryuhina@ngosar.ru",
+      "recipient": "td_sales1.9@turbo-don.ru",
+      "subject": "заявка распор.246",
+      "keywords": [
+        "заявка распор.246",
+        "td_sales1.9",
+        "гранд",
+        "андрюхина просит",
+        "был выставлен",
+        "в количестве"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "ce661c02-cecc-45b8-9677-434a7b71c0d4",
+      "created_at": "2026-07-20T13:41:45.786420+00:00",
+      "sender_email": "yuliya.matanova@eurochem.ru",
+      "recipient": "test_ii@turbo-don.ru",
+      "subject": "запрос кп на стенд ремонта и контроля предохранительно-впускных клапанов котлов вагонов-цистерн для ооо «врз «депо нтк» г. невинномысск",
+      "keywords": [
+        "запрос кп на стенд ремонта и контроля предохранительно-впускных клапанов котлов вагонов-цистерн для ооо «врз «депо нтк» г. невинномысск",
+        "test_ii",
+        "врз депо нтк",
+        "г невинномысск"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000002",
+      "original_department_name": "Бухгалтерия"
+    },
+    {
+      "id": "9c498f59-4c9e-4ffa-9804-973b93c2f7bc",
+      "created_at": "2026-07-21T05:15:52.395889+00:00",
+      "sender_email": "market@pkspecmash.ru",
+      "recipient": "uk_omto10@turbo-don.ru",
+      "subject": "сз 10880",
+      "keywords": [
+        "сз 10880",
+        "uk_omto10",
+        "ufg-700-16.10.101-01 ранее",
+        "был направлен",
+        "выставление счета",
+        "заглушку зф",
+        "запрос на"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "4cf9e14b-7dad-4697-98aa-ab15e4b6603d",
+      "created_at": "2026-07-21T05:52:51.982473+00:00",
+      "sender_email": "moskalenko_ilona@yahoo.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "гранд",
+      "keywords": [
+        "info",
+        "07.2014 отправлено",
+        "08.2014 0714231411",
+        "yahoo почты",
+        "газовые счетчики",
+        "гранд 1",
+        "гранд 6"
+      ],
+      "department_id": "00-000011",
+      "department_name": "Отдел по работе с рекламациями",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "40db81d2-ca2c-42fc-966d-75dd4b8e70db",
+      "created_at": "2026-07-21T09:59:59.002908+00:00",
+      "sender_email": "02-25@ekaterinburg-tr.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "газпром",
+        "нпо турбулентность-дон",
+        "ооо нпо",
+        "исх письмо",
+        "письмо от",
+        "турбулентность-дон о"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000001",
+      "original_department_name": "Председатель Совета Директоров"
+    },
+    {
+      "id": "0349a6a6-a35a-4d2e-b697-7a8d6e800769",
+      "created_at": "2026-07-21T10:20:13.442761+00:00",
+      "sender_email": "ural@ekaterinburg-tr.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "отправка: исх. письмо от 13.07.2026 № 007/201-786 в ооо нпо \"турбулентность-дон\" \"о предоставлении обосновывающих документов",
+      "keywords": [
+        "отправка: исх. письмо от 13.07.2026 № 007/201-786 в ооо нпо \"турбулентность-дон\" \"о предоставлении обосновывающих документов",
+        "info",
+        "газпром трансгаз",
+        "ооо газпром"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000007",
+      "original_department_name": "ГЛАВНЫЙ КОНСТРУКТОР"
+    },
+    {
+      "id": "78fb1344-ba3f-4627-9360-52ea41fb00bc",
+      "created_at": "2026-07-21T10:41:29.552015+00:00",
+      "sender_email": "snab-bs@bacs.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "ufg 191593 (газпром трансгаз ставрополь ооо) привольненское лпумг",
+      "keywords": [
+        "ufg 191593 (газпром трансгаз ставрополь ооо) привольненское лпумг",
+        "opmu",
+        "ооо газпром",
+        "ufg 191593 газпром"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "4aaf944b-d774-4bd5-a30a-a74333eba7d7",
+      "created_at": "2026-07-21T11:03:18.761059+00:00",
+      "sender_email": "mr@kupi-sport.ru",
+      "recipient": "uk_omto10@turbo-don.ru",
+      "subject": "ксения , высылаем счет на оплату по вашему запросу",
+      "keywords": [
+        "ксения , высылаем счет на оплату по вашему запросу",
+        "uk_omto10",
+        "турбулентность-дон"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "102a2ad1-3e77-4c13-8b12-bf4d4c15d103",
+      "created_at": "2026-07-21T11:03:56.334133+00:00",
+      "sender_email": "andryuhina@ngosar.ru",
+      "recipient": "td_sales1.9@turbo-don.ru",
+      "subject": "заявка распор.242",
+      "keywords": [
+        "заявка распор.242",
+        "td_sales1.9",
+        "газа гранд",
+        "алмаз необходимо"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "ef5fb3c4-77b6-4612-8866-0785b82ef6fd",
+      "created_at": "2026-07-21T11:06:20.525089+00:00",
+      "sender_email": "g.melnikov@zngs.ru",
+      "recipient": "uk_omto10@turbo-don.ru",
+      "subject": "знгс",
+      "keywords": [
+        "знгс",
+        "uk_omto10",
+        "2026",
+        "aka.ms/o0ukef от",
+        "friday 17",
+        "g.melnikov zngs.ru",
+        "https aka.ms/o0ukef",
+        "ios https"
+      ],
+      "department_id": "00-000159",
+      "department_name": "Сектор сопровождения производства и продаж",
+      "original_department_id": "00-000163",
+      "original_department_name": "ТЕХНИЧЕСКИЙ ДИРЕКТОР"
+    },
+    {
+      "id": "a3010613-7d38-433d-b6f0-e8a432f9cd2e",
+      "created_at": "2026-07-21T11:07:45.552129+00:00",
+      "sender_email": "burlachukse@mosoblgaz.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "запрос документов ао \"мособлгаз",
+      "keywords": [
+        "запрос документов ао \"мособлгаз",
+        "opmu",
+        "документов ао мособлгаз"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "a2914027-e6e2-496a-a913-ff8285c23160",
+      "created_at": "2026-07-21T11:59:56.634694+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "27-30 октября",
+        "i всероссийского",
+        "а ну-ка",
+        "в москве",
+        "в план",
+        "включения конкурса"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "5743ca7b-3e3e-4a0d-9b37-975df7fbe611",
+      "created_at": "2026-07-21T12:01:36.597405+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "240-16-32 факс",
+        "240-17-39 в",
+        "240-18-27 240-16-32",
+        "240-51-56 240-18-27"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "ce4e3316-d973-4587-9c2e-e89b5a3b4a96",
+      "created_at": "2026-07-21T12:20:44.474614+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "27-30 октября",
+        "всероссийского",
+        "а ну-ка",
+        "в двух"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "ffb35b47-71e9-483e-8508-50495d9d2d00",
+      "created_at": "2026-07-21T12:20:52.515634+00:00",
+      "sender_email": "aro-minprom@yandex.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "27-30 октября",
+        "всероссийского",
+        "а ну-ка",
+        "в двух"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "7e626e3e-cdd1-4722-b606-953e1e29c1e4",
+      "created_at": "2026-07-21T12:25:26.572949+00:00",
+      "sender_email": "sergey.khrol@jsc-arcticgas.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "отправка исходящего письма",
+      "keywords": [
+        "отправка исходящего письма",
+        "info",
+        "требуется",
+        "21.07.2026 с"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000076",
+      "original_department_name": "Отдел по работе с ПАО Газпром"
+    },
+    {
+      "id": "4d51ca65-5c6f-4007-b140-6eb7ea92c9a1",
+      "created_at": "2026-07-21T12:26:45.883816+00:00",
+      "sender_email": "kelly.q@unitexcomposite.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "fire blankets request",
+      "keywords": [
+        "fire blankets request",
+        "info",
+        "a professional"
+      ],
+      "department_id": "00-000015",
+      "department_name": "Отдел внешнеэкономической деятельности",
+      "original_department_id": "00-000029",
+      "original_department_name": "Служба ремонта и обслуживания оборудования"
+    },
+    {
+      "id": "b508a63c-25e0-42bb-ac16-a2b075c1e0ef",
+      "created_at": "2026-07-21T12:36:09.940093+00:00",
+      "sender_email": "zabitova8247@icloud.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "газовый счетчик (нужен паспорт) адрес каспийск ул. каспийская 6-166",
+      "keywords": [
+        "газовый счетчик (нужен паспорт) адрес каспийск ул. каспийская 6-166",
+        "info",
+        "газовый счетчик нужен",
+        "каспийск ул каспийская"
+      ],
+      "department_id": "00-000099",
+      "department_name": "Отдел технической поддержки",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "ae7a1727-5058-4e21-a82b-63419bac2bfd",
+      "created_at": "2026-07-21T12:39:17.432679+00:00",
+      "sender_email": "hicom@kamensk.donpac.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "фкп \"комбинат \"каменский",
+      "keywords": [
+        "фкп \"комбинат \"каменский",
+        "info",
+        "фкп комбинат каменский",
+        "pdf текст"
+      ],
+      "department_id": "00-000056",
+      "department_name": "Метрологическая служба",
+      "original_department_id": "00-000066",
+      "original_department_name": "Управление делами"
+    },
+    {
+      "id": "9d28802c-b30e-40eb-a7a7-2ae4194e0466",
+      "created_at": "2026-07-21T13:03:45.055477+00:00",
+      "sender_email": "zabitova8247@icloud.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "газовый счетчик (нужен паспорт) адрес каспийск ул. каспийская 6-166",
+      "keywords": [
+        "газовый счетчик (нужен паспорт) адрес каспийск ул. каспийская 6-166",
+        "info",
+        "газовый счетчик нужен",
+        "каспийск ул каспийская"
+      ],
+      "department_id": "00-000099",
+      "department_name": "Отдел технической поддержки",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "59fad7ad-711b-4624-af13-502522eebef4",
+      "created_at": "2026-07-22T06:14:57.194276+00:00",
+      "sender_email": "no-reply@tektorg.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "уведомление о проверке в рамках должной осмотрительности в ооо \"рн-ванкор",
+      "keywords": [
+        "уведомление о проверке в рамках должной осмотрительности в ооо \"рн-ванкор",
+        "info",
+        "в ооо рн-ванкор"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000066",
+      "original_department_name": "Управление делами"
+    },
+    {
+      "id": "5d2d8285-881f-4e39-9721-8f4ba5c4ffe2",
+      "created_at": "2026-07-22T06:18:41.989935+00:00",
+      "sender_email": "mikhaleva.oe@roseltorg.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "приглашение на поставку системы погружной телеметрии с расходомером для нужд ооо \"российская инновационная топливно-энергетическая компания",
+      "keywords": [
+        "приглашение на поставку системы погружной телеметрии с расходомером для нужд ооо \"российская инновационная топливно-энергетическая компания",
+        "info"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "104a7fed-9011-4f57-b83d-f0a8bad9219b",
+      "created_at": "2026-07-22T08:43:04.133824+00:00",
+      "sender_email": "spirov.ia@gazprom.kg",
+      "recipient": "almaz_proizvodstvo@turbo-don.ru",
+      "subject": "счетчик",
+      "keywords": [
+        "счетчик",
+        "поверка",
+        "almaz_proizvodstvo turbo-don.ru",
+        "friday may",
+        "from ачимова",
+        "gazprom.kg mailto",
+        "gazprom.kg subject"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "9e38f5e5-156b-4e97-9e3c-e9155f8388f5",
+      "created_at": "2026-07-22T10:30:13.713212+00:00",
+      "sender_email": "i.n.konyuxov@sgservice.org",
+      "recipient": "info@turbo-don.ru",
+      "subject": "поставка расходомеров ультразвуковых для объекта \"техническое перевооружение грс ново-успенка",
+      "keywords": [
+        "поставка расходомеров ультразвуковых для объекта \"техническое перевооружение грс ново-успенка",
+        "info",
+        "газа",
+        "для объекта техническое",
+        "объекта техническое перевооружение"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000001",
+      "original_department_name": "Председатель Совета Директоров"
+    },
+    {
+      "id": "a219ada6-8e31-41cf-b380-c40aca29e266",
+      "created_at": "2026-07-22T10:30:55.890213+00:00",
+      "sender_email": "vetrov_i@mercury-llc.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "кп 21.07. электрика",
+      "keywords": [
+        "кп 21.07. электрика",
+        "info",
+        "turbo flow",
+        "кп 21.07 электрика"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "82a12e24-12fb-49cd-86e6-bdb6a5450ff6",
+      "created_at": "2026-07-22T10:31:52.021106+00:00",
+      "sender_email": "vgs-61@yandex.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "задолженность ип амураль и ооо турбулентность-дон",
+      "keywords": [
+        "задолженность ип амураль и ооо турбулентность-дон",
+        "info"
+      ],
+      "department_id": "00-000001",
+      "department_name": "Председатель Совета Директоров",
+      "original_department_id": "00-000001",
+      "original_department_name": "Председатель Совета Директоров"
+    },
+    {
+      "id": "c09b5c75-12d7-4a40-8a15-e06410349870",
+      "created_at": "2026-07-22T10:47:16.363950+00:00",
+      "sender_email": "andreev.m@bunter.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "эб3825 запрос кп на расходомеры",
+      "keywords": [
+        "эб3825 запрос кп на расходомеры",
+        "info",
+        "расходомеров",
+        "газа"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "a0300085-8101-45e3-afac-62d9e9534440",
+      "created_at": "2026-07-22T10:49:31.377040+00:00",
+      "sender_email": "olgakez1@yandex.by",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос стоимости и наличия",
+      "keywords": [
+        "запрос стоимости и наличия",
+        "info"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "e2508848-09f5-4cb9-82e0-3489c1be54a3",
+      "created_at": "2026-07-22T10:52:05.595796+00:00",
+      "sender_email": "andreev.m@bunter.ru",
+      "recipient": "test_ii@turbo-don.ru",
+      "subject": "эб3825 запрос кп на расходомеры",
+      "keywords": [
+        "эб3825 запрос кп на расходомеры",
+        "test_ii"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "de2a3323-fdfd-4272-8a45-8d6980ea14e5",
+      "created_at": "2026-07-22T10:53:32.208902+00:00",
+      "sender_email": "tatyana.stepanchuk@chipdip.ru",
+      "recipient": "uk_omto7@turbo-don.ru",
+      "subject": "заказ 17594765",
+      "keywords": [
+        "заказ 17594765",
+        "uk_omto7",
+        "на оплату",
+        "счет на",
+        "оплата"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "8b1cde43-fc05-4af9-bd2b-1f1f25429d64",
+      "created_at": "2026-07-22T10:56:25.816871+00:00",
+      "sender_email": "nizomiddinusmonov12@gmail.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "срочна кп",
+      "keywords": [
+        "срочна кп",
+        "info",
+        "flow ufg-f",
+        "turbo flow",
+        "ufg-f 1",
+        "а также",
+        "благодарим за"
+      ],
+      "department_id": "00-000015",
+      "department_name": "Отдел внешнеэкономической деятельности",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "8f18df4d-5ef7-4a95-95d8-4d5152b50e44",
+      "created_at": "2026-07-22T11:11:15.253405+00:00",
+      "sender_email": "gtngaz@mail.ru",
+      "recipient": "td_odppo7@turbo-don.ru",
+      "subject": "запрос ооо гтн газ для цветковой анастасии",
+      "keywords": [
+        "запрос ооо гтн газ для цветковой анастасии",
+        "td_odppo7",
+        "техническое"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000128",
+      "original_department_name": "Отдел продаж БМИ"
+    },
+    {
+      "id": "3886ab83-9360-42cd-bd64-c35d2c6a5543",
+      "created_at": "2026-07-22T11:32:34.677321+00:00",
+      "sender_email": "2233777@mail.ru",
+      "recipient": "uk_omto11@turbo-don.ru",
+      "subject": "документы для ооо нпо \"турбулентность-дон\" от ооо \"металл-актив",
+      "keywords": [
+        "документы для ооо нпо \"турбулентность-дон\" от ооо \"металл-актив",
+        "uk_omto11",
+        "на оплату",
+        "счет на"
+      ],
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "a40a6627-6b35-4745-9289-4817a7056b8a",
+      "created_at": "2026-07-22T11:34:21.613806+00:00",
+      "sender_email": "ovyadviga@rspn.rosneft.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "приглашение на участие в закупочной процедуре",
+      "keywords": [
+        "приглашение на участие в закупочной процедуре",
+        "info",
+        "требуется"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "083c70cb-d1ab-40a0-b880-ca33947ec008",
+      "created_at": "2026-07-22T11:34:46.114001+00:00",
+      "sender_email": "ovyadviga@rspn.rosneft.ru",
+      "recipient": "test_ii@turbo-don.ru",
+      "subject": "приглашение на участие в закупочной процедуре",
+      "keywords": [
+        "приглашение на участие в закупочной процедуре",
+        "test_ii"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "79f00041-c6a3-475d-8b2c-092bba220ca7",
+      "created_at": "2026-07-22T11:44:14.262886+00:00",
+      "sender_email": "ri.ahshiyatov@ttg.gazprom.ru",
+      "recipient": "npo_pto2@turbo-don.ru",
+      "subject": "письмо входящее № 50-014-009812 от 18.03.2026 от ооо _газпром комплектация_, о рекламационной работе",
+      "keywords": [
+        "письмо входящее № 50-014-009812 от 18.03.2026 от ооо _газпром комплектация_, о рекламационной работе",
+        "npo_pto2",
+        "входящее 50-014-009812 от"
+      ],
+      "department_id": "00-000028",
+      "department_name": "Отдел сервисного обслуживания",
+      "original_department_id": "00-000076",
+      "original_department_name": "Отдел по работе с ПАО Газпром"
+    },
+    {
+      "id": "3eb836ec-8f72-4ea9-97d1-9172900cd6dd",
+      "created_at": "2026-07-22T11:45:15.005265+00:00",
+      "sender_email": "oge-ngrs@yandex.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "ооо \" няганские газораспределительные сети",
+      "keywords": [
+        "ооо \" няганские газораспределительные сети",
+        "opmu",
+        "ufg-f",
+        "запрос",
+        "ооо няганские"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "0d3ea0e7-ae41-4993-83e4-ae7fc51e66be",
+      "created_at": "2026-07-22T11:45:32.014784+00:00",
+      "sender_email": "sedykhta@inbox.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "поверка газового счетчика",
+      "keywords": [
+        "поверка газового счетчика",
+        "opmu",
+        "алексеевна направила"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "d5003fb6-2883-40a8-905a-9a969a1ba06b",
+      "created_at": "2026-07-22T11:50:48.295136+00:00",
+      "sender_email": "sale3@smknovator.ru",
+      "recipient": "almaz_proizvodstvo@turbo-don.ru",
+      "subject": "паспорт гранд",
+      "keywords": [
+        "паспорт гранд",
+        "almaz_proizvodstvo",
+        "выставить счет",
+        "гранд 6",
+        "для прибора"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000155",
+      "original_department_name": "Отдел дилерских продаж"
+    },
+    {
+      "id": "4a0075b4-0407-421a-82dc-3068298e09b7",
+      "created_at": "2026-07-22T12:06:04.056109+00:00",
+      "sender_email": "info_brif@greenatom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "важные изменения в цр \"бриф",
+      "keywords": [
+        "важные изменения в цр \"бриф",
+        "info",
+        "в цр бриф"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "2260b698-728d-4c61-b44f-6e42486cf41f",
+      "created_at": "2026-07-22T12:34:27.136111+00:00",
+      "sender_email": "g.kulakovskiy@samaratransgaz.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "газпром трансгаз самара",
+      "keywords": [
+        "газпром трансгаз самара",
+        "info",
+        "ооо газпром"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000001",
+      "original_department_name": "Председатель Совета Директоров"
+    },
+    {
+      "id": "dc02f910-9968-42c2-bf61-2b44a7d8749d",
+      "created_at": "2026-07-23T05:12:52.876139+00:00",
+      "sender_email": "khorenkosv@samng.rosneft.ru",
+      "recipient": "td_bmi2@turbo-don.ru",
+      "subject": "гк \"турбулентность-дон",
+      "keywords": [
+        "гк \"турбулентность-дон",
+        "td_bmi2",
+        "гк турбулентность-дон",
+        "flow tfg-s-x-1-0300-а-07",
+        "tfg-s-x-1-0300-а-07 внутренний",
+        "turbo flow",
+        "ао самаранефтегаз"
+      ],
+      "department_id": "00-000128",
+      "department_name": "Отдел продаж БМИ",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "8c8a5f35-c7b8-4e15-b159-512620142767",
+      "created_at": "2026-07-23T05:15:43.188745+00:00",
+      "sender_email": "chadovvn@uromgaz.ru",
+      "recipient": "td_orkk2@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "td_orkk2",
+        "на поставку",
+        "ufg-f-050-c-xx-х-2г-016е-х5-с1тр-ххх-хх-да-0 16",
+        "ао уромгаз",
+        "в течение",
+        "выставления счета"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000128",
+      "original_department_name": "Отдел продаж БМИ"
+    },
+    {
+      "id": "d9403efa-22eb-4faf-bc3b-6967d5a725be",
+      "created_at": "2026-07-23T05:18:05.756747+00:00",
+      "sender_email": "pachuevae@vtg.gazprom.ru",
+      "recipient": "d.shamray@turbo-don.ru",
+      "subject": "необходимые мтр",
+      "keywords": [
+        "необходимые мтр",
+        "d.shamray",
+        "газпром трансгаз",
+        "ооо газпром",
+        "запрос"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000128",
+      "original_department_name": "Отдел продаж БМИ"
+    },
+    {
+      "id": "644048cd-1140-4ba1-89a3-add1626798c1",
+      "created_at": "2026-07-23T05:20:17.450191+00:00",
+      "sender_email": "ayu_bessonov@tng.rosneft.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "о turboflow",
+      "keywords": [
+        "о turboflow",
+        "opmu",
+        "turboflow зав",
+        "автоматизацию и",
+        "ао тюменнефтегаз",
+        "выдачи прибора",
+        "зав 6864"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "50ca7fba-6de9-4c3d-a0b5-fda197dddb29",
+      "created_at": "2026-07-23T05:57:09.434977+00:00",
+      "sender_email": "info@rusgasproject.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "26-ргп-0221 от 22.07.2026 о направлении дополнительных соглашений",
+      "keywords": [
+        "26-ргп-0221 от 22.07.2026 о направлении дополнительных соглашений",
+        "info"
+      ],
+      "department_id": "00-000099",
+      "department_name": "Отдел технической поддержки",
+      "original_department_id": "00-000001",
+      "original_department_name": "Председатель Совета Директоров"
+    },
+    {
+      "id": "97618634-2b52-41d5-b530-480e28092a10",
+      "created_at": "2026-07-23T05:58:35.537491+00:00",
+      "sender_email": "lp@amfexpo.com",
+      "recipient": "info@tpp-titan.ru",
+      "subject": "запрос на тендер - застройка стенда на форуме «пмгф - 2026",
+      "keywords": [
+        "запрос на тендер - застройка стенда на форуме «пмгф - 2026",
+        "info",
+        "требуется"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "fd567093-aa9e-4fce-9e7f-b991edc0b731",
+      "created_at": "2026-07-23T07:10:09.032200+00:00",
+      "sender_email": "tashbulatova.em@ngiugntu.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос ткп на датчик расхода (объект рсн141-25",
+      "keywords": [
+        "запрос ткп на датчик расхода (объект рсн141-25",
+        "info",
+        "для объекта"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "81248c31-e7a9-4235-b962-282f98c34b57",
+      "created_at": "2026-07-23T07:11:28.913637+00:00",
+      "sender_email": "office@servis-cargo.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "srv счет на оплату - higer klq6928q х885на761",
+      "keywords": [
+        "srv счет на оплату - higer klq6928q х885на761",
+        "info"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000152",
+      "original_department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
+    },
+    {
+      "id": "f735340f-805a-4e1d-b701-7bae087f09b3",
+      "created_at": "2026-07-23T07:14:44.732106+00:00",
+      "sender_email": "gorbunova_km@odk-gt.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос",
+      "keywords": [
+        "запрос",
+        "info",
+        "стоимость",
+        "22-605 email",
+        "293-605 тел",
+        "email gorbunova_km",
+        "gfg2-f-c2tp-g-0025.01-p-0tki-exi-c-0010e 1",
+        "gorbunova_km odk-gt.ru"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "0156251d-bead-4e08-8a17-c33bd366863c",
+      "created_at": "2026-07-23T11:26:49.451174+00:00",
+      "sender_email": "busines.quattro.pro@bk.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "счетчики",
+        "spi-grand g10",
+        "веса и",
+        "вложениях изображения",
+        "во вложениях",
+        "габаритов веса"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "c7a54ada-fb07-4ad0-845e-a7d693b6ad15",
+      "created_at": "2026-07-23T12:01:47.422039+00:00",
+      "sender_email": "snab@smuets.by",
+      "recipient": "info@turbo-don.ru",
+      "subject": "заявка сму энерготехсервис",
+      "keywords": [
+        "заявка сму энерготехсервис",
+        "info",
+        "аналог с",
+        "без ндс"
+      ],
+      "department_id": "00-000015",
+      "department_name": "Отдел внешнеэкономической деятельности",
+      "original_department_id": "00-000065",
+      "original_department_name": "Отдел МТО"
+    },
+    {
+      "id": "4381b948-0f5d-4402-9e97-ea2a8703d199",
+      "created_at": "2026-07-24T05:35:58.318177+00:00",
+      "sender_email": "irina.kim2@sakhalin2.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "новый тендер/sellc rfq iki03072026а/ mr_opfc-0283_ru-6953_кипиа (расходомеры переменного перепада давления) bcd 15/07/2026",
+      "keywords": [
+        "новый тендер/sellc rfq iki03072026а/ mr_opfc-0283_ru-6953_кипиа (расходомеры переменного перепада давления) bcd 15/07/2026",
+        "info",
+        "iki03072026а/ mr_opfc-0283_ru-6953_кипиа расходомеры",
+        "mr_opfc-0283_ru-6953_кипиа расходомеры переменного"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "1af34977-1999-4777-9b94-2a8b553f43cc",
+      "created_at": "2026-07-27T05:07:22.405295+00:00",
+      "sender_email": "trias09@mail.ru",
+      "recipient": "td_odppo7@turbo-don.ru",
+      "subject": "*** spam *** консультация",
+      "keywords": [
+        "*** spam *** консультация",
+        "td_odppo7",
+        "flow ufg-f",
+        "стоимость",
+        "turbo flow"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "bc7fd3fe-ad53-43a2-81a5-422c96e4aa2d",
+      "created_at": "2026-07-27T05:08:11.817408+00:00",
+      "sender_email": "lanservicekhv@yandex.ru",
+      "recipient": "td_odppo7@turbo-don.ru",
+      "subject": "ол 31374 в работу",
+      "keywords": [
+        "ол 31374 в работу",
+        "td_odppo7",
+        "в просчет",
+        "вложении письма"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "06cb888e-1b66-4e26-a846-d84498a0850a",
+      "created_at": "2026-07-27T05:08:46.579433+00:00",
+      "sender_email": "trias09@mail.ru",
+      "recipient": "td_odppo7@turbo-don.ru",
+      "subject": "*** spam *** консультация",
+      "keywords": [
+        "*** spam *** консультация",
+        "td_odppo7",
+        "spam консультация",
+        "flow ufg-f",
+        "стоимости",
+        "turbo flow"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000099",
+      "original_department_name": "Отдел технической поддержки"
+    },
+    {
+      "id": "4605e514-1439-4ba7-9390-ae73c813bc43",
+      "created_at": "2026-07-27T05:31:56.774925+00:00",
+      "sender_email": "metrolog@ngosar.ru",
+      "recipient": "opmu@turbo-don.ru",
+      "subject": "исх. № №1198 от 02.07.2026",
+      "keywords": [
+        "исх. № №1198 от 02.07.2026",
+        "opmu",
+        "запрос",
+        "исх 1198 от"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    },
+    {
+      "id": "0252fe44-79bc-453d-ac7c-9750bcead127",
+      "created_at": "2026-07-27T05:45:34.864224+00:00",
+      "sender_email": "info.quattropro@gmail.com",
+      "recipient": "info@turbo-don.ru",
+      "subject": "",
+      "keywords": [
+        "info",
+        "spi-grand g10",
+        "газа",
+        "запрос",
+        "в количестве",
+        "веса габаритов"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "1463cb97-f436-4f24-a8e8-83565bfcbefc",
+      "created_at": "2026-07-28T11:36:48.848518+00:00",
+      "sender_email": "promet84@mail.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос счетчик газа",
+      "keywords": [
+        "запрос счетчик газа",
+        "info",
+        "возможности поставки"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "023c2eb2-426c-4f1b-b4ea-d5f086122c85",
+      "created_at": "2026-07-28T11:57:16.331716+00:00",
+      "sender_email": "ceo@vtg.gazprom.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "06/22-01-4417",
+      "keywords": [
+        "06/22-01-4417",
+        "info",
+        "turboflow ufg-f",
+        "ufg-f зав",
+        "в отчетах",
+        "газпром трансгаз",
+        "горький-3 необходимо"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000001",
+      "original_department_name": "Председатель Совета Директоров"
+    },
+    {
+      "id": "3cb16904-297f-4801-bea0-45acd9ad0d2d",
+      "created_at": "2026-07-28T11:58:43.180714+00:00",
+      "sender_email": "oboron@rostov-gorod.ru",
+      "recipient": "info@bonum-trailer.ru",
+      "subject": "руководителю - от администрации города ростова-на-дону",
+      "keywords": [
+        "руководителю - от администрации города ростова-на-дону",
+        "info",
+        "руководителю от"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "4fc7d28c-be64-4f2f-925b-04b826a564d7",
+      "created_at": "2026-07-28T11:58:51.107033+00:00",
+      "sender_email": "oboron@rostov-gorod.ru",
+      "recipient": "info@slmug.ru",
+      "subject": "руководителю - от администрации города ростова-на-дону",
+      "keywords": [
+        "руководителю - от администрации города ростова-на-дону",
+        "info",
+        "руководителю от"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "9f3a8785-ca67-4e37-b4c9-731d632aaae2",
+      "created_at": "2026-07-28T11:58:58.739488+00:00",
+      "sender_email": "oboron@rostov-gorod.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "руководителю - от администрации города ростова-на-дону",
+      "keywords": [
+        "руководителю - от администрации города ростова-на-дону",
+        "info",
+        "руководителю от"
+      ],
+      "department_id": "00-000152",
+      "department_name": "ОПЕРАЦИОННЫЙ ДИРЕКТОР",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "1faa3208-a9d9-4aac-b5cf-1a18b34ed80d",
+      "created_at": "2026-07-28T12:37:58.638786+00:00",
+      "sender_email": "nikolay.polionny@macrogroup.ru",
+      "recipient": "uk_omto4@turbo-don.ru",
+      "subject": "параметры монтажа",
+      "keywords": [
+        "параметры монтажа",
+        "uk_omto4",
+        "запрос",
+        "macrogroup поступил",
+        "графит или",
+        "двигателя и"
+      ],
+      "department_id": "00-000155",
+      "department_name": "Отдел дилерских продаж",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "900d83f8-6a19-4fdd-b9cf-09976732f878",
+      "created_at": "2026-07-28T13:45:56.535701+00:00",
+      "sender_email": "anna.uvarova@gazprombank.ru",
+      "recipient": "npo_buh5@turbo-don.ru",
+      "subject": "гпб_мониторинг_2 кв 26_запрос документов_турбулентность-дон",
+      "keywords": [
+        "гпб_мониторинг_2 кв 26_запрос документов_турбулентность-дон",
+        "npo_buh5",
+        "сверки",
+        "2026"
+      ],
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "original_department_id": "00-000076",
+      "original_department_name": "Отдел по работе с ПАО Газпром"
+    },
+    {
+      "id": "141f1b10-8ae6-400b-8115-43ebd46245bb",
+      "created_at": "2026-07-28T13:49:20.687813+00:00",
+      "sender_email": "personal@avionpilot.ru",
+      "recipient": "npo_sb2@turbo-don.ru",
+      "subject": "на проверку",
+      "keywords": [
+        "на проверку",
+        "npo_sb2",
+        "день направляю",
+        "направляю на"
+      ],
+      "department_id": "00-000061",
+      "department_name": "Служба безопасности",
+      "original_department_id": "00-000059",
+      "original_department_name": "ЗАМ. ДИРЕКТОРА ПО ЭКОНОМИЧЕСКОЙ БЕЗОПАСНОСТИ"
+    },
+    {
+      "id": "b46e9b90-87d7-4dff-ad0e-3d3fc423135e",
+      "created_at": "2026-07-29T05:15:58.209579+00:00",
+      "sender_email": "svc-insurer@ingos.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "регистрация претензии по накладной № 26-08210102719. предмет обращения –просрочка доставки. ооо «деловые линии",
+      "keywords": [
+        "регистрация претензии по накладной № 26-08210102719. предмет обращения –просрочка доставки. ооо «деловые линии",
+        "info",
+        "26-08210102719 предмет обращения",
+        "доставки ооо деловые",
+        "накладной 26-08210102719"
+      ],
+      "department_id": "00-000044",
+      "department_name": "Юридический отдел",
+      "original_department_id": "00-000111",
+      "original_department_name": "Транспортная служба"
+    },
+    {
+      "id": "deec3751-d05f-4002-aabd-77d93b4945e0",
+      "created_at": "2026-07-29T05:46:37.135724+00:00",
+      "sender_email": "oksana.shishkova@sakhalin2.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "приглашение к предквалификационному отбору в рамках предстоящего тендера с02749",
+      "keywords": [
+        "приглашение к предквалификационному отбору в рамках предстоящего тендера с02749",
+        "info",
+        "участие в"
+      ],
+      "department_id": "00-000054",
+      "department_name": "Тендерный офис",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "2731bf2e-26cf-4e23-8346-b9a470d7f886",
+      "created_at": "2026-07-29T08:00:35.932128+00:00",
+      "sender_email": "06sep@snos.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "запрос 34123",
+      "keywords": [
+        "запрос 34123",
+        "info",
+        "цены",
+        "ооо газпром",
+        "поставки"
+      ],
+      "department_id": "00-000076",
+      "department_name": "Отдел по работе с ПАО Газпром",
+      "original_department_id": "00-000025",
+      "original_department_name": "Отдел метрологии и сертификации"
+    },
+    {
+      "id": "a8728bbc-f964-424d-9aa6-ffdecfff9431",
+      "created_at": "2026-07-29T12:13:40.736084+00:00",
+      "sender_email": "info@gesrv.ru",
+      "recipient": "info@turbo-don.ru",
+      "subject": "о начале работ по ремонту резервуара рз-1 (№ 00-3091-и от 29.07.2026) (документ",
+      "keywords": [
+        "о начале работ по ремонту резервуара рз-1 (№ 00-3091-и от 29.07.2026) (документ",
+        "info",
+        "ооо нпо",
+        "нпо турбулентность-дон"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000015",
+      "original_department_name": "Отдел внешнеэкономической деятельности"
+    },
+    {
+      "id": "f448985b-a4d9-4621-84ac-fa423d2f446d",
+      "created_at": "2026-07-29T12:14:48.756202+00:00",
+      "sender_email": "avf159n@yandex.by",
+      "recipient": "info@turbo-don.ru",
+      "subject": "вопрос по методике поверки счётчиков газа мп 208-016-2023",
+      "keywords": [
+        "вопрос по методике поверки счётчиков газа мп 208-016-2023",
+        "info"
+      ],
+      "department_id": "00-000042",
+      "department_name": "Отдел по работе с ключевыми клиентами",
+      "original_department_id": "00-000025",
+      "original_department_name": "Отдел метрологии и сертификации"
+    },
+    {
+      "id": "34079dca-7bbc-4abf-ad96-aa355c705ec7",
+      "created_at": "2026-07-29T12:14:56.976431+00:00",
+      "sender_email": "avf159n@yandex.by",
+      "recipient": "info@turbo-don.ru",
+      "subject": "вопрос по методике поверки счётчиков газа мп 208-016-2023",
+      "keywords": [
+        "вопрос по методике поверки счётчиков газа мп 208-016-2023",
+        "info",
+        "счетчика",
+        "гранд"
+      ],
+      "department_id": "00-000074",
+      "department_name": "Отдел продаж эталонного оборудования и услуг",
+      "original_department_id": "00-000042",
+      "original_department_name": "Отдел по работе с ключевыми клиентами"
+    }
+  ]
+}

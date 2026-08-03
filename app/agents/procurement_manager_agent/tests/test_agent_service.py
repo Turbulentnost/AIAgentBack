@@ -89,8 +89,8 @@ def _case(*, with_positions: bool = True) -> SimpleNamespace:
         case_metadata={"procurement_manager": {}},
         positions=positions,
         current_task_id=None,
-        current_agent_id="procurement_logistics_agent",
-        assigned_agents=["procurement_logistics_agent"],
+        current_agent_id="purchase_manager_agent",
+        assigned_agents=["purchase_manager_agent"],
         requested_operation="route_confirmed_deficit",
     )
 

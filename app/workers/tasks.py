@@ -34,6 +34,62 @@ def debug_task(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+@celery_app.task(name="archive_expired_scheduled_meetings")
+def archive_expired_scheduled_meetings() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.scheduled_meeting_service import ScheduledMeetingService
+
+    if not settings.SCHEDULED_MEETINGS_ARCHIVE_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "archive_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _archive() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            result = await ScheduledMeetingService(db).archive_expired_series()
+            await db.commit()
+            return {
+                **result,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    return _run_async_task(_archive)
+
+
+@celery_app.task(name="sync_scheduled_meeting_registry_cards")
+def sync_scheduled_meeting_registry_cards() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.scheduled_meeting_registry_sync import ScheduledMeetingRegistrySyncService
+
+    if not settings.SCHEDULED_MEETINGS_CARD_SYNC_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "card_sync_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _sync() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            result = await ScheduledMeetingRegistrySyncService(db).sync_all_due_series()
+            await db.commit()
+            return {
+                "processed": result.processed,
+                "created": result.created,
+                "rolled": result.rolled,
+                "updated": result.updated,
+                "skipped": result.skipped,
+                "no_occurrences": result.no_occurrences,
+                "errors": result.errors,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    return _run_async_task(_sync)
+
+
 @celery_app.task(name="warm_meeting_dashboard_cache")
 def warm_meeting_dashboard_cache() -> dict[str, Any]:
     from app.core.config import settings
@@ -54,6 +110,98 @@ def warm_meeting_dashboard_cache() -> dict[str, Any]:
         }
 
     return _run_async_task(_warm)
+
+
+@celery_app.task(name="sync_turbo_project_meeting_series")
+def sync_turbo_project_meeting_series() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.turbo_project_series_sync_service import (
+        TurboProjectSeriesSyncError,
+        TurboProjectSeriesSyncService,
+    )
+
+    if not settings.TURBO_PROJECT_SERIES_SYNC_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "turbo_project_series_sync_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _sync() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await TurboProjectSeriesSyncService(db).discover_and_notify()
+                await db.commit()
+                return {
+                    **result.as_dict(),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except TurboProjectSeriesSyncError as exc:
+                await db.rollback()
+                return {
+                    "skipped": True,
+                    "reason": "sync_error",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+    return _run_async_task(_sync)
+
+
+@celery_app.task(name="create_registry_protocol_draft", bind=True, max_retries=2)
+def create_registry_protocol_draft(self, entry_id: str) -> dict[str, Any]:
+    import uuid as uuid_module
+
+    from app.db.session import AsyncSessionLocal
+    from app.services.meeting_protocol_draft_service import MeetingProtocolDraftService
+
+    async def _create() -> dict[str, Any]:
+        async with AsyncSessionLocal() as db:
+            service = MeetingProtocolDraftService(db)
+            try:
+                result = await service.create_protocol_draft_for_entry(uuid_module.UUID(entry_id))
+                await db.commit()
+                return {
+                    **result,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+            except Exception as exc:
+                await db.commit()
+                raise exc
+
+    try:
+        return _run_async_task(_create)
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60) from exc
+
+
+@celery_app.task(name="dispatch_meeting_protocol_drafts")
+def dispatch_meeting_protocol_drafts() -> dict[str, Any]:
+    from app.core.config import settings
+    from app.services.meeting_protocol_dispatch_service import run_protocol_draft_dispatch
+
+    if not settings.MEETING_PROTOCOL_DRAFT_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "protocol_draft_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+    if not settings.MEETING_PROTOCOL_DISPATCH_BEAT_ENABLED:
+        return {
+            "skipped": True,
+            "reason": "dispatch_beat_disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _dispatch() -> dict[str, Any]:
+        result = await run_protocol_draft_dispatch()
+        return {
+            **result,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return _run_async_task(_dispatch)
 
 
 @celery_app.task(name="run_task", bind=True, max_retries=3)
@@ -939,8 +1087,14 @@ def classify_template_document(self, document_link_id: str) -> dict[str, Any]:
     return _run_async_task(_run)
 
 
-@celery_app.task(name="poll_procurement_sources", bind=True, max_retries=0)
-def poll_procurement_sources(self, force: bool = False) -> dict[str, Any]:
+def _poll_procurement_sources_impl(
+    *,
+    celery_task_id: str | None,
+    task_name: str,
+    lock_scope: str,
+    lock_ttl_seconds: int,
+    source_types: set | frozenset | None,
+) -> dict[str, Any]:
     from redis import Redis
 
     from app.core.config import settings
@@ -948,53 +1102,32 @@ def poll_procurement_sources(self, force: bool = False) -> dict[str, Any]:
     from app.services.procurement_orchestrator_service import (
         ProcurementOrchestratorService,
         build_poll_lock_key,
-        build_poll_success_key,
-        should_throttle_auto_poll,
     )
 
     if not settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
         return {
-            "celery_task_id": self.request.id,
-            "task_name": "poll_procurement_sources",
+            "celery_task_id": celery_task_id,
+            "task_name": task_name,
             "status": "disabled",
-            "force": bool(force),
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    lock_key = build_poll_lock_key()
-    success_key = build_poll_success_key()
+    lock_key = build_poll_lock_key(lock_scope)
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
-    skip, remaining = should_throttle_auto_poll(
-        redis_client.get(success_key),
-        force=bool(force),
-        min_interval_seconds=settings.PROCUREMENT_ORCHESTRATOR_MIN_INTERVAL_SECONDS,
-    )
-    if skip:
-        redis_client.close()
-        return {
-            "celery_task_id": self.request.id,
-            "task_name": "poll_procurement_sources",
-            "status": "skipped_throttle",
-            "force": bool(force),
-            "retry_after_seconds": remaining,
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-        }
-
     acquired = bool(
         redis_client.set(
             lock_key,
-            self.request.id or "poll",
+            celery_task_id or "poll",
             nx=True,
-            ex=settings.PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS,
+            ex=lock_ttl_seconds,
         )
     )
     if not acquired:
         redis_client.close()
         return {
-            "celery_task_id": self.request.id,
-            "task_name": "poll_procurement_sources",
+            "celery_task_id": celery_task_id,
+            "task_name": task_name,
             "status": "skipped_locked",
-            "force": bool(force),
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -1002,15 +1135,14 @@ def poll_procurement_sources(self, force: bool = False) -> dict[str, Any]:
         async with AsyncSessionLocal() as db:
             service = ProcurementOrchestratorService(db, enqueue_case=True)
             try:
-                summary = await service.poll_once(force=bool(force))
+                summary = await service.poll_once(source_types=source_types)
                 await db.commit()
             except Exception as exc:  # noqa: BLE001
                 await db.rollback()
                 return {
-                    "celery_task_id": self.request.id,
-                    "task_name": "poll_procurement_sources",
+                    "celery_task_id": celery_task_id,
+                    "task_name": task_name,
                     "status": "failed",
-                    "force": bool(force),
                     "error": str(exc),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
@@ -1023,21 +1155,289 @@ def poll_procurement_sources(self, force: bool = False) -> dict[str, Any]:
             )
             dispatched += 1
         summary["dispatched"] = dispatched
-        summary["celery_task_id"] = self.request.id
-        summary["task_name"] = "poll_procurement_sources"
+        summary["celery_task_id"] = celery_task_id
+        summary["task_name"] = task_name
         summary["status"] = "completed"
-        summary["force"] = bool(force)
         return summary
 
     try:
-        summary = _run_async_task(_run)
-        if summary.get("status") == "completed":
-            redis_client.set(
-                success_key,
-                datetime.now(timezone.utc).isoformat(),
-                ex=max(settings.PROCUREMENT_ORCHESTRATOR_MIN_INTERVAL_SECONDS * 2, 86400),
+        return _run_async_task(_run)
+    finally:
+        redis_client.delete(lock_key)
+        redis_client.close()
+
+
+@celery_app.task(name="poll_procurement_sources", bind=True, max_retries=0)
+def poll_procurement_sources(self) -> dict[str, Any]:
+    from app.core.config import settings
+    from app.models.enums import ProcurementSourceType
+
+    return _poll_procurement_sources_impl(
+        celery_task_id=self.request.id,
+        task_name="poll_procurement_sources",
+        lock_scope="sources",
+        lock_ttl_seconds=settings.PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS,
+        source_types={
+            ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
+            ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+            ProcurementSourceType.TRANSFER_ORDER,
+        },
+    )
+
+
+@celery_app.task(name="poll_procurement_reorder_points", bind=True, max_retries=0)
+def poll_procurement_reorder_points(self) -> dict[str, Any]:
+    from app.core.config import settings
+    from app.models.enums import ProcurementSourceType
+
+    return _poll_procurement_sources_impl(
+        celery_task_id=self.request.id,
+        task_name="poll_procurement_reorder_points",
+        lock_scope="reorder",
+        lock_ttl_seconds=settings.PROCUREMENT_ORCHESTRATOR_REORDER_LOCK_TTL_SECONDS,
+        source_types={ProcurementSourceType.REORDER_POINT},
+    )
+
+
+@celery_app.task(
+    name="sync_procurement_material_orders",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=1500,
+    time_limit=1680,
+)
+def sync_procurement_material_orders(self) -> dict[str, Any]:
+    """Run one ordered 30-minute material-order refresh under a single lock."""
+    from redis import Redis
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.models.enums import ProcurementSourceType
+    from app.services.procurement_orchestrator_service import (
+        ProcurementOrchestratorService,
+        build_poll_lock_key,
+    )
+    from app.services.supplier_order_reconciliation_service import (
+        SupplierOrderReconciliationService,
+    )
+    from app.services.tmc_presentation_reconciliation_service import (
+        TmcPresentationReconciliationService,
+    )
+
+    if not settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "sync_procurement_material_orders",
+            "status": "disabled",
+        }
+
+    lock_key = build_poll_lock_key("material-order-sync")
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    lock_token = self.request.id or "material-order-sync"
+    # Keep lock under one beat interval so a hung cycle cannot block the next day.
+    lock_ttl = max(300, min(settings.PROCUREMENT_ORCHESTRATOR_LOCK_TTL_SECONDS, 1700))
+    acquired = bool(
+        redis_client.set(
+            lock_key,
+            lock_token,
+            nx=True,
+            ex=lock_ttl,
+        )
+    )
+    if not acquired:
+        redis_client.close()
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "sync_procurement_material_orders",
+            "status": "skipped_locked",
+        }
+
+    async def _run() -> tuple[dict[str, Any], list[tuple[str, str]]]:
+        async with AsyncSessionLocal() as db:
+            orchestrator = ProcurementOrchestratorService(db, enqueue_case=True)
+            poll_summary: dict[str, Any] = {"status": "pending"}
+            coverage_summary: dict[str, Any] = {"status": "disabled"}
+            tmc_summary: dict[str, Any] = {"status": "disabled"}
+            picker_sync: dict[str, Any] = {}
+            complex_sync: dict[str, Any] = {}
+            manager_sync: dict[str, Any] = {}
+            try:
+                # Stamp «Обновлён» before any 1C/MCP I/O so a hung poll cannot
+                # freeze UI dates for hours.
+                stamped = await orchestrator.mark_material_cases_actualized()
+                await db.commit()
+
+                try:
+                    poll_summary = await orchestrator.poll_once(
+                        source_types={
+                            ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+                        },
+                        run_agent_maintenance=False,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    poll_summary = {"status": "failed", "error": str(exc)}
+
+                if settings.PROCUREMENT_SUPPLIER_RECONCILIATION_ENABLED:
+                    try:
+                        coverage_summary = await SupplierOrderReconciliationService(
+                            db
+                        ).reconcile()
+                    except Exception as exc:  # noqa: BLE001
+                        coverage_summary = {
+                            "status": "failed",
+                            "error": str(exc),
+                        }
+                try:
+                    tmc_summary = await TmcPresentationReconciliationService(
+                        db
+                    ).reconcile()
+                except Exception as exc:  # noqa: BLE001
+                    tmc_summary = {"status": "failed", "error": str(exc)}
+
+                try:
+                    picker_sync = await orchestrator.ensure_picker_agent_work()
+                    complex_sync = await orchestrator.ensure_complex_chief_agent_work()
+                    manager_sync = await orchestrator.ensure_purchase_manager_work()
+                except Exception as exc:  # noqa: BLE001
+                    manager_sync = {"status": "failed", "error": str(exc)}
+
+                stamped = await orchestrator.mark_material_cases_actualized()
+                await db.commit()
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                return (
+                    {
+                        "celery_task_id": self.request.id,
+                        "task_name": "sync_procurement_material_orders",
+                        "status": "failed",
+                        "error": str(exc),
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    [],
+                )
+            return (
+                {
+                    "celery_task_id": self.request.id,
+                    "task_name": "sync_procurement_material_orders",
+                    "status": "completed",
+                    "poll": poll_summary,
+                    "coverage": coverage_summary,
+                    "tmc_presentation": tmc_summary,
+                    "picker_sync": picker_sync,
+                    "complex_sync": complex_sync,
+                    "purchase_manager_sync": manager_sync,
+                    "cases_actualized": stamped,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                },
+                list(orchestrator.pending_dispatches),
             )
+
+    try:
+        summary, pending_dispatches = _run_async_task(_run)
+        dispatched = 0
+        for case_id, task_id in pending_dispatches:
+            run_procurement_case_task.apply_async(
+                args=[case_id, task_id],
+                queue="agents",
+            )
+            dispatched += 1
+        summary["dispatched"] = dispatched
         return summary
+    finally:
+        redis_client.eval(
+            """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            end
+            return 0
+            """,
+            1,
+            lock_key,
+            lock_token,
+        )
+        redis_client.close()
+
+
+@celery_app.task(name="reconcile_procurement_supplier_orders", bind=True, max_retries=0)
+def reconcile_procurement_supplier_orders(self) -> dict[str, Any]:
+    from redis import Redis
+
+    from app.core.config import settings
+    from app.db.session import AsyncSessionLocal
+    from app.services.procurement_orchestrator_service import (
+        ProcurementOrchestratorService,
+        build_poll_lock_key,
+    )
+    from app.services.supplier_order_reconciliation_service import (
+        SupplierOrderReconciliationService,
+    )
+
+    if not settings.PROCUREMENT_SUPPLIER_RECONCILIATION_ENABLED:
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "reconcile_procurement_supplier_orders",
+            "status": "disabled",
+        }
+    lock_key = build_poll_lock_key("supplier-orders")
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    acquired = bool(
+        redis_client.set(
+            lock_key,
+            self.request.id or "supplier-orders",
+            nx=True,
+            ex=settings.PROCUREMENT_SUPPLIER_RECONCILIATION_LOCK_TTL_SECONDS,
+        )
+    )
+    if not acquired:
+        redis_client.close()
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "reconcile_procurement_supplier_orders",
+            "status": "skipped_locked",
+        }
+
+    async def _run() -> dict[str, Any]:
+        from app.services.tmc_presentation_reconciliation_service import (
+            TmcPresentationReconciliationService,
+        )
+
+        async with AsyncSessionLocal() as db:
+            try:
+                summary = await SupplierOrderReconciliationService(db).reconcile()
+                tmc_summary = await TmcPresentationReconciliationService(db).reconcile()
+                orchestrator = ProcurementOrchestratorService(db, enqueue_case=True)
+                picker_sync = await orchestrator.ensure_picker_agent_work()
+                complex_sync = await orchestrator.ensure_complex_chief_agent_work()
+                purchase_manager_sync = await orchestrator.ensure_purchase_manager_work()
+                await db.commit()
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                return {
+                    "celery_task_id": self.request.id,
+                    "task_name": "reconcile_procurement_supplier_orders",
+                    "status": "failed",
+                    "error": str(exc),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                }
+        dispatched = 0
+        for case_id, task_id in orchestrator.pending_dispatches:
+            run_procurement_case_task.apply_async(
+                args=[case_id, task_id],
+                queue="agents",
+            )
+            dispatched += 1
+        summary["tmc_presentation"] = tmc_summary
+        summary["picker_sync"] = picker_sync
+        summary["complex_sync"] = complex_sync
+        summary["purchase_manager_sync"] = purchase_manager_sync
+        summary["picker_dispatched"] = dispatched
+        summary["celery_task_id"] = self.request.id
+        summary["task_name"] = "reconcile_procurement_supplier_orders"
+        summary["finished_at"] = datetime.now(timezone.utc).isoformat()
+        return summary
+
+    try:
+        return _run_async_task(_run)
     finally:
         redis_client.delete(lock_key)
         redis_client.close()

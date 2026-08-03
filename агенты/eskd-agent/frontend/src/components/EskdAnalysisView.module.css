@@ -1,0 +1,256 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.summaryBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+}
+
+.tone_ok {
+  background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
+  border-color: #bbf7d0;
+  color: #14532d;
+}
+
+.tone_warn {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.tone_err {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.summaryIcon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  opacity: 0.9;
+}
+
+.summaryTitle {
+  font-weight: 650;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.summaryHint {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  opacity: 0.75;
+}
+
+.summarySpinner {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.section {
+  border: 1px solid var(--color-border-soft);
+  border-radius: 12px;
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--color-hover);
+  border-bottom: 1px solid var(--color-border-soft);
+  color: var(--color-text-strong);
+}
+
+.sectionHead h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 650;
+  flex: 1;
+}
+
+.count {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.checkGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.checkRow {
+  position: relative;
+  border-radius: 10px;
+  padding: 10px 52px 10px 12px;
+  border: 1px solid var(--color-border-soft);
+  background: #fafbfc;
+}
+
+.checkOk {
+  border-left: 3px solid #22c55e;
+}
+
+.checkBad {
+  border-left: 3px solid #ef4444;
+}
+
+.checkMain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.checkElement {
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--color-text-strong);
+  text-transform: lowercase;
+}
+
+.checkZone {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  background: #eef2f7;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.checkValue {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.checkMessage {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  line-height: 1.35;
+}
+
+.checkGost {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--color-muted);
+}
+
+.badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 6px;
+  padding: 3px 7px;
+}
+
+.badgeOk {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badgeBad {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.table th,
+.table td {
+  padding: 9px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.table th {
+  font-weight: 600;
+  color: var(--color-muted);
+  background: #fafbfc;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.rowBad {
+  background: #fff7ed;
+}
+
+.remarkList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.remarkError,
+.remarkWarning {
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.remarkError {
+  background: var(--color-danger-soft);
+  color: #7f1d1d;
+}
+
+.remarkWarning {
+  background: var(--color-warning-soft);
+  color: #92400e;
+}
+
+.remarkError code,
+.remarkWarning code {
+  font-size: 0.76rem;
+  opacity: 0.85;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

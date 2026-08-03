@@ -16,6 +16,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import httpx  # noqa: E402
 
 from agent_pochta.config import get_settings  # noqa: E402
+from agent_pochta.services import build_container  # noqa: E402
+
+
+def _check_openai_compat_llm(settings, *, label: str = "LLM Gateway") -> bool:
+    try:
+        container = build_container(settings)
+        gw = container.llm
+        content = gw._chat_plain("Ответь одним словом: ок", "ping")  # type: ignore[attr-defined]
+        ok = bool(content.strip())
+        print(f"  {'OK' if ok else 'WARN'} {label}: chat → {len(content)} символов в ответе")
+        gw.close()  # type: ignore[attr-defined]
+        return ok
+    except Exception as exc:
+        print(f"  FAIL {label}: {exc}")
+        return False
+
+
+def _check_gigachat(settings) -> bool:
+    return _check_openai_compat_llm(settings, label="GigaChat")
 
 
 def check(name: str, url: str, path: str = "") -> bool:
@@ -38,10 +57,15 @@ def main() -> None:
     print()
 
     ok = True
-    if settings.llm_gateway_url:
-        ok &= check("LLM Gateway", settings.llm_gateway_url, "/models")
+    if settings.llm_configured:
+        if settings.effective_llm_provider == "gigachat":
+            ok &= _check_gigachat(settings)
+        elif settings.effective_llm_provider == "deepseek":
+            ok &= _check_openai_compat_llm(settings, label="DeepSeek")
+        else:
+            ok &= check("LLM Gateway", settings.llm_gateway_url, "/models")
     else:
-        print("  SKIP LLM Gateway — LLM_GATEWAY_URL не задан")
+        print("  SKIP LLM Gateway — LLM не настроен (DEEPSEEK_API_KEY / GIGACHAT_API_PERS / LLM_GATEWAY_URL)")
 
     if settings.rag_backend == "qdrant":
         ok &= check("Qdrant", settings.qdrant_url, "/collections")

@@ -24,7 +24,7 @@ from app.api import deps as api_deps
 from app.api.v1.endpoints import procurement_manager as endpoint_module
 from app.main import app
 
-PREFIX = "/api/v1/procurement/role-agents/procurement_logistics_agent"
+PREFIX = "/api/v1/procurement/role-agents/purchase_manager_agent"
 
 
 def test_estimate_report_content_disposition_is_latin1_safe() -> None:
@@ -199,6 +199,26 @@ async def test_normal_ui_posts_do_not_return_422(
                 "web_fallback_used": False,
             }
 
+        async def prepare_supplier_search(
+            self,
+            case_id: uuid.UUID,
+            request: SupplierSearchRequest,
+        ):
+            return await self.search_suppliers(case_id, request)
+
+        async def execute_supplier_search_web(self, prepared: object):
+            return prepared
+
+        async def finalize_supplier_search(
+            self,
+            prepared: object,
+            result: object = None,
+            *,
+            execute_error: str | None = None,
+        ):
+            _ = (execute_error,)
+            return result if result is not None else prepared
+
         async def recommendation(
             self,
             case_id: uuid.UUID,
@@ -227,11 +247,30 @@ async def test_normal_ui_posts_do_not_return_422(
     async def no_commit(db: object) -> None:
         _ = db
 
+    async def resolve_user(_db: object, _token: str | None):
+        return await override_user()
+
+    class _FakeSession:
+        async def commit(self) -> None:
+            return None
+
+    class _SessionCM:
+        def __init__(self) -> None:
+            self._value = _FakeSession()
+
+        async def __aenter__(self) -> _FakeSession:
+            return self._value
+
+        async def __aexit__(self, *args: object) -> None:
+            _ = args
+
     app.dependency_overrides[api_deps.get_db] = override_db
     app.dependency_overrides[api_deps.get_current_user] = override_user
     monkeypatch.setattr(endpoint_module, "ProcurementManagerService", StubService)
     monkeypatch.setattr(endpoint_module, "_require_access", allow_access)
     monkeypatch.setattr(endpoint_module, "_commit", no_commit)
+    monkeypatch.setattr(endpoint_module, "resolve_user_from_token", resolve_user)
+    monkeypatch.setattr(endpoint_module, "AsyncSessionLocal", _SessionCM)
     try:
         case_id = uuid.uuid4()
         search_response = await client.post(f"{PREFIX}/cases/{case_id}/supplier-search")

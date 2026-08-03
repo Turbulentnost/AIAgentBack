@@ -1,38 +1,60 @@
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
 import pytest
 
-from app.services import procurement_permission as perm
+from app.services.procurement_permission import (
+    is_omto_support_manager_position,
+    is_production_preparation_engineer_position,
+    is_warehouse_complex_chief_position,
+    is_warehouse_complex_department_name,
+    is_warehouse_head_position,
+)
 
 
 def test_engineer_position_normalization():
-    assert perm.is_production_preparation_engineer_position("Ведущий инженер по подготовке производства")
-    assert perm.is_production_preparation_engineer_position("Инженер СПП")
-    assert not perm.is_production_preparation_engineer_position("Инженер ОМТО")
-    assert not perm.is_production_preparation_engineer_position("Менеджер по сопровождению ОМТО")
+    assert is_production_preparation_engineer_position("Ведущий инженер по подготовке производства")
+    assert is_production_preparation_engineer_position("Инженер СПП")
+    assert not is_production_preparation_engineer_position("Инженер ОМТО")
+    assert not is_production_preparation_engineer_position("Менеджер по сопровождению ОМТО")
 
 
 def test_omto_position_normalization():
-    assert perm.is_omto_support_manager_position("Менеджер по сопровождению ОМТО")
-    assert perm.is_omto_support_manager_position("менеджер омто")
-    assert perm.is_omto_support_manager_position("Специалист ОМТО")
-    assert not perm.is_omto_support_manager_position("Инженер по подготовке производства")
-    assert not perm.is_omto_support_manager_position("Инженер СПП")
-    assert not perm.is_omto_support_manager_position(None)
-    assert not perm.is_omto_support_manager_position("")
+    assert is_omto_support_manager_position("Менеджер по сопровождению ОМТО")
+    assert is_omto_support_manager_position("менеджер омто")
+    assert is_omto_support_manager_position("Специалист ОМТО")
+    assert not is_omto_support_manager_position("Инженер по подготовке производства")
+    assert not is_omto_support_manager_position("Инженер СПП")
+    assert not is_omto_support_manager_position(None)
+    assert not is_omto_support_manager_position("")
 
 
-def test_procurement_manager_position_normalization():
-    assert perm.is_procurement_manager_position("Ведущий менеджер по закупкам")
-    assert perm.is_procurement_manager_position("Начальник ОМТО")
-    assert not perm.is_procurement_manager_position("Инженер по качеству")
+def test_warehouse_complex_chief_position_rules():
+    assert is_warehouse_complex_chief_position("Начальник складского комплекса")
+    assert is_warehouse_complex_chief_position("начальник складского комплекса")
+    assert not is_warehouse_complex_chief_position("Начальник склада")
+    assert not is_warehouse_complex_chief_position("Кладовщик-комплектовщик")
+    assert is_warehouse_head_position("Начальник склада")
+    assert is_warehouse_head_position("начальник склада участка")
+    assert not is_warehouse_head_position("Начальник складского комплекса")
+    assert is_warehouse_complex_department_name("Складской комплекс")
+    assert is_warehouse_complex_department_name("Отдел «Складской комплекс»")
+    assert not is_warehouse_complex_department_name("Склад №1")
 
 
 @pytest.mark.asyncio
-async def test_auth_disabled_grants_procurement_manager(monkeypatch):
-    monkeypatch.setattr(perm, "_auth_disabled_dev", lambda: True)
-    user = SimpleNamespace(is_superuser=False, position="Developer")
-    db = AsyncMock()
-    assert await perm.can_access_procurement_manager(db, user) is True
-    db.scalar.assert_not_called()
+async def test_warehouse_complex_chief_exclusive_user(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import procurement_permission as perm
+
+    user = SimpleNamespace(
+        is_superuser=False,
+        position="Начальник склада",
+        department_id="dept-1",
+    )
+
+    async def _in_complex(_db, _user):
+        return True
+
+    monkeypatch.setattr(perm, "user_in_warehouse_complex_department", _in_complex)
+    assert await perm.is_warehouse_complex_chief_exclusive_user(None, user) is True
+
+    user.is_superuser = True
+    assert await perm.is_warehouse_complex_chief_exclusive_user(None, user) is False

@@ -14,6 +14,7 @@ from sqlalchemy import select, text
 from agent_pochta.config import PROJECT_ROOT, get_settings
 from agent_pochta.db.message_filters import MSK
 from agent_pochta.db.models import ChangeEventRow, EmailMessageRow
+from agent_pochta.stats.classification_log import collect_classification_summary_for_period
 from agent_pochta.db.session import get_session_factory
 
 
@@ -166,6 +167,7 @@ def _build_markdown(report: dict[str, Any]) -> str:
     tw = report["time_window"]
     emails = report["emails"]
     human = report["human_changes"]
+    classification = report.get("classification_changes") or {}
     counts = human["counts"]
     lines = [
         "# Статистика agent-pochta",
@@ -234,6 +236,32 @@ def _build_markdown(report: dict[str, Any]) -> str:
                 f"({entry.get('message_id')}, {entry.get('source')})"
             )
 
+    accuracy = classification.get("accuracy") or {}
+    approvals = classification.get("operator_approvals") or {}
+    rate = approvals.get("rate")
+    rate_label = f"{round(rate * 100, 1)}%" if isinstance(rate, (int, float)) else "—"
+    lines.extend(
+        [
+            "",
+            "## Классификация (отдел / спам) — classification_events",
+            "",
+            f"- Источник: **{classification.get('source', 'postgresql.classification_events')}**",
+            f"- Всего событий: **{classification.get('total_events', 0)}**",
+            f"- Назначений отдела агентом: **{accuracy.get('agent_department_assigns', 0)}**",
+            f"- Коррекций отдела оператором: **{accuracy.get('operator_department_corrections', 0)}**",
+            f"- Точность отдела: **{accuracy.get('department_accuracy', '—')}**",
+            f"- Назначений спама агентом: **{accuracy.get('agent_spam_assigns', 0)}**",
+            f"- Коррекций спама оператором: **{accuracy.get('operator_spam_corrections', 0)}**",
+            f"- Точность спама: **{accuracy.get('spam_accuracy', '—')}**",
+            f"- Сохранений без изменений (saved): **{approvals.get('saved', 0)}**",
+            f"- Сохранений с правками (changed): **{approvals.get('changed', 0)}**",
+            f"- Доля без изменений (saved/(saved+changed)): **{rate_label}**",
+            "",
+        ]
+    )
+    for event_type, count in (classification.get("by_event_type") or {}).items():
+        lines.append(f"- {event_type}: {count}")
+
     lines.append("")
     return "\n".join(lines)
 
@@ -268,6 +296,10 @@ def build_statistics_report(
         },
         "emails": _query_email_stats(start_utc, end_utc),
         "human_changes": _collect_change_events(start_utc, end_utc),
+        "classification_changes": collect_classification_summary_for_period(
+            start_utc=start_utc,
+            end_utc=end_utc,
+        ),
     }
 
 

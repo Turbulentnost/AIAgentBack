@@ -1,4 +1,5 @@
 from app.models.agent import Agent, AgentPrompt, AgentTool, AgentVersion, ToolCall
+from app.models.app_notification import AppNotification
 from app.models.agent_blueprint import AgentBlueprint
 from app.models.agent_builder_attempt import AgentBuilderAttempt
 from app.models.agent_builder_plan import AgentBuilderPlan, AgentBuilderPlanStep
@@ -23,6 +24,10 @@ from app.models.knowledge_base import (
     KnowledgeBaseSource,
 )
 from app.models.llm import LLMCall
+from app.models.meeting_category import MeetingCategory
+from app.models.meeting_registry import MeetingRegistryEntry, MeetingRegistryEvent
+from app.models.position import DepartmentPosition, Position
+from app.models.scheduled_meeting import ScheduledMeeting, ScheduledMeetingParticipant
 from app.models.nd_change import (
     NdChangeApprovalParticipant,
     NdChangeApprovalRoute,
@@ -71,4 +76,31 @@ from app.models.user import (
     UserSession,
 )
 
-__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AgentBlueprint", "AgentBuilderAttempt", "AgentBuilderPlan", "AgentBuilderPlanStep", "AgentBuilderSession", "AgentBuilderSandboxRun", "AgentBuilderSandboxStep", "AuditLog", "BrowserRun", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "QmsDocumentCard", "EskdDocumentRegistration", "IntegrationSyncState", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "NdChangeRequest", "NdChangeCandidateDocument", "NdChangeTargetLocation", "NdChangeOperation", "NdChangeDraftFile", "NdChangeApprovalRoute", "NdChangeApprovalParticipant", "NdChangeResult", "NdChangeJournalEntry", "NdControlDepartment", "NdControlDepartmentKnowledgeBase", "NdControlTemplate", "NdControlTemplateDocument", "NdControlTemplateKnowledgeBase", "NdDocumentCard", "DepartmentAnalysisRun", "DocumentCard", "DepartmentProfile", "ProcessCard", "NdRelation", "ProcessUmlCache", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "ProcurementCase", "ProcurementCaseEvent", "ProcurementCasePosition", "ProcurementSourceSyncState", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]
+__all__ = [
+    "Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall",
+    "AgentBlueprint", "AgentBuilderAttempt", "AgentBuilderPlan",
+    "AgentBuilderPlanStep", "AgentBuilderSession", "AgentBuilderSandboxRun",
+    "AgentBuilderSandboxStep", "AppNotification", "AuditLog", "BrowserRun",
+    "MeetingCategory", "MeetingRegistryEntry", "MeetingRegistryEvent",
+    "ScheduledMeeting", "ScheduledMeetingParticipant", "DataSource",
+    "SourcePermission", "Document", "DocumentVersion", "DocumentChunk",
+    "SourceReference", "QmsDocumentCard", "EskdDocumentRegistration",
+    "IntegrationSyncState", "KnowledgeBase", "KnowledgeBaseSource",
+    "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant",
+    "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding",
+    "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall",
+    "NdChangeRequest", "NdChangeCandidateDocument", "NdChangeTargetLocation",
+    "NdChangeOperation", "NdChangeDraftFile", "NdChangeApprovalRoute",
+    "NdChangeApprovalParticipant", "NdChangeResult", "NdChangeJournalEntry",
+    "NdControlDepartment", "NdControlDepartmentKnowledgeBase",
+    "NdControlTemplate", "NdControlTemplateDocument",
+    "NdControlTemplateKnowledgeBase", "NdDocumentCard",
+    "DepartmentAnalysisRun", "DocumentCard", "DepartmentProfile",
+    "ProcessCard", "NdRelation", "ProcessUmlCache", "OpeCard",
+    "OpeChecklist", "OpeIssue", "OpeReport", "ProcurementCase",
+    "ProcurementCaseEvent", "ProcurementCasePosition",
+    "ProcurementSourceSyncState", "Task", "TaskStep", "TaskResult",
+    "task_documents", "User", "Department", "Position",
+    "DepartmentPosition", "Role", "Permission", "UserAgent",
+    "DepartmentAgent", "UserSession", "UserProfileImage",
+]

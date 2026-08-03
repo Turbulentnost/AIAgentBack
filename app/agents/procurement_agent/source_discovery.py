@@ -71,6 +71,11 @@ class NormalizedSourceDocument(BaseModel):
     warehouse_to_1c_ref: str | None = None
     organization_1c_ref: str | None = None
     priority_1c_ref: str | None = None
+    source_basis_1c_ref: str | None = None
+    source_basis_type: str | None = None
+    source_basis_number: str | None = None
+    source_basis_date: datetime | None = None
+    source_basis_status: str | None = None
     production_order_1c_ref: str | None = None
     production_order_type: str | None = None
     required_date: datetime | None = None
@@ -111,7 +116,10 @@ SOURCE_CAPABILITIES: dict[ProcurementSourceType, SourceCapability] = {
         source_type=ProcurementSourceType.REORDER_POINT,
         entity_set="Document_ТД_УстановкаТочекЗаказа",
         lines_entity_set="Document_ТД_УстановкаТочекЗаказа_Товары",
-        label_ru="Сигнал точки заказа / заказ условному поставщику",
+        label_ru=(
+            "Формирование плана производства полуфабрикатов "
+            "и плана закупок по точкам заказа"
+        ),
     ),
 }
 
@@ -200,6 +208,25 @@ def is_supply_action(value: str | None) -> bool:
     return normalized == "кобеспечению"
 
 
+def is_active_source_line(
+    source_type: ProcurementSourceType,
+    supply_action: str | None,
+) -> bool:
+    if source_type is not ProcurementSourceType.REORDER_POINT:
+        return is_supply_action(supply_action)
+    if not supply_action:
+        return False
+    normalized = (
+        supply_action.strip()
+        .casefold()
+        .replace("ё", "е")
+        .replace(" ", "")
+        .replace("_", "")
+        .replace("-", "")
+    )
+    return normalized == "засчетзапасов"
+
+
 def normalize_need_lines(raw_lines: Any) -> list[NormalizedNeedLine]:
     if not isinstance(raw_lines, list):
         return []
@@ -217,8 +244,18 @@ def normalize_need_lines(raw_lines: Any) -> list[NormalizedNeedLine]:
         )
         if quantity is None:
             continue
-        line_number = int(item.get("LineNumber") or item.get("КодСтроки") or index)
-        line_id = str(item.get("КодСтроки") or item.get("LineNumber") or line_number)
+        raw_line_number = item.get("LineNumber")
+        raw_line_code = item.get("КодСтроки")
+        line_number = int(
+            raw_line_number
+            or (raw_line_code if str(raw_line_code or "") != "0" else None)
+            or index
+        )
+        line_id = str(
+            raw_line_code
+            if str(raw_line_code or "") != "0"
+            else raw_line_number or line_number
+        )
         required_date = (
             parse_1c_datetime(item.get("ДатаОтгрузки"))
             or parse_1c_datetime(item.get("НачалоОтгрузки"))
@@ -307,7 +344,12 @@ def normalize_source_document(
         or raw.get("Отменено")
     )
     positions = normalize_need_lines(raw.get("Товары") or [])
-    active_positions = [line for line in positions if not line.cancelled]
+    active_positions = [
+        line
+        for line in positions
+        if not line.cancelled
+        and is_active_source_line(source_type, line.supply_action)
+    ]
     # Header desired-receipt date applies to every line; otherwise keep per-line dates.
     header_required_date = parse_1c_datetime(raw.get("ЖелаемаяДатаПоступления"))
     if header_required_date:
@@ -338,6 +380,12 @@ def normalize_source_document(
         warehouse_to_1c_ref=warehouse_to,
         organization_1c_ref=_optional_str(raw.get("Организация_Key")),
         priority_1c_ref=_optional_str(raw.get("Приоритет_Key")),
+        source_basis_1c_ref=_optional_str(
+            raw.get("Основание") or raw.get("ДокументОснование")
+        ),
+        source_basis_type=_optional_str(
+            raw.get("Основание_Type") or raw.get("ДокументОснование_Type")
+        ),
         production_order_1c_ref=_optional_str(
             raw.get("ЗаказНаПроизводство_Key")
             or raw.get("ЗаказНаПроизводство")
@@ -361,9 +409,11 @@ def normalize_source_document(
     elif is_terminal_status(status):
         document.skip_reason = f"terminal_status:{status}"
     elif not active_positions:
-        document.skip_reason = "no_active_positions"
-    elif any(not is_supply_action(line.supply_action) for line in active_positions):
-        document.skip_reason = "inactive_supply_action"
+        document.skip_reason = (
+            "inactive_supply_action"
+            if any(not line.cancelled for line in positions)
+            else "no_active_positions"
+        )
     return document
 
 
@@ -402,6 +452,15 @@ def positions_to_agent_source_data(document: NormalizedSourceDocument) -> dict[s
         "source_status": document.status,
         "source_date": document.date.isoformat() if document.date else None,
         "source_data_version": document.data_version,
+        "source_basis_1c_ref": document.source_basis_1c_ref,
+        "source_basis_type": document.source_basis_type,
+        "source_basis_number": document.source_basis_number,
+        "source_basis_date": (
+            document.source_basis_date.isoformat()
+            if document.source_basis_date
+            else None
+        ),
+        "source_basis_status": document.source_basis_status,
         "production_order_1c_ref": document.production_order_1c_ref,
         "production_order_type": document.production_order_type,
     }
@@ -414,6 +473,7 @@ __all__ = [
     "SourceCapability",
     "get_source_capability",
     "is_terminal_status",
+    "is_active_source_line",
     "is_supply_action",
     "list_source_capabilities",
     "normalize_need_lines",

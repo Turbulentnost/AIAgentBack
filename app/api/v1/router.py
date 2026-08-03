@@ -18,6 +18,7 @@ from app.api.v1.endpoints import (
     nd_change_requests,
     nd_control,
     otk,
+    notifications,
     porucheniya,
     positions,
     procurement,
@@ -40,9 +41,9 @@ api_router.include_router(documents.router)
 api_router.include_router(document_cards.router)
 api_router.include_router(knowledge_bases.router)
 api_router.include_router(meetings.router)
+api_router.include_router(notifications.router)
 api_router.include_router(porucheniya.router)
-# Manager routes are static (`.../procurement_logistics_agent/...`) and must be
-# registered before the parameterized `/role-agents/{agent_id}/...` routes.
+# Static manager routes must be registered before parameterized /role-agents/{agent_id}.
 api_router.include_router(procurement_manager.router)
 api_router.include_router(procurement_manager.operations_router)
 api_router.include_router(procurement.router)

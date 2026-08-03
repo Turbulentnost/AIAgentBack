@@ -111,7 +111,8 @@ class QdrantRAGService(RAGService):
             score = score_department_keywords(department, text, recipient=recipient)
             scored.append((score, department))
         scored.sort(key=lambda item: item[0], reverse=True)
-        ranked = [dept for score, dept in scored if score > 0] or [dept for _, dept in scored]
+        # Без совпадений — пустой список (n5 оставит кандидата RuleRouter)
+        ranked = [dept for score, dept in scored if score > 0]
         return ranked[:top_k]
 
     def get_department(self, department_id: str) -> Department | None:

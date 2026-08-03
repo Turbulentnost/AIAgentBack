@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
 from app.models.document import Document
+from app.models.enums import AgentStatus
 from app.models.task import Task
 from app.models.user import DepartmentAgent, Permission, User, UserAgent, role_permissions, user_roles
 
@@ -20,7 +21,11 @@ class PermissionService:
 
     async def list_available_agents(self, user: User) -> list[Agent]:
         if user.is_superuser:
-            result = await self.db.execute(select(Agent).order_by(Agent.name))
+            result = await self.db.execute(
+                select(Agent)
+                .where(Agent.status != AgentStatus.ARCHIVED)
+                .order_by(Agent.name)
+            )
             return list(result.scalars().unique().all())
 
         now = datetime.now(timezone.utc)
@@ -44,7 +49,12 @@ class PermissionService:
         agent_ids_query = agent_id_queries[0] if len(agent_id_queries) == 1 else union(*agent_id_queries)
 
         result = await self.db.execute(
-            select(Agent).where(Agent.id.in_(agent_ids_query)).order_by(Agent.name)
+            select(Agent)
+            .where(
+                Agent.id.in_(agent_ids_query),
+                Agent.status != AgentStatus.ARCHIVED,
+            )
+            .order_by(Agent.name)
         )
         return list(result.scalars().unique().all())
 

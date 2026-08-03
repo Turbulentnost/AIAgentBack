@@ -1,0 +1,66 @@
+.page {
+  display: grid;
+  gap: 18px;
+  width: min(1380px, calc(100vw - 72px));
+  min-width: 980px;
+  margin: 0 auto;
+  color: var(--color-text);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.headerMain {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.header h1 {
+  margin: 0;
+  color: var(--color-text-strong);
+  font-size: 25px;
+  font-weight: var(--summary-section-title-weight, 700);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
+.header p {
+  margin: 0;
+  max-width: 820px;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.headerAside {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+  width: min(380px, 100%);
+}
+
+@media (max-width: 1200px) {
+  .page {
+    width: min(1380px, calc(100vw - 48px));
+    min-width: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .page {
+    width: min(100%, calc(100vw - 32px));
+    min-width: 0;
+  }
+
+  .header {
+    flex-direction: column;
+  }
+}

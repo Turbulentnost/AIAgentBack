@@ -56,3 +56,29 @@ def routing_message_id(base_message_id: str, recipient: str) -> str:
     if not recipient:
         return base_message_id
     return f"{base_message_id}#{recipient.lower()}"
+
+
+def parse_routing_message_id(message_id: str) -> tuple[str, str | None]:
+    """Разбирает base Message-ID и routing recipient, снимая повторные суффиксы."""
+    base = message_id
+    recipient: str | None = None
+    while "#" in base:
+        candidate_base, candidate_suffix = base.rsplit("#", 1)
+        if "@" not in candidate_suffix:
+            break
+        recipient = candidate_suffix.lower()
+        base = candidate_base
+    if recipient is None:
+        return message_id, None
+    return base, recipient
+
+
+def normalize_routing_email(email: EmailMessage) -> EmailMessage:
+    """Приводит message_id к base и переносит recipient из суффикса id."""
+    base_id, routing_from_id = parse_routing_message_id(email.message_id)
+    if routing_from_id is None:
+        return email
+    updates: dict = {"message_id": base_id}
+    if not email.routing_recipient:
+        updates["routing_recipient"] = routing_from_id
+    return email.model_copy(update=updates)

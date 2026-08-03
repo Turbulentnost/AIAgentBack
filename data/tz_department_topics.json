@@ -71,21 +71,6 @@
       "deadline": "4 часа"
     }
   },
-  "00-000016": {
-    "topics": [
-      "Служба управления персоналом"
-    ],
-    "names": [
-      "Директор по персоналу"
-    ],
-    "emails": [
-      "npo_kadr1@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
   "00-000025": {
     "topics": [
       "Отдел метрологии и сертификации"
@@ -106,21 +91,6 @@
       "deadline": "4 часа"
     }
   },
-  "00-000034": {
-    "topics": [
-      "ОПЕРАЦИОННЫЙ ДИРЕКТОР"
-    ],
-    "names": [
-      "исполнительный директор, если заграница - то Колязин"
-    ],
-    "emails": [
-      "npo_uprdir@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
   "00-000035": {
     "topics": [
       "МИЛАКА"
@@ -130,26 +100,6 @@
     ],
     "emails": [
       "i.shchitov@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
-  "00-000037": {
-    "topics": [
-      "Сервисная служба"
-    ],
-    "names": [
-      "сервисная служба, начальник сервисной службы"
-    ],
-    "emails": [
-      "npo_service@turbo-don.ru",
-      "npo_pto3@turbo-don.ru",
-      "npo_otp2@turbo-don.ru",
-      "sktb_otp3@turbo-don.ru",
-      "mgs_buh@turbo-don.ru",
-      "mgs_buh1@turbo-don.ru"
     ],
     "task_defaults": {
       "process": "рассмотрение",
@@ -253,10 +203,12 @@
       "Служба управления персоналом"
     ],
     "names": [
-      "служба управления персоналом, отдел кадров, смотреть на какую организацию из Справочника двухбуквенных кодов Внутренних организаций и их названий пришло письмо и в поле организации вставить эту организацию"
+      "служба управления персоналом, отдел кадров, смотреть на какую организацию из Справочника двухбуквенных кодов Внутренних организаций и их названий пришло письмо и в поле организации вставить эту организацию",
+      "Директор по персоналу"
     ],
     "emails": [
-      "npo_kadr2@turbo-don.ru"
+      "npo_kadr2@turbo-don.ru",
+      "npo_kadr1@turbo-don.ru"
     ],
     "task_defaults": {
       "process": "рассмотрение",
@@ -300,12 +252,11 @@
     ],
     "names": [
       "получатель: офис-менеджер управления делами, содержит фразы: Во вложении, исх. №",
-      "помощник председателя совета директоров, управление делами (УД), офис-менеджер"
+      "помощник председателя совета директоров, управление делами (УД), офис-менеджер",
+      "перевод на помощника заместителя операционного директора (00-000182)"
     ],
     "emails": [
       "almaz_glavbuh@turbo-don.ru",
-      "gd@turbo-don.ru",
-      "gk_secretar@turbo-don.ru",
       "info@turbo-don.ru",
       "npo_uprdir@turbo-don.ru",
       "officemanager@turbo-don.ru"
@@ -351,35 +302,6 @@
       "deadline": "4 часа"
     }
   },
-  "00-000075": {
-    "topics": [
-      "ОДП"
-    ],
-    "names": [
-      "отдел дилерских продаж бытового оборудования (ОДПБО, odpbo)"
-    ],
-    "emails": [
-      "td_sales2.6@turbo-don.ru",
-      "td_sales2.8@turbo-don.ru",
-      "sales.td@turbo-don.ru",
-      "td_sales2.3@turbo-don.ru",
-      "td_sales1.5@turbo-don.ru",
-      "td_sales1.9@turbo-don.ru",
-      "td_sales1.8@turbo-don.ru",
-      "td_odppo9@turbo-don.ru",
-      "td_oppo1.9@turbo-don.ru",
-      "td_odppo7@turbo-don.ru",
-      "td_odppo6@turbo-don.ru",
-      "td_odppo5@turbo-don.ru",
-      "td_odppo10@turbo-don.ru",
-      "td_odppo3@turbo-don.ru",
-      "td_odppo2@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
   "00-000076": {
     "topics": [
       "Отдел по работе с ПАО Газпром"
@@ -418,28 +340,6 @@
       "deadline": "4 часа"
     }
   },
-  "00-000105": {
-    "topics": [
-      "ОДП"
-    ],
-    "names": [
-      "отдел дилерских продаж промышленного оборудования (ОДППО, odppo), начальник ОДППО"
-    ],
-    "emails": [
-      "td_odppo10@turbo-don.ru",
-      "td_odppo2@turbo-don.ru",
-      "td_odppo3@turbo-don.ru",
-      "td_odppo5@turbo-don.ru",
-      "td_odppo6@turbo-don.ru",
-      "td_odppo7@turbo-don.ru",
-      "td_odppo9@turbo-don.ru",
-      "td_oppo1.9@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
   "00-000106": {
     "topics": [
       "Отдел продаж Амурской легенды"
@@ -448,23 +348,6 @@
       "директор Амурская Легенда, Амурская легенда ООО"
     ],
     "emails": []
-  },
-  "00-000109": {
-    "topics": [
-      "Цех БМИ"
-    ],
-    "names": [
-      "директор по производству БМИ (блочно-модульные изделия), Улановский"
-    ],
-    "emails": [
-      "bmimaster@turbo-don.ru",
-      "bmiproekt@turbo-don.ru",
-      "bmisnab@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
   },
   "00-000111": {
     "topics": [
@@ -478,94 +361,6 @@
       "zavgar@turbo-don.ru"
     ]
   },
-  "00-000120": {
-    "topics": [
-      "Цех БМИ"
-    ],
-    "names": [
-      "Производство БМИ (Блочно-модульные изделия), Улановский"
-    ],
-    "emails": [
-      "npo_bmi1@turbo-don.ru",
-      "npo_bmi22@turbo-don.ru",
-      "npo_bmi4@turbo-don.ru",
-      "npo_bmi9@turbo-don.ru",
-      "sktb_std1@turbo-don.ru"
-    ]
-  },
-  "00-000131": {
-    "topics": [
-      "Отдел продаж БМИ"
-    ],
-    "names": [
-      "директор по продажам БМИ (Блочно-модульные изделия), Милютенко"
-    ],
-    "emails": [
-      "td_bmi1@turbo-don.ru",
-      "td_bmi3@turbo-don.ru",
-      "td_oppo2.1@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
-  "00-000139": {
-    "topics": [
-      "ОРКК"
-    ],
-    "names": [
-      "отдел по работе с холдингами 1, Холдинг 1"
-    ],
-    "emails": [
-      "npo_orkk@turbo-don.ru",
-      "td_odppo1@turbo-don.ru",
-      "td_oppo1.7@turbo-don.ru",
-      "td_oppo2.6@turbo-don.ru",
-      "td_asutp@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
-  "00-000140": {
-    "topics": [
-      "ОРКК"
-    ],
-    "names": [
-      "отдел по работе с холдингами 2. Холдинг 2"
-    ],
-    "emails": [
-      "td_oppo1.3@turbo-don.ru",
-      "td_oppo1.8@turbo-don.ru",
-      "td_oppo2.4@turbo-don.ru",
-      "td_sales2@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
-  "00-000141": {
-    "topics": [
-      "ОРКК"
-    ],
-    "names": [
-      "отдел по работе с холдингами 3. Холдинг 3"
-    ],
-    "emails": [
-      "npo_orik1@turbo-don.ru",
-      "td_bmi2@turbo-don.ru",
-      "td_odppo8@turbo-don.ru",
-      "td_odppo1@turbo-don.ru",
-      "td_orkk5@turbo-don.ru"
-    ],
-    "task_defaults": {
-      "process": "рассмотрение",
-      "deadline": "4 часа"
-    }
-  },
   "00-000149": {
     "topics": [
       "ГЛАВНЫЙ МЕТРОЛОГ"
@@ -577,13 +372,177 @@
       "i.hozuyan@turbo-don.ru"
     ]
   },
-  "00-000003": {
-    "topics": [],
+  "00-000163": {
+    "topics": [
+      "Сервисная служба",
+      "Цех БМИ",
+      "ПУРГ",
+      "ПУРГС",
+      "ГРПШ",
+      "ГРПБ",
+      "ШУРГ",
+      "ПУГС",
+      "ПУГ",
+      "ГИС",
+      "ГРС",
+      "АГНКС",
+      "СИРГ",
+      "СИГК",
+      "АГРС",
+      "УИРГ",
+      "УКИРГ",
+      "блок-бокс",
+      "пункт учета",
+      "шкафной",
+      "УРМЦ"
+    ],
     "names": [
-      "Амураль И.Б."
+      "сервисная служба, начальник сервисной службы",
+      "директор по производству БМИ (блочно-модульные изделия), Улановский"
     ],
     "emails": [
-      "gd@turbo-don.ru"
+      "npo_service@turbo-don.ru",
+      "npo_pto3@turbo-don.ru",
+      "npo_otp2@turbo-don.ru",
+      "sktb_otp3@turbo-don.ru",
+      "mgs_buh@turbo-don.ru",
+      "mgs_buh1@turbo-don.ru",
+      "bmimaster@turbo-don.ru",
+      "bmiproekt@turbo-don.ru",
+      "bmisnab@turbo-don.ru"
+    ],
+    "task_defaults": {
+      "process": "рассмотрение",
+      "deadline": "4 часа"
+    }
+  },
+  "00-000128": {
+    "topics": [
+      "Отдел продаж БМИ",
+      "ПУРГ",
+      "ПУРГС",
+      "ГРПШ",
+      "ГРПБ",
+      "ШУРГ",
+      "ПУГС",
+      "ПУГ",
+      "ГИС",
+      "ГРС",
+      "АГНКС",
+      "СИРГ",
+      "СИГК",
+      "АГРС",
+      "УИРГ",
+      "УКИРГ",
+      "блок-бокс",
+      "пункт учета",
+      "шкафной",
+      "УРМЦ",
+      "ТКП",
+      "коммерческое предложение"
+    ],
+    "names": [
+      "отдел продаж БМИ"
+    ],
+    "emails": [
+      "td_bmi1@turbo-don.ru",
+      "td_bmi2@turbo-don.ru",
+      "npo_bmi4@turbo-don.ru",
+      "npo_bmi5@turbo-don.ru",
+      "npo_bmi8@turbo-don.ru"
+    ],
+    "task_defaults": {
+      "process": "рассмотрение",
+      "deadline": "4 часа"
+    }
+  },
+  "00-000042": {
+    "topics": [
+      "ОРКК"
+    ],
+    "names": [
+      "отдел по работе с холдингами 1, Холдинг 1",
+      "отдел по работе с холдингами 2. Холдинг 2",
+      "отдел по работе с холдингами 3. Холдинг 3"
+    ],
+    "emails": [
+      "npo_orkk@turbo-don.ru",
+      "td_odppo1@turbo-don.ru",
+      "td_oppo1.7@turbo-don.ru",
+      "td_oppo2.6@turbo-don.ru",
+      "td_asutp@turbo-don.ru",
+      "td_oppo1.3@turbo-don.ru",
+      "td_oppo1.8@turbo-don.ru",
+      "td_oppo2.4@turbo-don.ru",
+      "td_sales2@turbo-don.ru",
+      "npo_orik1@turbo-don.ru",
+      "td_bmi2@turbo-don.ru",
+      "td_odppo8@turbo-don.ru",
+      "td_orkk5@turbo-don.ru"
+    ],
+    "task_defaults": {
+      "process": "рассмотрение",
+      "deadline": "4 часа"
+    }
+  },
+  "00-000155": {
+    "topics": [
+      "ОДП"
+    ],
+    "names": [
+      "отдел дилерских продаж бытового оборудования (ОДПБО, odpbo)",
+      "отдел дилерских продаж промышленного оборудования (ОДППО, odppo), начальник ОДППО"
+    ],
+    "emails": [
+      "td_sales2.6@turbo-don.ru",
+      "td_sales2.8@turbo-don.ru",
+      "sales.td@turbo-don.ru",
+      "td_sales2.3@turbo-don.ru",
+      "td_sales1.5@turbo-don.ru",
+      "td_sales1.9@turbo-don.ru",
+      "td_sales1.8@turbo-don.ru",
+      "td_odppo9@turbo-don.ru",
+      "td_oppo1.9@turbo-don.ru",
+      "td_odppo7@turbo-don.ru",
+      "td_odppo6@turbo-don.ru",
+      "td_odppo5@turbo-don.ru",
+      "td_odppo10@turbo-don.ru",
+      "td_odppo3@turbo-don.ru",
+      "td_odppo2@turbo-don.ru"
+    ],
+    "task_defaults": {
+      "process": "рассмотрение",
+      "deadline": "4 часа"
+    }
+  },
+  "00-000182": {
+    "topics": [
+      "Помощник зам. операционного директора"
+    ],
+    "names": [
+      "помощник заместителя операционного директора",
+      "помощник зам. операционного директора"
+    ],
+    "emails": [],
+    "task_defaults": {
+      "process": "рассмотрение",
+      "deadline": "4 часа"
+    }
+  },
+  "00-000001": {
+    "topics": [
+      "Председатель Совета Директоров"
+    ],
+    "names": [
+      "Председатель Совета Директоров",
+      "помощник председателя совета директоров",
+      "Амураль Игорь Борисович",
+      "Игорь Борисович",
+      "Игорь Борисович Амураль"
+    ],
+    "emails": [
+      "gd@turbo-don.ru",
+      "gk_secretar@turbo-don.ru"
     ],
     "task_defaults": {
       "process": "рассмотрение",

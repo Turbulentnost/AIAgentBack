@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from agent_pochta.config import PROJECT_ROOT
-from agent_pochta.routing.corrections import extract_correction_keywords
+from agent_pochta.routing.corrections import extract_spam_learning_keywords
 from agent_pochta.schemas import EmailMessage, SpamResult
 
 LearnedEntryLabel = Literal["spam", "not_spam"]
@@ -29,10 +29,17 @@ _NOT_SPAM_REASON_MARKERS = (
     "деловой запрос",
     "деловая переписка",
     "деловое уведомление",
+    "деловое письмо",
+    "легитимн",
+    "легитимное",
     "не реклам",
     "не фишинг",
     "отсутствуют признаки",
     "отсутствие признаков",
+    "ошибка 1с",
+    "ошибка odata",
+    "нарушение прав доступа",
+    "erp",
 )
 
 _DEFAULT_LEARNING_PATH = PROJECT_ROOT / "data" / "spam_learning_patterns.json"
@@ -73,11 +80,13 @@ def reason_indicates_not_spam(reason: str | None) -> bool:
 def resolve_human_spam_reason(stored_reason: str | None) -> str:
     """Причина для spam-паттерна после решения оператора mark_spam.
 
-    Не копируем LLM-текст «не спам» из row.spam_reason — только явная причина
-    спама или стандартная формулировка оператора.
+    Не копируем LLM-текст «не спам» или причину эскалации маршрута — только
+    явная причина спама или стандартная формулировка оператора.
     """
+    from agent_pochta.routing.hitl import is_routing_escalation_reason
+
     reason = (stored_reason or "").strip()
-    if not reason or reason_indicates_not_spam(reason):
+    if not reason or reason_indicates_not_spam(reason) or is_routing_escalation_reason(reason):
         return _OPERATOR_SPAM_REASON
     return reason
 
@@ -177,7 +186,7 @@ def save_learning_entry(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "message_id": message_id,
         "sender_email": sender_email.lower().strip(),
-        "keywords": extract_correction_keywords(subject, body),
+        "keywords": extract_spam_learning_keywords(subject, body, sender_email=sender_email),
         "label": label,
         "reason": normalized_reason,
     }
@@ -346,13 +355,21 @@ def _find_first_learned_match(
     path: Path | str | None = None,
 ) -> tuple[LearnedEntryLabel, dict] | None:
     for entry in _collect_learned_entries(path=path):
-        if _entry_matches_email(
+        if not _entry_matches_email(
             sender_email=sender_email,
             subject=subject,
             body=body,
             entry=entry,
         ):
-            return _normalize_label(entry.get("label")), entry
+            continue
+        label = _reconcile_label_with_reason(
+            _normalize_label(entry.get("label")),
+            str(entry.get("reason") or ""),
+        )
+        # Противоречивые spam-метки с «легитимным» reason не считаем спамом.
+        if label == "spam" and reason_indicates_not_spam(str(entry.get("reason") or "")):
+            continue
+        return label, entry
     return None
 
 
@@ -448,11 +465,20 @@ def resync_spam_learning_to_qdrant(path: Path | str | None = None) -> dict:
         return {"synced": 0, "reason": "stub_backend"}
 
     store = load_spam_learning(path)
+    entries = store.get("entries") or []
     synced = 0
-    for entry in store.get("entries") or []:
+    for entry in entries:
         if _upsert_learning_qdrant(entry):
             synced += 1
-    return {"synced": synced, "total": len(store.get("entries") or [])}
+    pruned = 0
+    try:
+        from agent_pochta.services.spam_learning_rag_qdrant import prune_spam_learning_orphans
+
+        valid_ids = {str(e.get("id")) for e in entries if e.get("id")}
+        pruned = prune_spam_learning_orphans(settings.qdrant_url, valid_ids)
+    except Exception:
+        pruned = 0
+    return {"synced": synced, "total": len(entries), "pruned": pruned}
 
 
 def check_learned_spam(email: EmailMessage) -> SpamResult | None:

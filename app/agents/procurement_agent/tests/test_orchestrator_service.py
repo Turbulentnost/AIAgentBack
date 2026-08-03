@@ -8,11 +8,21 @@ from sqlalchemy import event, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import selectinload
 
 from app.agents.procurement_agent.source_discovery import normalize_source_document
-from app.agents.procurement_role_agents.config import SOURCE_AGENT_MAP
+from app.agents.procurement_role_agents.config import (
+    OMTO_CHIEF_AGENT_ID,
+    PRODUCTION_DISPATCHER_AGENT_ID,
+    PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+    PURCHASE_MANAGER_AGENT_ID,
+    QUALITY_ENGINEER_AGENT_ID,
+    SOURCE_AGENT_MAP,
+    WAREHOUSE_COMPLEX_CHIEF_AGENT_ID,
+    WAREHOUSE_PICKER_AGENT_ID,
+)
 from app.db.base import Base
-from app.models.enums import ProcurementSourceType, TaskStatus
+from app.models.enums import ProcurementCaseStatus, ProcurementSourceType, TaskStatus
 from app.models.procurement import (
     ProcurementCase,
     ProcurementCaseEvent,
@@ -98,7 +108,16 @@ def _document(
                     "Номенклатура_Key": "item-1",
                     "Количество": quantity,
                     "Отменено": cancelled,
-                    "ВариантОбеспечения": action,
+                    (
+                        "ОбеспечениеЗаказовПриПоддержанииЗапаса"
+                        if source_type is ProcurementSourceType.REORDER_POINT
+                        else "ВариантОбеспечения"
+                    ): (
+                        "ЗаСчетЗапасов"
+                        if source_type is ProcurementSourceType.REORDER_POINT
+                        and action == "КОбеспечению"
+                        else action
+                    ),
                 }
             ],
         },
@@ -200,11 +219,380 @@ async def test_role_agent_is_routed_by_source_type(
     assert result == "enqueued"
     case = (await db_session.execute(select(ProcurementCase))).scalar_one()
     task = (await db_session.execute(select(Task))).scalar_one()
-    expected_agent = SOURCE_AGENT_MAP[source_type.value]
+    if source_type is ProcurementSourceType.PRODUCTION_MATERIAL_ORDER:
+        expected_agent = WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+    else:
+        expected_agent = SOURCE_AGENT_MAP[source_type.value]
     assert case.current_agent_id == expected_agent
     assert case.assigned_agents == [expected_agent]
     assert task.task_metadata["agent_slug"] == expected_agent
     assert task.task_type == "procurement_role_agent"
+
+
+@pytest.mark.asyncio
+async def test_non_mu2_material_order_goes_to_complex_chief_not_engineer(
+    db_session: AsyncSession,
+):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    result = await service._upsert_case_from_document(
+        _document(
+            ref,
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    assert result == "enqueued"
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №1"
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    assert await service._enqueue_role_agent(case) is True
+    assert case.current_agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+    task = await db_session.get(Task, case.current_task_id)
+    assert (task.task_metadata or {}).get("agent_slug") == WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+    assert case.case_metadata.get("complex_invoked_at")
+    assert case.case_metadata.get("picker_invoked_at") is None
+    assert case.case_metadata.get("engineer_invoked_at") is None
+
+
+@pytest.mark.asyncio
+async def test_complex_poll_redispatches_pending_task_and_reports_status(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Цех сборки"
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    await service._enqueue_role_agent(case)
+    chief_task_id = case.current_task_id
+    chief_task = await db_session.get(Task, chief_task_id)
+    chief_task.task_metadata = {
+        key: value
+        for key, value in (chief_task.task_metadata or {}).items()
+        if key != "dispatch_requested_at"
+    }
+    service.pending_dispatches.clear()
+
+    result = await service.ensure_complex_chief_agent_work()
+
+    assert result["reported"] == 1
+    assert result["redispatched"] == 1
+    assert result["enqueued"] == 0
+    assert service.pending_dispatches == [(str(case.id), str(chief_task_id))]
+    assert case.case_metadata["complex_last_reported_status"] == "processing"
+
+
+@pytest.mark.asyncio
+async def test_migrate_undecided_engineer_case_to_complex_chief(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №1"
+    case.current_agent_id = PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+    case.assigned_agents = [PRODUCTION_PREPARATION_ENGINEER_AGENT_ID]
+    case.case_metadata = {
+        "engineer_invoked_at": "2026-07-21T12:00:00+00:00",
+        "engineer_workspace_status": "processing",
+    }
+    if case.current_task_id:
+        old_task = await db_session.get(Task, case.current_task_id)
+        if old_task is not None:
+            old_task.task_metadata = {
+                **(old_task.task_metadata or {}),
+                "agent_slug": PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+            }
+    service.pending_dispatches.clear()
+
+    migrated = await service._migrate_undecided_engineer_cases_to_complex_chief()
+
+    assert migrated == 1
+    assert case.current_agent_id == WAREHOUSE_COMPLEX_CHIEF_AGENT_ID
+    assert case.case_metadata.get("complex_invoked_at")
+    assert case.case_metadata.get("complex_migrated_from_engineer_at")
+
+
+@pytest.mark.asyncio
+async def test_montage_section_2_material_order_goes_to_picker_not_engineer(
+    db_session: AsyncSession,
+):
+    ref = str(uuid.uuid4())
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    result = await service._upsert_case_from_document(
+        _document(
+            ref,
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    assert result == "enqueued"
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    await db_session.flush()
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    assert await service._enqueue_role_agent(case) is True
+    assert case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+    task = await db_session.get(Task, case.current_task_id)
+    assert (task.task_metadata or {}).get("agent_slug") == WAREHOUSE_PICKER_AGENT_ID
+    assert case.case_metadata.get("picker_invoked_at")
+    assert case.case_metadata.get("engineer_invoked_at") is None
+
+
+@pytest.mark.asyncio
+async def test_picker_poll_redispatches_pending_task_and_reports_status(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    await service._enqueue_role_agent(case)
+    picker_task_id = case.current_task_id
+    picker_task = await db_session.get(Task, picker_task_id)
+    picker_task.task_metadata = {
+        key: value
+        for key, value in (picker_task.task_metadata or {}).items()
+        if key != "dispatch_requested_at"
+    }
+    service.pending_dispatches.clear()
+
+    result = await service.ensure_picker_agent_work()
+
+    assert result == {"reported": 1, "enqueued": 0, "redispatched": 1}
+    assert service.pending_dispatches == [(str(case.id), str(picker_task_id))]
+    assert case.case_metadata["picker_last_reported_status"] == "processing"
+    assert case.case_metadata["picker_last_status_reported_at"]
+
+
+@pytest.mark.asyncio
+async def test_picker_poll_restarts_waiting_task_without_result(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    await service._enqueue_role_agent(case)
+    old_task = await db_session.get(Task, case.current_task_id)
+    old_task.status = TaskStatus.WAITING_HUMAN
+    case.case_metadata = {
+        **(case.case_metadata or {}),
+        "picker_workspace_status": "awaiting_action",
+    }
+    service.pending_dispatches.clear()
+
+    result = await service.ensure_picker_agent_work()
+
+    assert result == {"reported": 1, "enqueued": 1, "redispatched": 0}
+    assert old_task.status is TaskStatus.CANCELLED
+    assert case.current_task_id != old_task.id
+    new_task = await db_session.get(Task, case.current_task_id)
+    assert new_task.status is TaskStatus.PENDING
+    assert (new_task.task_metadata or {})["agent_slug"] == WAREHOUSE_PICKER_AGENT_ID
+    assert service.pending_dispatches == [(str(case.id), str(new_task.id))]
+
+
+@pytest.mark.asyncio
+async def test_ensure_purchase_manager_work_assigns_coverage_cases(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.current_agent_id = WAREHOUSE_PICKER_AGENT_ID
+    case.assigned_agents = [WAREHOUSE_PICKER_AGENT_ID]
+    case.case_metadata = {
+        "supplier_order_coverage": {
+            "coverage_status": "partial",
+            "covered_positions": 1,
+            "positions_count": 2,
+        }
+    }
+
+    result = await service.ensure_purchase_manager_work()
+
+    assert result["reported"] == 1
+    assert result["assigned"] == 1
+    assert result["enqueued"] == 0
+    assert PURCHASE_MANAGER_AGENT_ID in (case.assigned_agents or [])
+    assert case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+    assert case.case_metadata["purchase_manager_invoked_at"]
+    assert case.case_metadata["purchase_manager_last_reported_status"] == "partial"
+
+    case.case_metadata = {
+        **case.case_metadata,
+        "supplier_order_coverage": {
+            "coverage_status": "full",
+            "covered_positions": 2,
+            "positions_count": 2,
+        },
+    }
+    case.current_task_id = None
+    case.current_agent_id = WAREHOUSE_PICKER_AGENT_ID
+    service.pending_dispatches.clear()
+
+    full_result = await service.ensure_purchase_manager_work()
+
+    assert full_result["reported"] == 1
+    assert case.current_agent_id == PURCHASE_MANAGER_AGENT_ID
+    assert full_result["enqueued"] == 1
+    assert case.current_task_id is not None
+
+
+@pytest.mark.asyncio
+async def test_montage_section_2_ignores_old_engineer_dispatcher_handoff(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.control_point = "chief_dispatcher"
+    case.current_task_id = None
+    case.current_agent_id = PRODUCTION_DISPATCHER_AGENT_ID
+    case.case_metadata = {
+        "engineer_handoff_agent_id": PRODUCTION_DISPATCHER_AGENT_ID,
+        "engineer_invoked_at": "2026-07-21T12:00:00+00:00",
+        "dispatcher_invoked_at": "2026-07-21T12:10:00+00:00",
+    }
+    await db_session.flush()
+    assert service._resolve_role_agent_id(case) == WAREHOUSE_PICKER_AGENT_ID
+    assert await service._enqueue_role_agent(case) is True
+    assert case.current_agent_id == WAREHOUSE_PICKER_AGENT_ID
+
+
+@pytest.mark.asyncio
+async def test_picker_confirmation_hands_off_to_omto(db_session: AsyncSession):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (
+        await db_session.execute(
+            select(ProcurementCase).options(selectinload(ProcurementCase.positions))
+        )
+    ).scalar_one()
+    case.department_name = "Монтажный участок №2"
+    case.current_task_id = None
+    case.current_agent_id = None
+    case.case_metadata = {}
+    await service._enqueue_role_agent(case)
+    task = await db_session.get(Task, case.current_task_id)
+    output = {
+        "decision_kind": "deficit_confirmation",
+        "conclusion": {"confirmed_deficit": "5", "quantity_to_purchase": "5"},
+        "positions": [{"confirmed_deficit": "5"}],
+    }
+    task.status = TaskStatus.WAITING_HUMAN
+    task.final_result = {
+        "agent_id": WAREHOUSE_PICKER_AGENT_ID,
+        "role_status": "waiting_human",
+        "output_data": output,
+    }
+    case.case_metadata = {
+        **(case.case_metadata or {}),
+        "picker_decision_kind": "deficit_confirmation",
+        "warehouse_picker_output": output,
+    }
+    await db_session.flush()
+
+    result = await service.confirm_picker_conclusion(
+        case.id,
+        user_id="picker-1",
+        action="confirm_deficit",
+    )
+    assert result is not None
+    assert case.control_point == "omto"
+    assert case.current_agent_id == OMTO_CHIEF_AGENT_ID
+    assert case.case_metadata["picker_handoff_agent_id"] == OMTO_CHIEF_AGENT_ID
+    assert case.case_metadata["picker_workspace_status"] == "archived"
 
 
 @pytest.mark.asyncio
@@ -254,7 +642,8 @@ async def test_role_agent_wait_blocks_duplicates_and_completed_resume_releases(
 
 @pytest.mark.asyncio
 async def test_engineer_dispatch_claims_only_five_cases(db_session: AsyncSession):
-    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    """Legacy engineer queue still claims at most five PENDING engineer tasks."""
+    service = ProcurementOrchestratorService(db_session, enqueue_case=False)
     for index in range(7):
         await service._upsert_case_from_document(
             _document(
@@ -263,6 +652,28 @@ async def test_engineer_dispatch_claims_only_five_cases(db_session: AsyncSession
                 source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
             )
         )
+    cases = (await db_session.execute(select(ProcurementCase))).scalars().all()
+    for case in cases:
+        task = Task(
+            title="legacy engineer",
+            status=TaskStatus.PENDING,
+            task_type="procurement_role_agent",
+            input_payload={"case_id": str(case.id)},
+            task_metadata={
+                "agent_slug": PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+                "procurement_case_id": str(case.id),
+            },
+        )
+        db_session.add(task)
+        await db_session.flush()
+        case.current_task_id = task.id
+        case.current_agent_id = PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+        case.assigned_agents = [PRODUCTION_PREPARATION_ENGINEER_AGENT_ID]
+        case.case_metadata = {
+            "engineer_invoked_at": "2026-07-21T12:00:00+00:00",
+            "engineer_workspace_status": "processing",
+        }
+    await db_session.flush()
 
     claimed = await service.claim_engineer_dispatches(limit=5)
     tasks = (await db_session.execute(select(Task))).scalars().all()
@@ -273,6 +684,166 @@ async def test_engineer_dispatch_claims_only_five_cases(db_session: AsyncSession
         bool((task.task_metadata or {}).get("dispatch_claimed"))
         for task in tasks
     ) == 5
+
+
+@pytest.mark.asyncio
+async def test_final_otk_release_closes_case_without_poll_reactivation(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=False)
+    source_ref = str(uuid.uuid4())
+    document = _document(
+        source_ref,
+        "v1",
+        source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+    )
+    await service._upsert_case_from_document(document)
+    case = await db_session.scalar(
+        select(ProcurementCase).where(ProcurementCase.source_1c_ref == source_ref)
+    )
+    assert case is not None
+    task = Task(
+        title="ОТК",
+        status=TaskStatus.RUNNING,
+        task_type="procurement_role_agent",
+        input_payload={"case_id": str(case.id)},
+        task_metadata={
+            "agent_slug": QUALITY_ENGINEER_AGENT_ID,
+            "procurement_case_id": str(case.id),
+        },
+    )
+    db_session.add(task)
+    await db_session.flush()
+    case.current_task_id = task.id
+    case.current_agent_id = QUALITY_ENGINEER_AGENT_ID
+
+    await service._apply_role_agent_result(
+        case,
+        task,
+        {
+            "role_status": "completed",
+            "agent_id": QUALITY_ENGINEER_AGENT_ID,
+            "summary": "Контроль завершён",
+            "output_data": {
+                "next_status": ProcurementCaseStatus.QUALITY_RELEASED.value
+            },
+        },
+        event_type="quality_agent_completed",
+    )
+
+    assert case.status == ProcurementCaseStatus.CLOSED.value
+    assert case.closed_reason == "quality_released"
+    assert case.closed_at is not None
+    assert await service._upsert_case_from_document(document) == "skipped"
+    assert case.status == ProcurementCaseStatus.CLOSED.value
+
+
+@pytest.mark.asyncio
+async def test_engineer_purchase_confirmation_hands_off_and_archives_workspace(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    task = (await db_session.execute(select(Task))).scalar_one()
+    output = {
+        "decision_kind": "purchase_confirmation",
+        "positions": [{"net_requirement": "12"}],
+    }
+    task.status = TaskStatus.WAITING_HUMAN
+    task.task_metadata = {
+        **(task.task_metadata or {}),
+        "agent_slug": PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+    }
+    task.final_result = {
+        "agent_id": PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+        "role_status": "waiting_human",
+        "output_data": output,
+    }
+    case.current_agent_id = PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+    case.assigned_agents = [PRODUCTION_PREPARATION_ENGINEER_AGENT_ID]
+    case.case_metadata = {
+        "engineer_invoked_at": "2026-07-21T12:00:00+00:00",
+        "engineer_workspace_status": "awaiting_action",
+        "engineer_decision_kind": "purchase_confirmation",
+        "production_preparation_engineer_output": output,
+    }
+    await db_session.flush()
+
+    result = await service.confirm_engineer_purchase(case.id, user_id="engineer-1")
+
+    assert result is not None
+    assert task.status is TaskStatus.COMPLETED
+    assert case.current_agent_id == PRODUCTION_DISPATCHER_AGENT_ID
+    assert case.control_point == "chief_dispatcher"
+    assert case.case_metadata["engineer_archived_bucket"] == "attention"
+    assert case.case_metadata["engineer_workspace_status"] == "archived"
+    dispatcher_task = (
+        await db_session.execute(
+            select(Task).where(Task.id == case.current_task_id)
+        )
+    ).scalar_one()
+    assert (dispatcher_task.task_metadata or {}).get("agent_slug") == (
+        PRODUCTION_DISPATCHER_AGENT_ID
+    )
+    assert await service._enqueue_role_agent(case) is False
+    archive = await service.list_dashboard(
+        view="archive",
+        source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value,
+        engineer_workspace=True,
+    )
+    assert archive["total_cases"] == 1
+
+
+@pytest.mark.asyncio
+async def test_engineer_critical_acknowledgement_keeps_waiting(
+    db_session: AsyncSession,
+):
+    service = ProcurementOrchestratorService(db_session, enqueue_case=True)
+    await service._upsert_case_from_document(
+        _document(
+            str(uuid.uuid4()),
+            "v1",
+            source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER,
+        )
+    )
+    case = (await db_session.execute(select(ProcurementCase))).scalar_one()
+    task = (await db_session.execute(select(Task))).scalar_one()
+    task.status = TaskStatus.WAITING_HUMAN
+    task.task_metadata = {
+        **(task.task_metadata or {}),
+        "agent_slug": PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
+    }
+    case.current_agent_id = PRODUCTION_PREPARATION_ENGINEER_AGENT_ID
+    case.assigned_agents = [PRODUCTION_PREPARATION_ENGINEER_AGENT_ID]
+    case.case_metadata = {
+        "engineer_invoked_at": "2026-07-21T12:00:00+00:00",
+        "engineer_workspace_status": "awaiting_action",
+        "engineer_decision_kind": "critical_acknowledgement",
+    }
+    await db_session.flush()
+
+    result = await service.acknowledge_engineer_critical(
+        case.id,
+        user_id="engineer-1",
+    )
+
+    assert result is not None
+    assert task.status is TaskStatus.WAITING_HUMAN
+    assert case.current_task_id == task.id
+    assert case.case_metadata["engineer_critical_acknowledged_by"] == "engineer-1"
+    active = await service.list_dashboard(
+        view="active",
+        source_type=ProcurementSourceType.PRODUCTION_MATERIAL_ORDER.value,
+        engineer_workspace=True,
+    )
+    assert active["total_cases"] == 1
 
 
 @pytest.mark.asyncio

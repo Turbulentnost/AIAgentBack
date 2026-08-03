@@ -1,0 +1,79 @@
+.sub {
+  margin: 0;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+}
+
+.filters label {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  flex: 1 1 220px;
+  color: var(--color-text-secondary);
+  font-size: var(--form-label-size, 14px);
+  font-weight: var(--form-label-weight, 600);
+}
+
+.filters input {
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.meta {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.tableWrap {
+  overflow: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid var(--color-border);
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.table th {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--color-hover);
+}
+
+.table tbody tr:hover {
+  background: var(--color-hover);
+}
+
+.error {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+}

@@ -34,6 +34,10 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _aware_datetime(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def _is_active_spec(spec: ResourceSpecification, production_date: datetime) -> bool:
     if spec.deletion_mark or not spec.approved:
         return False
@@ -96,7 +100,10 @@ def validate_case(
                 "1c",
             )
         )
-    if not case.production_order_1c_ref:
+    is_direct_material_order = bool(needs) and all(
+        need.direct_quantity is not None for need in needs
+    )
+    if not case.production_order_1c_ref and not is_direct_material_order:
         issues.append(
             _issue(
                 "production_order_missing",
@@ -259,11 +266,13 @@ def _exclusion_reason(
         return "use_not_allowed"
     if not supply.exact_match:
         return "analogue_not_approved"
-    if supply.unit != material.unit:
+    if supply.unit != material.unit and supply.unit != "base_unit":
         return "unit_mismatch"
     if material.characteristic_id and supply.characteristic_id != material.characteristic_id:
         return "characteristic_mismatch"
-    if supply.available_at and supply.available_at > required_date:
+    if supply.available_at and _aware_datetime(supply.available_at) > _aware_datetime(
+        required_date
+    ):
         return "available_after_required_date"
     return None
 
@@ -471,10 +480,40 @@ def calculate_engineer_assessment(
                 * material.consumption_rate
                 * (Decimal("1") + material.technological_loss_percent / Decimal("100"))
             )
+            warehouse_stock_before = sum(
+                (
+                    remaining.get(supply.supply_id, Decimal("0"))
+                    for supply in supplies
+                    if supply.nomenclature_id == material.nomenclature_id
+                    and supply.source_type in OTHER_WAREHOUSE_TYPES
+                    and (
+                        not supply.warehouse_id
+                        or supply.warehouse_id == case.warehouse_1c_ref
+                    )
+                    and _exclusion_reason(
+                        supply,
+                        material=material,
+                        required_date=required_date,
+                    )
+                    is None
+                ),
+                Decimal("0"),
+            )
             included: list[tuple[EngineerSupplyItem, Decimal]] = []
             excluded: list[EngineerExcludedSupply] = []
             for supply in sorted(
-                supplies, key=lambda value: (value.available_at or now, value.supply_id)
+                supplies,
+                key=lambda value: (
+                    0
+                    if value.source_type in OTHER_WAREHOUSE_TYPES
+                    and (
+                        not value.warehouse_id
+                        or value.warehouse_id == case.warehouse_1c_ref
+                    )
+                    else 1,
+                    _aware_datetime(value.available_at) if value.available_at else now,
+                    value.supply_id,
+                ),
             ):
                 if supply.nomenclature_id != material.nomenclature_id:
                     continue
@@ -543,6 +582,11 @@ def calculate_engineer_assessment(
                 and supply.warehouse_id
                 and supply.warehouse_id != case.warehouse_1c_ref
             )
+            warehouse_stock_used = free_stock
+            warehouse_stock_remaining = max(
+                Decimal("0"),
+                warehouse_stock_before - warehouse_stock_used,
+            )
             confirmed_arrivals = sum(
                 breakdown.get(value, Decimal("0")) for value in FUTURE_SUPPLY_TYPES
             )
@@ -579,6 +623,9 @@ def calculate_engineer_assessment(
                     gross_requirement=gross,
                     free_stock=free_stock,
                     available_other_warehouses=other_stock,
+                    warehouse_stock_before=warehouse_stock_before,
+                    warehouse_stock_used=warehouse_stock_used,
+                    warehouse_stock_remaining=warehouse_stock_remaining,
                     confirmed_arrivals=confirmed_arrivals,
                     total_available_supply=available,
                     net_requirement=net,

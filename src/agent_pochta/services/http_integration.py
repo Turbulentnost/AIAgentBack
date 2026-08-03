@@ -43,5 +43,6 @@ class HttpIntegrationService(IntegrationService):
         return {
             "erp_document_number": data.get("erp_document_number") or data.get("document_number"),
             "erp_task_id": data.get("erp_task_id") or data.get("task_id"),
+            "erp_document_id": data.get("erp_document_id") or data.get("document_id") or data.get("ref_key"),
             "fields": data.get("fields") or payload,
         }

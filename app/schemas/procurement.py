@@ -86,6 +86,11 @@ class ProcurementCaseSummary(BaseModel):
     source_date: datetime | None = None
     source_status: str | None = None
     source_synced_at: datetime | None = None
+    source_basis_1c_ref: str | None = None
+    source_basis_type: str | None = None
+    source_basis_number: str | None = None
+    source_basis_date: datetime | None = None
+    source_basis_status: str | None = None
     status: str
     control_point: str | None = None
     current_agent_id: str | None = None
@@ -94,7 +99,10 @@ class ProcurementCaseSummary(BaseModel):
     required_date: datetime | None = None
     deadline_at: datetime | None = None
     positions_count: int = 0
+    created_at: datetime | None = None
     updated_at: datetime | None = None
+    coverage_checked_at: datetime | None = None
+    last_actualized_at: datetime | None = None
     summary: str | None = None
     requires_human_review: bool = False
     closed_at: datetime | None = None
@@ -104,20 +112,71 @@ class ProcurementCaseSummary(BaseModel):
     source_active: bool = False
     engineer_bucket: Literal["success", "attention", "critical"] | None = None
     engineer_bucket_reason: str | None = None
-    procurement_manager: dict[str, Any] = Field(default_factory=dict)
-    suppliers: list[dict[str, Any]] = Field(default_factory=list)
-    quotes: list[dict[str, Any]] = Field(default_factory=list)
-    comparison: dict[str, Any] | None = None
-    rfq_drafts: list[dict[str, Any]] = Field(default_factory=list)
-    approvals: list[dict[str, Any]] = Field(default_factory=list)
-    shipment_events: list[dict[str, Any]] = Field(default_factory=list)
-    payment_document_draft: dict[str, Any] | None = None
-    recommendation: dict[str, Any] | None = None
-    recommendation_audit: list[dict[str, Any]] = Field(default_factory=list)
-    # Bank allocation coverage for manager cards (warehouse/suppliers by deadline).
-    # Must be declared so response_model validation does not strip these fields.
-    order_coverage: dict[str, Any] | None = None
-    coverage: dict[str, Any] | None = None
+    engineer_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    engineer_decision_kind: Literal[
+        "none", "purchase_confirmation", "critical_acknowledgement"
+    ] | None = None
+    engineer_invoked_at: datetime | None = None
+    engineer_workspace_archived_at: datetime | None = None
+    engineer_action_at: datetime | None = None
+    engineer_critical_acknowledged_at: datetime | None = None
+    dispatcher_bucket: Literal["success", "attention", "critical"] | None = None
+    dispatcher_bucket_reason: str | None = None
+    dispatcher_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    dispatcher_decision_kind: Literal[
+        "none", "supply_confirmation", "critical_acknowledgement"
+    ] | None = None
+    dispatcher_invoked_at: datetime | None = None
+    dispatcher_workspace_archived_at: datetime | None = None
+    dispatcher_action_at: datetime | None = None
+    dispatcher_critical_acknowledged_at: datetime | None = None
+    dispatcher_stream: Literal["reorder_point", "after_engineer"] | None = None
+    department_name: str | None = None
+    picker_bucket: Literal["success", "attention", "critical"] | None = None
+    picker_bucket_reason: str | None = None
+    picker_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    picker_decision_kind: Literal[
+        "none",
+        "stock_confirmation",
+        "deficit_confirmation",
+        "discrepancy_return",
+        "critical_acknowledgement",
+    ] | None = None
+    picker_invoked_at: datetime | None = None
+    picker_workspace_archived_at: datetime | None = None
+    picker_action_at: datetime | None = None
+    picker_critical_acknowledged_at: datetime | None = None
+    complex_bucket: Literal["success", "attention", "critical"] | None = None
+    complex_bucket_reason: str | None = None
+    complex_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    complex_decision_kind: Literal[
+        "none",
+        "stock_confirmation",
+        "deficit_confirmation",
+        "discrepancy_return",
+        "critical_acknowledgement",
+    ] | None = None
+    complex_invoked_at: datetime | None = None
+    complex_workspace_archived_at: datetime | None = None
+    complex_action_at: datetime | None = None
+    complex_critical_acknowledged_at: datetime | None = None
+    purchase_manager_work_status: Literal[
+        "processing", "awaiting_action", "completed", "archived"
+    ] | None = None
+    purchase_manager_bucket: Literal["success", "attention", "critical"] | None = None
+    purchase_manager_bucket_reason: str | None = None
+    purchase_manager_invoked_at: datetime | None = None
+    purchase_manager_workspace_archived_at: datetime | None = None
+    supplier_coverage_status: Literal["none", "partial", "full"] | None = None
+    coverage_sources: list[str] = Field(default_factory=list)
 
 
 class ProcurementCaseDetail(ProcurementCaseSummary):
@@ -136,9 +195,6 @@ class ProcurementCaseDetail(ProcurementCaseSummary):
     priority_1c_ref: str | None = None
     assigned_agents: list[str] = Field(default_factory=list)
     deviation_summary: str | None = None
-    need_title: str | None = None
-    project_code: str | None = None
-    project_name: str | None = None
     latest_result: dict[str, Any] | None = None
     case_metadata: dict[str, Any] | None = None
     positions: list[ProcurementCasePositionRead] = Field(default_factory=list)
@@ -190,7 +246,6 @@ class ProcurementDashboardRead(BaseModel):
     groups: list[ProcurementSourceGroupRead] = Field(default_factory=list)
     total_cases: int = 0
     counts: ProcurementDashboardCounts = Field(default_factory=ProcurementDashboardCounts)
-    material_allocation_summary: dict[str, Any] | None = None
 
 
 class ProcurementRefreshResult(BaseModel):
@@ -216,6 +271,17 @@ class ProcurementRoleAgentResultRead(ProcurementRoleAgentResumeRequest):
     correlation_id: str
 
 
+class ProcurementEngineerActionRead(BaseModel):
+    status: str
+    action: Literal[
+        "purchase_confirmed",
+        "critical_acknowledged",
+        "supply_confirmed",
+        "picker_confirmed",
+    ]
+    case_id: str
+
+
 __all__ = [
     "ProcurementCaseDetail",
     "ProcurementCaseEventRead",
@@ -224,6 +290,7 @@ __all__ = [
     "ProcurementCurrentStateRead",
     "ProcurementDashboardCounts",
     "ProcurementDashboardRead",
+    "ProcurementEngineerActionRead",
     "ProcurementPermissionsRead",
     "ProcurementRefreshResult",
     "ProcurementRoleAgentResumeRequest",

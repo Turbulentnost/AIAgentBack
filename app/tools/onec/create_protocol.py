@@ -1,0 +1,550 @@
+"""
+Создание и удаление протокола совещания в 1С:ERP (OData).
+
+Сущности:
+  - Document_ТД_Протокол
+  - InformationRegister_ТД_ЗадачиПротоколов
+
+CLI:
+  python -m app.tools.onec.create_protocol create --number "НСР_001_О_001" --comment "Тест"
+  python -m app.tools.onec.create_protocol create --topic-key ... --manager-fio "..." --meeting-type Отчетное --department-key ...
+  python -m app.tools.onec.create_protocol delete --number "НСР_001_О_001"
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+from urllib.parse import quote
+
+import requests
+
+from app.tools.onec.connection import CONFIG, ODataConfig, create_session
+from app.tools.onec.get_meetings import entity_url
+from app.tools.onec.lookup_user_ref import is_empty_key, resolve_user_by_fio
+from app.tools.onec.meeting_topic_participants import (
+    extract_participant_keys,
+    fetch_participant_rows,
+)
+
+PROTOCOL_DOCUMENT = "Document_ТД_Протокол"
+PROTOCOL_TASKS_REGISTER = "InformationRegister_ТД_ЗадачиПротоколов"
+PROTOCOL_ATTENDEES_SECTION = "ПрисутствующиеНаСовещании"
+DEFAULT_MEETING_TYPE = "Отчетное"
+DEFAULT_STATUS = "Подготовлен"
+TOPIC_TYPE = "StandardODATA.Catalog_ТД_ТемыСовещаний"
+DEPARTMENT_TYPE = "StandardODATA.Catalog_ПодразделенияОрганизаций"
+ROOM_TYPE = "StandardODATA.Catalog_CRM_Помещения"
+USER_TYPE = "StandardODATA.Catalog_Пользователи"
+
+
+def fetch_protocol_by_ref(
+    session: requests.Session,
+    config: ODataConfig,
+    ref_key: str,
+) -> dict[str, Any]:
+    response = session.get(
+        f"{entity_url(config.url, PROTOCOL_DOCUMENT)}(guid'{ref_key}')?$format=json",
+        timeout=config.timeout,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"Протокол не найден: HTTP {response.status_code}: {response.text[:400]}"
+        )
+    return response.json()
+
+
+def fetch_protocol_by_number(
+    session: requests.Session,
+    config: ODataConfig,
+    number: str,
+) -> dict[str, Any] | None:
+    safe_number = number.replace("'", "''")
+    url = (
+        f"{entity_url(config.url, PROTOCOL_DOCUMENT)}"
+        f"?$filter=Number eq '{safe_number}'&$top=1&$format=json"
+    )
+    response = session.get(url, timeout=config.timeout)
+    if not response.ok:
+        raise RuntimeError(
+            f"Ошибка поиска протокола: HTTP {response.status_code}: {response.text[:400]}"
+        )
+    rows = response.json().get("value") or []
+    return rows[0] if rows else None
+
+
+def fetch_previous_protocol_by_topic(
+    session: requests.Session,
+    config: ODataConfig,
+    topic_key: str,
+    *,
+    before: datetime | None = None,
+) -> dict[str, Any] | None:
+    normalized_topic_key = str(topic_key or "").strip()
+    if is_empty_key(normalized_topic_key):
+        return None
+
+    filter_parts = [
+        "DeletionMark eq false",
+        f"ТемаСовещания_Key eq guid'{normalized_topic_key}'",
+    ]
+    if before is not None:
+        if before.tzinfo is not None:
+            before = before.astimezone(timezone.utc).replace(tzinfo=None)
+        before_text = before.strftime("%Y-%m-%dT%H:%M:%S")
+        filter_parts.append(f"Date lt datetime'{before_text}'")
+
+    url = (
+        f"{entity_url(config.url, PROTOCOL_DOCUMENT)}"
+        f"?$filter={quote(' and '.join(filter_parts), safe='')}"
+        f"&$orderby=Date desc&$top=1&$format=json"
+    )
+    response = session.get(url, timeout=config.timeout)
+    if not response.ok:
+        raise RuntimeError(
+            "Ошибка поиска предыдущего протокола: "
+            f"HTTP {response.status_code}: {response.text[:400]}"
+        )
+    rows = response.json().get("value") or []
+    return rows[0] if rows else None
+
+
+def resolve_protocol_attendee_person_keys(
+    session: requests.Session,
+    config: ODataConfig,
+    participant_ref_keys: list[str],
+) -> list[str]:
+    """В протоколе Участник_Key — это Catalog_ФизическиеЛица, не Catalog_Пользователи."""
+    from app.tools.onec.lookup_user_ref import resolve_person_keys_by_refs
+
+    return resolve_person_keys_by_refs(
+        session,
+        participant_ref_keys,
+        config=config,
+        error_context="участника протокола",
+    )
+
+
+def build_protocol_attendees_rows(
+    participant_person_keys: list[str],
+    *,
+    document_ref_key: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, participant_ref in enumerate(participant_person_keys, start=1):
+        ref_key = str(participant_ref or "").strip()
+        if is_empty_key(ref_key):
+            continue
+        rows.append(
+            {
+                "Ref_Key": document_ref_key,
+                "LineNumber": str(index),
+                "Участник_Key": ref_key,
+            }
+        )
+    return rows
+
+
+def resolve_topic_participant_ref_keys(
+    session: requests.Session,
+    config: ODataConfig,
+    topic_key: str,
+) -> list[str]:
+    normalized_topic_key = str(topic_key or "").strip()
+    if is_empty_key(normalized_topic_key):
+        raise ValueError("Не указан Ref_Key темы совещания для участников протокола")
+    rows = fetch_participant_rows(session, config, normalized_topic_key)
+    participant_keys = extract_participant_keys(rows)
+    if not participant_keys:
+        raise ValueError(
+            "У темы совещания не указаны участники — укажите их при создании темы, "
+            "чтобы они попали в протокол"
+        )
+    return participant_keys
+
+
+def _apply_user_ref(
+    session: requests.Session,
+    config: ODataConfig,
+    payload: dict[str, Any],
+    *,
+    field_key: str,
+    fio: str | None,
+) -> None:
+    if not fio:
+        return
+    user_ref, _, _ = resolve_user_by_fio(session, fio, config=config)
+    payload[field_key] = user_ref
+    payload[f"{field_key.replace('_Key', '')}_Type"] = USER_TYPE
+
+
+def _apply_ref_field(
+    payload: dict[str, Any],
+    *,
+    field_key: str,
+    ref_key: str | None,
+    ref_type: str | None,
+    type_field_key: str | None = None,
+) -> None:
+    normalized = str(ref_key or "").strip()
+    if is_empty_key(normalized) or not ref_type:
+        return
+    payload[field_key] = normalized
+    payload[type_field_key or f"{field_key.replace('_Key', '')}_Type"] = ref_type
+
+
+def build_protocol_payload(
+    *,
+    number: str | None = None,
+    comment: str = "",
+    manager_fio: str | None = None,
+    responsible_fio: str | None = None,
+    prepared_by_fio: str | None = None,
+    topic_key: str | None = None,
+    meeting_type: str | None = None,
+    department_key: str | None = None,
+    room_key: str | None = None,
+    next_meeting_date: str | None = None,
+    basis_key: str | None = None,
+    basis_type: str | None = None,
+    participant_ref_keys: list[str] | None = None,
+    session: requests.Session | None = None,
+    config: ODataConfig = CONFIG,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    payload: dict[str, Any] = {
+        "Ref_Key": str(uuid.uuid4()),
+        "Date": now,
+        "ДатаСоздания": now,
+        "DeletionMark": False,
+        "Posted": False,
+        "Комментарий": comment,
+        "Статус": DEFAULT_STATUS,
+        "ВидСовещания": meeting_type or DEFAULT_MEETING_TYPE,
+    }
+    normalized_number = (number or "").strip()
+    if normalized_number:
+        payload["Number"] = normalized_number
+
+    _apply_ref_field(
+        payload,
+        field_key="ТемаСовещания_Key",
+        ref_key=topic_key,
+        ref_type=TOPIC_TYPE if topic_key else None,
+    )
+    _apply_ref_field(
+        payload,
+        field_key="Подразделение_Key",
+        ref_key=department_key,
+        ref_type=DEPARTMENT_TYPE if department_key else None,
+    )
+    _apply_ref_field(
+        payload,
+        field_key="Кабинет_Key",
+        ref_key=room_key,
+        ref_type=ROOM_TYPE if room_key else None,
+    )
+    _apply_ref_field(
+        payload,
+        field_key="ДокументОснование",
+        ref_key=basis_key,
+        ref_type=basis_type if basis_key else None,
+        type_field_key="ДокументОснование_Type",
+    )
+    if next_meeting_date:
+        payload["ДатаСледующегоСовещания"] = next_meeting_date
+
+    if session is not None:
+        _apply_user_ref(session, config, payload, field_key="Руководитель_Key", fio=manager_fio)
+        _apply_user_ref(session, config, payload, field_key="Ответственный_Key", fio=responsible_fio)
+        _apply_user_ref(session, config, payload, field_key="Подготовил_Key", fio=prepared_by_fio)
+
+    attendee_keys = list(participant_ref_keys or [])
+    if not attendee_keys and topic_key and session is not None:
+        attendee_keys = resolve_topic_participant_ref_keys(session, config, topic_key)
+    if attendee_keys:
+        if session is None:
+            raise ValueError(
+                "Для заполнения участников протокола нужна активная OData-сессия"
+            )
+        person_keys = resolve_protocol_attendee_person_keys(session, config, attendee_keys)
+        payload[PROTOCOL_ATTENDEES_SECTION] = build_protocol_attendees_rows(
+            person_keys,
+            document_ref_key=str(payload["Ref_Key"]),
+        )
+    elif topic_key:
+        raise ValueError(
+            "У темы совещания не указаны участники — укажите их при создании темы, "
+            "чтобы они попали в протокол"
+        )
+    return payload
+
+
+def post_protocol_document(
+    session: requests.Session,
+    config: ODataConfig,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    response = session.post(
+        f"{entity_url(config.url, PROTOCOL_DOCUMENT)}?$format=json",
+        json=payload,
+        timeout=config.timeout,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"Ошибка создания протокола: HTTP {response.status_code}: {response.text[:1200]}"
+        )
+    return response.json()
+
+
+def post_protocol_task(
+    session: requests.Session,
+    config: ODataConfig,
+    *,
+    protocol_ref: str,
+    protocol_body: dict[str, Any],
+    item_number: int,
+    task_text: str,
+    due_date: str | None = None,
+    responsible_fio: str | None = None,
+) -> dict[str, Any]:
+    due = due_date or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    payload: dict[str, Any] = {
+        "Протокол_Key": protocol_ref,
+        "Протокол_Type": f"StandardODATA.{PROTOCOL_DOCUMENT}",
+        "ИдентификаторЗадачи": str(uuid.uuid4()),
+        "НомерПунктаПротокола": item_number,
+        "Задача": task_text,
+        "СрокИсполнения": due,
+    }
+    for key in ("ТемаСовещания_Key",):
+        value = protocol_body.get(key)
+        if value and not is_empty_key(value):
+            payload[key] = value
+            type_key = key.replace("_Key", "_Type")
+            if protocol_body.get(type_key):
+                payload[type_key] = protocol_body[type_key]
+
+    if responsible_fio:
+        user_ref, _, _ = resolve_user_by_fio(session, responsible_fio, config=config)
+        payload["Ответственный_Key"] = user_ref
+        payload["Ответственный_Type"] = protocol_body.get("Ответственный_Type") or USER_TYPE
+
+    response = session.post(
+        f"{entity_url(config.url, PROTOCOL_TASKS_REGISTER)}?$format=json",
+        json=payload,
+        timeout=config.timeout,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"Ошибка создания пункта протокола: HTTP {response.status_code}: {response.text[:1200]}"
+        )
+    return response.json()
+
+
+def ensure_protocol_number_in_body(
+    session: requests.Session,
+    config: ODataConfig,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """OData POST иногда не возвращает Number — перечитываем документ по Ref_Key."""
+    if (body.get("Number") or "").strip():
+        return body
+    ref_key = (body.get("Ref_Key") or "").strip()
+    if not ref_key:
+        return body
+    refreshed = fetch_protocol_by_ref(session, config, ref_key)
+    if (refreshed.get("Number") or "").strip():
+        body["Number"] = refreshed["Number"]
+    return body
+
+
+def create_meeting_protocol(
+    *,
+    number: str | None = None,
+    comment: str = "",
+    manager_fio: str | None = None,
+    responsible_fio: str | None = None,
+    prepared_by_fio: str | None = None,
+    topic_key: str | None = None,
+    meeting_type: str | None = None,
+    department_key: str | None = None,
+    room_key: str | None = None,
+    next_meeting_date: str | None = None,
+    basis_key: str | None = None,
+    basis_type: str | None = None,
+    participant_ref_keys: list[str] | None = None,
+    tasks: list[dict[str, Any]] | None = None,
+    config: ODataConfig = CONFIG,
+) -> dict[str, Any]:
+    normalized_number = (number or "").strip() or None
+
+    session = create_session(config)
+    payload = build_protocol_payload(
+        number=normalized_number,
+        comment=comment,
+        manager_fio=manager_fio,
+        responsible_fio=responsible_fio,
+        prepared_by_fio=prepared_by_fio,
+        topic_key=topic_key,
+        meeting_type=meeting_type,
+        department_key=department_key,
+        room_key=room_key,
+        next_meeting_date=next_meeting_date,
+        basis_key=basis_key,
+        basis_type=basis_type,
+        participant_ref_keys=participant_ref_keys,
+        session=session,
+        config=config,
+    )
+    body = post_protocol_document(session, config, payload)
+    body = ensure_protocol_number_in_body(session, config, body)
+
+    created_tasks: list[dict[str, Any]] = []
+    for index, task in enumerate(tasks or [], start=1):
+        task_text = str(task.get("text") or task.get("task") or "").strip()
+        if not task_text:
+            raise ValueError(f"Пустой текст пункта протокола #{index}")
+        task_body = post_protocol_task(
+            session,
+            config,
+            protocol_ref=body["Ref_Key"],
+            protocol_body=body,
+            item_number=int(task.get("item_number") or index),
+            task_text=task_text,
+            due_date=task.get("due_date"),
+            responsible_fio=task.get("responsible_fio"),
+        )
+        created_tasks.append(
+            {
+                "item_number": task_body.get("НомерПунктаПротокола"),
+                "task_id": task_body.get("ИдентификаторЗадачи"),
+                "text": task_body.get("Задача"),
+                "due_date": task_body.get("СрокИсполнения"),
+                "responsible_ref": task_body.get("Ответственный_Key"),
+            }
+        )
+
+    return {
+        "protocol": {
+            "ref_key": body.get("Ref_Key"),
+            "number": body.get("Number"),
+            "date": body.get("Date"),
+            "status": body.get("Статус"),
+            "posted": body.get("Posted"),
+            "comment": body.get("Комментарий"),
+        },
+        "tasks": created_tasks,
+    }
+
+
+def delete_meeting_protocol(
+    *,
+    ref_key: str | None = None,
+    number: str | None = None,
+    config: ODataConfig = CONFIG,
+) -> dict[str, Any]:
+    ref_key = (ref_key or "").strip() or None
+    number = (number or "").strip() or None
+    if not ref_key and not number:
+        raise ValueError("Укажите ref_key или number протокола")
+
+    session = create_session(config)
+    resolved_number = number
+    if not ref_key:
+        row = fetch_protocol_by_number(session, config, number or "")
+        if row is None:
+            raise ValueError(f"Протокол с номером «{number}» не найден")
+        ref_key = row["Ref_Key"]
+        resolved_number = row.get("Number")
+
+    response = session.delete(
+        f"{entity_url(config.url, PROTOCOL_DOCUMENT)}(guid'{ref_key}')",
+        timeout=config.timeout,
+    )
+    if response.status_code not in (200, 204):
+        raise RuntimeError(
+            f"Ошибка удаления протокола: HTTP {response.status_code}: {response.text[:400]}"
+        )
+    return {
+        "ref_key": ref_key,
+        "number": resolved_number,
+        "deleted": True,
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Создание и удаление протокола 1С через OData.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    create_parser = subparsers.add_parser("create", help="Создать протокол")
+    create_parser.add_argument(
+        "--number",
+        help="Номер протокола, например НСР_001_О_001; если не указан — нумерация 1С",
+    )
+    create_parser.add_argument("--comment", default="", help="Комментарий документа")
+    create_parser.add_argument("--manager-fio", help="ФИО руководителя")
+    create_parser.add_argument("--responsible-fio", help="ФИО ответственного")
+    create_parser.add_argument("--prepared-by-fio", help="ФИО подготовившего")
+    create_parser.add_argument("--topic-key", help="Ref_Key темы совещания")
+    create_parser.add_argument("--meeting-type", help="Вид совещания, например Отчетное")
+    create_parser.add_argument("--department-key", help="Ref_Key подразделения протокола")
+    create_parser.add_argument("--room-key", help="Ref_Key кабинета/переговорной")
+    create_parser.add_argument("--next-meeting-date", help="Дата следующего совещания (ISO)")
+    create_parser.add_argument("--basis-key", help="Ref_Key документа-основания")
+    create_parser.add_argument("--basis-type", help="Тип документа-основания (OData)")
+    create_parser.add_argument("--task", action="append", default=[], help="Текст пункта протокола")
+    create_parser.add_argument("-o", "--output", help="Путь к JSON-файлу результата")
+
+    delete_parser = subparsers.add_parser("delete", help="Удалить протокол")
+    delete_parser.add_argument("--ref-key", help="Ref_Key протокола")
+    delete_parser.add_argument("--number", help="Номер протокола")
+    delete_parser.add_argument("-o", "--output", help="Путь к JSON-файлу результата")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+    args = build_parser().parse_args(argv)
+    try:
+        if args.command == "create":
+            tasks = [{"text": text} for text in args.task if str(text).strip()]
+            result = create_meeting_protocol(
+                number=args.number,
+                comment=args.comment,
+                manager_fio=args.manager_fio,
+                responsible_fio=args.responsible_fio,
+                prepared_by_fio=args.prepared_by_fio,
+                topic_key=args.topic_key,
+                meeting_type=args.meeting_type,
+                department_key=args.department_key,
+                room_key=args.room_key,
+                next_meeting_date=args.next_meeting_date,
+                basis_key=args.basis_key,
+                basis_type=args.basis_type,
+                tasks=tasks or None,
+            )
+        else:
+            result = delete_meeting_protocol(ref_key=args.ref_key, number=args.number)
+    except (requests.RequestException, RuntimeError, ValueError) as error:
+        print(f"Ошибка: {error}", file=sys.stderr)
+        return 1
+
+    text = json.dumps(result, ensure_ascii=False, indent=2, default=str)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as file:
+            file.write(text)
+        print(f"Сохранено: {args.output}")
+    else:
+        print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

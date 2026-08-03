@@ -151,17 +151,31 @@ def test_manager_queue_statuses_exclude_engineer_stages() -> None:
     assert "human_required" not in MANAGER_QUEUE_STATUSES
     assert "agent_waiting" not in MANAGER_QUEUE_STATUSES
     assert "data_check" not in MANAGER_QUEUE_STATUSES
+    # Queue is coverage-driven (already purchasing), not bare case status.
     assert case_in_manager_queue(
-        current_agent_id="procurement_logistics_agent",
-        status="human_required",
+        current_agent_id="purchase_manager_agent",
+        status="ordered",
+        purchase_manager_invoked_at="2026-07-29T00:00:00+00:00",
+        supplier_coverage_status="full",
+    )
+    assert case_in_manager_queue(
+        current_agent_id="warehouse_picker_agent",
+        status="agent_waiting",
+        purchase_manager_invoked_at="2026-07-29T00:00:00+00:00",
+        supplier_coverage_status="partial",
     )
     assert not case_in_manager_queue(
         current_agent_id="production_preparation_engineer_agent",
         status="human_required",
     )
-    assert case_in_manager_queue(
+    assert not case_in_manager_queue(
         current_agent_id=None,
         status="purchase_draft",
+    )
+    assert case_in_manager_queue(
+        current_agent_id="purchase_manager_agent",
+        status="agent_waiting",
+        purchase_manager_invoked_at="2026-07-29T00:00:00+00:00",
     )
 
 

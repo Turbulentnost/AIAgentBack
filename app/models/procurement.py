@@ -100,6 +100,11 @@ class ProcurementCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         order_by="ProcurementCasePosition.line_number",
     )
+    supplier_order_links: Mapped[list["ProcurementSupplierOrderLink"]] = relationship(
+        back_populates="case",
+        cascade="all, delete-orphan",
+        order_by="ProcurementSupplierOrderLink.order_date",
+    )
 
 
 class ProcurementCasePosition(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -161,6 +166,66 @@ class ProcurementCaseEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     case: Mapped[ProcurementCase] = relationship(back_populates="events")
 
 
+class ProcurementSupplierOrderLink(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "procurement_supplier_order_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "case_id",
+            "supplier_order_1c_ref",
+            name="uq_procurement_supplier_order_links_case_order",
+        ),
+    )
+
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("procurement_cases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    supplier_order_1c_ref: Mapped[str] = mapped_column(String(64), index=True)
+    supplier_order_number: Mapped[str | None] = mapped_column(String(128), index=True)
+    order_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    order_status: Mapped[str | None] = mapped_column(String(128), index=True)
+    basis_1c_ref: Mapped[str | None] = mapped_column(String(64), index=True)
+    basis_type: Mapped[str | None] = mapped_column(String(255))
+    root_source_1c_ref: Mapped[str | None] = mapped_column(String(64), index=True)
+    root_source_type: Mapped[str | None] = mapped_column(String(64), index=True)
+    chain: Mapped[list | None] = mapped_column(JSONB)
+    first_detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+    case: Mapped[ProcurementCase] = relationship(back_populates="supplier_order_links")
+    lines: Mapped[list["ProcurementSupplierOrderLine"]] = relationship(
+        back_populates="link",
+        cascade="all, delete-orphan",
+        order_by="ProcurementSupplierOrderLine.line_number",
+    )
+
+
+class ProcurementSupplierOrderLine(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "procurement_supplier_order_lines"
+    __table_args__ = (
+        UniqueConstraint(
+            "link_id",
+            "line_id",
+            name="uq_procurement_supplier_order_lines_link_line",
+        ),
+    )
+
+    link_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("procurement_supplier_order_links.id", ondelete="CASCADE"),
+        index=True,
+    )
+    line_id: Mapped[str] = mapped_column(String(128))
+    line_number: Mapped[int] = mapped_column(Integer, default=0)
+    nomenclature_id: Mapped[str] = mapped_column(String(64), index=True)
+    characteristic_id: Mapped[str | None] = mapped_column(String(64))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=0)
+    cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
+    raw_payload: Mapped[dict | None] = mapped_column(JSONB)
+
+    link: Mapped[ProcurementSupplierOrderLink] = relationship(back_populates="lines")
+
+
 class ProcurementSourceSyncState(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "procurement_source_sync_state"
     __table_args__ = (
@@ -195,5 +260,7 @@ __all__ = [
     "ProcurementCase",
     "ProcurementCaseEvent",
     "ProcurementCasePosition",
+    "ProcurementSupplierOrderLine",
+    "ProcurementSupplierOrderLink",
     "ProcurementSourceSyncState",
 ]

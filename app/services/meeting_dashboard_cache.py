@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.meeting_memo_cache import patch_dashboard_payload_slot, patch_dashboard_payload_status
+from app.services.meeting_memo_cache import _dashboard_items
 from app.services.meeting_redis_ops import meeting_redis_get, meeting_redis_setex
 
 logger = get_logger(__name__)
@@ -35,11 +37,41 @@ def _payload_from_cached(cached: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _repair_cached_payload(payload: dict[str, Any], day: date) -> dict[str, Any]:
+    repaired = dict(payload)
+    repaired.setdefault("date", day.isoformat())
+    repaired.setdefault("unapproved", [])
+    repaired.setdefault("today", [])
+    repaired.setdefault("counts", {})
+    if not repaired.get("items"):
+        merged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for group in (repaired.get("unapproved") or [], repaired.get("today") or []):
+            for item in group:
+                ref_key = str(item.get("ref_key") or "").strip()
+                key = ref_key or f"number:{item.get('number')}"
+                if key not in merged:
+                    order.append(key)
+                merged[key] = item
+        repaired["items"] = [merged[key] for key in order]
+    return repaired
+
+
+def _cache_has_queue_people_schema(cached: dict[str, Any]) -> bool:
+    payload = _payload_from_cached(cached)
+    items = _dashboard_items(payload)
+    if not items:
+        return True
+    return all("initiator" in item and "manager" in item for item in items)
+
+
 def _is_usable_cache(cached: dict[str, Any]) -> bool:
+    if not _cache_has_queue_people_schema(cached):
+        return False
     if cached.get("fetch_ok") is True:
         return True
     counts = cached.get("counts") or {}
-    return bool(counts.get("unapproved") or counts.get("today"))
+    return bool(counts.get("unapproved") or counts.get("today") or counts.get("items"))
 
 
 def _parse_cached_payload(raw: str) -> dict[str, Any]:
@@ -77,7 +109,8 @@ class MeetingDashboardCacheService:
             cached = await self._read_cache(day)
             if cached is not None and _is_usable_cache(cached):
                 fetched_at = cached["fetched_at"]
-                return _payload_from_cached(cached), fetched_at, True
+                payload = _repair_cached_payload(_payload_from_cached(cached), day)
+                return payload, fetched_at, True
 
         payload, fetched_at = await self._fetch_and_store(day)
         return payload, fetched_at, False
@@ -96,7 +129,8 @@ class MeetingDashboardCacheService:
             cached = await self._read_cache(day)
             if cached is not None and _is_usable_cache(cached):
                 fetched_at = cached["fetched_at"]
-                return _payload_from_cached(cached), fetched_at, True, str(exc)
+                payload = _repair_cached_payload(_payload_from_cached(cached), day)
+                return payload, fetched_at, True, str(exc)
             raise
 
     async def warmup(self, *, target_date: date | None = None) -> dict[str, Any]:
@@ -119,14 +153,21 @@ class MeetingDashboardCacheService:
 
     async def _fetch_and_store(self, day: date) -> tuple[dict[str, Any], datetime]:
         from app.agents.meeting_agent.dashboard import get_meeting_dashboard
+        from app.services.meeting_memo_cache import warm_memo_details_from_dashboard
 
         fetched_at = datetime.now(timezone.utc)
         payload = await asyncio.to_thread(get_meeting_dashboard, target_date=day)
         if settings.MEETING_DASHBOARD_CACHE_ENABLED:
             await self._write_cache(day, payload, fetched_at=fetched_at)
-            from app.services.meeting_memo_cache import warm_memo_details_from_dashboard
-
-            await warm_memo_details_from_dashboard(payload)
+            try:
+                # Текст СЗ дотягивается в get_meeting_dashboard и кладётся в per-memo кэш.
+                await warm_memo_details_from_dashboard(payload)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "meeting_memo_text_warm_failed",
+                    date=day.isoformat(),
+                    error=str(exc),
+                )
         return payload, fetched_at
 
     async def _read_cache(self, day: date) -> dict[str, Any] | None:
@@ -160,3 +201,64 @@ class MeetingDashboardCacheService:
                 date=day.isoformat(),
                 error=str(exc),
             )
+
+    async def patch_status(
+        self,
+        ref_key: str,
+        status: str,
+        *,
+        target_date: date | None = None,
+    ) -> bool:
+        """Обновляет статус СЗ в dashboard-кэше без запроса в 1С."""
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return False
+        day = target_date or date.today()
+        cached = await self._read_cache(day)
+        if cached is None:
+            return False
+        payload = _payload_from_cached(cached)
+        if not any(
+            (item.get("ref_key") or "").strip().lower() == ref_key.strip().lower()
+            for item in _dashboard_items(payload)
+        ):
+            return False
+        patched_payload = patch_dashboard_payload_status(payload, ref_key, status)
+        fetched_at = cached.get("fetched_at")
+        if not isinstance(fetched_at, datetime):
+            fetched_at = datetime.now(timezone.utc)
+        await self._write_cache(day, patched_payload, fetched_at=fetched_at)
+        return True
+
+    async def patch_meeting_slot(
+        self,
+        ref_key: str,
+        *,
+        slot_start: str,
+        slot_end: str,
+        location: str | None = None,
+        target_date: date | None = None,
+    ) -> bool:
+        if not settings.MEETING_DASHBOARD_CACHE_ENABLED:
+            return False
+        day = target_date or date.today()
+        cached = await self._read_cache(day)
+        if cached is None:
+            return False
+        payload = _payload_from_cached(cached)
+        if not any(
+            (item.get("ref_key") or "").strip().lower() == ref_key.strip().lower()
+            for item in _dashboard_items(payload)
+        ):
+            return False
+        patched_payload = patch_dashboard_payload_slot(
+            payload,
+            ref_key,
+            slot_start=slot_start,
+            slot_end=slot_end,
+            location=location,
+        )
+        fetched_at = cached.get("fetched_at")
+        if not isinstance(fetched_at, datetime):
+            fetched_at = datetime.now(timezone.utc)
+        await self._write_cache(day, patched_payload, fetched_at=fetched_at)
+        return True

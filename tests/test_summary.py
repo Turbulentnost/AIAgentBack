@@ -5,7 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from agent_pochta.schemas import Attachment, EmailMessage, RoutingResult, Priority
-from agent_pochta.services.summary import build_summary_context, clamp_summary, prepare_text_for_summary
+from agent_pochta.services.summary import (
+    build_summary_context,
+    clamp_summary,
+    extract_partner_from_signature,
+    looks_like_chat_reply,
+    prepare_text_for_summary,
+    sanitize_summary_ru,
+)
 
 
 def test_prepare_text_strips_signature():
@@ -14,11 +21,67 @@ def test_prepare_text_strips_signature():
     assert "Иванов" not in prepare_text_for_summary(text)
 
 
+def test_extract_partner_from_signature_lan_service():
+    body = (
+        "Добрый день! ОЛ 31222, 31340 отправлены в просчет.\n\n"
+        "С уважением,\n"
+        "Менеджер\n"
+        "ООО ЛАН-Сервис"
+    )
+    assert extract_partner_from_signature(body) == "ООО ЛАН-Сервис"
+
+
+def test_extract_partner_from_signature_karbin():
+    body = (
+        "Просим согласовать спецификацию.\n\n"
+        "С уважением,\n"
+        "Иванов И.И.\n"
+        "ООО «Карбин»\n"
+        "тел. +7 (863) 123-45-67"
+    )
+    assert extract_partner_from_signature(body) == "ООО «Карбин»"
+
+
+def test_build_summary_context_includes_email_signature():
+    body = "Текст запроса.\n\nС уважением,\nООО ЛАН-Сервис"
+    email = EmailMessage(
+        message_id="<sig@example>",
+        mailbox="info@turbo-don.ru",
+        sender_email="sales@lan-service.ru",
+        subject="ОЛ 31222",
+        body_text=body,
+        received_at=datetime.now(timezone.utc),
+    )
+    ctx = build_summary_context(email, body)
+    assert "ООО ЛАН-Сервис" in ctx["email_signature"]
+
+
 def test_clamp_summary_limits_sentences():
     text = "Первое. Второе. Третье. Четвёртое. Пятое. Шестое."
     result = clamp_summary(text, max_sentences=3, max_chars=500)
     assert result.count(".") == 3
     assert "Шестое" not in result
+
+
+def test_looks_like_chat_reply_detects_greeting_assistant():
+    bad = (
+        "Здравствуйте, Роман! Спасибо за ваше сообщение. "
+        "В «Турбулентность Дон» вам может потребоваться обратиться "
+        "к руководителю отдела персонала."
+    )
+    assert looks_like_chat_reply(bad) is True
+    assert sanitize_summary_ru(bad) == ""
+    assert clamp_summary(bad) == ""
+
+
+def test_clamp_summary_keeps_official_office_overview():
+    good = (
+        "Роман (внешний отправитель) спрашивает о порядке обращения в отдел персонала. "
+        "Требуется маршрутизировать письмо в профильный отдел."
+    )
+    assert looks_like_chat_reply(good) is False
+    assert sanitize_summary_ru(good) == good
+    assert "отдел персонала" in clamp_summary(good)
 
 
 def test_build_summary_context_includes_attachment_text():

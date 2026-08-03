@@ -34,8 +34,8 @@ async def _require_otk_worker(db: DbSession, user: CurrentUser) -> None:
         )
 
 
-def _service() -> OtkPresentationService:
-    return OtkPresentationService()
+def _service(db: DbSession) -> OtkPresentationService:
+    return OtkPresentationService(db=db)
 
 
 @router.get("/presentations", response_model=OtkPresentationListResponse)
@@ -44,7 +44,7 @@ async def list_otk_presentations(
     current_user: CurrentUser,
 ) -> OtkPresentationListResponse:
     await _require_otk_worker(db, current_user)
-    return _service().list_presentations()
+    return await _service(db).list_presentations()
 
 
 @router.post(
@@ -68,7 +68,7 @@ async def get_otk_presentation(
     current_user: CurrentUser,
 ) -> OtkPresentationCardRead:
     await _require_otk_worker(db, current_user)
-    card = _service().get_presentation(presentation_id)
+    card = await _service(db).get_presentation(presentation_id)
     if card is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Предъявление не найдено")
     return card
@@ -82,7 +82,7 @@ async def update_otk_presentation(
     current_user: CurrentUser,
 ) -> OtkPresentationCardRead:
     await _require_otk_worker(db, current_user)
-    card = _service().update_presentation(presentation_id, payload)
+    card = await _service(db).update_presentation(presentation_id, payload)
     if card is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Предъявление не найдено")
     return card
@@ -100,7 +100,7 @@ async def add_otk_line(
     current_user: CurrentUser,
 ) -> OtkPresentationCardRead:
     await _require_otk_worker(db, current_user)
-    card = _service().add_line(presentation_id, payload)
+    card = await _service(db).add_line(presentation_id, payload)
     if card is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Предъявление не найдено")
     return card
@@ -118,7 +118,7 @@ async def update_otk_line(
     current_user: CurrentUser,
 ) -> OtkPresentationCardRead:
     await _require_otk_worker(db, current_user)
-    card = _service().update_line(presentation_id, line_id, payload)
+    card = await _service(db).update_line(presentation_id, line_id, payload)
     if card is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -138,9 +138,9 @@ async def delete_otk_line(
     current_user: CurrentUser,
 ) -> OtkPresentationCardRead:
     await _require_otk_worker(db, current_user)
-    if _service().get_presentation(presentation_id) is None:
+    if await _service(db).get_presentation(presentation_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Предъявление не найдено")
-    card = _service().delete_line(presentation_id, line_id)
+    card = await _service(db).delete_line(presentation_id, line_id)
     if card is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Строка не найдена")
     return card
@@ -156,7 +156,7 @@ async def write_otk_check_to_1c(
     current_user: CurrentUser,
 ) -> OtkWriteTo1CResult:
     await _require_otk_worker(db, current_user)
-    result = _service().write_check_to_1c(presentation_id)
+    result = await _service(db).write_check_to_1c(presentation_id)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Предъявление не найдено")
     return result

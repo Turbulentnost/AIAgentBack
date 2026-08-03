@@ -34,7 +34,7 @@ def test_build_orders_still_generates_varied_project_orders_for_tests() -> None:
         for line in item["positions"]
     }
     assert len(noms) >= 12
-    assert all(item["current_agent_id"] == "procurement_logistics_agent" for item in orders)
+    assert all(item["current_agent_id"] == "purchase_manager_agent" for item in orders)
 
 
 def test_write_fixture_roundtrip(tmp_path: Path) -> None:

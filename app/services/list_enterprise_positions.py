@@ -38,7 +38,9 @@ from app.integrations.onec_odata import create_session, fetch_all, get_odata_bas
 from app.utils.department_classification import is_position_like_department_name
 from app.utils.position_names import position_display_name
 
-sys.stdout.reconfigure(encoding="utf-8")
+stdout_reconfigure = getattr(sys.stdout, "reconfigure", None)
+if callable(stdout_reconfigure):
+    stdout_reconfigure(encoding="utf-8")
 print = functools.partial(print, flush=True)
 
 EMPLOYEE_ENTITY = "Catalog_Сотрудники"

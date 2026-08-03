@@ -28,10 +28,57 @@ _beat_schedule["recover-stale-knowledge-base-indexing-jobs"] = {
     "options": {"queue": "indexing"},
 }
 if settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
-    _beat_schedule["poll-procurement-sources"] = {
-        "task": "poll_procurement_sources",
+    _beat_schedule["sync-procurement-material-orders"] = {
+        "task": "sync_procurement_material_orders",
         "schedule": float(settings.PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS),
-        "options": {"queue": "procurement_poll"},
+        "options": {
+            "queue": "procurement_poll",
+            "expires": settings.PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS,
+        },
+    }
+    _beat_schedule["poll-procurement-reorder-points"] = {
+        "task": "poll_procurement_reorder_points",
+        "schedule": float(settings.PROCUREMENT_ORCHESTRATOR_REORDER_INTERVAL_SECONDS),
+        "options": {
+            "queue": "procurement_poll",
+            "expires": settings.PROCUREMENT_ORCHESTRATOR_REORDER_INTERVAL_SECONDS,
+        },
+    }
+if settings.SCHEDULED_MEETINGS_ARCHIVE_ENABLED:
+    _beat_schedule["archive-expired-scheduled-meetings"] = {
+        "task": "archive_expired_scheduled_meetings",
+        "schedule": crontab(
+            hour=settings.SCHEDULED_MEETINGS_ARCHIVE_HOUR,
+            minute=settings.SCHEDULED_MEETINGS_ARCHIVE_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
+if settings.SCHEDULED_MEETINGS_CARD_SYNC_ENABLED:
+    _beat_schedule["sync-scheduled-meeting-registry-cards"] = {
+        "task": "sync_scheduled_meeting_registry_cards",
+        "schedule": crontab(
+            hour=settings.SCHEDULED_MEETINGS_CARD_SYNC_HOUR,
+            minute=settings.SCHEDULED_MEETINGS_CARD_SYNC_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
+if settings.MEETING_PROTOCOL_DRAFT_ENABLED and settings.MEETING_PROTOCOL_DISPATCH_BEAT_ENABLED:
+    _beat_schedule["dispatch-meeting-protocol-drafts"] = {
+        "task": "dispatch_meeting_protocol_drafts",
+        "schedule": crontab(
+            hour=settings.MEETING_PROTOCOL_DISPATCH_BEAT_HOURS,
+            minute=settings.MEETING_PROTOCOL_DISPATCH_BEAT_MINUTE,
+        ),
+        "options": {"queue": "default"},
+    }
+if settings.TURBO_PROJECT_SERIES_SYNC_ENABLED:
+    _beat_schedule["sync-turbo-project-meeting-series"] = {
+        "task": "sync_turbo_project_meeting_series",
+        "schedule": crontab(
+            hour=settings.TURBO_PROJECT_SERIES_SYNC_HOUR,
+            minute=settings.TURBO_PROJECT_SERIES_SYNC_MINUTE,
+        ),
+        "options": {"queue": "default"},
     }
 
 celery_app.conf.update(
@@ -49,6 +96,11 @@ celery_app.conf.update(
     task_routes={
         "debug_task": {"queue": "default"},
         "warm_meeting_dashboard_cache": {"queue": "default"},
+        "archive_expired_scheduled_meetings": {"queue": "default"},
+        "sync_scheduled_meeting_registry_cards": {"queue": "default"},
+        "create_registry_protocol_draft": {"queue": "default"},
+        "dispatch_meeting_protocol_drafts": {"queue": "default"},
+        "sync_turbo_project_meeting_series": {"queue": "default"},
         "process_document": {"queue": "documents"},
         "run_agent": {"queue": "agents"},
         "index_document": {"queue": "indexing"},
@@ -61,6 +113,9 @@ celery_app.conf.update(
         "update_task_status": {"queue": "default"},
         "run_department_analysis": {"queue": "default"},
         "poll_procurement_sources": {"queue": "procurement_poll"},
+        "poll_procurement_reorder_points": {"queue": "procurement_poll"},
+        "reconcile_procurement_supplier_orders": {"queue": "procurement_poll"},
+        "sync_procurement_material_orders": {"queue": "procurement_poll"},
         "run_procurement_case_task": {"queue": "agents"},
     },
     task_serializer="json",

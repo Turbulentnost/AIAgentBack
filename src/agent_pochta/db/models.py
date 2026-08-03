@@ -57,6 +57,7 @@ class EmailMessageRow(Base):
     attachments_count: Mapped[int] = mapped_column(Integer, default=0)
     agent_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_info_recipient: Mapped[bool] = mapped_column(Boolean, default=False)
     erp_retry_count: Mapped[int] = mapped_column(Integer, default=0)
 
     attachments: Mapped[list["EmailAttachmentRow"]] = relationship(
@@ -155,6 +156,30 @@ class ChangeEventRow(Base):
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     actor: Mapped[str] = mapped_column(Text, default="operator")
+    source: Mapped[str] = mapped_column(Text, default="system")
+
+
+class ClassificationEventRow(Base):
+    """Накопление смен отдела и спам-статуса (агент + оператор) для графиков и точности."""
+
+    __tablename__ = "classification_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, index=True)
+    message_id: Mapped[str] = mapped_column(Text, index=True)
+    email_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("email_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    category: Mapped[str] = mapped_column(Text, index=True)
+    event_type: Mapped[str] = mapped_column(Text, index=True)
+    old_department_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    old_department_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_department_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_department_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    old_is_spam: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    new_is_spam: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    actor: Mapped[str] = mapped_column(Text, default="agent", index=True)
     source: Mapped[str] = mapped_column(Text, default="system")
 
 

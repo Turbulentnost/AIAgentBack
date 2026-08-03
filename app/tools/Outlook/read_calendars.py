@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+import threading
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -23,24 +25,26 @@ from zoneinfo import ZoneInfo
 from exchangelib import DELEGATE, EWSDateTime, EWSTimeZone, Account, Configuration, Credentials
 from exchangelib.errors import ErrorFolderNotFound, ErrorNonExistentMailbox
 from exchangelib.folders import Calendar, Folder
+from exchangelib.protocol import BaseProtocol
 from exchangelib.version import EXCHANGE_2013_SP1, Version
 
+from app.services.meeting_constants import EWS_REQUEST_TIMEOUT_SECONDS
+from app.tools.Outlook.cancel_meeting import to_ews
 from app.tools.Outlook.outlook_config import OutlookConfig
 from app.tools.Outlook.send_meeting_invite import connect_account, load_config, primary_smtp_address
+
+logger = logging.getLogger(__name__)
+
+_EWS_VERSION = Version(build=EXCHANGE_2013_SP1)
+
+BaseProtocol.TIMEOUT = EWS_REQUEST_TIMEOUT_SECONDS
+
+_OWNER_ACCOUNT_CACHE: dict[str, Account] = {}
+_OWNER_ACCOUNT_LOCK = threading.Lock()
 
 
 def ews_timezone(config: OutlookConfig) -> EWSTimeZone:
     return EWSTimeZone.from_timezone(ZoneInfo(config.timezone))
-
-
-def date_range(*, days: int, config: OutlookConfig) -> tuple[EWSDateTime, EWSDateTime]:
-    tz = ews_timezone(config)
-    start = EWSDateTime.now(tz=tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=max(days, 1))
-    return start, end
-
-
-_EWS_VERSION = Version(build=EXCHANGE_2013_SP1)
 
 
 def ews_configuration(config: OutlookConfig) -> Configuration:
@@ -57,21 +61,41 @@ def ews_configuration(config: OutlookConfig) -> Configuration:
     )
 
 
+def _owner_account_cache_key(config: OutlookConfig, owner_smtp: str) -> str:
+    return f"{config.email}|{config.server or ''}|{owner_smtp.strip().lower()}"
+
+
 def connect_as_owner(config: OutlookConfig, owner_smtp: str) -> Account:
     """Календарь другого пользователя: логин Postagent, mailbox = owner."""
-    if config.server:
-        return Account(
-            primary_smtp_address=owner_smtp.strip(),
-            config=ews_configuration(config),
-            autodiscover=False,
-            access_type=DELEGATE,
-        )
-    return Account(
-        primary_smtp_address=owner_smtp.strip(),
-        credentials=Credentials(username=config.email, password=config.password),
-        autodiscover=True,
-        access_type=DELEGATE,
-    )
+    cache_key = _owner_account_cache_key(config, owner_smtp)
+    with _OWNER_ACCOUNT_LOCK:
+        cached = _OWNER_ACCOUNT_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        if config.server:
+            account = Account(
+                primary_smtp_address=owner_smtp.strip(),
+                config=ews_configuration(config),
+                autodiscover=False,
+                access_type=DELEGATE,
+            )
+        else:
+            account = Account(
+                primary_smtp_address=owner_smtp.strip(),
+                credentials=Credentials(username=config.email, password=config.password),
+                autodiscover=True,
+                access_type=DELEGATE,
+            )
+        _OWNER_ACCOUNT_CACHE[cache_key] = account
+        return account
+
+
+def date_range(*, days: int, config: OutlookConfig) -> tuple[EWSDateTime, EWSDateTime]:
+    tz = ews_timezone(config)
+    start = EWSDateTime.now(tz=tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=max(days, 1))
+    return start, end
 
 
 def folder_label(folder: Folder) -> str:
@@ -111,6 +135,81 @@ def event_to_dict(item: Any) -> dict[str, Any]:
         "is_cancelled": bool(item.is_cancelled),
         "legacy_free_busy_status": str(item.legacy_free_busy_status or ""),
     }
+
+
+def hydrate_calendar_item_attendees(items: list[Any]) -> list[Any]:
+    """Догружает участников только если calendar.view их не вернул."""
+    from app.tools.Outlook.slot_search.attendees import calendar_item_attendee_emails
+
+    hydrated: list[Any] = []
+    for item in items:
+        if not calendar_item_attendee_emails(item):
+            try:
+                item.refresh()
+            except Exception as exc:
+                logger.warning("calendar_item_refresh_failed error=%s", exc)
+        hydrated.append(item)
+    return hydrated
+
+
+def read_calendar_items_in_range(
+    config: OutlookConfig,
+    owner_smtp: str,
+    *,
+    range_start: datetime,
+    range_end: datetime,
+    max_items: int = 50,
+    load_attendees: bool = False,
+) -> list[Any]:
+    """События календаря владельца в интервале (EWS Delegate через Postagent)."""
+    if range_end <= range_start:
+        return []
+    account = connect_as_owner(config, owner_smtp)
+    try:
+        calendar = account.calendar
+    except ErrorFolderNotFound as error:
+        raise RuntimeError(
+            "Папка календаря не найдена. Проверьте права Reviewer/Delegate "
+            "или укажите другой --owner."
+        ) from error
+
+    start = to_ews(range_start, config)
+    end = to_ews(range_end, config)
+    range_minutes = int((range_end - range_start).total_seconds() // 60)
+    logger.info(
+        "ews.calendar.view owner=%s range_minutes=%d max_items=%d",
+        owner_smtp.strip(),
+        range_minutes,
+        max_items,
+    )
+    items = list(calendar.view(start=start, end=end, max_items=max_items))
+    if load_attendees and items:
+        items = hydrate_calendar_item_attendees(items)
+    return items
+
+
+def read_events_in_range(
+    account: Account,
+    *,
+    range_start: datetime,
+    range_end: datetime,
+    max_items: int,
+    config: OutlookConfig,
+) -> list[dict[str, Any]]:
+    if range_end <= range_start:
+        return []
+    start = to_ews(range_start, config)
+    end = to_ews(range_end, config)
+    try:
+        calendar = account.calendar
+    except ErrorFolderNotFound as error:
+        raise RuntimeError(
+            "Папка календаря не найдена. Проверьте права Reviewer/Delegate "
+            "или укажите другой --owner."
+        ) from error
+
+    items = calendar.view(start=start, end=end, max_items=max_items)
+    return [event_to_dict(item) for item in items]
 
 
 def read_events(

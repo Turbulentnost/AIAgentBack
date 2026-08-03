@@ -127,6 +127,53 @@ def load_persons_for_keys(
     return result
 
 
+def resolve_person_keys_by_refs(
+    session: requests.Session,
+    ref_keys: list[str],
+    *,
+    config: ODataConfig = CONFIG,
+    error_context: str = "участника",
+) -> list[str]:
+    """Преобразует Ref_Key пользователя или физлица в ключ Catalog_ФизическиеЛица."""
+    from app.tools.onec.get_porucheniya import load_users_for_keys
+
+    ordered_keys = [
+        str(ref_key).strip()
+        for ref_key in ref_keys
+        if not is_empty_key(ref_key)
+    ]
+    if not ordered_keys:
+        return []
+
+    users = load_users_for_keys(session, set(ordered_keys), config=config)
+    unresolved = [key for key in ordered_keys if key not in users]
+    persons = load_persons_for_keys(session, set(unresolved), config=config)
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for key in ordered_keys:
+        person_key: str | None = None
+        user = users.get(key)
+        if user:
+            raw_person_key = user.get("ФизическоеЛицо_Key")
+            if not is_empty_key(raw_person_key):
+                person_key = str(raw_person_key).strip()
+        elif key in persons:
+            person_key = key
+
+        if not person_key:
+            raise ValueError(
+                f"Не удалось определить физическое лицо {error_context} "
+                f"(Ref_Key={key}). Проверьте связку пользователя с физлицом в 1С."
+            )
+        normalized = person_key.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        resolved.append(person_key)
+    return resolved
+
+
 def resolve_user_by_fio(
     session: requests.Session,
     fio: str,

@@ -9,6 +9,7 @@ from agent_pochta.services.document_service import DocumentService
 from agent_pochta.services.http_document import HttpDocumentService
 from agent_pochta.services.local_document import LocalDocumentService
 from agent_pochta.services.http_integration import HttpIntegrationService
+from agent_pochta.services.gigachat_llm import GigaChatLLMGateway
 from agent_pochta.services.http_llm import ChatCompletionsLLMGateway
 from agent_pochta.services.integration_service import IntegrationService, StubIntegrationService
 from agent_pochta.services.odata_integration import ODataIntegrationService
@@ -28,10 +29,25 @@ class ServiceContainer:
 
 
 def _build_llm(settings: Settings) -> LLMGateway:
-    if settings.llm_gateway_url:
+    if settings.effective_llm_provider == "gigachat":
+        credentials = settings.effective_gigachat_credentials
+        if credentials:
+            return GigaChatLLMGateway(
+                credentials,
+                scope=settings.gigachat_scope,
+                auth_url=settings.gigachat_auth_url,
+                base_url=settings.effective_llm_base_url,
+                model=settings.llm_default_model,
+                verify_ssl=settings.gigachat_verify_ssl,
+            )
+    base_url = settings.effective_llm_base_url
+    if base_url and (
+        settings.effective_llm_provider in {"openai_compat", "deepseek"}
+        or settings.effective_llm_api_key
+    ):
         return ChatCompletionsLLMGateway(
-            settings.llm_gateway_url,
-            api_key=settings.llm_gateway_api_key,
+            base_url,
+            api_key=settings.effective_llm_api_key,
             model=settings.llm_default_model,
             timeout_sec=settings.llm_gateway_timeout_sec,
         )
@@ -60,9 +76,19 @@ def _build_integration(settings: Settings) -> IntegrationService:
             timeout_sec=settings.odata_timeout_sec,
             field_map_json=settings.odata_incoming_field_map,
             extra_fields_json=settings.odata_incoming_extra_fields,
+            incoming_defaults_file=settings.odata_incoming_defaults_file,
             organization_keys_json=settings.odata_organization_keys,
             department_keys_json=settings.odata_department_keys,
+            organization_keys_file=settings.odata_organization_keys_file,
+            department_keys_file=settings.odata_department_keys_file,
             routing_rules_path=settings.odata_routing_rules_path,
+            attached_file_field_map_path=settings.odata_attached_file_field_map_file,
+            attach_files_enabled=settings.odata_attach_files_enabled,
+            file_volume_key=settings.odata_file_volume_key,
+            file_author_key=settings.odata_file_author_key,
+            file_storage_mode=settings.odata_file_storage_mode,
+            file_volume_root=settings.odata_file_volume_root,
+            file_volume_preupload=settings.odata_file_volume_preupload,
         )
     if mode == "http":
         return HttpIntegrationService(settings.integration_service_url)

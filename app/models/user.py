@@ -44,6 +44,10 @@ class Department(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="department",
         cascade="all, delete-orphan",
     )
+    position_links: Mapped[list["DepartmentPosition"]] = relationship(
+        back_populates="department",
+        cascade="all, delete-orphan",
+    )
 
 
 class Permission(UUIDPrimaryKeyMixin, TimestampMixin, Base):

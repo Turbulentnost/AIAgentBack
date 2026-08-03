@@ -1,7 +1,7 @@
 """omto support manager agent catalog and permissions
 
 Revision ID: 0054_omto_agent
-Revises: 0053_engineer_agent
+Revises: 0064_supplier_order_reconciliation
 Create Date: 2026-07-20
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "0054_omto_agent"
-down_revision = "0053_engineer_agent"
+down_revision = "0064_supplier_order_reconciliation"
 branch_labels = None
 depends_on = None
 

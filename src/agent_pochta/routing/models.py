@@ -6,8 +6,11 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from agent_pochta.routing.organizations import DIRECTION_DEFAULT, DIRECTION_UNCLEAR
+
 
 class ConfidenceLevel(StrEnum):
+    CRITICAL = "КРИТИЧЕСКАЯ"
     HIGH = "ВЫСОКАЯ"
     MEDIUM = "СРЕДНЯЯ"
     LOW = "НИЗКАЯ"
@@ -18,12 +21,12 @@ class ServiceRoute(BaseModel):
     name: str
     process: str = "исполнение"
     reasoning: str = ""
-    direction: str = "КС"
+    direction: str = DIRECTION_DEFAULT
 
 
 class RoutingDecision(BaseModel):
     organization: str = "НП"
-    direction: str = "КС"
+    direction: str = DIRECTION_DEFAULT
     process: str = "исполнение"
     services: list[ServiceRoute] = Field(default_factory=list)
     confidence_level: ConfidenceLevel = ConfidenceLevel.LOW
@@ -34,4 +37,9 @@ class RoutingDecision(BaseModel):
     theme: str = ""
     has_conflict: bool = False
     match_source: str = ""
+    dialog_mode: str | None = None
     xml_document: str | None = None
+    hard_signal_count: int = 0
+    adaptive_signal_count: int = 0
+    hard_foreign: bool = False
+    evidence_notes: list[str] = Field(default_factory=list)

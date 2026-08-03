@@ -46,6 +46,26 @@ def format_email_lookup_error(exc: BaseException) -> str:
     return "Не удалось получить e-mail участников из Exchange. Проверьте OUTLOOK_* и GAL."
 
 
+def is_personal_calendar_access_error(exc: BaseException) -> bool:
+    """True, если EWS не может открыть личный Calendar участника (нет Delegate/Reviewer)."""
+    raw = _compact(str(exc)).lower()
+    return any(
+        token in raw
+        for token in (
+            "не удалось прочитать календарь",
+            "no usable default",
+            "errorfoldernotfound",
+            "папка календаря не найдена",
+        )
+    )
+
+
+def is_no_slot_search_error(exc: BaseException) -> bool:
+    """True, если поиск слота завершился штатно — просто не нашёл окно."""
+    message = _compact(str(exc))
+    return "Quorum-слот не найден" in message or "Свободный слот не найден" in message
+
+
 def format_calendar_error(exc: BaseException) -> str:
     network_error = _format_exchange_network_error(exc)
     if network_error:
@@ -71,6 +91,24 @@ def format_no_slot_error(*, max_days: int = 7) -> str:
     return (
         f"Свободный общий слот для всех участников не найден в ближайшие {max_days} дн. "
         "Измените желаемое время в СЗ или проверьте календари вручную."
+    )
+
+
+def format_partial_slot_preview_note() -> str:
+    return (
+        "Общего времени для всех участников нет. Ниже — варианты с конфликтами; "
+        "«лёгкие» переносы (Под вопросом) отмечены отдельно. "
+        "Назначение или переносы возможны только после решения сотрудника УД."
+    )
+
+
+def format_reschedule_suggestions_note(count: int) -> str:
+    if count <= 0:
+        return ""
+    return (
+        f"Общего слота нет. Ниже — до {count} встреч из общего календаря компании, "
+        "которые можно рассмотреть для переноса. "
+        "Фактический перенос возможен только после решения сотрудника УД."
     )
 
 

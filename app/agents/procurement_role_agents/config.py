@@ -4,6 +4,10 @@ from app.models.enums import ProcurementSourceType
 
 PRODUCTION_DISPATCHER_AGENT_ID = "production_dispatcher_agent"
 PRODUCTION_PREPARATION_ENGINEER_AGENT_ID = "production_preparation_engineer_agent"
+WAREHOUSE_PICKER_AGENT_ID = "warehouse_picker_agent"
+WAREHOUSE_COMPLEX_CHIEF_AGENT_ID = "warehouse_complex_chief_agent"
+PURCHASE_MANAGER_AGENT_ID = "purchase_manager_agent"
+OMTO_CHIEF_AGENT_ID = "omto_chief_agent"
 DEPARTMENT_INITIATOR_AGENT_ID = "department_initiator_agent"
 WAREHOUSE_MANAGER_AGENT_ID = "warehouse_manager_agent"
 OMTO_SUPPORT_MANAGER_AGENT_ID = "omto_support_manager_agent"
@@ -21,9 +25,11 @@ CFO_HEAD_AGENT_ID = "cfo_head_agent"
 
 AGENT_LABELS = {
     PRODUCTION_DISPATCHER_AGENT_ID: "Агент диспетчера производства",
-    PRODUCTION_PREPARATION_ENGINEER_AGENT_ID: (
-        "Агент инженера по подготовке производства"
-    ),
+    PRODUCTION_PREPARATION_ENGINEER_AGENT_ID: "Агент закупок и логистики",
+    WAREHOUSE_PICKER_AGENT_ID: "ИИ-агент по закупке",
+    WAREHOUSE_COMPLEX_CHIEF_AGENT_ID: "ИИ-агент по закупкам",
+    PURCHASE_MANAGER_AGENT_ID: "ИИ-агент менеджера по закупкам",
+    OMTO_CHIEF_AGENT_ID: "Агент начальника ОМТО",
     DEPARTMENT_INITIATOR_AGENT_ID: "Агент руководителя подразделения / инициатора",
     WAREHOUSE_MANAGER_AGENT_ID: "Агент начальника склада",
     OMTO_SUPPORT_MANAGER_AGENT_ID: "Агент менеджера по сопровождению ОМТО",
@@ -120,18 +126,22 @@ __all__ = [
     "FINANCE_DIRECTOR_AGENT_ID",
     "KPI_EVALUATED_AGENT_IDS",
     "LEGAL_SPECIALIST_AGENT_ID",
+    "OMTO_CHIEF_AGENT_ID",
     "OMTO_SUPPORT_MANAGER_AGENT_ID",
     "OTK_HEAD_AGENT_ID",
     "PROCUREMENT_LOGISTICS_AGENT_ID",
     "PRODUCTION_DISPATCHER_AGENT_ID",
     "PRODUCTION_PREPARATION_ENGINEER_AGENT_ID",
+    "PURCHASE_MANAGER_AGENT_ID",
     "QUALITY_DEPUTY_DIRECTOR_AGENT_ID",
     "QUALITY_ENGINEER_AGENT_ID",
     "QUALITY_KPI_AGENT_ID",
     "QUALITY_ROLE_AGENT_IDS",
     "QUALITY_STATUS_AGENT_MAP",
     "SOURCE_AGENT_MAP",
+    "WAREHOUSE_COMPLEX_CHIEF_AGENT_ID",
     "WAREHOUSE_MANAGER_AGENT_ID",
+    "WAREHOUSE_PICKER_AGENT_ID",
     "agent_id_for_quality_status",
     "agent_id_for_source",
     "agent_label",

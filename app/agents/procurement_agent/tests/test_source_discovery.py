@@ -239,7 +239,7 @@ def test_cancelled_document_is_skipped_even_with_active_lines() -> None:
     assert cancelled.skip_reason == "cancelled"
 
 
-def test_document_requires_all_non_cancelled_lines_to_be_for_supply() -> None:
+def test_document_keeps_only_non_cancelled_lines_for_supply() -> None:
     base = {
         "Ref_Key": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
         "DataVersion": "v-action",
@@ -264,23 +264,24 @@ def test_document_requires_all_non_cancelled_lines_to_be_for_supply() -> None:
             },
         ],
     }
-    inactive = normalize_source_document(
+    mixed = normalize_source_document(
         source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
         database="erp_pm",
         entity_set="Document_ЗаказНаВнутреннееПотребление",
         raw=base,
     )
-    assert inactive.skip_reason == "inactive_supply_action"
+    assert mixed.skip_reason is None
+    assert [line.nomenclature_id for line in mixed.positions] == ["item-active"]
 
-    base["Товары"][1]["Отменено"] = True
-    active = normalize_source_document(
+    base["Товары"][0]["Отменено"] = True
+    without_supply = normalize_source_document(
         source_type=ProcurementSourceType.INTERNAL_CONSUMPTION_ORDER,
         database="erp_pm",
         entity_set="Document_ЗаказНаВнутреннееПотребление",
         raw=base,
     )
-    assert active.skip_reason is None
-    assert [line.nomenclature_id for line in active.positions] == ["item-active"]
+    assert without_supply.skip_reason == "inactive_supply_action"
+    assert without_supply.positions == []
 
 
 def test_reorder_point_capability_is_published() -> None:
@@ -307,6 +308,8 @@ def test_normalize_reorder_point_uses_new_maximum_stock() -> None:
             "Статус": "Утвержден",
             "Ответственный_Key": "user-1",
             "Склад_Key": "wh-1",
+            "Основание": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "Основание_Type": "StandardODATA.Document_ЗаказПоставщику",
             "Товары": [
                 {
                     "LineNumber": 1,
@@ -314,7 +317,7 @@ def test_normalize_reorder_point_uses_new_maximum_stock() -> None:
                     "Номенклатура_Key": "item-4",
                     "МинимальноеКоличествоЗапаса_После": 5,
                     "МаксимальноеКоличествоЗапаса_После": 12,
-                    "ОбеспечениеЗаказовПриПоддержанииЗапаса": "КОбеспечению",
+                    "ОбеспечениеЗаказовПриПоддержанииЗапаса": "ЗаСчетЗапасов",
                 }
             ],
         },
@@ -322,4 +325,30 @@ def test_normalize_reorder_point_uses_new_maximum_stock() -> None:
     assert document.skip_reason is None
     assert document.positions[0].quantity == 12
     assert document.required_date is None
-    assert document.positions[0].supply_action == "КОбеспечению"
+    assert document.positions[0].supply_action == "ЗаСчетЗапасов"
+    assert document.source_basis_1c_ref == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    assert document.source_basis_type == "StandardODATA.Document_ЗаказПоставщику"
+
+
+def test_reorder_point_uses_line_number_when_line_code_is_zero() -> None:
+    document = normalize_source_document(
+        source_type=ProcurementSourceType.REORDER_POINT,
+        database="erp_pm",
+        entity_set="Document_ТД_УстановкаТочекЗаказа",
+        raw={
+            "Ref_Key": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+            "Date": "2026-07-20T10:00:00",
+            "Товары": [
+                {
+                    "LineNumber": str(number),
+                    "КодСтроки": "0",
+                    "Номенклатура_Key": f"item-{number}",
+                    "МаксимальноеКоличествоЗапаса_После": number,
+                    "ОбеспечениеЗаказовПриПоддержанииЗапаса": "ЗаСчетЗапасов",
+                }
+                for number in (1, 2)
+            ],
+        },
+    )
+
+    assert [line.line_id for line in document.positions] == ["1", "2"]

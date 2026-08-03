@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password
-from app.models.user import Department, User, UserAgent
-from app.services.employee_sync_service import SOURCE_SYSTEM
+from app.models.user import Department, User, UserAgent, UserSession
 from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.schemas.user import AdminUserCreate, UserCreate, UserUpdate
+from app.services.employee_sync_service import SOURCE_SYSTEM
+from app.utils.department_classification import (
+    is_position_like_department_name,
+    is_schedule_participant_department_name,
+)
 from app.utils.department_utils import is_liquidated_department_name
-from app.utils.department_classification import is_position_like_department_name
 
 
 class UserService:
@@ -76,7 +79,9 @@ class UserService:
         if existing_email is not None:
             raise ValueError("Пользователь с таким email уже существует")
         if data.username:
-            existing_username = await self.db.scalar(select(User).where(User.username == data.username))
+            existing_username = await self.db.scalar(
+                select(User).where(User.username == data.username)
+            )
             if existing_username is not None:
                 raise ValueError("Пользователь с таким username уже существует")
 
@@ -130,8 +135,14 @@ class UserService:
         return user
 
     async def soft_delete(self, user: User) -> User:
+        deleted_at = datetime.now(UTC)
         user.is_active = False
-        user.deleted_at = datetime.now(timezone.utc)
+        user.deleted_at = deleted_at
+        await self.db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == user.id, UserSession.revoked_at.is_(None))
+            .values(revoked_at=deleted_at)
+        )
         await self.db.flush()
         return user
 
@@ -144,7 +155,13 @@ class DepartmentService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def list(self, limit: int = 1000, offset: int = 0, *, active_only: bool = True) -> list[Department]:
+    async def list(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        *,
+        active_only: bool = True,
+    ) -> list[Department]:
         stmt = select(Department).order_by(Department.name).limit(limit).offset(offset)
         if active_only:
             stmt = stmt.where(Department.is_active.is_(True))
@@ -158,6 +175,30 @@ class DepartmentService:
                 and not is_position_like_department_name(department.name)
             ]
         return departments
+
+    async def list_schedule_participant_options(
+        self,
+        *,
+        search: str | None = None,
+        limit: int = 100,
+    ) -> list[Department]:
+        """Должности из справочника departments для графика совещаний."""
+        result = await self.db.execute(select(Department).order_by(Department.name.asc()))
+        departments = [
+            department
+            for department in result.scalars().all()
+            if is_schedule_participant_department_name(department.name)
+            and not is_liquidated_department_name(department.name)
+        ]
+        if search:
+            normalized = search.strip().lower().replace("ё", "е")
+            if normalized:
+                departments = [
+                    department
+                    for department in departments
+                    if normalized in department.name.lower().replace("ё", "е")
+                ]
+        return departments[:limit]
 
     async def get(self, department_id: uuid.UUID) -> Department | None:
         return await self.db.get(Department, department_id)

@@ -176,6 +176,41 @@ def _load_latest_hr_for_persons(
     return latest
 
 
+def resolve_department_key_for_manager_fio(
+    session: requests.Session,
+    manager_fio: str,
+    *,
+    config: ODataConfig = CONFIG,
+) -> str | None:
+    from app.tools.onec.lookup_user_ref import load_persons_for_keys, resolve_user_by_fio
+
+    user_ref, _, users = resolve_user_by_fio(session, manager_fio, config=config)
+    user_row = next((user for user in users if user.get("Ref_Key") == user_ref), {})
+    person_keys = {
+        user_row.get("ФизическоеЛицо_Key")
+        for user in users
+        if user.get("ФизическоеЛицо_Key") and not is_empty_key(user.get("ФизическоеЛицо_Key"))
+    }
+    persons = load_persons_for_keys(session, person_keys, config=config)
+    person_key = person_key_for_responsible(
+        user_ref,
+        users={user_ref: user_row},
+        persons=persons,
+    )
+    if person_key:
+        hr_rows = _load_latest_hr_for_persons(session, {person_key}, config=config)
+        hr_row = hr_rows.get(person_key)
+        if hr_row:
+            dept_key = hr_row.get("Подразделение_Key")
+            if not is_empty_key(dept_key):
+                return str(dept_key).strip()
+
+    dept_key = user_row.get("Подразделение_Key")
+    if is_empty_key(dept_key):
+        return None
+    return str(dept_key).strip()
+
+
 def load_departments_for_responsible_keys(
     session: requests.Session,
     responsible_keys: set[str],

@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app.tools.base import Tool
 from app.core.config import settings
+from app.tools.onec.approve_service_memo import approve_service_memo
+from app.tools.onec.reject_service_memo import reject_service_memo
 from app.tools.onec.create_service_memo import (
     DEFAULT_TASK_DESCRIPTION,
     DEFAULT_THEME,
     create_and_send_service_memo,
 )
+from app.tools.onec.create_protocol import create_meeting_protocol, delete_meeting_protocol
+from app.tools.onec.create_meeting_topic import MEETING_TYPES, create_meeting_topic
+from app.tools.onec.meeting_topic_participants import get_meeting_topic_participants
 from app.tools.onec.get_meetings import get_last_meeting_memos
 from app.tools.onec.lookup_email_by_fio import dispatch_lookup_emails_by_fio
 from app.tools.onec.meeting_topics_registry import query_meeting_topics
@@ -92,10 +97,10 @@ class GetMeetingDashboardInput(BaseModel):
         description="Дата совещаний в формате YYYY-MM-DD (по умолчанию — сегодня)",
     )
     limit: int = Field(
-        default=500,
+        default=50,
         ge=1,
-        le=500,
-        description="Максимум документов в каждом списке",
+        le=50,
+        description="Максимум служебных записок суммарно (несогласованные + за день)",
     )
 
 
@@ -103,6 +108,7 @@ class GetMeetingDashboardOutput(BaseModel):
     date: str
     unapproved: list[dict[str, Any]]
     today: list[dict[str, Any]]
+    items: list[dict[str, Any]] = Field(default_factory=list)
     counts: dict[str, int]
 
 
@@ -120,11 +126,17 @@ async def get_meeting_dashboard_tool(
     raw, _fetched_at, _from_cache = await cache.get_dashboard(
         target_date=target_date,
     )
+    if not raw.get("items"):
+        from app.agents.meeting_agent.dashboard import merge_dashboard_items
+
+        raw["items"] = merge_dashboard_items(raw.get("unapproved") or [], raw.get("today") or [])
     raw["unapproved"] = (raw.get("unapproved") or [])[: payload.limit]
     raw["today"] = (raw.get("today") or [])[: payload.limit]
+    raw["items"] = (raw.get("items") or [])[: payload.limit]
     raw["counts"] = {
         "unapproved": len(raw["unapproved"]),
         "today": len(raw["today"]),
+        "items": len(raw["items"]),
     }
     return GetMeetingDashboardOutput.model_validate(raw)
 
@@ -132,12 +144,15 @@ async def get_meeting_dashboard_tool(
 class GetMeetingDashboardTool(Tool):
     name = "get_meeting_dashboard"
     description = (
-        "Возвращает несогласованные служебные записки по совещаниям и совещания на указанную дату из 1С."
+        "Возвращает служебные записки по совещаниям из 1С: несогласованные за всё время "
+        "и все СЗ за указанную дату (любой статус)."
     )
     agent_description = (
         "Инструмент get_meeting_dashboard читает Document_ТД_СлужебнаяЗаписка из 1С по теме "
-        "ONEC_MEETING_MEMO_THEME. unapproved — Статус «НеСогласована»; today — совещания на дату "
-        "(target_date, по умолчанию сегодня). Нужны ONEC_ODATA_* в .env."
+        "ONEC_MEETING_MEMO_THEME. unapproved — Статус «НеСогласована» за всё время; "
+        "today — все СЗ с датой документа (Date) за target_date, любой статус; "
+        "items — объединённый список без дублей. "
+        "target_date по умолчанию — сегодня. Нужны ONEC_ODATA_* в .env."
     )
     input_model = GetMeetingDashboardInput
     output_model = GetMeetingDashboardOutput
@@ -263,6 +278,7 @@ class MeetingTopicItem(BaseModel):
     ref_key: str | None = None
     code: str | None = None
     description: str
+    details: str | None = None
     meeting_type: str | None = None
     priority: str | None = None
     schedule_defined: bool = False
@@ -424,6 +440,757 @@ class CreateServiceMemoTool(Tool):
 
 
 register_tool(CreateServiceMemoTool())
+
+
+class ApproveServiceMemoInput(BaseModel):
+    ref_key: str | None = Field(default=None, description="Ref_Key служебной записки")
+    number: str | None = Field(default=None, description="Номер служебной записки, например 000010430")
+    approver_fio: str | None = Field(
+        default=None,
+        description="ФИО согласующего (Catalog_Пользователи) для поля ИсполнительУД",
+    )
+    comment: str | None = Field(default=None, description="Комментарий к согласованию")
+
+
+class ApproveServiceMemoOutput(BaseModel):
+    ref_key: str
+    number: str | None = None
+    date: str | None = None
+    posted: bool | None = None
+    status: str | None = None
+    previous_status: str | None = None
+    already_approved: bool = False
+    changed: bool = False
+    auto_approved: bool = False
+    sto_ready: bool = False
+    sto_issues: list[dict[str, str]] = Field(default_factory=list)
+    ud_recommendation: str | None = None
+    auto_approve_allowed: bool = False
+    approver_fio: str | None = None
+    comment: str | None = None
+    message: str | None = None
+
+
+async def approve_service_memo_tool(
+    payload: ApproveServiceMemoInput,
+    context: ToolContext,
+) -> ApproveServiceMemoOutput:
+    del context
+    raw = await asyncio.to_thread(
+        approve_service_memo,
+        ref_key=payload.ref_key,
+        number=payload.number,
+        approver_fio=payload.approver_fio,
+        comment=payload.comment,
+    )
+    return ApproveServiceMemoOutput.model_validate(raw)
+
+
+class ApproveServiceMemoTool(Tool):
+    name = "approve_service_memo"
+    description = (
+        "Согласовывает служебную записку по совещанию в 1С:ERP "
+        "(Статус «НеСогласована» → «Согласована»)."
+    )
+    agent_description = (
+        "Инструмент approve_service_memo проверяет Document_ТД_СлужебнаяЗаписка в 1С:ERP "
+        "и условия СТО. Передай ref_key или number (например 000010430). "
+        "Возвращает sto_checklist, sto_ready, ud_recommendation для сотрудника УД. "
+        "Автосогласование в 1С сейчас отключено — документ не меняется. "
+        "approver_fio и comment зарезервированы для ручного согласования. "
+        "Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = ApproveServiceMemoInput
+    output_model = ApproveServiceMemoOutput
+    required_permissions = ["approve_service_memo"]
+    preview_default_params = {"number": "000010430"}
+
+    async def execute(
+        self,
+        payload: ApproveServiceMemoInput,
+        context: ToolContext,
+    ) -> ApproveServiceMemoOutput:
+        return await approve_service_memo_tool(payload, context)
+
+
+register_tool(ApproveServiceMemoTool())
+
+
+class RejectServiceMemoInput(BaseModel):
+    ref_key: str | None = Field(default=None, description="Ref_Key служебной записки")
+    number: str | None = Field(default=None, description="Номер служебной записки, например 000009853")
+    reason: str = Field(description="Причина отклонения")
+    rejector_fio: str | None = Field(
+        default=None,
+        description="ФИО сотрудника УД (Catalog_Пользователи) для поля ИсполнительУД",
+    )
+    notify_initiator: bool = Field(
+        default=True,
+        description="Отправить уведомление на рабочий стол 1С инициатору СЗ",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Только проверить документ, без PATCH и уведомления",
+    )
+
+
+class RejectServiceMemoOutput(BaseModel):
+    ref_key: str
+    number: str | None = None
+    date: str | None = None
+    posted: bool | None = None
+    status: str | None = None
+    previous_status: str | None = None
+    already_rejected: bool = False
+    changed: bool = False
+    notification_sent: bool = False
+    dry_run: bool = False
+    would_notify_initiator: bool | None = None
+    initiator_fio: str | None = None
+    initiator_ref: str | None = None
+    reason: str
+    comment: str | None = None
+    rejector_fio: str | None = None
+    notification_message: str | None = None
+    notification: dict[str, Any] | None = None
+
+
+async def reject_service_memo_tool(
+    payload: RejectServiceMemoInput,
+    context: ToolContext,
+) -> RejectServiceMemoOutput:
+    del context
+    raw = await asyncio.to_thread(
+        reject_service_memo,
+        ref_key=payload.ref_key,
+        number=payload.number,
+        reason=payload.reason,
+        rejector_fio=payload.rejector_fio,
+        notify_initiator=payload.notify_initiator,
+        dry_run=payload.dry_run,
+    )
+    return RejectServiceMemoOutput.model_validate(raw)
+
+
+class RejectServiceMemoTool(Tool):
+    name = "reject_service_memo"
+    description = (
+        "Отклоняет служебную записку по совещанию в 1С:ERP "
+        "(Статус «НеСогласована» → «Отклонена») и уведомляет инициатора."
+    )
+    agent_description = (
+        "Инструмент reject_service_memo отклоняет Document_ТД_СлужебнаяЗаписка в 1С:ERP. "
+        "Передай ref_key или number (например 000009853) и reason — краткую причину отклонения "
+        "(например «Не указана тема совещания» из sto_issues). "
+        "В поле Комментарий 1С записывается только reason, без номера СЗ и без текста уведомления. "
+        "Статус меняется на «Отклонена». "
+        "Инициатору (Ответственный) отправляется уведомление на рабочий стол 1С. "
+        "rejector_fio — ФИО сотрудника УД; dry_run=true — только проверка без изменений. "
+        "Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = RejectServiceMemoInput
+    output_model = RejectServiceMemoOutput
+    required_permissions = ["reject_service_memo"]
+    preview_default_params = {
+        "number": "000009853",
+        "reason": "Не заполнены обязательные поля СТО",
+        "dry_run": True,
+    }
+
+    async def execute(
+        self,
+        payload: RejectServiceMemoInput,
+        context: ToolContext,
+    ) -> RejectServiceMemoOutput:
+        return await reject_service_memo_tool(payload, context)
+
+
+register_tool(RejectServiceMemoTool())
+
+
+class ProtocolTaskInput(BaseModel):
+    item_number: int | None = Field(
+        default=None,
+        ge=1,
+        description="Номер пункта протокола (если не указан — порядковый)",
+    )
+    text: str = Field(description="Текст пункта / поручения")
+    due_date: str | None = Field(
+        default=None,
+        description="Срок исполнения в ISO-формате",
+    )
+    responsible_fio: str | None = Field(
+        default=None,
+        description="ФИО ответственного за пункт",
+    )
+
+
+class CreateProtocolInput(BaseModel):
+    number: str | None = Field(
+        default=None,
+        description="Номер протокола, например НСР_001_О_001; если не указан — нумерация 1С",
+    )
+    comment: str = Field(default="", description="Комментарий документа")
+    manager_fio: str | None = Field(default=None, description="ФИО руководителя")
+    responsible_fio: str | None = Field(default=None, description="ФИО ответственного")
+    prepared_by_fio: str | None = Field(default=None, description="ФИО подготовившего")
+    topic_key: str | None = Field(default=None, description="Ref_Key темы совещания")
+    meeting_type: str | None = Field(
+        default=None,
+        description="Вид совещания, например Отчетное",
+    )
+    department_key: str | None = Field(
+        default=None,
+        description="Ref_Key подразделения протокола",
+    )
+    room_key: str | None = Field(default=None, description="Ref_Key кабинета/переговорной")
+    next_meeting_date: str | None = Field(
+        default=None,
+        description="Дата следующего совещания (ISO); для единоразовых не заполнять",
+    )
+    basis_key: str | None = Field(default=None, description="Ref_Key документа-основания")
+    basis_type: str | None = Field(default=None, description="Тип документа-основания (OData)")
+    tasks: list[ProtocolTaskInput] = Field(
+        default_factory=list,
+        description="Пункты протокола для регистра задач",
+    )
+
+
+class ProtocolInfo(BaseModel):
+    ref_key: str | None = None
+    number: str | None = None
+    date: str | None = None
+    status: str | None = None
+    posted: bool | None = None
+    comment: str | None = None
+
+
+class ProtocolTaskInfo(BaseModel):
+    item_number: str | int | None = None
+    task_id: str | None = None
+    text: str | None = None
+    due_date: str | None = None
+    responsible_ref: str | None = None
+
+
+class CreateProtocolOutput(BaseModel):
+    protocol: ProtocolInfo
+    tasks: list[ProtocolTaskInfo] = Field(default_factory=list)
+
+
+async def create_protocol_tool(
+    payload: CreateProtocolInput,
+    context: ToolContext,
+) -> CreateProtocolOutput:
+    del context
+    raw = await asyncio.to_thread(
+        create_meeting_protocol,
+        number=payload.number,
+        comment=payload.comment,
+        manager_fio=payload.manager_fio,
+        responsible_fio=payload.responsible_fio,
+        prepared_by_fio=payload.prepared_by_fio,
+        topic_key=payload.topic_key,
+        meeting_type=payload.meeting_type,
+        department_key=payload.department_key,
+        room_key=payload.room_key,
+        next_meeting_date=payload.next_meeting_date,
+        basis_key=payload.basis_key,
+        basis_type=payload.basis_type,
+        tasks=[task.model_dump(exclude_none=True) for task in payload.tasks],
+    )
+    return CreateProtocolOutput.model_validate(raw)
+
+
+class CreateProtocolTool(Tool):
+    name = "create_protocol"
+    description = "Создаёт протокол совещания в 1С:ERP и при необходимости пункты в регистре задач."
+    agent_description = (
+        "Инструмент create_protocol создаёт Document_ТД_Протокол в 1С:ERP через OData. "
+        "number — номер документа (если не указан, 1С назначит по правилам конфигурации); "
+        "manager_fio, responsible_fio, prepared_by_fio — участники протокола; "
+        "room_key, department_key, next_meeting_date, basis_key/basis_type — реквизиты шапки; "
+        "tasks — пункты для InformationRegister_ТД_ЗадачиПротоколов. "
+        "Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = CreateProtocolInput
+    output_model = CreateProtocolOutput
+    required_permissions = ["create_protocol"]
+    preview_default_params = {
+        "number": "НСР_001_О_001",
+        "comment": "Тестовый протокол",
+        "tasks": [{"text": "Тестовое поручение"}],
+    }
+
+    async def execute(
+        self,
+        payload: CreateProtocolInput,
+        context: ToolContext,
+    ) -> CreateProtocolOutput:
+        return await create_protocol_tool(payload, context)
+
+
+register_tool(CreateProtocolTool())
+
+
+class CreateMeetingTopicInput(BaseModel):
+    description: str = Field(description="Наименование темы совещания")
+    manager_fio: str = Field(description="ФИО руководителя")
+    meeting_type: str = Field(
+        default="Отчетное",
+        description=f"Вид совещания: {', '.join(MEETING_TYPES)}",
+    )
+    reviewer_fio: str | None = Field(
+        default=None,
+        description="ФИО проверяющего; по умолчанию совпадает с руководителем",
+    )
+    closed_date: str | None = Field(
+        default=None,
+        description="Дата окончания действия темы (ISO). Пусто = бессрочно",
+    )
+    closed_end_of_year: bool = Field(
+        default=False,
+        description="Установить дату закрытия на 31.12 текущего года",
+    )
+    department_key: str | None = Field(default=None, description="GUID подразделения")
+    room_key: str | None = Field(default=None, description="GUID переговорной")
+    project_key: str | None = Field(default=None, description="GUID проекта")
+    committee_key: str | None = Field(default=None, description="GUID комитета")
+    organization_key: str | None = Field(default=None, description="GUID организации")
+    start_time: str | None = Field(
+        default=None,
+        description="Время начала в формате 0001-01-01THH:MM:SS",
+    )
+    end_time: str | None = Field(
+        default=None,
+        description="Время окончания в формате 0001-01-01THH:MM:SS",
+    )
+    is_management_circle_topic: bool | None = Field(
+        default=None,
+        description="Тема круга управления",
+    )
+    participant_fios: list[str] = Field(
+        default_factory=list,
+        description="Участники темы по ФИО (Catalog_Пользователи)",
+    )
+    topic_details: str | None = Field(
+        default=None,
+        description="Описание темы (поле Описание в 1С)",
+    )
+    skip_similarity_check: bool = Field(
+        default=False,
+        description="Не проверять похожие темы у руководителя перед созданием",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Сформировать payload без записи в 1С",
+    )
+
+
+class CreateMeetingTopicParticipantResult(BaseModel):
+    participant_ref_key: str | None = None
+    fio: str | None = None
+    dry_run: bool | None = None
+
+
+class CreateMeetingTopicSimilarityBreakdown(BaseModel):
+    topic: float | None = None
+    participants: float | None = None
+    details: float | None = None
+
+
+class CreateMeetingTopicOutput(BaseModel):
+    catalog_entity: str
+    dry_run: bool
+    created: bool = False
+    skipped: bool = False
+    skip_reason: str | None = None
+    manager_fio: str
+    reviewer_fio: str
+    similar_topic: MeetingTopicItem | None = None
+    similarity_score: float | None = None
+    similarity_method: str | None = None
+    similarity_breakdown: CreateMeetingTopicSimilarityBreakdown | None = None
+    topic: MeetingTopicItem | None = None
+    participants_count: int = 0
+    participants: list[CreateMeetingTopicParticipantResult] = Field(default_factory=list)
+    message: str | None = None
+
+
+async def create_meeting_topic_tool(
+    payload: CreateMeetingTopicInput,
+    context: ToolContext,
+) -> CreateMeetingTopicOutput:
+    del context
+    raw = await asyncio.to_thread(
+        create_meeting_topic,
+        description=payload.description,
+        manager_fio=payload.manager_fio,
+        meeting_type=payload.meeting_type,
+        reviewer_fio=payload.reviewer_fio,
+        closed_date=payload.closed_date,
+        closed_end_of_year=payload.closed_end_of_year,
+        department_key=payload.department_key,
+        room_key=payload.room_key,
+        project_key=payload.project_key,
+        committee_key=payload.committee_key,
+        organization_key=payload.organization_key,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        is_management_circle_topic=payload.is_management_circle_topic,
+        participant_fios=payload.participant_fios or None,
+        topic_details=payload.topic_details,
+        skip_similarity_check=payload.skip_similarity_check,
+        dry_run=payload.dry_run,
+    )
+    return CreateMeetingTopicOutput.model_validate(raw)
+
+
+class CreateMeetingTopicTool(Tool):
+    name = "create_meeting_topic"
+    description = "Создаёт тему совещания в справочнике Catalog_ТД_ТемыСовещаний 1С:ERP."
+    agent_description = (
+        "Инструмент create_meeting_topic создаёт элемент справочника тем совещаний 1С "
+        "(Catalog_ТД_ТемыСовещаний). При постановке совещания сначала вызывай "
+        "check_meeting_topic_similar, затем resolve_meeting_topic по решению пользователя. "
+        "Этот инструмент используй только для прямого создания или dry_run. "
+        "Обязательны description, manager_fio, meeting_type. participant_fios — участники темы."
+    )
+    input_model = CreateMeetingTopicInput
+    output_model = CreateMeetingTopicOutput
+    required_permissions = ["create_meeting_topic"]
+    preview_default_params = {
+        "description": "Еженедельное совещание с главным метрологом",
+        "manager_fio": "Мегрелишвили Михаил Эмзарович",
+        "meeting_type": "Отчетное",
+        "participant_fios": ["Хозуян Иван Владимирович"],
+        "dry_run": True,
+    }
+
+    async def execute(
+        self,
+        payload: CreateMeetingTopicInput,
+        context: ToolContext,
+    ) -> CreateMeetingTopicOutput:
+        return await create_meeting_topic_tool(payload, context)
+
+
+register_tool(CreateMeetingTopicTool())
+
+
+class CheckMeetingTopicSimilarInput(BaseModel):
+    description: str = Field(description="Наименование темы совещания")
+    manager_fio: str = Field(description="ФИО руководителя")
+    meeting_type: str = Field(
+        default="Отчетное",
+        description=f"Вид совещания: {', '.join(MEETING_TYPES)}",
+    )
+    topic_details: str | None = Field(
+        default=None,
+        description="Описание темы (поле Описание в 1С)",
+    )
+    participant_fios: list[str] = Field(
+        default_factory=list,
+        description="Участники темы по ФИО",
+    )
+    initiator_fio: str | None = Field(
+        default=None,
+        description="ФИО инициатора СЗ — учитывается при сравнении и добавлении участников",
+    )
+
+
+class CheckMeetingTopicSimilarOutput(BaseModel):
+    similar_found: bool
+    requires_user_decision: bool
+    similar_topic: MeetingTopicSummaryRead | None = None
+    similarity_score: float | None = None
+    similarity_method: str | None = None
+    similarity_breakdown: CreateMeetingTopicSimilarityBreakdown | None = None
+    missing_participants: list[CreateMeetingTopicParticipantResult] = Field(
+        default_factory=list,
+        description=(
+            "Участники из СЗ, которых нет в похожей теме. "
+            "При use_existing будут добавлены в тему в 1С, если найдены в справочнике."
+        ),
+    )
+    unresolved_participants: list[CreateMeetingTopicParticipantResult] = Field(
+        default_factory=list,
+        description="Участники из СЗ, не найденные в 1С — добавить автоматически нельзя.",
+    )
+    required_fields: list[str] = Field(default_factory=list)
+    message: str
+
+
+class MeetingTopicSummaryRead(BaseModel):
+    ref_key: str | None = None
+    code: str | None = None
+    description: str
+    details: str | None = None
+    meeting_type: str | None = None
+    manager: str | None = None
+    reviewer: str | None = None
+    department: str | None = None
+    room: str | None = None
+    project: str | None = None
+    committee: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    closed_date: str | None = None
+    is_active: bool = True
+    similarity_score: float | None = None
+    similarity_method: str | None = None
+    similarity_breakdown: CreateMeetingTopicSimilarityBreakdown | None = None
+    participants: list[CreateMeetingTopicParticipantResult] = Field(default_factory=list)
+
+
+async def check_meeting_topic_similar_tool(
+    payload: CheckMeetingTopicSimilarInput,
+    context: ToolContext,
+) -> CheckMeetingTopicSimilarOutput:
+    del context
+    from app.schemas.meeting_topic import MeetingTopicCheckSimilarRequest
+    from app.services.meeting_topic_service import MeetingTopicService
+
+    result = await MeetingTopicService().check_similar(
+        MeetingTopicCheckSimilarRequest.model_validate(payload.model_dump())
+    )
+    return CheckMeetingTopicSimilarOutput.model_validate(result.model_dump())
+
+
+class CheckMeetingTopicSimilarTool(Tool):
+    name = "check_meeting_topic_similar"
+    description = (
+        "Проверяет, есть ли у руководителя похожая активная тема совещания, "
+        "без создания новой."
+    )
+    agent_description = (
+        "Инструмент check_meeting_topic_similar запускается при постановке совещания, "
+        "когда нужно создать или выбрать тему в 1С. Ищет только среди активных тем "
+        "указанного руководителя (дата закрытия темы строго позже сегодня). "
+        "Сравнивает в первую очередь название темы. Если похожая тема найдена — покажи "
+        "пользователю карточку similar_topic и список missing_participants (участники из СЗ, "
+        "которых ещё нет в теме). Спроси: использовать её или создать новую? "
+        "При use_existing недостающие участники будут добавлены в тему в 1С. "
+        "Не создавай тему без явного решения пользователя."
+    )
+    input_model = CheckMeetingTopicSimilarInput
+    output_model = CheckMeetingTopicSimilarOutput
+    required_permissions = ["check_meeting_topic_similar"]
+    preview_default_params = {
+        "description": "Еженедельное совещание с главным метрологом",
+        "manager_fio": "Мегрелишвили Михаил Эмзарович",
+        "meeting_type": "Отчетное",
+        "participant_fios": ["Хозуян Иван Владимирович"],
+    }
+
+    async def execute(
+        self,
+        payload: CheckMeetingTopicSimilarInput,
+        context: ToolContext,
+    ) -> CheckMeetingTopicSimilarOutput:
+        return await check_meeting_topic_similar_tool(payload, context)
+
+
+register_tool(CheckMeetingTopicSimilarTool())
+
+
+class ResolveMeetingTopicInput(BaseModel):
+    decision: Literal["use_existing", "create_new"]
+    existing_topic_ref_key: str | None = Field(
+        default=None,
+        description="Ref_Key существующей темы при decision=use_existing",
+    )
+    description: str | None = None
+    manager_fio: str | None = None
+    meeting_type: str | None = Field(default="Отчетное")
+    reviewer_fio: str | None = None
+    closed_date: str | None = None
+    closed_end_of_year: bool = False
+    department_key: str | None = None
+    room_key: str | None = None
+    project_key: str | None = None
+    committee_key: str | None = None
+    organization_key: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    is_management_circle_topic: bool | None = None
+    topic_details: str | None = None
+    participant_fios: list[str] = Field(default_factory=list)
+    initiator_fio: str | None = Field(
+        default=None,
+        description="ФИО инициатора СЗ — будет добавлен в тему при use_existing, если его там ещё нет",
+    )
+    dry_run: bool = False
+
+
+class ResolveMeetingTopicOutput(BaseModel):
+    decision: Literal["use_existing", "create_new"]
+    used_existing: bool
+    created: bool
+    dry_run: bool = False
+    topic: MeetingTopicSummaryRead
+    participants_count: int = 0
+    added_participants: list[CreateMeetingTopicParticipantResult] = Field(
+        default_factory=list,
+        description="Участники из СЗ, добавленные в существующую тему 1С",
+    )
+    message: str
+
+
+async def resolve_meeting_topic_tool(
+    payload: ResolveMeetingTopicInput,
+    context: ToolContext,
+) -> ResolveMeetingTopicOutput:
+    del context
+    from app.schemas.meeting_topic import MeetingTopicResolveRequest
+    from app.services.meeting_topic_service import MeetingTopicService
+
+    result = await MeetingTopicService().resolve(
+        MeetingTopicResolveRequest.model_validate(payload.model_dump())
+    )
+    return ResolveMeetingTopicOutput.model_validate(result.model_dump())
+
+
+class ResolveMeetingTopicTool(Tool):
+    name = "resolve_meeting_topic"
+    description = (
+        "Подтверждает использование существующей темы или создаёт новую "
+        "после решения пользователя."
+    )
+    agent_description = (
+        "Инструмент resolve_meeting_topic вызывается после check_meeting_topic_similar "
+        "и явного ответа пользователя. decision=use_existing — берём existing_topic_ref_key "
+        "из similar_topic, новую тему не создаём; обязательно передай participant_fios и "
+        "initiator_fio из СЗ — недостающие участники будут добавлены в тему в 1С "
+        "(см. added_participants). Для совещания используем название и вид совещания "
+        "из выбранной темы 1С. decision=create_new — создаём тему в 1С с полями "
+        "description, manager_fio, meeting_type и остальными реквизитами; "
+        "проверка похожих тем при этом не повторяется."
+    )
+    input_model = ResolveMeetingTopicInput
+    output_model = ResolveMeetingTopicOutput
+    required_permissions = ["resolve_meeting_topic"]
+    preview_default_params = {
+        "decision": "use_existing",
+        "existing_topic_ref_key": "00000000-0000-0000-0000-000000000001",
+    }
+
+    async def execute(
+        self,
+        payload: ResolveMeetingTopicInput,
+        context: ToolContext,
+    ) -> ResolveMeetingTopicOutput:
+        return await resolve_meeting_topic_tool(payload, context)
+
+
+register_tool(ResolveMeetingTopicTool())
+
+
+class MeetingTopicParticipantItem(BaseModel):
+    participant_ref_key: str | None = None
+    fio: str | None = None
+    topic_ref_key: str | None = None
+
+
+class GetMeetingTopicParticipantsInput(BaseModel):
+    topic_ref_key: str | None = Field(default=None, description="Ref_Key темы совещания")
+    topic_code: str | None = Field(default=None, description="Код темы, например 000009459")
+
+
+class GetMeetingTopicParticipantsOutput(BaseModel):
+    register_entity: str
+    topic_ref_key: str
+    topic_code: str | None = None
+    topic_description: str | None = None
+    participants_count: int
+    participants: list[MeetingTopicParticipantItem]
+
+
+async def get_meeting_topic_participants_tool(
+    payload: GetMeetingTopicParticipantsInput,
+    context: ToolContext,
+) -> GetMeetingTopicParticipantsOutput:
+    del context
+    raw = await asyncio.to_thread(
+        get_meeting_topic_participants,
+        topic_ref_key=payload.topic_ref_key,
+        topic_code=payload.topic_code,
+    )
+    return GetMeetingTopicParticipantsOutput.model_validate(raw)
+
+
+class GetMeetingTopicParticipantsTool(Tool):
+    name = "get_meeting_topic_participants"
+    description = (
+        "Возвращает участников темы совещания из регистра "
+        "InformationRegister_ТД_СоответствиеТемыСовещанияИУчастниковСовещаний."
+    )
+    agent_description = (
+        "Инструмент get_meeting_topic_participants читает участников темы совещания 1С "
+        "из регистра «Соответствие темы совещания и участников совещаний (ТД)». "
+        "Нужен topic_ref_key или topic_code. Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = GetMeetingTopicParticipantsInput
+    output_model = GetMeetingTopicParticipantsOutput
+    required_permissions = ["get_meeting_topic_participants"]
+    preview_default_params = {"topic_code": "000009459"}
+
+    async def execute(
+        self,
+        payload: GetMeetingTopicParticipantsInput,
+        context: ToolContext,
+    ) -> GetMeetingTopicParticipantsOutput:
+        return await get_meeting_topic_participants_tool(payload, context)
+
+
+register_tool(GetMeetingTopicParticipantsTool())
+
+
+class DeleteProtocolInput(BaseModel):
+    ref_key: str | None = Field(default=None, description="Ref_Key протокола")
+    number: str | None = Field(default=None, description="Номер протокола")
+
+
+class DeleteProtocolOutput(BaseModel):
+    ref_key: str
+    number: str | None = None
+    deleted: bool
+
+
+async def delete_protocol_tool(
+    payload: DeleteProtocolInput,
+    context: ToolContext,
+) -> DeleteProtocolOutput:
+    del context
+    raw = await asyncio.to_thread(
+        delete_meeting_protocol,
+        ref_key=payload.ref_key,
+        number=payload.number,
+    )
+    return DeleteProtocolOutput.model_validate(raw)
+
+
+class DeleteProtocolTool(Tool):
+    name = "delete_protocol"
+    description = "Удаляет протокол совещания в 1С:ERP по Ref_Key или номеру."
+    agent_description = (
+        "Инструмент delete_protocol удаляет Document_ТД_Протокол в 1С:ERP через OData. "
+        "Нужен ref_key или number. Нужны ONEC_ODATA_* в .env."
+    )
+    input_model = DeleteProtocolInput
+    output_model = DeleteProtocolOutput
+    required_permissions = ["delete_protocol"]
+    preview_default_params = {"number": "НСР_001_О_001"}
+
+    async def execute(
+        self,
+        payload: DeleteProtocolInput,
+        context: ToolContext,
+    ) -> DeleteProtocolOutput:
+        return await delete_protocol_tool(payload, context)
+
+
+register_tool(DeleteProtocolTool())
 
 
 class SendDesktopNotificationInput(BaseModel):

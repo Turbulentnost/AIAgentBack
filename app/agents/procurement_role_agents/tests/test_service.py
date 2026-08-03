@@ -5,9 +5,14 @@ import pytest
 from app.agents import agent_registry
 from app.agents.procurement_role_agents.config import (
     AGENT_LABELS,
+    DEPARTMENT_INITIATOR_AGENT_ID,
+    OMTO_CHIEF_AGENT_ID,
     OMTO_SUPPORT_MANAGER_AGENT_ID,
+    PRODUCTION_DISPATCHER_AGENT_ID,
     PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
     SOURCE_AGENT_MAP,
+    WAREHOUSE_MANAGER_AGENT_ID,
+    WAREHOUSE_PICKER_AGENT_ID,
 )
 
 
@@ -15,29 +20,29 @@ from app.agents.procurement_role_agents.config import (
 @pytest.mark.parametrize(
     "agent_id",
     [
-        value
-        for value in AGENT_LABELS
-        if value
-        not in {
-            PRODUCTION_PREPARATION_ENGINEER_AGENT_ID,
-            OMTO_SUPPORT_MANAGER_AGENT_ID,
-        }
+        DEPARTMENT_INITIATOR_AGENT_ID,
+        WAREHOUSE_MANAGER_AGENT_ID,
+        OMTO_CHIEF_AGENT_ID,
     ],
 )
 async def test_role_agent_is_registered_and_waits_for_rules(agent_id: str):
     agent_cls = agent_registry.get(agent_id)
     assert agent_cls is not None
+    source_type = next(
+        (
+            mapped_source
+            for mapped_source, configured_agent in SOURCE_AGENT_MAP.items()
+            if configured_agent == agent_id
+        ),
+        "production_material_order",
+    )
 
     result = await agent_cls().run(
         {
             "task_id": "task-1",
             "case_id": "case-1",
             "correlation_id": "proc:test:case-1",
-            "source_type": next(
-                source_type
-                for source_type, configured_agent in SOURCE_AGENT_MAP.items()
-                if configured_agent == agent_id
-            ),
+            "source_type": source_type,
             "source_1c_ref": "ref-1",
             "idempotency_key": "role:case-1:v1",
             "source_data": {"positions": []},
@@ -53,7 +58,18 @@ async def test_role_agent_is_registered_and_waits_for_rules(agent_id: str):
 
 
 @pytest.mark.asyncio
-async def test_engineer_agent_calculates_embedded_confirmed_evidence():
+@pytest.mark.parametrize(
+    ("stock_quantity", "expected_status", "expected_net"),
+    [
+        ("50", "completed", "0"),
+        ("40", "waiting_human", "10"),
+    ],
+)
+async def test_engineer_agent_calculates_embedded_confirmed_evidence(
+    stock_quantity: str,
+    expected_status: str,
+    expected_net: str,
+):
     agent_cls = agent_registry.get(PRODUCTION_PREPARATION_ENGINEER_AGENT_ID)
     assert agent_cls is not None
     result = await agent_cls().run(
@@ -105,15 +121,64 @@ async def test_engineer_agent_calculates_embedded_confirmed_evidence():
                         "source_type": "warehouse",
                         "nomenclature_id": "steel",
                         "unit": "кг",
-                        "quantity": "50",
+                        "quantity": stock_quantity,
                     }
                 ],
             },
             "role_context": {"warehouse_1c_ref": "warehouse-main"},
         }
     )
-    assert result.role_status == "completed"
-    assert result.output_data["positions"][0]["net_requirement"] == "0"
+    assert result.role_status == expected_status
+    assert result.output_data["positions"][0]["net_requirement"] == expected_net
+    if expected_status == "waiting_human":
+        assert result.output_data["decision_kind"] == "purchase_confirmation"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_agent_calculates_embedded_supply():
+    agent_cls = agent_registry.get(PRODUCTION_DISPATCHER_AGENT_ID)
+    assert agent_cls is not None
+    result = await agent_cls().run(
+        {
+            "task_id": "task-1",
+            "case_id": "case-1",
+            "correlation_id": "proc:test:case-1",
+            "source_type": "reorder_point",
+            "source_1c_ref": "source-ref",
+            "source_number": "ТЗ-1",
+            "idempotency_key": "role:case-1:v1",
+            "source_data": {
+                "case_number": "ТЗ-1",
+                "skip_external": True,
+                "stock_growth_coefficient": "1",
+                "positions": [
+                    {
+                        "line_id": "1",
+                        "nomenclature_id": "mat-1",
+                        "nomenclature_name": "Материал",
+                        "unit": "шт",
+                        "quantity": "30",
+                        "minimum_stock": "10",
+                        "maximum_stock": "30",
+                    }
+                ],
+                "supplies": [
+                    {
+                        "supply_id": "stock",
+                        "source_type": "warehouse",
+                        "nomenclature_id": "mat-1",
+                        "unit": "шт",
+                        "quantity": "5",
+                        "warehouse_id": "wh-main",
+                    }
+                ],
+            },
+            "role_context": {"warehouse_1c_ref": "wh-main"},
+        }
+    )
+    assert result.role_status == "waiting_human"
+    assert result.output_data["decision_kind"] == "supply_confirmation"
+    assert result.output_data["positions"][0]["below_minimum"] is True
 
 
 @pytest.mark.asyncio
