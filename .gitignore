@@ -18,7 +18,7 @@ access-info.txt
 scripts/access-info.public-ip.*.txt
 
 # Celery / runtime
-celerybeat-schedule*
+celerybeat-schedule.*
 *.log
 
 # IDE / локальные инструменты
@@ -30,17 +30,40 @@ celerybeat-schedule*
 .pytest_cache/
 *.sqlite
 
-# Сгенерированные отчёты и артефакты анализа
-статистика.json
-статистика.md
-enterprise_positions_report_all.txt
-tz_keywords.txt
-tz_s12.txt
-tz_tables.txt
+# Локальные / служебные файлы
 
-# Локальные одноразовые скрипты и утилиты (не часть агента)
+# Статистика и отчёты
+статистика copy.md
+статистика.md
+статистика.json
+enterprise_positions_report_all.txt
+
+# Документация и промпты (локальные)
+README.md
+PROMT.md
+ПРОЦЕСС.md
+Запрос-промт.md
+last_5_llm_prompts.md
+
+# Данные и выгрузки (локальные)
+ОТ ПОЧТЫ ДАННЫЕ.txt
+Действующие подразделения.xlsx
+tz_tables.txt
+tz_s12.txt
+tz_keywords.txt
+debug_ud.txt
+
+# Скрипты запуска и утилиты
+run_plot_errors.cmd
+run_frontend.cmd
+run_access_info.cmd
 list_enterprise_positions.py
 scripts/_*.py
+
+# Конфигурация окружения (локальная копия)
+.env.Jalko.example
+pyproject.toml
+alembic.ini
 
 # Данные: по умолчанию не пушим, только RAG/маршрутизация агента
 data/*
