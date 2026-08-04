@@ -1,3 +1,5 @@
+name: agent-pochta
+
 x-app: &app
   build: .
   env_file:
