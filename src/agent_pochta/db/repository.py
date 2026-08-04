@@ -432,6 +432,12 @@ class EmailRepository:
             payload["routing_decision"] = routing_decision
         if "rag_fallback" in meta:
             payload["rag_fallback"] = bool(meta.get("rag_fallback"))
+        if routing_source := meta.get("routing_source"):
+            payload["routing_source"] = routing_source
+        if meta.get("bge_score") is not None:
+            payload["bge_score"] = meta.get("bge_score")
+        if bge_dept := meta.get("bge_dept_correct_id"):
+            payload["bge_dept_correct_id"] = bge_dept
         if routing_recipient := meta.get("routing_recipient"):
             payload["routing_recipient"] = routing_recipient
         if dialog := meta.get("dialog"):
@@ -440,6 +446,13 @@ class EmailRepository:
             payload["erp_attachments"] = erp_attachments
         if erp_attachment_errors := meta.get("erp_attachment_errors"):
             payload["erp_attachment_errors"] = erp_attachment_errors
+        settings = get_settings()
+        if combined := state.get("combined_text"):
+            payload["embedding_source_text"] = _sanitize_pg_text(
+                combined[: settings.email_rag_max_source_chars]
+            )
+        payload.pop("qdrant_indexed_at", None)
+        payload.pop("qdrant_chunk_count", None)
         row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
 
         spam = state.get("spam")

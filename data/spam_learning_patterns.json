@@ -654,6 +654,19 @@
       "reason": "Внешний домен yandex.ru, но текст содержит деловое приветствие без признаков рекламы, фишинга или спама."
     },
     {
+      "id": "61d2b1ac-f15b-47eb-ac57-c99e4038ae17",
+      "created_at": "2026-07-09T07:28:35.429665+00:00",
+      "message_id": "<!&!AAAAAAAAAAAuAAAAAAAAACb4JkG6H+1EnUVNEIDOXxMBAMO2jhD3dRHOtM0AqgC7tuYAAAAAAA4AABAAAABgiWa3i7h/T6IyiS2yrEvvAQAAAAA=@konalink.ru>#td_odppo7@turbo-don.ru",
+      "sender_email": "kirtyanov@konalink.ru",
+      "keywords": [
+        "сэд тгв ис кв 120; адрес: , г. москва, внутригородское муниципальное образование кунцево, квартал 120",
+        "адрес г москва",
+        "г москва внутригородское"
+      ],
+      "label": "not_spam",
+      "reason": "Отмечено офис-менеджером как не спам"
+    },
+    {
       "id": "0be628cf-d5f0-4aaa-9c04-5b8919af02be",
       "created_at": "2026-07-09T07:28:56.817535+00:00",
       "message_id": "<oCGxtt8KGFWip38gFd8e230Ib61AeJvM1eb99uW2Xyw@www.turbo-don.ru>#info@turbo-don.ru",
@@ -669,165 +682,16 @@
       "reason": "Доверенный корпоративный отправитель, правила спама пройдены"
     },
     {
-      "id": "11b3b466-dadc-4c65-bbd1-9bc5c246c2b7",
-      "created_at": "2026-07-09T11:47:15.988138+00:00",
-      "message_id": "<GWtiXavEEFLVTsPEXplEXUVVm2OyHRxuKeiDc3MXk@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
+      "id": "fb2cdfc7-2b8d-4a16-9335-1086f92074da",
+      "created_at": "2026-07-09T08:13:02.095998+00:00",
+      "message_id": "<f6a3b361-436d-4fef-b505-d113330eb1c3@beloil.by>#td_ved6@turbo-don.ru",
+      "sender_email": "postmaster@beloil.by",
       "keywords": [
-        "новая закупка ооо \"интер рао-центр управления закупками\" - \"перерегистрация электротехнической лаборатории электрического цеха , республика башкортостан",
-        "закупка ооо интер",
-        "закупками перерегистрация электротехнической"
-      ],
-      "label": "spam",
-      "reason": "Уведомление о тендере с официального портала ЭТП, не является рекламой или фишингом"
-    },
-    {
-      "id": "143d1820-e225-4b69-80e8-e147a8ed55b1",
-      "created_at": "2026-07-09T11:46:31.276843+00:00",
-      "message_id": "<1ZIQ4MToz8KoQ1XrHJUkiwIln6Dx84cE8mk0PU8ghE@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "новая закупка ао \"тнт\" - \"кран трехходовый, манометры, г. новороссийск",
-        "ао тнт кран",
-        "г новороссийск",
-        "закупка ао тнт"
-      ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "1af864bf-b3df-421a-bcf4-c45f0c833411",
-      "created_at": "2026-07-09T11:46:15.401750+00:00",
-      "message_id": "<ZNNUYM9jDc3KJh92oPWwXc2F2nzTA7hM1F1fvdnwY@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "закупки по вашей сфере деятельности за 03.07.2026"
-      ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "1e6d9c58-1184-40a5-95c7-eb177f1ca520",
-      "created_at": "2026-07-09T11:46:39.228194+00:00",
-      "message_id": "<TMqR1NHQmA82Fx1IFyj5IM2JlsbeXIoraY2CgidxrMM@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "новая закупка ао \"гкнпц им. м.в. хруничева\" - \"оказание услуг ремонту козлового крана кк20-32, грузоподъемностью 20 тонн, заводской № 9670, владимирская область",
-        "ао гкнпц им",
-        "гкнпц им м.в"
-      ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "2605771a-59b4-46d5-beac-6b7dbe5bde83",
-      "created_at": "2026-07-09T11:47:21.090408+00:00",
-      "message_id": "<0Rc50QGUOsGa2lk2zp6Y1JLDHP1BjHm4xwJNZG0@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "новая закупка пао \"ростелеком\" - \"самоспасатель изолирующий промышленный, г.краснодар",
-        "закупка пао ростелеком",
-        "изолирующий промышленный г.краснодар"
-      ],
-      "label": "spam",
-      "reason": "Бизнес-уведомление от платформы ЭТП ГПБ о тендере, не является рекламой или фишингом"
-    },
-    {
-      "id": "3071f481-a9a4-418b-9a25-439866e4f0a1",
-      "created_at": "2026-07-09T12:34:42.498893+00:00",
-      "message_id": "<d0224045d92c477b91d4cf6fb73da243@luis.ru>#uk_omto6@turbo-don.ru",
-      "sender_email": "gorbunkova.ekaterina@luis.ru",
-      "keywords": [
-        "заказ 4489",
-        "fw заказ",
-        "вложении уважением",
-        "день счет",
-        "заказ вложении"
-      ],
-      "label": "not_spam",
-      "reason": "Восстановлено из спама оператором"
-    },
-    {
-      "id": "517d1f74-7348-4d11-bdb0-d8372118a000",
-      "created_at": "2026-07-09T11:47:24.795315+00:00",
-      "message_id": "<8ymgQW3bkZTQAVhx7uSyI2S027sfpid5eHNuepfSI@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "заказчик пао \"ростелеком\" ожидает ваш ответ на ценовой запрос",
-        "заказчик пао ростелеком"
-      ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "56200d39-02fb-43e1-9c44-672c6e4e4530",
-      "created_at": "2026-07-09T12:15:31.541500+00:00",
-      "message_id": "<fdb7ca68e2c249d6a60c1e00b3d2f4ce@lukoil.com>#td_oppo1.7@turbo-don.ru",
-      "sender_email": "ekaterina.al.kovaleva@lukoil.com",
-      "keywords": [
-        "запрос ткп_л-внп_расходомеры (выгрузка 02.04.26",
-        "запрос ткп_л-внп_расходомеры выгрузка",
-        "ткп_л-внп_расходомеры выгрузка 02.04.26"
-      ],
-      "label": "not_spam",
-      "reason": "Восстановлено из спама оператором"
-    },
-    {
-      "id": "5ace93b9-b876-4764-ae2a-67052db13912",
-      "created_at": "2026-07-09T11:46:24.580309+00:00",
-      "message_id": "<ybU4K6OwRIkwvPnl3tojxTPc6pX8lnRHiWHqFNu0XU4@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "ценовой запрос №969212 сменил статус",
-        "запрос 969212 сменил",
-        "ценовой запрос 969212"
-      ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "5e31f6f4-9c65-487a-9c9d-4f3d89f9d95b",
-      "created_at": "2026-07-09T11:46:41.559414+00:00",
-      "message_id": "<443Ir1q60RygadF8AY8drnsvIGP9DeLlJWyiorJQM@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "новая закупка филиал \"пензенский\" пао \"т плюс\" - \"датчик уф is-5 с кабелем, пензенская область",
-        "закупка филиал пензенский"
-      ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "61d2b1ac-f15b-47eb-ac57-c99e4038ae17",
-      "created_at": "2026-07-09T07:28:35.429665+00:00",
-      "message_id": "<!&!AAAAAAAAAAAuAAAAAAAAACb4JkG6H+1EnUVNEIDOXxMBAMO2jhD3dRHOtM0AqgC7tuYAAAAAAA4AABAAAABgiWa3i7h/T6IyiS2yrEvvAQAAAAA=@konalink.ru>#td_odppo7@turbo-don.ru",
-      "sender_email": "kirtyanov@konalink.ru",
-      "keywords": [
-        "сэд тгв ис кв 120; адрес: , г. москва, внутригородское муниципальное образование кунцево, квартал 120",
-        "адрес г москва",
-        "г москва внутригородское"
-      ],
-      "label": "not_spam",
-      "reason": "Отмечено офис-менеджером как не спам"
-    },
-    {
-      "id": "73fbbc7a-09d6-4236-b1ec-edcd51f3a472",
-      "created_at": "2026-07-09T08:46:53.631979+00:00",
-      "message_id": "<1783149946.868124590@f513.i.mail.ru>#svistun.1967@mail.ru",
-      "sender_email": "svistun.1967@mail.ru",
-      "keywords": [],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "759e1f99-6ad0-48dd-93ea-270986df39f1",
-      "created_at": "2026-07-09T11:46:28.316917+00:00",
-      "message_id": "<8nvkK4s84gXv6wN8N914b7kLwrJ53KutTIUaGLPfX4@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "новая закупка пао \"ростелеком\" - \"вок, г. самара",
-        "вок г самара",
-        "закупка пао ростелеком"
+        "доставить приглашение",
+        "нпо пмгф-2026",
+        "нпо приглашение",
+        "нпо турбулентность-дон",
+        "пмгф-2026 нпо"
       ],
       "label": "spam",
       "reason": "Отмечено офис-менеджером"
@@ -847,6 +711,178 @@
       ],
       "label": "spam",
       "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "73fbbc7a-09d6-4236-b1ec-edcd51f3a472",
+      "created_at": "2026-07-09T08:46:53.631979+00:00",
+      "message_id": "<1783149946.868124590@f513.i.mail.ru>#svistun.1967@mail.ru",
+      "sender_email": "svistun.1967@mail.ru",
+      "keywords": [],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "dd95d441-e87d-4484-876e-ea0e1845a8fc",
+      "created_at": "2026-07-09T10:01:52.576153+00:00",
+      "message_id": "<1783493225.477019421@f543.i.mail.ru>#npo_buh@turbo-don.ru",
+      "sender_email": "atm.dobroti@mail.ru",
+      "keywords": [
+        "для анны егоровны",
+        "высылаем просьбой",
+        "день высылаем"
+      ],
+      "label": "not_spam",
+      "reason": "Деловое письмо от благотворительной организации с реквизитами и просьбой о финансовой помощи."
+    },
+    {
+      "id": "1af864bf-b3df-421a-bcf4-c45f0c833411",
+      "created_at": "2026-07-09T11:46:15.401750+00:00",
+      "message_id": "<ZNNUYM9jDc3KJh92oPWwXc2F2nzTA7hM1F1fvdnwY@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "закупки по вашей сфере деятельности за 03.07.2026"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "d7912458-dbb2-4bde-9f8a-0abb8b84d603",
+      "created_at": "2026-07-09T11:46:18.106909+00:00",
+      "message_id": "<D4ZsyyMyKhD5ft0qoNDq9WEUDpuGkng2NJGK7TS8M@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "ценовой запрос №979098 сменил статус",
+        "запрос 979098 сменил",
+        "ценовой запрос 979098"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "efdb07d5-41d4-4535-aa4b-0b50cf3f30ea",
+      "created_at": "2026-07-09T11:46:21.373900+00:00",
+      "message_id": "<AZqA9Xml6dFDPgFujYdW1p9bQ7wOf0Ns4ZzfWL7IE@akd-223-prod-gaz1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "об изменении срока подачи нового коммерческого предложения 32616080142"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "5ace93b9-b876-4764-ae2a-67052db13912",
+      "created_at": "2026-07-09T11:46:24.580309+00:00",
+      "message_id": "<ybU4K6OwRIkwvPnl3tojxTPc6pX8lnRHiWHqFNu0XU4@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "ценовой запрос №969212 сменил статус",
+        "запрос 969212 сменил",
+        "ценовой запрос 969212"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "759e1f99-6ad0-48dd-93ea-270986df39f1",
+      "created_at": "2026-07-09T11:46:28.316917+00:00",
+      "message_id": "<8nvkK4s84gXv6wN8N914b7kLwrJ53KutTIUaGLPfX4@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка пао \"ростелеком\" - \"вок, г. самара",
+        "вок г самара",
+        "закупка пао ростелеком"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "143d1820-e225-4b69-80e8-e147a8ed55b1",
+      "created_at": "2026-07-09T11:46:31.276843+00:00",
+      "message_id": "<1ZIQ4MToz8KoQ1XrHJUkiwIln6Dx84cE8mk0PU8ghE@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка ао \"тнт\" - \"кран трехходовый, манометры, г. новороссийск",
+        "ао тнт кран",
+        "г новороссийск",
+        "закупка ао тнт"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "1e6d9c58-1184-40a5-95c7-eb177f1ca520",
+      "created_at": "2026-07-09T11:46:39.228194+00:00",
+      "message_id": "<TMqR1NHQmA82Fx1IFyj5IM2JlsbeXIoraY2CgidxrMM@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка ао \"гкнпц им. м.в. хруничева\" - \"оказание услуг ремонту козлового крана кк20-32, грузоподъемностью 20 тонн, заводской № 9670, владимирская область",
+        "ао гкнпц им",
+        "гкнпц им м.в"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "5e31f6f4-9c65-487a-9c9d-4f3d89f9d95b",
+      "created_at": "2026-07-09T11:46:41.559414+00:00",
+      "message_id": "<443Ir1q60RygadF8AY8drnsvIGP9DeLlJWyiorJQM@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка филиал \"пензенский\" пао \"т плюс\" - \"датчик уф is-5 с кабелем, пензенская область",
+        "закупка филиал пензенский"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "11b3b466-dadc-4c65-bbd1-9bc5c246c2b7",
+      "created_at": "2026-07-09T11:47:15.988138+00:00",
+      "message_id": "<GWtiXavEEFLVTsPEXplEXUVVm2OyHRxuKeiDc3MXk@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка ооо \"интер рао-центр управления закупками\" - \"перерегистрация электротехнической лаборатории электрического цеха , республика башкортостан",
+        "закупка ооо интер",
+        "закупками перерегистрация электротехнической"
+      ],
+      "label": "spam",
+      "reason": "Уведомление о тендере с официального портала ЭТП, не является рекламой или фишингом"
+    },
+    {
+      "id": "2605771a-59b4-46d5-beac-6b7dbe5bde83",
+      "created_at": "2026-07-09T11:47:21.090408+00:00",
+      "message_id": "<0Rc50QGUOsGa2lk2zp6Y1JLDHP1BjHm4xwJNZG0@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка пао \"ростелеком\" - \"самоспасатель изолирующий промышленный, г.краснодар",
+        "закупка пао ростелеком",
+        "изолирующий промышленный г.краснодар"
+      ],
+      "label": "spam",
+      "reason": "Бизнес-уведомление от платформы ЭТП ГПБ о тендере, не является рекламой или фишингом"
+    },
+    {
+      "id": "517d1f74-7348-4d11-bdb0-d8372118a000",
+      "created_at": "2026-07-09T11:47:24.795315+00:00",
+      "message_id": "<8ymgQW3bkZTQAVhx7uSyI2S027sfpid5eHNuepfSI@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "заказчик пао \"ростелеком\" ожидает ваш ответ на ценовой запрос",
+        "заказчик пао ростелеком"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "943143f7-c772-45cf-b277-3e5a404e52d6",
+      "created_at": "2026-07-09T11:49:43.639480+00:00",
+      "message_id": "<xYhmx7zYUcb4r7ZJSTwdOeN1jfcqEZ8dDuY3wHh0U@akd-223-prod-corp1>#test_ii@turbo-don.ru",
+      "sender_email": "notice@etpgpb.ru",
+      "keywords": [
+        "новая закупка пао \"ростелеком\" - \"вок в ростовскую область",
+        "закупка пао ростелеком"
+      ],
+      "label": "not_spam",
+      "reason": "Легитимное уведомление от платформы ЭТП ГПБ о тендере, не является фишингом или вредоносным спамом."
     },
     {
       "id": "8b5e7ed4-41f8-4999-b367-5ea3f09e51ee",
@@ -874,18 +910,6 @@
       "reason": "Отмечено офис-менеджером"
     },
     {
-      "id": "943143f7-c772-45cf-b277-3e5a404e52d6",
-      "created_at": "2026-07-09T11:49:43.639480+00:00",
-      "message_id": "<xYhmx7zYUcb4r7ZJSTwdOeN1jfcqEZ8dDuY3wHh0U@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
-      "keywords": [
-        "новая закупка пао \"ростелеком\" - \"вок в ростовскую область",
-        "закупка пао ростелеком"
-      ],
-      "label": "not_spam",
-      "reason": "Легитимное уведомление от платформы ЭТП ГПБ о тендере, не является фишингом или вредоносным спамом."
-    },
-    {
       "id": "a93bdb64-3459-4b5c-8ef3-60a1dbf9d5e8",
       "created_at": "2026-07-09T11:49:56.918988+00:00",
       "message_id": "<BJQOydsayVdvh5QNcMwqJQottpFqXvqwGpsD4PuAdEg@akd-223-prod-corp1>#test_ii@turbo-don.ru",
@@ -898,56 +922,32 @@
       "reason": "Легитимное уведомление от Электронного Торгового Портала, не содержит признаков фишинга или рекламы."
     },
     {
-      "id": "d7912458-dbb2-4bde-9f8a-0abb8b84d603",
-      "created_at": "2026-07-09T11:46:18.106909+00:00",
-      "message_id": "<D4ZsyyMyKhD5ft0qoNDq9WEUDpuGkng2NJGK7TS8M@akd-223-prod-corp1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
+      "id": "56200d39-02fb-43e1-9c44-672c6e4e4530",
+      "created_at": "2026-07-09T12:15:31.541500+00:00",
+      "message_id": "<fdb7ca68e2c249d6a60c1e00b3d2f4ce@lukoil.com>#td_oppo1.7@turbo-don.ru",
+      "sender_email": "ekaterina.al.kovaleva@lukoil.com",
       "keywords": [
-        "ценовой запрос №979098 сменил статус",
-        "запрос 979098 сменил",
-        "ценовой запрос 979098"
-      ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "dd95d441-e87d-4484-876e-ea0e1845a8fc",
-      "created_at": "2026-07-09T10:01:52.576153+00:00",
-      "message_id": "<1783493225.477019421@f543.i.mail.ru>#npo_buh@turbo-don.ru",
-      "sender_email": "atm.dobroti@mail.ru",
-      "keywords": [
-        "для анны егоровны",
-        "высылаем просьбой",
-        "день высылаем"
+        "запрос ткп_л-внп_расходомеры (выгрузка 02.04.26",
+        "запрос ткп_л-внп_расходомеры выгрузка",
+        "ткп_л-внп_расходомеры выгрузка 02.04.26"
       ],
       "label": "not_spam",
-      "reason": "Деловое письмо от благотворительной организации с реквизитами и просьбой о финансовой помощи."
+      "reason": "Восстановлено из спама оператором"
     },
     {
-      "id": "efdb07d5-41d4-4535-aa4b-0b50cf3f30ea",
-      "created_at": "2026-07-09T11:46:21.373900+00:00",
-      "message_id": "<AZqA9Xml6dFDPgFujYdW1p9bQ7wOf0Ns4ZzfWL7IE@akd-223-prod-gaz1>#test_ii@turbo-don.ru",
-      "sender_email": "notice@etpgpb.ru",
+      "id": "3071f481-a9a4-418b-9a25-439866e4f0a1",
+      "created_at": "2026-07-09T12:34:42.498893+00:00",
+      "message_id": "<d0224045d92c477b91d4cf6fb73da243@luis.ru>#uk_omto6@turbo-don.ru",
+      "sender_email": "gorbunkova.ekaterina@luis.ru",
       "keywords": [
-        "об изменении срока подачи нового коммерческого предложения 32616080142"
+        "заказ 4489",
+        "fw заказ",
+        "вложении уважением",
+        "день счет",
+        "заказ вложении"
       ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
-    },
-    {
-      "id": "fb2cdfc7-2b8d-4a16-9335-1086f92074da",
-      "created_at": "2026-07-09T08:13:02.095998+00:00",
-      "message_id": "<f6a3b361-436d-4fef-b505-d113330eb1c3@beloil.by>#td_ved6@turbo-don.ru",
-      "sender_email": "postmaster@beloil.by",
-      "keywords": [
-        "доставить приглашение",
-        "нпо пмгф-2026",
-        "нпо приглашение",
-        "нпо турбулентность-дон",
-        "пмгф-2026 нпо"
-      ],
-      "label": "spam",
-      "reason": "Отмечено офис-менеджером"
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
     },
     {
       "id": "e8b5e0e5-3cc0-4179-8b74-d51379cb4deb",
@@ -5367,6 +5367,94 @@
         "на поставку горизонтальных",
         "поставку горизонтальных тепловых",
         "горизонтальных тепловых завес"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "f4ecfc99-9984-4510-bcb8-99fcb516d0ba",
+      "created_at": "2026-07-30T13:44:54.747363+00:00",
+      "message_id": "<80d69f331998b2b02c299f33da6e44c93eef85@eremex-news.ru>#uk_omto4@turbo-don.ru",
+      "sender_email": "noreply@eremex-news.ru",
+      "keywords": [
+        "минпромторг рф запускает",
+        "рф запускает прием",
+        "запускает прием заявок",
+        "прием заявок на",
+        "заявок на получение",
+        "на получение субсидий"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "e065881a-9b54-43d1-8cff-ee71b11947ae",
+      "created_at": "2026-07-30T13:44:55.310657+00:00",
+      "message_id": "<80d69f331998b2b02c299f33da6e44c93eef85@eremex-news.ru>#uk_omto4@turbo-don.ru",
+      "sender_email": "noreply@eremex-news.ru",
+      "keywords": [
+        "минпромторг рф запускает",
+        "рф запускает прием",
+        "запускает прием заявок",
+        "прием заявок на",
+        "заявок на получение",
+        "на получение субсидий"
+      ],
+      "label": "not_spam",
+      "reason": "Восстановлено из спама оператором"
+    },
+    {
+      "id": "ea06867e-b990-4c8c-8e04-2ea9f754b394",
+      "created_at": "2026-07-30T13:45:18.127476+00:00",
+      "message_id": "<80d69f331998b2b02c299f33da6e44c93eef85@eremex-news.ru>#uk_omto4@turbo-don.ru",
+      "sender_email": "noreply@eremex-news.ru",
+      "keywords": [
+        "минпромторг рф запускает",
+        "рф запускает прием",
+        "запускает прием заявок",
+        "прием заявок на",
+        "заявок на получение",
+        "на получение субсидий"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "b7ad11a4-0bbd-4e79-a4ca-ede79ce7d8d1",
+      "created_at": "2026-07-30T13:46:26.329076+00:00",
+      "message_id": "<781451785418989@mail.360.yandex.ru>#uk_omto11@turbo-don.ru",
+      "sender_email": "anna.dmitrieva@vseinstrumenti.ru",
+      "keywords": [
+        "запрос турбулентность-дон",
+        "от анны",
+        "анны дмитриевой",
+        "дмитриевой vseinstrumenti.ru",
+        "anna.dmitrieva"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "2ae55b23-4b09-49a2-bc48-c0ca0be90c96",
+      "created_at": "2026-07-30T13:46:41.293742+00:00",
+      "message_id": "<0d2aeaf116ad4fda938d8000530fbd13@rusgasshelf.ru>#opmu@turbo-don.ru",
+      "sender_email": "ganzhov_s@rusgasshelf.ru",
+      "keywords": [
+        "согласование работ tfg",
+        "работ tfg 160098",
+        "ganzhov_s"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "b5cbc67b-27b9-401c-8310-84140d4414dc",
+      "created_at": "2026-07-31T07:01:21.265828+00:00",
+      "message_id": "<crm.activity.763094-RLJ778@b24.dikom.ru>#info@turbo-don.ru",
+      "sender_email": "grunin@dikom-a.ru",
+      "keywords": [
+        "диком автоматизация 8148",
+        "grunin"
       ],
       "label": "spam",
       "reason": "Отмечено офис-менеджером"

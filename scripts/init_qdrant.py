@@ -44,6 +44,12 @@ from agent_pochta.services.onec_corrections_rag_qdrant import (  # noqa: E402
     ONEC_CORRECTIONS_COLLECTION,
     ensure_onec_corrections_indexes,
 )
+from agent_pochta.services.email_rag_qdrant import (  # noqa: E402
+    DEPARTMENT_CORRECTIONS_COLLECTION,
+    EMAIL_MESSAGES_COLLECTION,
+    ensure_department_corrections_collection,
+    ensure_email_messages_collection,
+)
 from agent_pochta.routing.onec_corrections import (  # noqa: E402
     load_onec_corrections,
     resync_onec_corrections_to_qdrant,
@@ -92,16 +98,21 @@ def main() -> None:
     QdrantRAGService(url)
     ensure_spam_learning_indexes(url)
     ensure_onec_corrections_indexes(url)
+    ensure_email_messages_collection(url)
+    ensure_department_corrections_collection(url)
 
     contractors_n = _collection_points(url, CONTRACTORS_COLLECTION)
     departments_n = _collection_points(url, DEPARTMENTS_COLLECTION)
     spam_n = _collection_points(url, SPAM_LEARNING_COLLECTION)
     onec_n = _collection_points(url, ONEC_CORRECTIONS_COLLECTION)
+    emails_n = _collection_points(url, EMAIL_MESSAGES_COLLECTION)
+    dept_corr_n = _collection_points(url, DEPARTMENT_CORRECTIONS_COLLECTION)
 
     print(
         f"[init_qdrant] before seed: contractors={contractors_n}, "
         f"departments={departments_n}, spam_learning={spam_n}, "
-        f"onec_corrections={onec_n}"
+        f"onec_corrections={onec_n}, email_messages={emails_n}, "
+        f"department_corrections_bge={dept_corr_n}"
     )
 
     if departments_n == 0:
@@ -139,7 +150,8 @@ def main() -> None:
     print(
         f"[init_qdrant] done: contractors={contractors_n}, "
         f"departments={departments_n}, spam_learning={spam_n}, "
-        f"onec_corrections={onec_n}"
+        f"onec_corrections={onec_n}, email_messages={emails_n}, "
+        f"department_corrections_bge={dept_corr_n}"
     )
 
 

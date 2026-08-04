@@ -5,7 +5,7 @@ x-app: &app
       required: false
   environment:
     DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_pochta
-    QDRANT_URL: http://qdrant:6333
+    QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
     RAG_BACKEND: qdrant
     CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
     # Локальный GPU/LM Studio: 2-4; выше — LLM-шторм и зависания пула.
@@ -179,7 +179,7 @@ services:
       - .:/app/repo_root:rw
     environment:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_pochta
-      QDRANT_URL: http://qdrant:6333
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       RAG_BACKEND: qdrant
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
       # Локальный GPU/LM Studio: 2-4; выше — LLM-шторм и зависания пула.

@@ -1,6 +1,6 @@
 """Дообучение базы знаний на коррекциях оператора (human-in-the-loop).
 
-Маршрутизация: routing_corrections.json (RuleRouter) + keywords отдела в Qdrant (RAG fallback).
+Маршрутизация: audit в routing_corrections.json; production — BGE department_corrections_bge.
 Спам: spam_learning_patterns.json + коллекция spam_learning в Qdrant.
 Партнёр/организация: onec_corrections в routing_rules.json + коллекция onec_corrections.
 HITL-контрагент: PostgreSQL + коллекция contractors.
@@ -135,11 +135,15 @@ def learn_from_routing_correction(
     original_department_name: str | None = None,
     partner: str | None = None,
     organization: str | None = None,
+    embedding_source_text: str | None = None,
     path=None,
     session: Session | None = None,
     routing_rules_path=None,
 ) -> dict:
     """Сохраняет коррекцию отдела и (при наличии) полей 1С партнёр/организация."""
+    from agent_pochta.config import get_settings
+
+    settings = get_settings()
     entry = save_routing_correction(
         sender_email=sender_email,
         recipient=recipient,
@@ -149,10 +153,20 @@ def learn_from_routing_correction(
         department_name=department_name,
         original_department_id=original_department_id,
         original_department_name=original_department_name,
+        embedding_source_text=embedding_source_text or body,
         path=path,
     )
-    learning_keywords = collect_department_learning_keywords(entry)
-    qdrant = enrich_department_in_qdrant(department_id, learning_keywords)
+    qdrant: dict
+    if settings.bge_department_routing_enabled:
+        qdrant = {
+            "updated": False,
+            "keywords_added": 0,
+            "added_keywords": [],
+            "reason": "bge_routing_enabled",
+        }
+    else:
+        learning_keywords = collect_department_learning_keywords(entry)
+        qdrant = enrich_department_in_qdrant(department_id, learning_keywords)
 
     onec_entry = None
     if partner or organization:

@@ -235,6 +235,32 @@ def recipient_display_value(*, mailbox: str, payload: dict[str, Any] | None) -> 
     return ", ".join(to_list)
 
 
+IGNORED_TURBO_RECIPIENTS = frozenset({TEST_II_MAILBOX, "test_ii@turbo-don.ru"})
+
+
+def resolved_turbo_recipient(*, mailbox: str, payload: dict[str, Any] | None) -> str:
+    """Адрес @turbo-don.ru, куда направлено письмо (не test_ii)."""
+    payload = payload or {}
+    routing_raw = payload.get("routing_recipient")
+    if routing_raw:
+        routing = normalize_email_address(str(routing_raw))
+        if routing.endswith("@turbo-don.ru") and routing not in IGNORED_TURBO_RECIPIENTS:
+            return routing
+
+    to_list, cc_list = payload_recipient_lists(payload)
+    for addr in to_list + cc_list:
+        if addr.endswith("@turbo-don.ru") and addr not in IGNORED_TURBO_RECIPIENTS:
+            return addr
+
+    extra = payload.get("recipient")
+    if extra:
+        candidate = normalize_email_address(str(extra))
+        if candidate.endswith("@turbo-don.ru") and candidate not in IGNORED_TURBO_RECIPIENTS:
+            return candidate
+
+    return ""
+
+
 def matches_recipient_q(*, mailbox: str, payload: dict[str, Any] | None, query: str) -> bool:
     """Подстрока в графе «Кому» (без учёта регистра)."""
     needle = query.strip().lower()

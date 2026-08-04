@@ -60,6 +60,21 @@ celery_app.conf.update(
             "schedule": float(settings.rag_sync_interval_sec),
             "options": {"expires": settings.rag_sync_interval_sec},
         },
+        "sync-emails-to-qdrant": {
+            "task": "agent_pochta.sync_emails_to_qdrant",
+            "schedule": float(settings.email_rag_sync_interval_sec),
+            "options": {"expires": settings.email_rag_sync_interval_sec},
+        },
+        "sync-dept-corrections-to-qdrant": {
+            "task": "agent_pochta.sync_department_corrections_to_qdrant",
+            "schedule": float(settings.dept_corrections_sync_interval_sec),
+            "options": {"expires": settings.dept_corrections_sync_interval_sec},
+        },
+        "eval-bge-routing-holdout": {
+            "task": "agent_pochta.eval_bge_routing_holdout",
+            "schedule": 86400.0,
+            "options": {"expires": 86400},
+        },
     },
 )
 

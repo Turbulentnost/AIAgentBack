@@ -625,6 +625,10 @@ class RouteEngine:
         subject: str,
         body: str,
     ) -> _Candidate | None:
+        from agent_pochta.config import get_settings
+
+        if get_settings().bge_department_routing_enabled:
+            return None
         entry = find_correction_match(
             recipient=recipient,
             sender_email=sender_email,

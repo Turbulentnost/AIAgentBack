@@ -365,9 +365,56 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
     )
 
     rag_used = False
+    bge_direct = False
+    routing_source = "rules"
+    bge_score: float | None = None
+    bge_dept_correct_id: str | None = None
+    bge_dept_name: str | None = None
     llm_candidates = [{"department_id": primary_code, "department_name": dept_name}]
     need_rag = _needs_rag_fallback(decision) or reanalyze
-    if settings.rag_department_enabled and need_rag:
+    embed_text = text or attachments_text or email.body_text or ""
+
+    if need_rag and settings.bge_department_routing_enabled:
+        from agent_pochta.routing.bge_department import predict_department_bge
+
+        allowed = (
+            set(sender.allowed_departments)
+            if sender and sender.allowed_departments
+            else None
+        )
+        prediction = predict_department_bge(
+            embed_text,
+            recipient or "",
+            allowed_departments=allowed,
+        )
+        if prediction.ok:
+            bge_score = prediction.score
+            bge_dept_correct_id = prediction.dept_id
+            bge_dept_name = prediction.dept_name
+            if prediction.candidates:
+                llm_candidates = prediction.candidates
+            if prediction.score is not None and prediction.score >= settings.bge_dept_min_score:
+                bge_direct = True
+                routing_source = "bge_correction"
+                trace = trace + ["route_department_bge_direct"]
+            else:
+                rag_used = True
+                routing_source = "llm"
+                trace = trace + ["route_department_bge_llm"]
+        elif settings.rag_department_enabled:
+            rag_candidates = _rag_department_candidates(
+                container,
+                text,
+                sender,
+                recipient=recipient,
+                subject=email.subject or "",
+            )
+            if rag_candidates:
+                rag_used = True
+                routing_source = "keyword_rag_fallback"
+                llm_candidates = rag_candidates
+                trace = trace + ["route_department_rag_fallback"]
+    elif settings.rag_department_enabled and need_rag:
         rag_candidates = _rag_department_candidates(
             container,
             text,
@@ -377,16 +424,24 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
         )
         if rag_candidates:
             rag_used = True
+            routing_source = "keyword_rag_fallback"
             llm_candidates = rag_candidates
             trace = trace + ["route_department_rag"]
 
     routing = rule_routing
+    if bge_direct and bge_dept_correct_id:
+        routing = RoutingResult(
+            department_id=bge_dept_correct_id,
+            department_name=bge_dept_name or dept_name,
+            confidence=float(bge_score or 0.0),
+            reasoning=f"BGE correction match score={bge_score:.3f}" if bge_score else "BGE correction",
+        )
     use_llm_analyze = bool(settings.llm_configured and not settings.use_stubs)
     xml_theme: str | None = None
     llm_partner: str | None = None
     resolved_process: str | None = None
     spam = existing_spam
-    apply_llm_routing = rag_used or reanalyze or restored_from_spam
+    apply_llm_routing = (rag_used or reanalyze or restored_from_spam) and not bge_direct
 
     if use_llm_analyze:
         analysis = container.llm.analyze_incoming(
@@ -416,6 +471,8 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
                 decision_score=decision.confidence_score,
                 decision_level=decision.confidence_level,
             )
+            if routing_source != "keyword_rag_fallback":
+                routing_source = "llm"
     elif rag_used:
         spam = existing_spam
         choice = container.llm.choose_department(text, llm_candidates)
@@ -425,6 +482,7 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             decision_score=decision.confidence_score,
             decision_level=decision.confidence_level,
         )
+        routing_source = "llm"
         summary_ru = container.llm.summarize_ru(
             email,
             text,
@@ -650,7 +708,10 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             },
             "xml_document": decision.xml_document,
             "routing_recipient": recipient,
-            "rag_fallback": rag_used,
+            "rag_fallback": rag_used and routing_source == "keyword_rag_fallback",
+            "routing_source": routing_source,
+            "bge_score": bge_score,
+            "bge_dept_correct_id": bge_dept_correct_id,
             "skip_erp": not routing.register_erp,
         }
     )
@@ -663,7 +724,7 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             "activation_markers": dialog_cls.activation_markers,
             "reasoning": dialog_cls.reasoning,
         }
-    if rag_used:
+    if rag_used or bge_direct:
         meta["rag_candidates"] = llm_candidates
 
     if human or restored_from_spam or reanalyze:

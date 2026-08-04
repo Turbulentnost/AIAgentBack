@@ -509,6 +509,7 @@ def save_routing_correction(
     department_name: str,
     original_department_id: str | None = None,
     original_department_name: str | None = None,
+    embedding_source_text: str | None = None,
     path: Path | str | None = None,
 ) -> dict:
     store = load_corrections(path)
@@ -536,6 +537,11 @@ def save_routing_correction(
         "original_department_id": original_department_id,
         "original_department_name": original_department_name,
     }
+    if embedding_source_text:
+        from agent_pochta.config import get_settings
+
+        max_chars = get_settings().email_rag_max_source_chars
+        entry["embedding_source_text"] = embedding_source_text.strip()[:max_chars]
     store["entries"].append(entry)
     save_corrections(store, path)
     from agent_pochta.routing.engine import reset_route_engine

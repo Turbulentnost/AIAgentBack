@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from prometheus_client import Gauge
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from agent_pochta.config import get_settings
+from agent_pochta.config import PROJECT_ROOT, get_settings
 from agent_pochta.db.message_filters import MSK
 from agent_pochta.db.models import ChangeEventRow, ClassificationEventRow, EmailMessageRow
 from agent_pochta.db.session import get_session_factory
@@ -94,6 +95,26 @@ OPERATOR_KEEP_RATE = Gauge(
     "agent_pochta_operator_keep_rate",
     "Доля сохранений без правок: saved / (saved + changed), 0..1",
 )
+BGE_ROUTING_TOTAL_LAST_24H = Gauge(
+    "agent_pochta_bge_routing_total_last_24h",
+    "Писем с routing_source=bge_correction за последние 24ч",
+)
+BGE_ROUTING_ERRORS_LAST_24H = Gauge(
+    "agent_pochta_bge_routing_errors_last_24h",
+    "operator_change отдела после BGE-маршрута за 24ч",
+)
+BGE_ROUTING_ERROR_RATE = Gauge(
+    "agent_pochta_bge_routing_error_rate",
+    "Доля ошибок BGE-маршрута за 24ч (errors / total)",
+)
+BGE_OPERATOR_KEEP_RATE = Gauge(
+    "agent_pochta_bge_operator_keep_rate",
+    "1 - error_rate для BGE-маршрута за 24ч",
+)
+BGE_HOLDOUT_ACCURACY = Gauge(
+    "agent_pochta_bge_holdout_accuracy",
+    "Holdout accuracy BGE vs 1С (nightly eval)",
+)
 ROUTED_BY_DEPARTMENT = Gauge(
     "agent_pochta_routed_by_department",
     "Письма, направленные отделу (status: done/awaiting_human/error), по department_name",
@@ -125,6 +146,11 @@ _GAUGE_MAP: dict[str, Gauge] = {
     "agent_pochta_operator_saved_total": OPERATOR_SAVED_TOTAL,
     "agent_pochta_operator_changed_total": OPERATOR_CHANGED_TOTAL,
     "agent_pochta_operator_keep_rate": OPERATOR_KEEP_RATE,
+    "agent_pochta_bge_routing_total_last_24h": BGE_ROUTING_TOTAL_LAST_24H,
+    "agent_pochta_bge_routing_errors_last_24h": BGE_ROUTING_ERRORS_LAST_24H,
+    "agent_pochta_bge_routing_error_rate": BGE_ROUTING_ERROR_RATE,
+    "agent_pochta_bge_operator_keep_rate": BGE_OPERATOR_KEEP_RATE,
+    "agent_pochta_bge_holdout_accuracy": BGE_HOLDOUT_ACCURACY,
 }
 
 
@@ -212,6 +238,84 @@ def _change_percent(changes: int, messages: int) -> float:
 def _keep_rate(saved: int, changed: int) -> float:
     rate = operator_approval_rate(saved, changed)
     return float(rate) if rate is not None else 0.0
+
+
+def _bge_enabled_since_utc() -> datetime | None:
+    raw = (get_settings().bge_routing_enabled_since or "").strip()
+    if not raw:
+        return None
+    try:
+        if "T" in raw:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        else:
+            dt = datetime.fromisoformat(f"{raw}T00:00:00")
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except ValueError:
+        return None
+
+
+def _count_bge_routes(
+    session: Session,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> int:
+    since = _bge_enabled_since_utc()
+    filters = [
+        "processed_at >= :start_utc",
+        "processed_at <= :end_utc",
+        "raw_payload_json::jsonb->>'routing_source' = 'bge_correction'",
+    ]
+    params: dict[str, Any] = {"start_utc": start_utc, "end_utc": end_utc}
+    if since is not None:
+        filters.append("processed_at >= :since_utc")
+        params["since_utc"] = since
+    sql = "SELECT COUNT(*) FROM email_messages WHERE " + " AND ".join(filters)
+    return int(session.scalar(text(sql), params) or 0)
+
+
+def _count_bge_routing_errors(
+    session: Session,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> int:
+    since = _bge_enabled_since_utc()
+    sql = """
+        SELECT COUNT(*)
+        FROM classification_events ce
+        JOIN email_messages em ON em.id = ce.email_id
+        WHERE ce.category = 'department'
+          AND ce.event_type = 'operator_change'
+          AND ce.created_at >= :start_utc
+          AND ce.created_at <= :end_utc
+          AND em.raw_payload_json::jsonb->>'routing_source' = 'bge_correction'
+          AND ce.old_department_id IS NOT NULL
+          AND ce.new_department_id IS NOT NULL
+          AND ce.old_department_id <> ce.new_department_id
+    """
+    params: dict[str, Any] = {"start_utc": start_utc, "end_utc": end_utc}
+    if since is not None:
+        sql += " AND ce.created_at >= :since_utc"
+        params["since_utc"] = since
+    return int(session.scalar(text(sql), params) or 0)
+
+
+def _bge_error_rate(total: int, errors: int) -> float:
+    if total <= 0:
+        return 0.0
+    return round(errors / total, 4)
+
+
+def _read_bge_holdout_accuracy() -> float:
+    path = PROJECT_ROOT / "data" / "stats" / "bge_holdout_eval.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return float(data.get("accuracy") or 0.0)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return 0.0
 
 
 def _department_label(name: str) -> str:
@@ -345,6 +449,13 @@ def collect_metrics_snapshot(session: Session | None = None) -> dict[str, float]
         not_spam_total = _count_change_events(db_session, event_types=NOT_SPAM_EVENTS)
         operator_saved = _count_operator_events(db_session, event_type=OPERATOR_APPROVE_EVENT)
         operator_changed = _count_operator_events(db_session, event_type=OPERATOR_CHANGE_EVENT)
+        bge_total_24h = _count_bge_routes(db_session, start_utc=start_24h, end_utc=end_24h)
+        bge_errors_24h = _count_bge_routing_errors(
+            db_session, start_utc=start_24h, end_utc=end_24h
+        )
+        bge_error_rate = _bge_error_rate(bge_total_24h, bge_errors_24h)
+        bge_keep_rate = round(1.0 - bge_error_rate, 4) if bge_total_24h > 0 else 0.0
+        holdout_accuracy = _read_bge_holdout_accuracy()
 
         return {
             "agent_pochta_changes_last_24h": float(changes_24h),
@@ -361,6 +472,11 @@ def collect_metrics_snapshot(session: Session | None = None) -> dict[str, float]
             "agent_pochta_operator_saved_total": float(operator_saved),
             "agent_pochta_operator_changed_total": float(operator_changed),
             "agent_pochta_operator_keep_rate": _keep_rate(operator_saved, operator_changed),
+            "agent_pochta_bge_routing_total_last_24h": float(bge_total_24h),
+            "agent_pochta_bge_routing_errors_last_24h": float(bge_errors_24h),
+            "agent_pochta_bge_routing_error_rate": bge_error_rate,
+            "agent_pochta_bge_operator_keep_rate": bge_keep_rate,
+            "agent_pochta_bge_holdout_accuracy": holdout_accuracy,
         }
 
     if session is not None:

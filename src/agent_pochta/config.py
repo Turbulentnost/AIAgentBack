@@ -188,6 +188,37 @@ class Settings(BaseSettings):
     # Резервная синхронизация JSON / PG → Qdrant (celery-beat)
     rag_sync_interval_sec: int = Field(default=3600, alias="RAG_SYNC_INTERVAL_SEC")
 
+    # Семантическая индексация писем (тело + вложения) → Qdrant через BGE
+    email_rag_enabled: bool = Field(default=True, alias="EMAIL_RAG_ENABLED")
+    embedding_base_url: str = Field(
+        default="http://192.168.1.157:1234/v1",
+        alias="EMBEDDING_BASE_URL",
+    )
+    embedding_model: str = Field(default="BAAI/bge-m3", alias="EMBEDDING_MODEL")
+    embedding_vector_size: int = Field(default=1024, alias="EMBEDDING_VECTOR_SIZE")
+    embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
+    embedding_timeout_sec: float = Field(default=60.0, alias="EMBEDDING_TIMEOUT_SEC")
+    email_rag_max_source_chars: int = Field(default=50_000, alias="EMAIL_RAG_MAX_SOURCE_CHARS")
+    email_rag_chunk_chars: int = Field(default=4000, alias="EMAIL_RAG_CHUNK_CHARS")
+    email_rag_chunk_overlap: int = Field(default=200, alias="EMAIL_RAG_CHUNK_OVERLAP")
+    email_rag_min_chars: int = Field(default=40, alias="EMAIL_RAG_MIN_CHARS")
+    email_rag_sync_batch_size: int = Field(default=50, alias="EMAIL_RAG_SYNC_BATCH_SIZE")
+    email_rag_sync_interval_sec: int = Field(default=900, alias="EMAIL_RAG_SYNC_INTERVAL_SEC")
+    dept_corrections_sync_batch_size: int = Field(
+        default=100, alias="DEPT_CORRECTIONS_SYNC_BATCH_SIZE"
+    )
+    dept_corrections_sync_interval_sec: int = Field(
+        default=3600, alias="DEPT_CORRECTIONS_SYNC_INTERVAL_SEC"
+    )
+    bge_department_routing_enabled: bool = Field(
+        default=False, alias="BGE_DEPARTMENT_ROUTING_ENABLED"
+    )
+    bge_dept_min_score: float = Field(default=0.80, alias="BGE_DEPT_MIN_SCORE")
+    bge_dept_top_k: int = Field(default=3, alias="BGE_DEPT_TOP_K")
+    bge_routing_enabled_since: str = Field(
+        default="", alias="BGE_ROUTING_ENABLED_SINCE"
+    )
+
     @property
     def mailbox_list(self) -> list[str]:
         return [m.strip() for m in self.mailboxes.split(",") if m.strip()]
@@ -283,10 +314,16 @@ class Settings(BaseSettings):
             llm_label = f"real({llm_url})"
         else:
             llm_label = "stub(no URL)"
+        embedding = (
+            f"bge({self.embedding_base_url}, model={self.embedding_model})"
+            if self.email_rag_enabled and self.embedding_base_url
+            else "disabled"
+        )
         return {
             "mode": "production",
             "llm": llm_label,
             "rag": f"qdrant({self.qdrant_url})" if self.rag_backend == "qdrant" else "stub",
+            "email_vectors": embedding,
             "documents": f"http({self.document_service_url})"
             if self.document_service_url
             else "local(pdf/docx/xlsx/ocr)",
