@@ -482,7 +482,8 @@ def node_route_department(state: AgentState, container: ServiceContainer) -> Age
             decision_score=decision.confidence_score,
             decision_level=decision.confidence_level,
         )
-        routing_source = "llm"
+        if routing_source != "keyword_rag_fallback":
+            routing_source = "llm"
         summary_ru = container.llm.summarize_ru(
             email,
             text,
