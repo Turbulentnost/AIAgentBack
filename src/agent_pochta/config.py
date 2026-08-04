@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     imap_catchup_days: int = Field(default=7, alias="IMAP_CATCHUP_DAYS")
     imap_fetch_batch_size: int = Field(default=20, alias="IMAP_FETCH_BATCH_SIZE")
     imap_catchup_max_uids: int = Field(default=50, alias="IMAP_CATCHUP_MAX_UIDS")
+    # Не раздуваем очередь Celery, если много писем уже status=processing.
+    processing_backlog_pause_threshold: int = Field(
+        default=50, alias="PROCESSING_BACKLOG_PAUSE_THRESHOLD"
+    )
+    imap_poll_max_enqueue: int = Field(default=5, alias="IMAP_POLL_MAX_ENQUEUE")
+    stale_recovery_limit: int = Field(default=10, alias="STALE_RECOVERY_LIMIT")
     attachment_cache_ttl_sec: int = Field(default=1800, alias="ATTACHMENT_CACHE_TTL_SEC")
     attachment_cache_max_mb: int = Field(default=256, alias="ATTACHMENT_CACHE_MAX_MB")
     attachment_imap_partial_fetch: bool = Field(default=True, alias="ATTACHMENT_IMAP_PARTIAL_FETCH")

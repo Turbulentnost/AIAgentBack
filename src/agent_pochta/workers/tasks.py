@@ -109,9 +109,15 @@ def should_enqueue_email(email: EmailMessage) -> bool:
     return False
 
 
-def recover_stale_processing(*, limit: int = 30, force: bool = False) -> dict:
+def recover_stale_processing(*, limit: int | None = None, force: bool = False) -> dict:
     """Повторно ставит в очередь записи status=processing, зависшие дольше lease."""
     from datetime import datetime, timedelta
+
+    from sqlalchemy import func
+
+    settings = get_settings()
+    if limit is None:
+        limit = settings.stale_recovery_limit
 
     factory = get_session_factory()
     recovered = 0
@@ -122,6 +128,22 @@ def recover_stale_processing(*, limit: int = 30, force: bool = False) -> dict:
     to_enqueue: list[tuple[str, dict]] = []
 
     with factory() as session:
+        processing_count = (
+            session.query(func.count(EmailMessageRow.id))
+            .filter(EmailMessageRow.status == ProcessingStatus.PROCESSING.value)
+            .scalar()
+            or 0
+        )
+        if not force and processing_count >= settings.processing_backlog_pause_threshold:
+            return {
+                "recovered": 0,
+                "deleted_orphans": 0,
+                "skipped_fresh": 0,
+                "skipped_no_payload": 0,
+                "skipped_backlog": processing_count,
+                "errors": [],
+            }
+
         repo = EmailRepository(session)
         rows = (
             session.query(EmailMessageRow)
