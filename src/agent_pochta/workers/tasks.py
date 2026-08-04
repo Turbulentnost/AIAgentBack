@@ -109,9 +109,15 @@ def should_enqueue_email(email: EmailMessage) -> bool:
     return False
 
 
-def recover_stale_processing(*, limit: int = 30, force: bool = False) -> dict:
+def recover_stale_processing(*, limit: int | None = None, force: bool = False) -> dict:
     """Повторно ставит в очередь записи status=processing, зависшие дольше lease."""
     from datetime import datetime, timedelta
+
+    from sqlalchemy import func
+
+    settings = get_settings()
+    if limit is None:
+        limit = settings.stale_recovery_limit
 
     factory = get_session_factory()
     recovered = 0
@@ -122,6 +128,22 @@ def recover_stale_processing(*, limit: int = 30, force: bool = False) -> dict:
     to_enqueue: list[tuple[str, dict]] = []
 
     with factory() as session:
+        processing_count = (
+            session.query(func.count(EmailMessageRow.id))
+            .filter(EmailMessageRow.status == ProcessingStatus.PROCESSING.value)
+            .scalar()
+            or 0
+        )
+        if not force and processing_count >= settings.processing_backlog_pause_threshold:
+            return {
+                "recovered": 0,
+                "deleted_orphans": 0,
+                "skipped_fresh": 0,
+                "skipped_no_payload": 0,
+                "skipped_backlog": processing_count,
+                "errors": [],
+            }
+
         repo = EmailRepository(session)
         rows = (
             session.query(EmailMessageRow)
@@ -845,6 +867,133 @@ def sync_rag_to_qdrant_task() -> dict:
         return {"ok": True, **result}
     except Exception as exc:
         logger.exception("sync_rag_to_qdrant_failed")
+        return {"ok": False, "error": str(exc)}
+
+
+@celery_app.task(name="agent_pochta.index_email_vectors", bind=True, max_retries=3, default_retry_delay=120)
+def index_email_vectors_task(self, row_id: str, *, force: bool = False) -> dict:
+    """Векторизация письма (тело + вложения) в Qdrant через BGE."""
+    from agent_pochta.services.email_indexing import index_email_by_id
+
+    try:
+        result = index_email_by_id(row_id, force=force)
+        if not result.get("ok") and result.get("error") and not result.get("skipped"):
+            raise RuntimeError(result["error"])
+        return result
+    except Exception as exc:
+        logger.exception("index_email_vectors_failed", row_id=row_id)
+        if self.request.retries >= self.max_retries:
+            return {"ok": False, "row_id": row_id, "error": str(exc)}
+        raise self.retry(exc=exc) from exc
+
+
+@celery_app.task(name="agent_pochta.sync_emails_to_qdrant")
+def sync_emails_to_qdrant_task(*, limit: int | None = None, force: bool = False) -> dict:
+    """Backfill: индексирует необработанные письма в Qdrant (BGE)."""
+    from agent_pochta.config import PROJECT_ROOT, get_settings
+
+    settings = get_settings()
+    if not settings.email_rag_enabled or settings.rag_backend != "qdrant":
+        return {"ok": True, "skipped": True, "reason": "disabled_or_stub"}
+
+    try:
+        import importlib.util
+
+        script = PROJECT_ROOT / "scripts" / "sync_emails_to_qdrant.py"
+        spec = importlib.util.spec_from_file_location("sync_emails_to_qdrant", script)
+        if spec is None or spec.loader is None:
+            return {"ok": False, "error": f"cannot load {script}"}
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.sync_pending_emails(limit=limit or settings.email_rag_sync_batch_size, force=force)
+    except Exception as exc:
+        logger.exception("sync_emails_to_qdrant_failed")
+        return {"ok": False, "error": str(exc)}
+
+
+@celery_app.task(name="agent_pochta.index_department_correction", bind=True, max_retries=3, default_retry_delay=120)
+def index_department_correction_task(
+    self,
+    row_id: str,
+    *,
+    wrong_dept_id: str | None = None,
+    wrong_dept_name: str | None = None,
+    correct_dept_id: str,
+    correct_dept_name: str,
+    reextract: bool = True,
+) -> dict:
+    """Realtime upsert operator correction into department_corrections_bge."""
+    from agent_pochta.services.bge_correction_learning import upsert_correction_by_email_id
+
+    try:
+        result = upsert_correction_by_email_id(
+            row_id,
+            wrong_dept_id=wrong_dept_id,
+            wrong_dept_name=wrong_dept_name,
+            correct_dept_id=correct_dept_id,
+            correct_dept_name=correct_dept_name,
+            reextract=reextract,
+        )
+        if not result.get("ok") and not result.get("skipped"):
+            raise RuntimeError(result.get("reason") or result.get("error") or "upsert_failed")
+        return result
+    except Exception as exc:
+        logger.exception("index_department_correction_failed row_id=%s", row_id)
+        if self.request.retries >= self.max_retries:
+            return {"ok": False, "row_id": row_id, "error": str(exc)}
+        raise self.retry(exc=exc) from exc
+
+
+@celery_app.task(name="agent_pochta.sync_department_corrections_to_qdrant")
+def sync_department_corrections_to_qdrant_task(*, limit: int | None = None) -> dict:
+    """Backfill department corrections into Qdrant via BGE."""
+    from agent_pochta.config import PROJECT_ROOT, get_settings
+
+    settings = get_settings()
+    if not settings.email_rag_enabled or settings.rag_backend != "qdrant":
+        return {"ok": True, "skipped": True, "reason": "disabled_or_stub"}
+
+    try:
+        import importlib.util
+
+        script = PROJECT_ROOT / "scripts" / "sync_department_corrections_to_qdrant.py"
+        spec = importlib.util.spec_from_file_location("sync_department_corrections_to_qdrant", script)
+        if spec is None or spec.loader is None:
+            return {"ok": False, "error": f"cannot load {script}"}
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.sync_all(limit=limit or settings.dept_corrections_sync_batch_size)
+    except Exception as exc:
+        logger.exception("sync_department_corrections_to_qdrant_failed")
+        return {"ok": False, "error": str(exc)}
+
+
+@celery_app.task(name="agent_pochta.eval_bge_routing_holdout")
+def eval_bge_routing_holdout_task(*, limit: int = 100) -> dict:
+    """Nightly holdout eval → data/stats/bge_holdout_eval.json + Prometheus gauge."""
+    from agent_pochta.config import PROJECT_ROOT, get_settings
+    from agent_pochta.metrics.prometheus_exporter import refresh_prometheus_metrics
+
+    settings = get_settings()
+    if not settings.embedding_base_url or settings.rag_backend != "qdrant":
+        return {"ok": True, "skipped": True, "reason": "disabled_or_stub"}
+
+    try:
+        import importlib.util
+
+        script = PROJECT_ROOT / "scripts" / "eval_bge_routing_holdout.py"
+        spec = importlib.util.spec_from_file_location("eval_bge_routing_holdout", script)
+        if spec is None or spec.loader is None:
+            return {"ok": False, "error": f"cannot load {script}"}
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        result = mod.evaluate(limit=limit)
+        refresh_prometheus_metrics()
+        return {"ok": True, **result}
+    except SystemExit as exc:
+        return {"ok": False, "exit_code": int(exc.code or 1)}
+    except Exception as exc:
+        logger.exception("eval_bge_routing_holdout_failed")
         return {"ok": False, "error": str(exc)}
 
 

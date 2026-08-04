@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Корень репозитория (…/agent-pochta), не зависит от cwd процесса Celery
@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     imap_catchup_days: int = Field(default=7, alias="IMAP_CATCHUP_DAYS")
     imap_fetch_batch_size: int = Field(default=20, alias="IMAP_FETCH_BATCH_SIZE")
     imap_catchup_max_uids: int = Field(default=50, alias="IMAP_CATCHUP_MAX_UIDS")
+    # Не раздуваем очередь Celery, если много писем уже status=processing.
+    processing_backlog_pause_threshold: int = Field(
+        default=50, alias="PROCESSING_BACKLOG_PAUSE_THRESHOLD"
+    )
+    imap_poll_max_enqueue: int = Field(default=5, alias="IMAP_POLL_MAX_ENQUEUE")
+    stale_recovery_limit: int = Field(default=10, alias="STALE_RECOVERY_LIMIT")
     attachment_cache_ttl_sec: int = Field(default=1800, alias="ATTACHMENT_CACHE_TTL_SEC")
     attachment_cache_max_mb: int = Field(default=256, alias="ATTACHMENT_CACHE_MAX_MB")
     attachment_imap_partial_fetch: bool = Field(default=True, alias="ATTACHMENT_IMAP_PARTIAL_FETCH")
@@ -162,7 +168,7 @@ class Settings(BaseSettings):
     )
 
     # Внешние сервисы платформы (при use_stubs=false)
-    # openai_compat | gigachat | deepseek | auto
+    # openai_compat | deepseek | auto
     llm_provider: str = Field(default="auto", alias="LLM_PROVIDER")
     llm_gateway_url: str = Field(default="", alias="LLM_GATEWAY_URL")
     llm_gateway_api_key: str = Field(default="", alias="LLM_GATEWAY_API_KEY")
@@ -172,20 +178,6 @@ class Settings(BaseSettings):
         default="https://api.deepseek.com/v1",
         alias="DEEPSEEK_BASE_URL",
     )
-    gigachat_credentials: str = Field(
-        default="",
-        validation_alias=AliasChoices("GIGACHAT_API_PERS", "GIGACHAT_CREDENTIALS"),
-    )
-    gigachat_scope: str = Field(default="GIGACHAT_API_PERS", alias="GIGACHAT_SCOPE")
-    gigachat_auth_url: str = Field(
-        default="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-        alias="GIGACHAT_AUTH_URL",
-    )
-    gigachat_base_url: str = Field(
-        default="https://gigachat.devices.sberbank.ru/api/v1",
-        alias="GIGACHAT_BASE_URL",
-    )
-    gigachat_verify_ssl: bool = Field(default=False, alias="GIGACHAT_VERIFY_SSL")
     document_service_url: str = Field(default="", alias="DOCUMENT_SERVICE_URL")
     integration_service_url: str = Field(default="", alias="INTEGRATION_SERVICE_URL")
     vault_addr: str = Field(default="", alias="VAULT_ADDR")
@@ -201,6 +193,37 @@ class Settings(BaseSettings):
 
     # Резервная синхронизация JSON / PG → Qdrant (celery-beat)
     rag_sync_interval_sec: int = Field(default=3600, alias="RAG_SYNC_INTERVAL_SEC")
+
+    # Семантическая индексация писем (тело + вложения) → Qdrant через BGE
+    email_rag_enabled: bool = Field(default=True, alias="EMAIL_RAG_ENABLED")
+    embedding_base_url: str = Field(
+        default="http://192.168.1.157:1234/v1",
+        alias="EMBEDDING_BASE_URL",
+    )
+    embedding_model: str = Field(default="BAAI/bge-m3", alias="EMBEDDING_MODEL")
+    embedding_vector_size: int = Field(default=1024, alias="EMBEDDING_VECTOR_SIZE")
+    embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
+    embedding_timeout_sec: float = Field(default=60.0, alias="EMBEDDING_TIMEOUT_SEC")
+    email_rag_max_source_chars: int = Field(default=50_000, alias="EMAIL_RAG_MAX_SOURCE_CHARS")
+    email_rag_chunk_chars: int = Field(default=4000, alias="EMAIL_RAG_CHUNK_CHARS")
+    email_rag_chunk_overlap: int = Field(default=200, alias="EMAIL_RAG_CHUNK_OVERLAP")
+    email_rag_min_chars: int = Field(default=40, alias="EMAIL_RAG_MIN_CHARS")
+    email_rag_sync_batch_size: int = Field(default=50, alias="EMAIL_RAG_SYNC_BATCH_SIZE")
+    email_rag_sync_interval_sec: int = Field(default=900, alias="EMAIL_RAG_SYNC_INTERVAL_SEC")
+    dept_corrections_sync_batch_size: int = Field(
+        default=100, alias="DEPT_CORRECTIONS_SYNC_BATCH_SIZE"
+    )
+    dept_corrections_sync_interval_sec: int = Field(
+        default=3600, alias="DEPT_CORRECTIONS_SYNC_INTERVAL_SEC"
+    )
+    bge_department_routing_enabled: bool = Field(
+        default=False, alias="BGE_DEPARTMENT_ROUTING_ENABLED"
+    )
+    bge_dept_min_score: float = Field(default=0.80, alias="BGE_DEPT_MIN_SCORE")
+    bge_dept_top_k: int = Field(default=3, alias="BGE_DEPT_TOP_K")
+    bge_routing_enabled_since: str = Field(
+        default="", alias="BGE_ROUTING_ENABLED_SINCE"
+    )
 
     @property
     def mailbox_list(self) -> list[str]:
@@ -229,28 +252,18 @@ class Settings(BaseSettings):
 
     @property
     def effective_llm_provider(self) -> str:
-        """gigachat | deepseek | openai_compat."""
+        """deepseek | openai_compat."""
         explicit = (self.llm_provider or "auto").strip().lower()
-        if explicit in {"gigachat", "openai_compat", "deepseek"}:
+        if explicit in {"openai_compat", "deepseek"}:
             return explicit
         if self.deepseek_api_key:
             return "deepseek"
-        if self.gigachat_credentials:
-            return "gigachat"
-        if "gigachat.devices.sberbank.ru" in (self.llm_gateway_url or "").lower():
-            return "gigachat"
         return "openai_compat"
-
-    @property
-    def effective_gigachat_credentials(self) -> str:
-        return (self.gigachat_credentials or "").strip()
 
     @property
     def effective_llm_api_key(self) -> str:
         if self.effective_llm_provider == "deepseek":
             return (self.deepseek_api_key or self.llm_gateway_api_key).strip()
-        if self.effective_llm_provider == "gigachat":
-            return self.effective_gigachat_credentials
         return (self.llm_gateway_api_key or "").strip()
 
     @property
@@ -261,17 +274,13 @@ class Settings(BaseSettings):
                 or self.llm_gateway_url
                 or "https://api.deepseek.com/v1"
             ).rstrip("/")
-        if self.effective_llm_provider == "gigachat":
-            return self.gigachat_base_url or self.llm_gateway_url
         return self.llm_gateway_url
 
     @property
     def llm_configured(self) -> bool:
-        """Есть реальный LLM (DeepSeek / GigaChat / OpenAI-compatible URL)."""
+        """Есть реальный LLM (DeepSeek / OpenAI-compatible URL)."""
         if self.effective_llm_provider == "deepseek":
             return bool(self.effective_llm_api_key)
-        if self.effective_llm_provider == "gigachat":
-            return bool(self.effective_gigachat_credentials)
         return bool(self.llm_gateway_url)
 
     @property
@@ -307,16 +316,20 @@ class Settings(BaseSettings):
         llm_url = self.effective_llm_base_url
         if self.effective_llm_provider == "deepseek" and self.effective_llm_api_key:
             llm_label = f"deepseek({llm_url}, model={self.llm_default_model})"
-        elif self.effective_llm_provider == "gigachat" and self.effective_gigachat_credentials:
-            llm_label = f"gigachat({llm_url}, scope={self.gigachat_scope})"
         elif llm_url:
             llm_label = f"real({llm_url})"
         else:
             llm_label = "stub(no URL)"
+        embedding = (
+            f"bge({self.embedding_base_url}, model={self.embedding_model})"
+            if self.email_rag_enabled and self.embedding_base_url
+            else "disabled"
+        )
         return {
             "mode": "production",
             "llm": llm_label,
             "rag": f"qdrant({self.qdrant_url})" if self.rag_backend == "qdrant" else "stub",
+            "email_vectors": embedding,
             "documents": f"http({self.document_service_url})"
             if self.document_service_url
             else "local(pdf/docx/xlsx/ocr)",

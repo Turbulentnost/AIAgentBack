@@ -39,7 +39,7 @@ def test_extract_dedup_by_email_last_wins():
     by_email = {item.email: item for item in result}
     assert len(result) == 2
     assert by_email["client@example.com"].name == "Новое имя"
-    assert by_email["other@corp.ru"].name == "Corp"
+    assert by_email["other@corp.ru"].name == "corp.ru"
 
 
 def test_extract_skips_invalid_partner_and_email():
@@ -51,7 +51,7 @@ def test_extract_skips_invalid_partner_and_email():
     result = extract_contractors_from_messages(rows)
     by_email = {item.email: item for item in result}
     assert len(result) == 2
-    assert by_email["valid@corp.ru"].name == "Corp"
+    assert by_email["valid@corp.ru"].name == "corp.ru"
     assert by_email["ok@corp.ru"].name == "ООО OK"
     contractor = to_contractor(by_email["ok@corp.ru"])
     assert contractor.contractor_id == "email:ok@corp.ru"

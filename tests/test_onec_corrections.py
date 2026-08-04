@@ -73,7 +73,15 @@ def test_ensure_onec_section_on_legacy_rules(tmp_path: Path):
     assert rules["onec_corrections"]["entries"] == []
 
 
-def test_route_engine_ignores_onec_corrections_key(rules_file: Path):
+def test_route_engine_ignores_onec_corrections_key(rules_file: Path, monkeypatch: pytest.MonkeyPatch):
+    def _empty_deterministic_rules(path: str = "") -> dict:
+        return {}
+
+    _empty_deterministic_rules.cache_clear = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "agent_pochta.routing.deterministic_sales.load_deterministic_sales_rules",
+        _empty_deterministic_rules,
+    )
     engine = RouteEngine.load(rules_file)
     email = EmailMessage(
         message_id="<onec-ignore@example>",

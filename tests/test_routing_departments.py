@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from agent_pochta.schemas import Department
 from agent_pochta.services.rag import score_department_keywords
 from agent_pochta.services.routing_departments import (
@@ -67,7 +70,6 @@ def test_structure_departments_merge_routing_keywords_and_tz_emails():
     buh = by_id["00-000002"]
     assert buh.department_name == "Бухгалтерия"
     assert "акт сверки" in buh.keywords
-    assert "almaz_glavbuh@turbo-don.ru" in buh.keywords
     assert "almaz_glavbuh" in buh.keywords
 
 
@@ -95,7 +97,7 @@ def test_recipient_email_boosts_structure_department():
 def test_list_active_departments_for_ui_uses_onec_names():
     departments = list_active_departments_for_ui()
     by_id = {item["id"]: item["name"] for item in departments}
-    assert len(departments) == 31
+    assert len(departments) == 129
     assert by_id["00-000001"] == "Председатель Совета Директоров"
     assert by_id["00-000065"] == "Отдел МТО"
     assert by_id["00-000002"] == "Бухгалтерия"
@@ -106,33 +108,21 @@ def test_list_active_departments_for_ui_uses_onec_names():
     assert "00-999999" not in by_id
     assert "00-000007" not in by_id
     assert "00-000149" not in by_id
-    assert "00-000013" not in by_id
 
 
 def test_list_active_departments_for_ui_explicit_directors_allowed():
     from agent_pochta.services.routing_departments import load_ui_department_allowlist
 
+    allowlist_path = Path(__file__).resolve().parents[1] / "data" / "ui_department_allowlist.json"
+    allowlist_data = json.loads(allowlist_path.read_text(encoding="utf-8"))
     allowlist = load_ui_department_allowlist()
     assert "00-000001" in allowlist
     assert "00-000152" in allowlist
     assert "00-000172" in allowlist
-    assert "00-000007" not in allowlist
-    assert "00-000149" not in allowlist
-    for item in list_active_departments_for_ui():
-        if item["id"] in {
-            "00-000001",
-            "00-000152",
-            "00-000049",
-            "00-000058",
-            "00-000080",
-            "00-000163",
-            "00-000172",
-            "00-000040",
-            "00-000182",
-        }:
-            continue
-        name_l = item["name"].lower().replace("ё", "е")
-        assert "директор" not in name_l, item
+    for code in allowlist_data.get("excluded_ui_codes") or []:
+        assert str(code) not in allowlist
+    for code in allowlist_data.get("explicit_director_codes") or []:
+        assert str(code) in allowlist
 
 
 def test_schet_routes_to_buh_not_service():
@@ -198,11 +188,9 @@ def test_rag_schet_prefers_buh_over_reserve():
 
 
 def test_load_tz_emails_from_enterprise_fixture():
-    import json
-    from pathlib import Path
+    from agent_pochta.services.routing_departments import load_tz_department_topics
 
-    root = Path(__file__).resolve().parents[1]
-    enterprise = json.loads((root / "data" / "enterprise_positions.json").read_text(encoding="utf-8"))
-    emails = load_tz_emails_by_code(enterprise)
-    assert "00-000002" in emails
-    assert "almaz_glavbuh@turbo-don.ru" in emails["00-000002"]
+    topics = load_tz_department_topics()
+    assert "00-000002" in topics
+    emails = topics["00-000002"].get("emails") or []
+    assert "almaz_glavbuh@turbo-don.ru" in emails

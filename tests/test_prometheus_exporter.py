@@ -54,7 +54,7 @@ def test_rolling_24h_window_is_24_hours() -> None:
 def test_collect_metrics_snapshot_with_mock_session() -> None:
     session = MagicMock()
     # 10 change/message counts + operator_saved + operator_changed
-    session.scalar.side_effect = [10, 100, 50, 500, 2, 20, 1, 5, 3, 15, 4, 12]
+    session.scalar.side_effect = [10, 100, 50, 500, 2, 20, 1, 5, 3, 15, 4, 12, 20, 3]
 
     snapshot = collect_metrics_snapshot(session=session)
 
@@ -72,6 +72,10 @@ def test_collect_metrics_snapshot_with_mock_session() -> None:
     assert snapshot["agent_pochta_operator_saved_total"] == 4.0
     assert snapshot["agent_pochta_operator_changed_total"] == 12.0
     assert snapshot["agent_pochta_operator_keep_rate"] == 0.25
+    assert snapshot["agent_pochta_bge_routing_total_last_24h"] == 20.0
+    assert snapshot["agent_pochta_bge_routing_errors_last_24h"] == 3.0
+    assert snapshot["agent_pochta_bge_routing_error_rate"] == 0.15
+    assert snapshot["agent_pochta_bge_operator_keep_rate"] == 0.85
 
 
 def test_count_routing_corrections_by_department(tmp_path) -> None:
@@ -122,7 +126,8 @@ def test_metrics_names_exported() -> None:
     assert "agent_pochta_operator_saved_total" in names
     assert "agent_pochta_operator_changed_total" in names
     assert "agent_pochta_operator_keep_rate" in names
-    assert len(names) == 14
+    assert "agent_pochta_bge_operator_keep_rate" in names
+    assert len(names) == 19
     assert "agent_pochta_routed_by_department" in labeled
     assert "agent_pochta_routing_corrections_by_department" in labeled
     assert "agent_pochta_emails_by_department" not in labeled

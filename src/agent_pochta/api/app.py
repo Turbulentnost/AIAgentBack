@@ -504,7 +504,7 @@ def classification_events_summary(
 def export_email_messages_report(
     period: str = Query(default="day", pattern="^(day|week|month)$"),
 ) -> Response:
-    """Excel-отчёт для «Таняфикации»: сводка + детализация писем за период (MSK)."""
+    """Excel-отчёт для «Вид 1С»: сводка + детализация писем за период (MSK)."""
     with get_session_factory()() as session:
         content, filename = collect_export_data(
             session,
@@ -876,12 +876,16 @@ def _apply_operator_routing_save(
     email = repo.load_email_from_row(row)
     learning: dict[str, Any] = {}
     if email is not None:
+        from agent_pochta.services.department_knowledge import build_unified_embed_text_from_row
+
+        embed_text = build_unified_embed_text_from_row(row)
         learning = learn_from_routing_correction(
             message_id=row.message_id,
             sender_email=email.sender_email,
             recipient=email.routing_recipient or email.mailbox,
             subject=email.subject,
-            body=repo.learning_text_from_row(row, email),
+            body=embed_text,
+            embedding_source_text=embed_text,
             department_id=body.department_id,
             department_name=department_name,
             original_department_id=original_department_id,
@@ -902,7 +906,35 @@ def _apply_operator_routing_save(
             process_override=process_override,
             organization_override=organization_override,
         )
+        if (
+            original_department_id
+            and body.department_id
+            and original_department_id != body.department_id
+        ):
+            learning["bge_correction_task"] = {
+                "row_id": str(row.id),
+                "wrong_dept_id": original_department_id,
+                "wrong_dept_name": original_department_name or "",
+                "correct_dept_id": body.department_id,
+                "correct_dept_name": department_name,
+            }
     return learning
+
+
+def _enqueue_bge_correction_task(learning: dict[str, Any]) -> None:
+    task_info = learning.get("bge_correction_task")
+    if not task_info:
+        return
+    from agent_pochta.workers.tasks import index_department_correction_task
+
+    index_department_correction_task.delay(
+        task_info["row_id"],
+        wrong_dept_id=task_info.get("wrong_dept_id"),
+        wrong_dept_name=task_info.get("wrong_dept_name"),
+        correct_dept_id=task_info["correct_dept_id"],
+        correct_dept_name=task_info.get("correct_dept_name") or task_info["correct_dept_id"],
+        reextract=True,
+    )
 
 
 @app.post("/api/v1/email-messages/{row_id}/resolve-human")
@@ -1007,6 +1039,7 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
                 already_processed=already_processed,
             )
             session.commit()
+            _enqueue_bge_correction_task(learning)
             if already_processed:
                 return {
                     "status": "correction_saved",
@@ -1042,6 +1075,7 @@ def resolve_human(row_id: uuid.UUID, body: HumanResolveRequest) -> dict[str, Any
             )
             repo.set_operator_verified(row, True)
             session.commit()
+            _enqueue_bge_correction_task(learning)
             return {
                 "status": "verified",
                 "id": str(row_id),

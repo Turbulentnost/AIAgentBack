@@ -97,8 +97,8 @@ def test_seed_overrides_older_spam_marked_business(seed_mod, tmp_path: Path, mon
         message_id="<test@example>",
         mailbox="info@turbo-don.ru",
         sender_email="vendor@example.com",
-        subject="Счёт на оплату",
-        body_text="Просим выставить счёт за поставку.",
+        subject="Акт сверки за квартал",
+        body_text="Просим направить акт сверки взаиморасчетов.",
         received_at=datetime.now(timezone.utc),
     )
     decision = check_learned_spam_decision(email, path=learning)
@@ -128,7 +128,7 @@ def test_keyword_match_any_one(seed_mod, tmp_path: Path, monkeypatch: pytest.Mon
         mailbox="info@turbo-don.ru",
         sender_email="client@partner.ru",
         subject="Запрос",
-        body_text="Направляем запрос на поставку оборудования.",
+        body_text="Направляем запрос документов по поставке оборудования.",
         received_at=datetime.now(timezone.utc),
     )
     decision = check_learned_spam_decision(email, path=learning)

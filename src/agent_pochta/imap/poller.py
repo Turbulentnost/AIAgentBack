@@ -13,7 +13,7 @@ from agent_pochta.db.session import get_session_factory
 from agent_pochta.demo_filter import is_demo_email
 from agent_pochta.email_payload import email_to_task_payload
 from agent_pochta.imap.client import fetch_since_messages, fetch_unseen_messages
-from agent_pochta.schemas import EmailMessage
+from agent_pochta.schemas import EmailMessage, ProcessingStatus
 from agent_pochta.services import ServiceContainer, build_container
 
 logger = structlog.get_logger(__name__)
@@ -54,10 +54,29 @@ def poll_mailboxes(container: ServiceContainer | None = None) -> dict:
     enqueued = 0
     skipped_demo = 0
     skipped_processed = 0
+    skipped_backlog = 0
     errors: list[str] = []
 
     factory = get_session_factory()
+    backlog_paused = False
+    processing_count = 0
     with factory() as session:
+        processing_count = (
+            session.query(func.count(EmailMessageRow.id))
+            .filter(EmailMessageRow.status == ProcessingStatus.PROCESSING.value)
+            .scalar()
+            or 0
+        )
+        backlog_paused = processing_count >= settings.processing_backlog_pause_threshold
+        max_enqueue = settings.imap_poll_max_enqueue if not backlog_paused else 0
+
+        if backlog_paused:
+            logger.info(
+                "imap_poll_backlog_paused",
+                processing_count=processing_count,
+                threshold=settings.processing_backlog_pause_threshold,
+            )
+
         for mailbox in settings.mailbox_list:
             mailbox_enqueued = 0
             mailbox_skipped_processed = 0
@@ -80,26 +99,30 @@ def poll_mailboxes(container: ServiceContainer | None = None) -> dict:
                     if mid
                 }
                 catchup_emails: list[EmailMessage] = []
-                try:
-                    catchup_emails = fetch_since_messages(
-                        mailbox,
-                        container.vault,
-                        since,
-                        settings=settings,
-                        mark_seen=False,
-                        exclude_message_id_bases=known_bases,
-                    )
-                except Exception as catchup_exc:
-                    # Do not block new UNSEEN mail if catch-up FETCH fails server-side.
-                    errors.append(f"{mailbox}: catchup {catchup_exc}")
-                    logger.exception(
-                        "imap_catchup_failed",
-                        mailbox=mailbox,
-                        catchup_since=since.isoformat(),
-                    )
+                if not backlog_paused:
+                    try:
+                        catchup_emails = fetch_since_messages(
+                            mailbox,
+                            container.vault,
+                            since,
+                            settings=settings,
+                            mark_seen=False,
+                            exclude_message_id_bases=known_bases,
+                        )
+                    except Exception as catchup_exc:
+                        # Do not block new UNSEEN mail if catch-up FETCH fails server-side.
+                        errors.append(f"{mailbox}: catchup {catchup_exc}")
+                        logger.exception(
+                            "imap_catchup_failed",
+                            mailbox=mailbox,
+                            catchup_since=since.isoformat(),
+                        )
                 emails = merge_emails_by_message_id(unseen_emails, catchup_emails)
                 mailbox_fetched = len(emails)
                 for email in emails:
+                    if enqueued >= max_enqueue:
+                        skipped_backlog += 1
+                        continue
                     if is_demo_email(email):
                         skipped_demo += 1
                         logger.info(
@@ -134,5 +157,8 @@ def poll_mailboxes(container: ServiceContainer | None = None) -> dict:
         "enqueued": enqueued,
         "skipped_demo": skipped_demo,
         "skipped_processed": skipped_processed,
+        "skipped_backlog": skipped_backlog,
+        "backlog_paused": backlog_paused,
+        "processing_count": processing_count,
         "errors": errors,
     }

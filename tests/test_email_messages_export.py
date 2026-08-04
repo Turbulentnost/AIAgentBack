@@ -1,4 +1,4 @@
-"""Тесты Excel-выгрузки «Таняфикация»."""
+"""Тесты Excel-выгрузки «Вид 1С»."""
 
 from __future__ import annotations
 
@@ -124,9 +124,9 @@ def test_build_export_xlsx_has_two_sheets():
 
 def test_export_filename():
     now = datetime(2026, 7, 22, tzinfo=_MSK)
-    assert export_filename("day", now=now) == "tanyafication_report_day_2026-07-22.xlsx"
+    assert export_filename("day", now=now) == "vid_1c_report_day_2026-07-22.xlsx"
     assert export_filename("week", now=now) == (
-        "tanyafication_report_week_2026-07-16_2026-07-22.xlsx"
+        "vid_1c_report_week_2026-07-16_2026-07-22.xlsx"
     )
 
 

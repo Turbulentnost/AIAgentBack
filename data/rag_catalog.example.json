@@ -1,0 +1,54 @@
+{
+  "contractors": [
+    {
+      "Ref_Key": "uuid-1",
+      "Description": "ООО «Промтехснаб»",
+      "Email": "prom@client.ru",
+      "DepartmentCodes": "00-000065"
+    },
+    {
+      "Ref_Key": "uuid-2",
+      "Description": "ООО «Тест»",
+      "Email": "test@client.ru",
+      "DepartmentCodes": "00-000002"
+    },
+    {
+      "Ref_Key": "uuid-3",
+      "Description": "АО «Пример»",
+      "Email": "demo@example.ru",
+      "DepartmentCodes": "00-000044"
+    }
+  ],
+  "departments": [
+    {
+      "department_id": "00-000002",
+      "department_name": "Бухгалтерия",
+      "keywords": [
+        "счёт",
+        "акт сверки"
+      ]
+    },
+    {
+      "department_id": "00-000065",
+      "department_name": "Отдел МТО",
+      "keywords": [
+        "закупка",
+        "оплата"
+      ]
+    },
+    {
+      "department_id": "00-000044",
+      "department_name": "Юридический отдел",
+      "keywords": [
+        "договор"
+      ]
+    },
+    {
+      "department_id": "00-000066",
+      "department_name": "Управление делами",
+      "keywords": [
+        "канцелярия"
+      ]
+    }
+  ]
+}

@@ -215,7 +215,7 @@ def test_mark_verified_rejected_for_awaiting_human():
         )
 
     assert response.status_code == 400
-    assert "done or error" in response.json()["detail"]
+    assert "done, error, or dialog" in response.json()["detail"]
 
 
 def test_approve_routing_on_done_schedules_erp_sync_when_document_exists():

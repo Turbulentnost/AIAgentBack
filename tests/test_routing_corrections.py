@@ -162,7 +162,15 @@ def test_payload_meta_handles_invalid_json():
         sender_email="a@b.ru",
         raw_payload_json="{not-json",
     )
-    assert _payload_meta(row) == {"to": [], "routing_recipient": None, "hitl_reason": None}
+    assert _payload_meta(row) == {
+        "to": [],
+        "routing_recipient": None,
+        "hitl_reason": None,
+        "routing_decision": {},
+        "rag_fallback": None,
+        "operator_verified": False,
+        "operator_corrected": False,
+    }
 
 
 def test_row_to_dict_empty_body_returns_not_stored_placeholder():
@@ -210,7 +218,7 @@ def test_list_departments_endpoint():
     response = client.get("/api/v1/departments")
     assert response.status_code == 200
     departments = response.json()
-    assert len(departments) == 134
+    assert len(departments) == 129
     assert all("id" in item and "name" in item for item in departments)
     assert departments == sorted(departments, key=lambda item: item["id"])
     by_id = {item["id"]: item["name"] for item in departments}

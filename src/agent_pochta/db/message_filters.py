@@ -163,7 +163,7 @@ def email_eligible_for_erp(
     routing_recipient: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> bool:
-    """Регистрация входящей в 1С ERP только для info@turbo-don.ru."""
+    """Регистрация входящей в 1С ERP для маршрута info@ (в т.ч. test_ii@ ← info@)."""
     if payload is None:
         payload = email_info_filter_payload(
             mailbox=mailbox,
@@ -171,7 +171,17 @@ def email_eligible_for_erp(
             cc=cc,
             routing_recipient=routing_recipient,
         )
-    return is_only_info_to(mailbox=mailbox, payload=payload)
+    if is_only_info_to(mailbox=mailbox, payload=payload):
+        return True
+    if is_info_to_test_ii_routing(mailbox=mailbox, payload=payload):
+        return True
+    # Multi-recipient split: routing-попытка info@ при нескольких адресах в To.
+    to_list, cc_list = payload_recipient_lists(payload)
+    if cc_list:
+        return False
+    routing_raw = payload.get("routing_recipient")
+    routing = normalize_email_address(str(routing_raw)) if routing_raw else ""
+    return routing == INFO_MAILBOX and INFO_MAILBOX in to_list
 
 
 def is_only_info_to(*, mailbox: str, payload: dict[str, Any] | None) -> bool:
@@ -223,6 +233,32 @@ def recipient_display_value(*, mailbox: str, payload: dict[str, Any] | None) -> 
         return routing
     to_list, _ = payload_recipient_lists(payload)
     return ", ".join(to_list)
+
+
+IGNORED_TURBO_RECIPIENTS = frozenset({TEST_II_MAILBOX, "test_ii@turbo-don.ru"})
+
+
+def resolved_turbo_recipient(*, mailbox: str, payload: dict[str, Any] | None) -> str:
+    """Адрес @turbo-don.ru, куда направлено письмо (не test_ii)."""
+    payload = payload or {}
+    routing_raw = payload.get("routing_recipient")
+    if routing_raw:
+        routing = normalize_email_address(str(routing_raw))
+        if routing.endswith("@turbo-don.ru") and routing not in IGNORED_TURBO_RECIPIENTS:
+            return routing
+
+    to_list, cc_list = payload_recipient_lists(payload)
+    for addr in to_list + cc_list:
+        if addr.endswith("@turbo-don.ru") and addr not in IGNORED_TURBO_RECIPIENTS:
+            return addr
+
+    extra = payload.get("recipient")
+    if extra:
+        candidate = normalize_email_address(str(extra))
+        if candidate.endswith("@turbo-don.ru") and candidate not in IGNORED_TURBO_RECIPIENTS:
+            return candidate
+
+    return ""
 
 
 def matches_recipient_q(*, mailbox: str, payload: dict[str, Any] | None, query: str) -> bool:

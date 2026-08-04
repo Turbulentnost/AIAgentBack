@@ -5,6 +5,27 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.eggs/
+build/
+dist/
+
+# Окружение и секреты
+.env
+.env.Jalko
+*.local
+ОТ ПОЧТЫ*.txt
+*ДАННЫЕ*.txt
+access-info.txt
+scripts/access-info.public-ip.*.txt
+
+# Celery / runtime
+celerybeat-schedule.*
+*.log
+
+# IDE / локальные инструменты
+.idea/
+.vscode/
+.tools/
 .mypy_cache/
 .ruff_cache/
 exports/
@@ -37,16 +58,12 @@ alembic/versions/*.py
 !alembic/versions/20260722_protocol_draft.py
 
 # Build / coverage
-dist/
-build/
 htmlcov/
 .coverage
 coverage.xml
 *.egg
 
 # IDE / OS
-.idea/
-.vscode/
 *.swp
 *~
 .DS_Store
@@ -54,7 +71,6 @@ Thumbs.db
 desktop.ini
 
 # Logs & runtime output
-*.log
 _kb_import_log.txt
 reports/
 
@@ -67,7 +83,36 @@ tools/tesseract/
 # One-off / scratch scripts
 scripts/_*.py
 
-# Данные agent_pochta: по умолчанию не пушим, только RAG/маршрутизация
+# Статистика и отчёты (локальные)
+статистика copy.md
+статистика.md
+статистика.json
+enterprise_positions_report_all.txt
+
+# Документация и промпты (локальные)
+PROMT.md
+ПРОЦЕСС.md
+Запрос-промт.md
+last_5_llm_prompts.md
+
+# Данные и выгрузки (локальные)
+ОТ ПОЧТЫ ДАННЫЕ.txt
+Действующие подразделения.xlsx
+tz_tables.txt
+tz_s12.txt
+tz_keywords.txt
+debug_ud.txt
+
+# Скрипты запуска и утилиты
+run_plot_errors.cmd
+run_frontend.cmd
+run_access_info.cmd
+list_enterprise_positions.py
+
+# Конфигурация окружения (локальная копия)
+.env.Jalko.example
+
+# Данные: по умолчанию не пушим, только RAG/маршрутизация агента
 data/*
 !data/routing_rules.json
 !data/dialog_rules.json
@@ -75,11 +120,14 @@ data/*
 !data/rag_department_keywords.json
 !data/tz_department_topics.json
 !data/spam_learning_patterns.json
+!data/spam_learning_not_spam_seed.json
+!data/rag_catalog.example.json
+!data/enterprise_positions.json
+!data/ui_department_allowlist.json
 !data/templates/
 !data/templates/**
 
-# Устаревшие/лишние RAG-артефакты
-data/rag_catalog.example.json
+# Устаревшие/лишние RAG-артефакты (не используются коллекциями departments/spam_learning)
 data/spam_patterns.json
 
 # Импорты, выгрузки, runtime-обучение и отчёты в data/
@@ -89,8 +137,6 @@ data/*.xlsx
 data/*.xls
 data/*.docx
 data/*.xml
-data/routing_corrections.json
-data/enterprise_positions.json
 data/*_report*.json
 data/*_comparison*.json
 data/*_mapping*.xlsx

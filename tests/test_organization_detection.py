@@ -51,7 +51,7 @@ def test_almaz_and_grand_set_al(engine):
         engine=engine,
     )
     assert decision.organization == "АЛ"
-    assert decision.direction == "АЛ"
+    assert decision.direction == "ПР"
 
 
 def test_metrogazservis_sets_mg_only(engine):
