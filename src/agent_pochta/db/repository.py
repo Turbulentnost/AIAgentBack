@@ -7,7 +7,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 import structlog
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, func, not_, or_
 from sqlalchemy.orm import Session
 
 from agent_pochta.db.message_filters import (
@@ -27,6 +27,10 @@ from agent_pochta.db.models import EmailAttachmentRow, EmailMessageRow
 from agent_pochta.db.session import get_session_factory
 from agent_pochta.email_payload import email_to_task_payload
 from agent_pochta.schemas import EmailMessage, Priority, ProcessingStatus, RoutingResult
+from agent_pochta.services.erp_attachments import (
+    STUB_ERP_DOCUMENT_PREFIX,
+    STUB_ERP_TASK_PREFIX,
+)
 from agent_pochta.state import AgentState
 
 logger = structlog.get_logger(__name__)
@@ -173,8 +177,13 @@ class EmailRepository:
         only_info_to: bool = False,
     ) -> int:
         query = self._session.query(func.count(EmailMessageRow.id)).filter(
+            EmailMessageRow.erp_document_number.is_not(None),
+            EmailMessageRow.erp_document_number != "",
+            ~EmailMessageRow.erp_document_number.in_(("SKIP-ERP", "DRY-RUN")),
+            ~EmailMessageRow.erp_document_number.like(f"{STUB_ERP_DOCUMENT_PREFIX}%"),
             EmailMessageRow.erp_task_id.is_not(None),
             EmailMessageRow.erp_task_id != "",
+            ~EmailMessageRow.erp_task_id.like(f"{STUB_ERP_TASK_PREFIX}%"),
         )
         query = self._apply_message_filters(
             query,
@@ -200,7 +209,11 @@ class EmailRepository:
         only_info_to: bool = False,
     ) -> int:
         query = self._session.query(func.count(EmailMessageRow.id)).filter(
-            EmailMessageRow.erp_document_number == "SKIP-ERP",
+            or_(
+                EmailMessageRow.erp_document_number == "SKIP-ERP",
+                EmailMessageRow.erp_document_number == "DRY-RUN",
+                EmailMessageRow.erp_document_number.like(f"{STUB_ERP_DOCUMENT_PREFIX}%"),
+            )
         )
         query = self._apply_message_filters(
             query,

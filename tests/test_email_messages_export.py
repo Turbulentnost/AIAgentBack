@@ -49,6 +49,20 @@ def test_export_detail_columns_exclude_access_and_responsible():
     assert "Ответственный" not in headers
 
 
+def test_row_dict_to_export_detail_hides_stub_erp_number():
+    detail = row_dict_to_export_detail(
+        {
+            "operator_review_state": "pending",
+            "status": "done",
+            "is_spam": False,
+            "received_at": "2026-08-04T16:01:00+00:00",
+            "erp_document_number": "ВК-СТУБ-000001",
+            "sender_email": "noreply@gazprom-neft.ru",
+        }
+    )
+    assert detail["erp_document_number"] == "—"
+
+
 def test_row_dict_to_export_detail_maps_table_fields():
     detail = row_dict_to_export_detail(
         {

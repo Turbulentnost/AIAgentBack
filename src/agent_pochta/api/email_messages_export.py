@@ -12,6 +12,7 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from agent_pochta.db.message_filters import MSK, msk_day_end_exclusive_utc, msk_day_start_utc
+from agent_pochta.services.erp_attachments import display_erp_document_number
 from agent_pochta.stats.classification_log import collect_operator_approvals
 
 ExportPeriod = Literal["day", "week", "month"]
@@ -136,7 +137,10 @@ def row_dict_to_export_detail(row_dict: dict[str, Any]) -> dict[str, Any]:
         "mail_date_display": _format_msk_datetime(
             str(mail_date) if mail_date is not None else None
         ),
-        "erp_document_number": str(row_dict.get("erp_document_number") or "").strip() or "—",
+        "erp_document_number": display_erp_document_number(
+            row_dict.get("erp_document_number")
+        )
+        or "—",
         "attachments_display": _attachments_display(row_dict),
         "organization_name": str(row_dict.get("organization_name") or row_dict.get("organization") or "").strip() or "—",
         "sender_email": str(row_dict.get("sender_email") or "").strip() or "—",

@@ -37,6 +37,7 @@ def _build_llm(settings: Settings) -> LLMGateway:
             base_url,
             api_key=settings.effective_llm_api_key,
             model=settings.llm_default_model,
+            timeout_sec=settings.llm_gateway_timeout_sec,
         )
     return StubLLMGateway()
 

@@ -172,6 +172,7 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="auto", alias="LLM_PROVIDER")
     llm_gateway_url: str = Field(default="", alias="LLM_GATEWAY_URL")
     llm_gateway_api_key: str = Field(default="", alias="LLM_GATEWAY_API_KEY")
+    llm_gateway_timeout_sec: float = Field(default=120.0, alias="LLM_GATEWAY_TIMEOUT_SEC")
     llm_default_model: str = Field(default="qwen/qwen3.5-9b", alias="LLM_DEFAULT_MODEL")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(
