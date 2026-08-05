@@ -43,6 +43,12 @@ def reset_deterministic_sales_rules_cache() -> None:
     load_deterministic_sales_rules.cache_clear()
 
 
+def ved_deterministic_routing_enabled(rules: dict | None = None) -> bool:
+    """Жёсткая маршрутизация в ВЭД (det_foreign_domain / det_sales_foreign)."""
+    cfg = rules if rules is not None else load_deterministic_sales_rules()
+    return bool(cfg.get("ved_deterministic_routing_enabled", False))
+
+
 def _hits_in_text(markers: list[str], text: str) -> list[str]:
     found: list[str] = []
     for marker in markers:
@@ -215,7 +221,7 @@ def match_foreign_domain_route(
 ) -> DeterministicHit | None:
     """Маршрут в ВЭД по зарубежному домену без sales-context и ключевых слов."""
     cfg = rules if rules is not None else load_deterministic_sales_rules()
-    if not cfg:
+    if not cfg or not ved_deterministic_routing_enabled(cfg):
         return None
     text = normalize_text(f"{subject} {body}")
     sender = (sender_email or "").lower().strip()
@@ -367,7 +373,7 @@ def match_deterministic_sales(
             return chairman_hit
 
     is_foreign, foreign_hits = _is_foreign(text, sender, cfg)
-    if is_foreign:
+    if is_foreign and ved_deterministic_routing_enabled(cfg):
         return _accept(
             DeterministicHit(
                 code=str(cfg["foreign_department_id"]),

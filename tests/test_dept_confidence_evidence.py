@@ -154,7 +154,7 @@ def test_ru_sales_does_not_route_to_ved(engine):
     assert decision.match_source != "det_foreign_domain"
 
 
-def test_foreign_domain_routes_ved_with_high_confidence(engine):
+def test_foreign_domain_does_not_route_to_ved_when_disabled(engine):
     decision = _route(
         engine,
         "Inquiry Incoterms FOB. Contact sales@partner-export.de",
@@ -162,10 +162,9 @@ def test_foreign_domain_routes_ved_with_high_confidence(engine):
         mailbox="sales@turbo-don.ru",
         routing_recipient="sales@turbo-don.ru",
     )
-    assert decision.services[0].code == VED_DEPARTMENT_CODE
-    assert decision.match_source == "det_foreign_domain"
-    assert decision.hard_foreign is True
-    assert decision.confidence_score >= 90
+    assert decision.services[0].code != VED_DEPARTMENT_CODE
+    assert decision.match_source != "det_foreign_domain"
+    assert decision.hard_foreign is not True
 
 
 def test_chairman_institution_live_route(engine):

@@ -70,15 +70,15 @@ def test_service_routes_to_service_department(engine):
     assert decision.match_source == "det_product_service"
 
 
-def test_foreign_domain_in_body_routes_to_ved(engine):
+def test_foreign_domain_does_not_route_to_ved_when_disabled(engine):
     decision = _route(
         engine,
         "Запрос КП. Контакт: sales@partner-export.de",
         sender_email="client@example.ru",
     )
 
-    assert decision.services[0].code == "00-000015"
-    assert decision.match_source == "det_foreign_domain"
+    assert decision.services[0].code != "00-000015"
+    assert decision.match_source != "det_foreign_domain"
 
 
 def test_export_keyword_without_foreign_domain_does_not_route_to_ved(engine):
@@ -88,18 +88,18 @@ def test_export_keyword_without_foreign_domain_does_not_route_to_ved(engine):
     assert decision.match_source != "det_sales_foreign"
 
 
-def test_com_sender_with_sales_context_routes_to_ved(engine):
+def test_com_sender_with_sales_context_does_not_route_to_ved_when_disabled(engine):
     decision = _route(
         engine,
         "Запрос КП на оборудование.",
         sender_email="info@hebei-export.com",
     )
 
-    assert decision.services[0].code == "00-000015"
-    assert decision.match_source in {"det_sales_foreign", "det_foreign_domain"}
+    assert decision.services[0].code != "00-000015"
+    assert decision.match_source not in {"det_sales_foreign", "det_foreign_domain"}
 
 
-def test_foreign_sender_routes_to_ved_without_sales_context(engine):
+def test_foreign_sender_does_not_route_to_ved_when_disabled(engine):
     decision = _route(
         engine,
         "Please send quotation for spare parts.",
@@ -108,11 +108,11 @@ def test_foreign_sender_routes_to_ved_without_sales_context(engine):
         routing_recipient="uk_omto10@turbo-don.ru",
     )
 
-    assert decision.services[0].code == "00-000015"
-    assert decision.match_source == "det_foreign_domain"
+    assert decision.services[0].code != "00-000015"
+    assert decision.match_source != "det_foreign_domain"
 
 
-def test_foreign_domain_in_cc_routes_to_ved(engine):
+def test_foreign_domain_in_cc_does_not_route_to_ved_when_disabled(engine):
     email = _email(
         sender_email="client@example.ru",
         mailbox="info@turbo-don.ru",
@@ -126,8 +126,8 @@ def test_foreign_domain_in_cc_routes_to_ved(engine):
         engine=engine,
     )
 
-    assert decision.services[0].code == "00-000015"
-    assert decision.match_source == "det_foreign_domain"
+    assert decision.services[0].code != "00-000015"
+    assert decision.match_source != "det_foreign_domain"
 
 
 def test_gmail_com_is_not_foreign(engine):
