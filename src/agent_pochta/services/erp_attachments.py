@@ -29,16 +29,40 @@ from agent_pochta.services.vault import VaultClient
 logger = structlog.get_logger(__name__)
 
 _SKIP_ERP_DOCUMENT_NUMBERS = frozenset({"SKIP-ERP", "DRY-RUN"})
+STUB_ERP_DOCUMENT_PREFIX = "ВК-СТУБ-"
+STUB_ERP_TASK_PREFIX = "TASK-STUB-"
 ERP_LEGACY_EMAIL_FILENAME = "Входящее_письмо.eml"
 # Обратная совместимость тестов и retry API
 ERP_FULL_EMAIL_FILENAME = ERP_LEGACY_EMAIL_FILENAME
 ERP_LEGACY_EML_BASENAME = "Входящее_письмо"
 
 
+def is_real_erp_document_number(number: str | None) -> bool:
+    """True только для номера, созданного реальной интеграцией 1С (не stub/dry-run/skip)."""
+    text = (number or "").strip()
+    if not text or text in _SKIP_ERP_DOCUMENT_NUMBERS:
+        return False
+    return not text.startswith(STUB_ERP_DOCUMENT_PREFIX)
+
+
+def is_real_erp_task_id(task_id: str | None) -> bool:
+    """True только для Ref_Key / task_id из реальной интеграции 1С."""
+    text = (task_id or "").strip()
+    if not text or text in _SKIP_ERP_DOCUMENT_NUMBERS:
+        return False
+    return not text.startswith(STUB_ERP_TASK_PREFIX)
+
+
+def display_erp_document_number(number: str | None) -> str | None:
+    """Номер для UI/Excel: stub и служебные значения скрываются (→ «—»)."""
+    text = (number or "").strip()
+    return text if is_real_erp_document_number(text) else None
+
+
 def existing_erp_document_ref_key(row) -> str | None:
     """Ref_Key документа 1С из БД (erp_task_id хранит erp_document_id после create)."""
     ref = (getattr(row, "erp_task_id", None) or "").strip()
-    if not ref or ref in _SKIP_ERP_DOCUMENT_NUMBERS:
+    if not is_real_erp_task_id(ref):
         return None
     return ref
 

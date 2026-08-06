@@ -49,7 +49,10 @@ from agent_pochta.services.routing_departments import list_active_departments_fo
 from agent_pochta.services.contractor_seed import contractor_id_from_email, is_valid_sender_email, partner_from_payload
 from agent_pochta.services.llm_analyze import normalize_partner_name
 from agent_pochta.services import build_container
-from agent_pochta.services.erp_attachments import existing_erp_document_ref_key
+from agent_pochta.services.erp_attachments import (
+    display_erp_document_number,
+    existing_erp_document_ref_key,
+)
 from agent_pochta.services.erp_process import delete_linked_processes_on_spam
 from agent_pochta.services.rag_qdrant import search_contractors as qdrant_search_contractors
 from agent_pochta.routing.xml_parser import parse_document_xml
@@ -250,7 +253,7 @@ def _row_to_list_dict(
         "route_confidence_score": route_score,
         "priority": row.priority,
         "summary_ru": row.summary_ru,
-        "erp_document_number": row.erp_document_number,
+        "erp_document_number": display_erp_document_number(row.erp_document_number),
         "erp_task_id": row.erp_task_id,
         "human_review": row.human_review,
         "erp_retry_count": row.erp_retry_count,

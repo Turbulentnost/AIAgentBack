@@ -578,41 +578,6 @@
       "about": "участие в тендерной процедуре поставка ультразвуковых расходомеров ,услуг по поверке ,Опубликована новая закупка,Информи"
     },
     {
-      "email": "y.titova@turbo-don.ru",
-      "code": "00-000015",
-      "name": "начальник отдела ВЭД",
-      "direction": "ПР",
-      "about": "ТКП, технико-коммерческое предложение, КП, коммерческое предложение, ценовое предложение, счет, сообщить стоимость, запр"
-    },
-    {
-      "email": "oved@turbo-don.ru",
-      "code": "00-000015",
-      "name": "начальник отдела ВЭД",
-      "direction": "ПР",
-      "about": "ТКП, технико-коммерческое предложение, КП, коммерческое предложение, ценовое предложение, счет, сообщить стоимость, запр"
-    },
-    {
-      "email": "td_ved8@turbo-don.ru",
-      "code": "00-000015",
-      "name": "начальник отдела ВЭД",
-      "direction": "ПР",
-      "about": "ТКП, технико-коммерческое предложение, КП, коммерческое предложение, ценовое предложение, счет, сообщить стоимость, запр"
-    },
-    {
-      "email": "td_ved9@turbo-don.ru",
-      "code": "00-000015",
-      "name": "начальник отдела ВЭД",
-      "direction": "ПР",
-      "about": "ТКП, технико-коммерческое предложение, КП, коммерческое предложение, ценовое предложение, счет, сообщить стоимость, запр"
-    },
-    {
-      "email": "npo_orik2@turbo-don.ru",
-      "code": "00-000015",
-      "name": "начальник отдела ВЭД",
-      "direction": "ПР",
-      "about": "ТКП, технико-коммерческое предложение, КП, коммерческое предложение, ценовое предложение, счет, сообщить стоимость, запр"
-    },
-    {
       "email": "gd@turbo-don.ru",
       "code": "00-000001",
       "name": "Председатель Совета Директоров",
@@ -1406,22 +1371,6 @@
           "ооо стс поверка tfg-s с арендой, таганрог",
           "opmu",
           "арендой таганрог"
-        ]
-      },
-      {
-        "id": "4ae00e3f-ae10-4c3e-9a30-089fa6a1287c",
-        "created_at": "2026-07-14T13:34:22.249668+00:00",
-        "partner": "Госуслуги ВЭД",
-        "organization": "НП",
-        "department_id": "00-000015",
-        "department_name": "Отдел внешнеэкономической деятельности",
-        "sender_email": "ask@exportcenter.ru",
-        "recipient": "td_ved8@turbo-don.ru",
-        "subject": "#r524531 - обращение закрыто",
-        "keywords": [
-          "#r524531 - обращение закрыто",
-          "td_ved8",
-          "r524531 обращение закрыто"
         ]
       },
       {
@@ -3033,23 +2982,6 @@
         ]
       },
       {
-        "id": "e74b66ae-8265-466b-8019-88b919388202",
-        "created_at": "2026-07-20T12:02:29.096511+00:00",
-        "partner": "АО «ДПД РУС»",
-        "organization": "НП",
-        "department_id": "00-000015",
-        "department_name": "Отдел внешнеэкономической деятельности",
-        "sender_email": "north_spec_oper@dpd.ru",
-        "recipient": "td_ved8@turbo-don.ru",
-        "subject": "на: re: прошу проверить снт по ru120456624",
-        "keywords": [
-          "на: re: прошу проверить снт по ru120456624",
-          "td_ved8",
-          "re прошу проверить",
-          "на re прошу"
-        ]
-      },
-      {
         "id": "860a6e6a-285f-4720-8fdd-8b5d0aae9d58",
         "created_at": "2026-07-20T12:02:43.685502+00:00",
         "partner": "ООО «ВсеИнструменты.ру»",
@@ -3085,25 +3017,6 @@
           "299/26 от",
           "pdf-файл заявки",
           "ао мособлгаз"
-        ]
-      },
-      {
-        "id": "ba52c87d-e5da-4a9c-8843-0deae7aee025",
-        "created_at": "2026-07-20T12:03:24.840859+00:00",
-        "partner": "Hebei Yaoyu Import and Export Trade Co",
-        "organization": "НП",
-        "department_id": "00-000015",
-        "department_name": "Отдел внешнеэкономической деятельности",
-        "sender_email": "daniel@vexabaseexport.com",
-        "recipient": "npo_razvitie2@turbo-don.ru",
-        "subject": "крепежные изделия",
-        "keywords": [
-          "крепежные изделия",
-          "npo_razvitie2",
-          "and export",
-          "co ltd",
-          "export trade",
-          "hebei yaoyu"
         ]
       },
       {
@@ -3629,22 +3542,6 @@
         ]
       },
       {
-        "id": "6b9ad3a8-6d4f-43e1-9ef7-d7c358182f41",
-        "created_at": "2026-07-21T12:26:45.954325+00:00",
-        "partner": "Unitex Composite",
-        "organization": "НП",
-        "department_id": "00-000015",
-        "department_name": "Отдел внешнеэкономической деятельности",
-        "sender_email": "kelly.q@unitexcomposite.com",
-        "recipient": "info@turbo-don.ru",
-        "subject": "re: fire blankets request",
-        "keywords": [
-          "fire blankets request",
-          "info",
-          "a professional"
-        ]
-      },
-      {
         "id": "8f21de84-1be2-400c-813f-ef604735bbbd",
         "created_at": "2026-07-21T12:36:10.020983+00:00",
         "partner": "Амина Забитова",
@@ -3858,26 +3755,6 @@
           "uk_omto7",
           "на оплату",
           "счет на"
-        ]
-      },
-      {
-        "id": "36d976fa-300a-4eac-8147-ff08daebce6d",
-        "created_at": "2026-07-22T10:56:25.922117+00:00",
-        "partner": "ООО \"Экспортёр\"",
-        "organization": "НП",
-        "department_id": "00-000015",
-        "department_name": "Отдел внешнеэкономической деятельности",
-        "sender_email": "nizomiddinusmonov12@gmail.com",
-        "recipient": "info@turbo-don.ru",
-        "subject": "срочна кп",
-        "keywords": [
-          "срочна кп",
-          "info",
-          "flow ufg-f",
-          "turbo flow",
-          "ufg-f 1",
-          "а также",
-          "благодарим за"
         ]
       },
       {
@@ -4222,23 +4099,6 @@
           "вложениях изображения",
           "во вложениях",
           "габаритов веса"
-        ]
-      },
-      {
-        "id": "b32e1f6a-7bea-4ec4-9efd-ea68f393ad05",
-        "created_at": "2026-07-23T12:01:47.578853+00:00",
-        "partner": "Частное предприятие «СМУ Энерготехсервис»",
-        "organization": "НП",
-        "department_id": "00-000015",
-        "department_name": "Отдел внешнеэкономической деятельности",
-        "sender_email": "snab@smuets.by",
-        "recipient": "info@turbo-don.ru",
-        "subject": "заявка сму энерготехсервис",
-        "keywords": [
-          "заявка сму энерготехсервис",
-          "info",
-          "аналог с",
-          "без ндс"
         ]
       },
       {
