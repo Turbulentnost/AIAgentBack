@@ -43,7 +43,7 @@ async def main() -> None:
     out.write_bytes(result.result_xlsx_bytes)
     wb = load_workbook(out)
     print("sheets:", wb.sheetnames)
-    assert wb.sheetnames[0] == "помесячное обеспечение" or "помесячное обеспечение" in wb.sheetnames
+    assert wb.sheetnames[0] == "1-производственный план (мес.)" or "1-производственный план (мес.)" in wb.sheetnames
     assert "обеспечение (Июль)" in wb.sheetnames
 
     daily = wb["обеспечение (Июль)"]
@@ -110,7 +110,7 @@ async def main() -> None:
     print("reconstructed", recon, "stored", matched.daily_demand[day_key])
     assert abs(recon - matched.daily_demand[day_key]) < 1e-6
 
-    monthly = wb["помесячное обеспечение"]
+    monthly = wb["1-производственный план (мес.)"]
     print("monthly A5:", monthly["A5"].value, "E5:", monthly["E5"].value)
     assert monthly["A5"].value
     nonzero_daily = sum(

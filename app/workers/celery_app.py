@@ -33,6 +33,18 @@ if settings.PROCUREMENT_ORCHESTRATOR_ENABLED:
         "schedule": float(settings.PROCUREMENT_ORCHESTRATOR_INTERVAL_SECONDS),
         "options": {"queue": "procurement_poll"},
     }
+if settings.ONEC_DAILY_SYNC_ENABLED:
+    _onec_sync_every_hours = max(1, int(settings.ONEC_SYNC_EVERY_HOURS))
+    _onec_sync_crontab = (
+        crontab(minute=settings.ONEC_SYNC_MINUTE)
+        if _onec_sync_every_hours == 1
+        else crontab(minute=settings.ONEC_SYNC_MINUTE, hour=f"*/{_onec_sync_every_hours}")
+    )
+    _beat_schedule["sync-onec-aveon-scheduled"] = {
+        "task": "sync_onec_aveon_daily",
+        "schedule": _onec_sync_crontab,
+        "options": {"queue": "default"},
+    }
 
 celery_app.conf.update(
     accept_content=["json"],
@@ -62,6 +74,7 @@ celery_app.conf.update(
         "run_department_analysis": {"queue": "default"},
         "poll_procurement_sources": {"queue": "procurement_poll"},
         "run_procurement_case_task": {"queue": "agents"},
+        "sync_onec_aveon_daily": {"queue": "default"},
     },
     task_serializer="json",
     task_track_started=True,

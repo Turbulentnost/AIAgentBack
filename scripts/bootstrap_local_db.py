@@ -1,8 +1,9 @@
-"""Создаёт локальную БД ai_agents и тестового пользователя для dev."""
+"""Создаёт локальную БД ai_agents и тестовых пользователей для dev."""
 from __future__ import annotations
 
 import asyncio
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import asyncpg
@@ -16,12 +17,51 @@ from app.core.security import hash_password
 from app.db.base import Base
 from app.models import *  # noqa: F401,F403
 from app.models.user import User
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.asyncio import AsyncSession
 
-DEFAULT_EMAIL = "temp.nd@local.dev"
-DEFAULT_PASSWORD = "NdTemp2026!"
+
+@dataclass(frozen=True)
+class DevUserSpec:
+    email: str
+    password: str
+    full_name: str
+    first_name: str
+    last_name: str
+    is_superuser: bool = False
+
+
+DEV_USERS: tuple[DevUserSpec, ...] = (
+    DevUserSpec(
+        email="temp.nd@local.dev",
+        password="NdTemp2026!",
+        full_name="Temp ND",
+        first_name="Temp",
+        last_name="ND",
+        is_superuser=True,
+    ),
+    DevUserSpec(
+        email="rodionov.pavel@local.dev",
+        password="Rodionov2026!",
+        full_name="Родионов Павел",
+        first_name="Павел",
+        last_name="Родионов",
+    ),
+    DevUserSpec(
+        email="tishchenko.nadezhda@local.dev",
+        password="Tishchenko2026!",
+        full_name="Тищенко Надежда",
+        first_name="Надежда",
+        last_name="Тищенко",
+    ),
+    DevUserSpec(
+        email="aksinin.leonid@local.dev",
+        password="Aksinin2026!",
+        full_name="Аксинин Леонид",
+        first_name="Леонид",
+        last_name="Аксинин",
+    ),
+)
 
 
 async def ensure_database() -> None:
@@ -41,7 +81,7 @@ async def ensure_database() -> None:
     await conn.close()
 
 
-async def ensure_schema_and_user() -> None:
+async def ensure_schema_and_users() -> None:
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -51,23 +91,26 @@ async def ensure_schema_and_user() -> None:
     async with session_factory() as session:
         from sqlalchemy import select
 
-        existing = await session.scalar(select(User).where(User.email == DEFAULT_EMAIL))
-        if existing is None:
-            session.add(
-                User(
-                    email=DEFAULT_EMAIL,
-                    full_name="Temp ND",
-                    hashed_password=hash_password(DEFAULT_PASSWORD),
-                    is_active=True,
-                    is_verified=True,
-                    is_superuser=True,
-                    must_change_password=False,
+        for spec in DEV_USERS:
+            existing = await session.scalar(select(User).where(User.email == spec.email))
+            if existing is None:
+                session.add(
+                    User(
+                        email=spec.email,
+                        full_name=spec.full_name,
+                        first_name=spec.first_name,
+                        last_name=spec.last_name,
+                        hashed_password=hash_password(spec.password),
+                        is_active=True,
+                        is_verified=True,
+                        is_superuser=spec.is_superuser,
+                        must_change_password=False,
+                    )
                 )
-            )
-            await session.commit()
-            print(f"Created dev user {DEFAULT_EMAIL}")
-        else:
-            print(f"Dev user {DEFAULT_EMAIL} already exists")
+                print(f"Created dev user {spec.email}")
+            else:
+                print(f"Dev user {spec.email} already exists")
+        await session.commit()
     await engine.dispose()
 
 
@@ -76,8 +119,15 @@ async def main() -> None:
         f"Connecting to postgres://{settings.POSTGRES_USER}@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
     )
     await ensure_database()
-    await ensure_schema_and_user()
+    await ensure_schema_and_users()
     print("Local bootstrap complete")
+    print("Leader account (coverage dashboard, all tasks):")
+    print("  - Родионов Павел: rodionov.pavel@local.dev / Rodionov2026!")
+    print("Manager accounts (personal tasks tab):")
+    for spec in DEV_USERS:
+        if spec.is_superuser or spec.email == "rodionov.pavel@local.dev":
+            continue
+        print(f"  - {spec.full_name}: {spec.email} / {spec.password}")
 
 
 if __name__ == "__main__":

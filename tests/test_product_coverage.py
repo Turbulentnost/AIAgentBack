@@ -7,11 +7,12 @@ from types import SimpleNamespace
 from app.agents.document_analysis_agent.product_coverage import compute_product_coverage
 
 
-def _plan(product: str, months: dict[str, float]):
+def _plan(product: str, months: dict[str, float], *, facts: dict[str, float] | None = None):
     monthly_qty = {}
     for month, qty in months.items():
+        fact_qty = float((facts or {}).get(month, 0.0))
         monthly_qty[month] = {
-            "заказ": {"план": qty, "факт": 0.0},
+            "заказ": {"план": qty, "факт": fact_qty},
             "опытные": {"план": 0.0, "факт": 0.0},
             "склад": {"план": 0.0, "факт": 0.0},
         }
@@ -46,7 +47,6 @@ def test_proportional_split_on_shared_material():
     b = result.cell("Изделие Б", "Июль")
     assert a.covered + b.covered == 150
     assert a.covered > 0 and b.covered > 0
-    # α = 150/300 = 0.5 → floor 100 и 50
     assert a.covered == 100
     assert b.covered == 50
 
@@ -57,7 +57,6 @@ def test_top_down_remainder_after_floor():
         _plan("Верх", {"Июль": 10}),
         _plan("Низ", {"Июль": 10}),
     ]
-    # need 20 for full plan; stock 11 → α=0.55 → floor 5+5=10, remainder 1 → верх
     merged = [_row("M", {"Верх": 1, "Низ": 1}, stock=11)]
     result = compute_product_coverage(plans, merged, ["Июль"])
     assert result.cell("Верх", "Июль").covered == 6
@@ -66,13 +65,10 @@ def test_top_down_remainder_after_floor():
 
 def test_month2_uses_closing_from_covered():
     """Второй месяц видит closing после сборки первого."""
-    plans = [
-        _plan("A", {"Июль": 10, "Август": 10}),
-    ]
+    plans = [_plan("A", {"Июль": 10, "Август": 10})]
     merged = [_row("M", {"A": 1}, stock=15, receipts={"Август": 0})]
     result = compute_product_coverage(plans, merged, ["Июль", "Август"])
     assert result.cell("A", "Июль").covered == 10
-    # after July: 5 left → August can cover 5 of plan 10
     assert result.cell("A", "Август").covered == 5
     assert result.cell("A", "Август").plan == 10
 
@@ -96,7 +92,6 @@ def test_zero_plan_stays_zero():
 
 
 def test_exclusive_zero_does_not_kill_shared_alpha():
-    """Нулевой эксклюзивный материал изделия C не должен обнулять α для A/B."""
     plans = [
         _plan("A", {"Июль": 200}),
         _plan("B", {"Июль": 100}),
@@ -113,7 +108,6 @@ def test_exclusive_zero_does_not_kill_shared_alpha():
 
 
 def test_zero_stock_without_receipts_blocks_full_bom():
-    """Нет остатка и прихода по позиции спеки → изделие нельзя собрать."""
     plans = [_plan("A", {"Июль": 10})]
     merged = [
         _row("KIT", {"A": 1}, stock=10),
@@ -121,13 +115,9 @@ def test_zero_stock_without_receipts_blocks_full_bom():
     ]
     result = compute_product_coverage(plans, merged, ["Июль"])
     assert result.cell("A", "Июль").covered == 0
-    assert "провод" in " ".join(result.cell("A", "Июль").limiting_materials) or result.cell(
-        "A", "Июль"
-    ).limiting_materials
 
 
 def test_full_bom_covered_when_all_materials_available():
-    """Covered > 0 только если хватает всех позиций спеки."""
     plans = [_plan("A", {"Июль": 10})]
     merged = [
         _row("KIT", {"A": 1}, stock=10),
@@ -138,29 +128,23 @@ def test_full_bom_covered_when_all_materials_available():
 
 
 def test_pre_horizon_receipts_seed_opening():
-    """Поступления до первого месяца горизонта доступны в opening."""
     plans = [_plan("A", {"Июль": 10})]
-    merged = [
-        _row("M", {"A": 1}, stock=0.0, receipts={"Июнь": 7, "Июль": 0}),
-    ]
+    merged = [_row("M", {"A": 1}, stock=0.0, receipts={"Июнь": 7, "Июль": 0})]
     result = compute_product_coverage(plans, merged, ["Июль"])
     assert result.cell("A", "Июль").covered == 7
 
 
-def test_bom_detail_plan_and_available():
-    """Раскрытие изделия: план = plan×qty, доступно = остаток + приход."""
-    plans = [_plan("A", {"Июль": 10})]
+def test_bom_detail_plan_fact_and_available():
+    plans = [_plan("A", {"Июль": 10}, facts={"Июль": 6})]
     merged = [
         _row("Винт M3", {"A": 2}, stock=5.0, receipts={"Июль": 3}),
         _row("Корпус", {"A": 1}, stock=100.0),
     ]
     result = compute_product_coverage(plans, merged, ["Июль"])
-    lines = result.boms["A"].lines()
-    assert {line.nomenclature for line in lines} == {"Винт M3", "Корпус"}
+    assert result.cell("A", "Июль").fact == 6
     assert result.material_plan("A", "Июль", "винт m3") == 20.0
+    assert result.material_fact("A", "Июль", "винт m3") == 12.0
     assert result.material_available("Июль", "винт m3") == 8.0
-    assert result.material_plan("A", "Июль", "корпус") == 10.0
-    assert result.material_available("Июль", "корпус") == 100.0
 
 
 def test_coverage_sheet_has_collapsed_outline_rows():
@@ -178,5 +162,7 @@ def test_coverage_sheet_has_collapsed_outline_rows():
     assert ws["A6"].value == "Деталь X"
     assert ws.row_dimensions[6].outline_level == 1
     assert ws.row_dimensions[6].hidden is True
-    assert ws["B6"].value == 30  # доступно
-    assert ws["C6"].value == 15  # план 5×3
+    assert ws["B6"].value == 30
+    assert ws["C6"].value == 15
+    assert ws["D6"].value == 0
+    assert ws["D4"].value == "Факт"

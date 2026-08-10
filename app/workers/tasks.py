@@ -1093,6 +1093,68 @@ def run_procurement_case_task(self, case_id: str, task_id: str) -> dict[str, Any
     return _run_async_task(_run)
 
 
+@celery_app.task(name="sync_onec_aveon_daily", bind=True, max_retries=1)
+def sync_onec_aveon_daily(self) -> dict[str, Any]:
+    """По расписанию (каждый час в :00, включая 00:00): остатки и спецификации 1С → PostgreSQL."""
+    from redis import Redis
+
+    from app.core.config import settings
+    from app.services.onec_daily_sync import run_onec_daily_sync
+
+    if not settings.ONEC_DAILY_SYNC_ENABLED:
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "sync_onec_aveon_daily",
+            "status": "disabled",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    lock_key = "onec:aveon:daily_sync:lock"
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    acquired = bool(
+        redis_client.set(
+            lock_key,
+            self.request.id or "sync_onec_aveon_daily",
+            nx=True,
+            ex=settings.ONEC_DAILY_SYNC_LOCK_TTL_SECONDS,
+        )
+    )
+    if not acquired:
+        redis_client.close()
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "sync_onec_aveon_daily",
+            "status": "skipped_locked",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _run() -> dict[str, Any]:
+        result = await run_onec_daily_sync()
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "sync_onec_aveon_daily",
+            "status": "completed" if result.get("ok") else "failed",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            **result,
+        }
+
+    try:
+        return _run_async_task(_run)
+    except Exception as exc:  # noqa: BLE001
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=300) from exc
+        return {
+            "celery_task_id": self.request.id,
+            "task_name": "sync_onec_aveon_daily",
+            "status": "failed",
+            "error": str(exc),
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+    finally:
+        redis_client.delete(lock_key)
+        redis_client.close()
+
+
 def _placeholder_result(celery_task_id: str, task_name: str, **payload: Any) -> dict[str, Any]:
     return {
         "celery_task_id": celery_task_id,

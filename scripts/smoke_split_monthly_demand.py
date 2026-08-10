@@ -49,9 +49,9 @@ async def main() -> None:
     out = ROOT / "scripts" / "_smoke_split_monthly.xlsx"
     out.write_bytes(result.result_xlsx_bytes)
     wb = load_workbook(out)
-    assert "помесячное обеспечение" in wb.sheetnames
-    assert any(name.startswith("обеспечение (") for name in wb.sheetnames)
-    monthly = wb["помесячное обеспечение"]
+    assert "1-производственный план (мес.)" in wb.sheetnames
+    assert any(name.startswith("2-произв. план (") for name in wb.sheetnames)
+    monthly = wb["1-производственный план (мес.)"]
     print("A1", monthly["A1"].value)
     print("G3 month", monthly["G3"].value, "G4", monthly["G4"].value, "G5", monthly["G5"].value)
     # summaryRight: G–L деталь Заказ/Опыт/Склад, M–N Потребность, далее недели, итог поступления, прогноз

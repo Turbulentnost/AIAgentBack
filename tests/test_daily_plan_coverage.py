@@ -63,6 +63,23 @@ def test_daily_receipt_unlocks_second_day():
     assert result.status_for_plan_cell("A", ["2026-07-02"], 10) == "yellow"
 
 
+def test_daily_coverage_keeps_detailed_fact():
+    days = ["2026-07-01", "2026-07-02"]
+    plans = [
+        SimpleNamespace(
+            product="A",
+            daily_qty={"2026-07-01": 10, "2026-07-02": 10},
+            daily_fact={"2026-07-01": 7, "2026-07-02": 4},
+        )
+    ]
+    merged = [_row("M", {"A": 1}, stock=20)]
+
+    result = compute_daily_plan_coverage(plans, merged, days)
+
+    assert result.cell("A", "2026-07-01").fact == 7
+    assert result.cell("A", "2026-07-02").fact == 4
+
+
 def test_unmatched_bom_is_red():
     days = ["2026-07-01"]
     plans = [_plan("Неизвестное", {"2026-07-01": 5})]

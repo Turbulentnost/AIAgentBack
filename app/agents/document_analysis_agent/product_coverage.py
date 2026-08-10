@@ -80,6 +80,7 @@ class ProductMonthCoverage:
     month: str
     plan: float
     covered: float
+    fact: float = 0.0
     cover_ratio: float = 0.0
     limiting_materials: list[str] = field(default_factory=list)
 
@@ -96,7 +97,7 @@ class ProductCoverageResult:
     def cell(self, product: str, month: str) -> ProductMonthCoverage:
         return self.cells.get(
             (product, month),
-            ProductMonthCoverage(product=product, month=month, plan=0.0, covered=0.0),
+            ProductMonthCoverage(product=product, month=month, plan=0.0, covered=0.0, fact=0.0),
         )
 
     def material_plan(self, product: str, month: str, norm_key: str) -> float:
@@ -109,6 +110,16 @@ class ProductCoverageResult:
             return 0.0
         return float(self.cell(product, month).plan) * qty
 
+    def material_fact(self, product: str, month: str, norm_key: str) -> float:
+        """Потребность материала на факт изделия в месяце = факт × qty из спеки."""
+        bom = self.boms.get(product)
+        if bom is None:
+            return 0.0
+        qty = float(bom.materials.get(norm_key, 0.0) or 0.0)
+        if qty <= 0:
+            return 0.0
+        return float(self.cell(product, month).fact) * qty
+
     def material_available(self, month: str, norm_key: str) -> float:
         return float((self.month_available.get(month) or {}).get(norm_key, 0.0) or 0.0)
 
@@ -120,6 +131,16 @@ def plan_total_for_month(plan: Any, month: str) -> float:
     total = 0.0
     for category in _SCHEDULE_CATEGORIES:
         total += float((bucket.get(category) or {}).get("план", 0.0) or 0.0)
+    return total
+
+
+def fact_total_for_month(plan: Any, month: str) -> float:
+    """Σ факт по категориям заказ/опытные/склад для изделия в месяце."""
+    monthly = getattr(plan, "monthly_qty", None) or {}
+    bucket = monthly.get(month) or {}
+    total = 0.0
+    for category in _SCHEDULE_CATEGORIES:
+        total += float((bucket.get(category) or {}).get("факт", 0.0) or 0.0)
     return total
 
 
@@ -346,6 +367,11 @@ def compute_product_coverage(
             for product in products_in_order
             if product in plans_by_product
         }
+        fact_m: dict[str, float] = {
+            product: fact_total_for_month(plans_by_product[product], month)
+            for product in products_in_order
+            if product in plans_by_product
+        }
         candidates = [
             product
             for product in products_in_order
@@ -379,6 +405,7 @@ def compute_product_coverage(
 
         for product in products_in_order:
             plan = float(plan_m.get(product, 0.0))
+            fact = float(fact_m.get(product, 0.0))
             cov = float(covered.get(product, 0.0))
             bom = boms.get(product) or ProductBom(product=product)
             limiting: list[str] = []
@@ -389,6 +416,7 @@ def compute_product_coverage(
                 product=product,
                 month=month,
                 plan=plan,
+                fact=fact,
                 covered=cov,
                 cover_ratio=ratio,
                 limiting_materials=limiting,
@@ -427,6 +455,7 @@ class ProductDayCoverage:
     day: str
     plan: float
     covered: float
+    fact: float = 0.0
     cover_ratio: float = 0.0
     matched: bool = False
 
@@ -443,7 +472,7 @@ class DailyPlanCoverageResult:
     def cell(self, product: str, day: str) -> ProductDayCoverage:
         return self.cells.get(
             (product, day),
-            ProductDayCoverage(product=product, day=day, plan=0.0, covered=0.0),
+            ProductDayCoverage(product=product, day=day, plan=0.0, covered=0.0, fact=0.0),
         )
 
     def covered_for_days(self, product: str, day_keys: list[str]) -> float:
@@ -659,10 +688,13 @@ def compute_daily_plan_coverage(
         }
 
         plan_d: dict[str, float] = {}
+        fact_d: dict[str, float] = {}
         for product in products_in_order:
             plan = plans_by_product.get(product)
             daily_qty = getattr(plan, "daily_qty", None) or {}
+            daily_fact = getattr(plan, "daily_fact", None) or {}
             plan_d[product] = float(daily_qty.get(day, 0.0) or 0.0)
+            fact_d[product] = float(daily_fact.get(day, 0.0) or 0.0)
 
         candidates = [
             product
@@ -705,6 +737,7 @@ def compute_daily_plan_coverage(
                 day=day,
                 plan=plan,
                 covered=cov,
+                fact=float(fact_d.get(product, 0.0)),
                 cover_ratio=ratio,
                 matched=bom.matched,
             )

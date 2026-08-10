@@ -9,6 +9,14 @@ from app.models.browser_run import BrowserRun
 from app.models.data_source import DataSource, SourcePermission
 from app.models.document import Document, DocumentChunk, DocumentVersion, SourceReference
 from app.models.integration import IntegrationSyncState
+from app.models.onec_resource_spec import (
+    OnecResourceSpec,
+    OnecResourceSpecMaterial,
+    OnecResourceSpecOutput,
+    OnecResourceSpecSyncRun,
+)
+from app.models.onec_nomenclature import OnecNomenclature
+from app.models.onec_stock import OnecStockBalance, OnecStockSyncRun
 from app.models.knowledge_base import (
     KnowledgeBase,
     KnowledgeBaseAccessException,
@@ -57,6 +65,7 @@ from app.models.procurement import (
     ProcurementCasePosition,
     ProcurementSourceSyncState,
 )
+from app.models.shift_completion import ShiftCompletionReport
 from app.models.task import Task, TaskResult, TaskStep, task_documents
 from app.models.user import (
     Department,
@@ -69,4 +78,4 @@ from app.models.user import (
     UserSession,
 )
 
-__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AgentBlueprint", "AgentBuilderAttempt", "AgentBuilderPlan", "AgentBuilderPlanStep", "AgentBuilderSession", "AgentBuilderSandboxRun", "AgentBuilderSandboxStep", "AuditLog", "BrowserRun", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "IntegrationSyncState", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "NdChangeRequest", "NdChangeCandidateDocument", "NdChangeTargetLocation", "NdChangeOperation", "NdChangeDraftFile", "NdChangeApprovalRoute", "NdChangeApprovalParticipant", "NdChangeResult", "NdChangeJournalEntry", "NdControlDepartment", "NdControlDepartmentKnowledgeBase", "NdControlTemplate", "NdControlTemplateDocument", "NdControlTemplateKnowledgeBase", "NdDocumentCard", "DepartmentAnalysisRun", "DocumentCard", "DepartmentProfile", "ProcessCard", "NdRelation", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "ProcurementCase", "ProcurementCaseEvent", "ProcurementCasePosition", "ProcurementSourceSyncState", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]
+__all__ = ["Agent", "AgentVersion", "AgentPrompt", "AgentTool", "ToolCall", "AgentBlueprint", "AgentBuilderAttempt", "AgentBuilderPlan", "AgentBuilderPlanStep", "AgentBuilderSession", "AgentBuilderSandboxRun", "AgentBuilderSandboxStep", "AuditLog", "BrowserRun", "DataSource", "SourcePermission", "Document", "DocumentVersion", "DocumentChunk", "SourceReference", "IntegrationSyncState", "OnecStockBalance", "OnecStockSyncRun", "OnecResourceSpec", "OnecResourceSpecMaterial", "OnecResourceSpecOutput", "OnecResourceSpecSyncRun", "OnecNomenclature", "KnowledgeBase", "KnowledgeBaseSource", "KnowledgeBaseChunk", "KnowledgeBaseRule", "KnowledgeBaseAccessGrant", "KnowledgeBaseAccessException", "KnowledgeBaseAgentBinding", "KnowledgeBaseIndexingJob", "KnowledgeBaseIndexingError", "LLMCall", "NdChangeRequest", "NdChangeCandidateDocument", "NdChangeTargetLocation", "NdChangeOperation", "NdChangeDraftFile", "NdChangeApprovalRoute", "NdChangeApprovalParticipant", "NdChangeResult", "NdChangeJournalEntry", "NdControlDepartment", "NdControlDepartmentKnowledgeBase", "NdControlTemplate", "NdControlTemplateDocument", "NdControlTemplateKnowledgeBase", "NdDocumentCard", "DepartmentAnalysisRun", "DocumentCard", "DepartmentProfile", "ProcessCard", "NdRelation", "OpeCard", "OpeChecklist", "OpeIssue", "OpeReport", "ProcurementCase", "ProcurementCaseEvent", "ProcurementCasePosition", "ProcurementSourceSyncState", "ShiftCompletionReport", "Task", "TaskStep", "TaskResult", "task_documents", "User", "Department", "Role", "Permission", "UserAgent", "DepartmentAgent", "UserSession", "UserProfileImage"]

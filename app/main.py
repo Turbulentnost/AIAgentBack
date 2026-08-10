@@ -26,7 +26,29 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("app.startup", environment=settings.ENVIRONMENT)
     await _run_database_migrations()
+    try:
+        from app.services.onec_db_schema import ensure_onec_agent_tables
+
+        await ensure_onec_agent_tables()
+    except Exception as exc:
+        logger.warning("app.onec_tables.ensure_failed", error=str(exc))
+
+    stop_onec_sync = asyncio.Event()
+    onec_sync_task: asyncio.Task | None = None
+    if settings.ONEC_DAILY_SYNC_ENABLED and settings.ONEC_INPROCESS_SYNC_ENABLED:
+        from app.services.onec_sync_scheduler import onec_sync_scheduler_loop
+
+        onec_sync_task = asyncio.create_task(onec_sync_scheduler_loop(stop_onec_sync))
+
     yield
+
+    stop_onec_sync.set()
+    if onec_sync_task is not None:
+        onec_sync_task.cancel()
+        try:
+            await onec_sync_task
+        except asyncio.CancelledError:
+            pass
     logger.info("app.shutdown")
 
 

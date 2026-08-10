@@ -48,7 +48,7 @@ def main() -> None:
     out.write_bytes(raw)
     wb = load_workbook(BytesIO(raw))
     print("sheets", wb.sheetnames)
-    assert "помесячное обеспечение" in wb.sheetnames
+    assert "1-производственный план (мес.)" in wb.sheetnames
     daily_name = next(name for name in wb.sheetnames if name.startswith("обеспечение ("))
     print("daily A1", wb[daily_name]["A1"].value)
     print("OK", out)

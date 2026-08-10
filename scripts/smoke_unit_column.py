@@ -30,7 +30,7 @@ async def main() -> None:
     out.write_bytes(result.result_xlsx_bytes)
     wb = load_workbook(out)
 
-    monthly = wb["помесячное обеспечение"]
+    monthly = wb["1-производственный план (мес.)"]
     assert monthly["C3"].value == "Поставщик"
     assert monthly["D3"].value == "Ед. изм."
     assert monthly["E3"].value == "Цена, руб./ед."

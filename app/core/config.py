@@ -186,6 +186,22 @@ class Settings(BaseSettings):
     MEETING_DASHBOARD_CACHE_WARMUP_MINUTE: int = 0
     MEETING_DASHBOARD_CACHE_WARMUP_TIMEZONE: str = "Europe/Moscow"
 
+    # Фоновая синхронизация остатков и ресурсных спецификаций Aveon из 1С OData.
+    # Каждые ONEC_SYNC_EVERY_HOURS часов в :ONEC_SYNC_MINUTE (Europe/Moscow), включая 00:00.
+    ONEC_DAILY_SYNC_ENABLED: bool = True
+    ONEC_SYNC_EVERY_HOURS: int = 1
+    ONEC_SYNC_MINUTE: int = 0
+    ONEC_DAILY_SYNC_LOCK_TTL_SECONDS: int = 60 * 55
+    # Fallback: периодическая синхронизация внутри uvicorn, если Celery Beat не запущен.
+    ONEC_INPROCESS_SYNC_ENABLED: bool = True
+
+    # Google Sheets (Авион): Service Account для чтения закрытых таблиц.
+    GOOGLE_SHEETS_SPREADSHEET_ID: str = "1C3SsvZ8IcK68d-nVCwOCnb7lmIy7SA03t6_wmHoJDqA"
+    GOOGLE_SHEETS_SHEET_GID: str = "295357731"
+    GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE: str = ""
+    # Альтернатива файлу: JSON Service Account одной строкой (удобно для Docker secrets).
+    GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON: str = ""
+
     # Outlook / Exchange (COM-календарь, EWS, SMTP) — значения из .env.
     OUTLOOK_EMAIL: str = ""
     OUTLOOK_PASSWORD: str = ""
@@ -196,6 +212,11 @@ class Settings(BaseSettings):
     OUTLOOK_SMTP_PORT: int = 587
     OUTLOOK_SMTP_TLS: str = "true"
     OUTLOOK_SMTP_FROM: str = ""
+    # Адрес получателя обратной связи по Авиону (developer feedback).
+    FEEDBACK_RECIPIENT_EMAIL: str = "sktb_razvitie5@turbo-don.ru"
+    # Временный получатель отчётов о завершении смены менеджера.
+    SHIFT_REPORT_RECIPIENT_EMAIL: str = "sktb_razvitie5@turbo-don.ru"
+    SHIFT_COMPLETION_RECIPIENT_EMAIL: str = "sktb_razvitie5@turbo-don.ru"
 
     @property
     def cors_origins(self) -> list[str]:

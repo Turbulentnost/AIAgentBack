@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import re
+from collections import OrderedDict
+from copy import copy
 from dataclasses import dataclass, field
 from calendar import monthrange
 from datetime import date, datetime, timedelta
@@ -34,14 +38,23 @@ _RESULT_DATA_START_ROW = 5  # дневной лист
 _MONTHLY_DATA_START_ROW = 6  # помесячный: шапка 1–5, данные с 6
 _RESULT_GRID_COLS = 23  # устаревший лимит Header.xlsx; помесячный строится динамически
 _PRICE_FUZZY_THRESHOLD = 0.78
-_SHEET_MONTHLY_ASSURANCE = "помесячное обеспечение"
-_SHEET_DAILY_ASSURANCE_PREFIX = "обеспечение ("
-_SHEET_DETAILED_PRIORITY = "приоритет сборки"
-_SHEET_PRODUCT_COVERAGE = "обеспеченность"
+_SHEET_MONTHLY_ASSURANCE = "1-производственный план (мес.)"
+_SHEET_DAILY_ASSURANCE_PREFIX = "2-произв. план ("
+_SHEET_DETAILED_PRIORITY = "3-произв. план по обеспеч."
+_SHEET_PRODUCT_COVERAGE = "4-обеспеченность по изделиям"
 _SHEET_ORDER_PLAN = "план заказов"
 _FILL_COVER_GREEN = PatternFill(fill_type="solid", fgColor="C6EFCE")
 _FILL_COVER_YELLOW = PatternFill(fill_type="solid", fgColor="FFEB9C")
 _FILL_COVER_RED = PatternFill(fill_type="solid", fgColor="FFC7CE")
+_FILL_NONE = PatternFill(fill_type=None)
+_PRIORITY_GRID_SIDE = Side(style="thin", color="B0B0B0")
+_PRIORITY_DAY_SIDE = Side(style="medium", color="000000")
+_PRIORITY_GRID_BORDER = Border(
+    left=_PRIORITY_GRID_SIDE,
+    right=_PRIORITY_GRID_SIDE,
+    top=_PRIORITY_GRID_SIDE,
+    bottom=_PRIORITY_GRID_SIDE,
+)
 _SCHEDULE_CATEGORIES = ("заказ", "опытные", "склад")
 _SCHEDULE_METRICS = ("план", "факт")
 _CATEGORY_LABELS = {
@@ -61,11 +74,11 @@ _MONTHLY_FIXED_TAIL_COLS = (
     + _MONTHLY_RECEIPT_TOTAL_COLS
     + _MONTHLY_FORECAST_COLS
 )
-# A–G: номенклатура, изделия, поставщик, ед. изм., цена, остаток, заказано
-_FIXED_RESULT_COLS = 7
+# A–H: номенклатура, изделия, поставщик, страна, ед. изм., цена, остаток, заказано
+_FIXED_RESULT_COLS = 8
 # Дневной лист: потребность план + потребность факт + поступление + прогноз
 _DAILY_COLS_PER_DAY = 4
-_STOCK_COL_LETTER = "F"
+_STOCK_COL_LETTER = "G"
 # Как в эталоне «Анализ обеспеченности»: дефицит < 0
 _FORECAST_DEFICIT_FILL = PatternFill(start_color="F4CCCC", end_color="F4CCCC", fill_type="solid")
 _FORECAST_DEFICIT_FONT = Font(color="9C0006")
@@ -91,8 +104,25 @@ _DETAILED_DAY_SKIP_HEADERS = {
     "наимнование",
     "наименования",
 }
-# Стадия выпуска в отчёте «Модель / изделие» — в дневную потребность берём только П/ф
+# Стадии выпуска в отчёте «Модель / изделие»: П/ф приоритетный, но не обязательный.
 _PF_STAGE_KEYS = {"п/ф", "пф", "п / ф", "полуфабрикат", "полуфабрикаты"}
+_DETAILED_SKIP_STAGE_TOKENS = (
+    "отк",
+    "склад",
+    "итог",
+    "остаток",
+    "нарастающ",
+    "откл",
+    "отклон",
+)
+_DETAILED_RELEASE_STAGE_TOKENS = (
+    "выпуск",
+    "готов",
+    "гп",
+    "производ",
+    "сборк",
+    "план",
+)
 _PF_SKIP_COLUMN_TOKENS = (
     "итог недели",
     "план недели",
@@ -123,6 +153,7 @@ class ProductSpecLink:
     schedule_product: str
     nomenclature: str | None = None
     spec_sheet: str | None = None
+    spec_ref_key: str | None = None
     status: str = "unmatched"
     reason: str = ""
 
@@ -161,6 +192,7 @@ class MergedNomenclatureRow:
     unit: str | None = None
     by_product: dict[str, float | None] = field(default_factory=dict)
     supplier: str | None = None
+    country_of_origin: str | None = None
     price: float | None = None
     price_match: str = ""  # exact | contains | fuzzy | unmatched
     stock: float | None = None
@@ -178,6 +210,8 @@ class MergedNomenclatureRow:
     daily_demand_fact: dict[str, float] = field(default_factory=dict)  # факт
     daily_receipts: dict[str, float] = field(default_factory=dict)
     daily_forecast: dict[str, float] = field(default_factory=dict)
+    # Имя номенклатуры в графике отгрузок (если сопоставлено при обогащении)
+    shipment_nomenclature: str | None = None
 
 
 @dataclass(frozen=True)
@@ -204,6 +238,29 @@ class ShipmentReceiptEntry:
     nomenclature: str
     monthly_qty: dict[str, float] = field(default_factory=dict)
     daily_qty: dict[str, float] = field(default_factory=dict)  # ISO date → qty
+
+
+@dataclass
+class ShipmentParsedSheet:
+    """Кэш распарсенного листа графика отгрузок для рисков логистики."""
+
+    title: str
+    header_idx: int
+    name_col: int
+    msk_col: int | None
+    rostov_col: int | None
+    date_cols: list[tuple[int, date]]
+    rows: list[tuple[Any, ...]]
+
+
+@dataclass
+class ShipmentScheduleBundle:
+    """Единый проход по файлам графика отгрузок: поступления, сроки, риски."""
+
+    receipt_index: dict[str, ShipmentReceiptEntry] = field(default_factory=dict)
+    shipment_files: list[str] = field(default_factory=list)
+    logistics_leads: dict[str, tuple[int, int]] = field(default_factory=dict)
+    parsed_sheets: list[ShipmentParsedSheet] = field(default_factory=list)
 
 
 @dataclass
@@ -317,16 +374,44 @@ class AveonAnalysisResult:
     production_schedule_plans: list[ScheduleProductPlan] = field(default_factory=list)
     detailed_production_schedule_files: list[str] = field(default_factory=list)
     detailed_schedule_month: str = ""
+    detailed_schedule_year: int = 0
+    detailed_schedule_month_num: int = 0
+    detailed_schedule_day_keys: list[str] = field(default_factory=list)
+    detailed_schedule_plans: list[DetailedScheduleProductPlan] = field(default_factory=list)
     product_spec_links: list[ProductSpecLink] = field(default_factory=list)
     material_usages: list[SpecMaterialItem] = field(default_factory=list)
     merged_nomenclatures: list[MergedNomenclatureRow] = field(default_factory=list)
     result_xlsx_bytes: bytes | None = None
     shift_assignment_xlsx_bytes: bytes | None = None
     shift_assignment_file_name: str = "сменное_задание_закупки.xlsx"
+    shift_assignment_values: list[list[str]] = field(default_factory=list)
+    shift_assignment_row_priorities: list[str | None] = field(default_factory=list)
+    shift_assignment_row_kinds: list[str] = field(default_factory=list)
+    shift_assignment_meta: dict[str, Any] = field(default_factory=dict)
     stock_files: list[str] = field(default_factory=list)
     shipment_files: list[str] = field(default_factory=list)
     logistics_risks: LogisticsRiskBoard | None = None
-
+    schedule_diff_has_changes: bool = False
+    schedule_diff_changed_months: list[str] = field(default_factory=list)
+    schedule_diff_changed_cells: int = 0
+    schedule_diff_file_name: str = "график_производства_изменения.xlsx"
+    schedule_diff_xlsx_bytes: bytes | None = None
+    schedule_diff_old_version: str = ""
+    schedule_diff_new_version: str = ""
+    schedule_diff_message: str = ""
+    schedule_baseline_saved: bool = False
+    schedule_compared_with_saved: bool = False
+    detailed_diff_has_changes: bool = False
+    detailed_diff_changed_dates: list[str] = field(default_factory=list)
+    detailed_diff_changed_cells: int = 0
+    detailed_diff_file_name: str = "детальный_график_изменения.xlsx"
+    detailed_diff_xlsx_bytes: bytes | None = None
+    detailed_diff_old_version: str = ""
+    detailed_diff_new_version: str = ""
+    detailed_diff_message: str = ""
+    detailed_baseline_saved: bool = False
+    detailed_compared_with_saved: bool = False
+    coverage_dashboard: dict[str, Any] | None = None
 
 @dataclass
 class _MappingRow:
@@ -342,6 +427,16 @@ ROLE_PRODUCTION_SCHEDULE = "production_schedule"
 ROLE_DETAILED_PRODUCTION_SCHEDULE = "detailed_production_schedule"
 ROLE_SHIPMENT_SCHEDULE = "shipment_schedule"
 ROLE_OTHER = "other"
+
+# Роли загружаемых пользователем файлов (ровно 4 типа в UI).
+UPLOAD_FILE_ROLES = frozenset(
+    {
+        ROLE_STOCK,
+        ROLE_PRODUCTION_SCHEDULE,
+        ROLE_DETAILED_PRODUCTION_SCHEDULE,
+        ROLE_SHIPMENT_SCHEDULE,
+    }
+)
 
 KNOWN_ROLES = {
     ROLE_SPECIFICATION,
@@ -419,19 +514,206 @@ _LOGISTICS_STAGE_DEFS: tuple[tuple[str, str], ...] = (
 _LOGISTICS_RANGE_RE = re.compile(r"(\d+)\s*[-–—]\s*(\d+)")
 
 
-async def analyze_aveon_excel_files(workbooks: list[UploadedWorkbook]) -> AveonAnalysisResult:
-    """Роли → изделия графика → листы спецификаций → материалы → result.xlsx."""
-    workbooks = _normalize_uploaded_workbooks(workbooks)
-    previews = await asyncio.to_thread(_build_workbook_previews, workbooks)
-    role_map, source = await _classify_workbooks_with_lm(previews)
-    schedule_files, schedule_plans = await asyncio.to_thread(
-        _extract_production_schedule_products, workbooks, role_map
+async def _resolve_role_map_for_analysis(
+    workbooks: list[UploadedWorkbook],
+) -> tuple[dict[str, WorkbookRole], str]:
+    """Роли для analyze: кэш по содержимому + LM только для файлов без кэша."""
+    role_map: dict[str, WorkbookRole] = {}
+    uncached: list[UploadedWorkbook] = []
+    key_by_filename: dict[str, str] = {}
+    for workbook in workbooks:
+        content_key = _workbook_content_key(workbook.content)
+        key_by_filename[workbook.filename] = content_key
+        cached = _role_cache_get(content_key)
+        if cached is not None:
+            role_map[workbook.filename] = cached
+        else:
+            uncached.append(workbook)
+
+    if not uncached:
+        logger.info(
+            "document_analysis_agent.roles_classified",
+            source="cache",
+            count=len(role_map),
+        )
+        return role_map, "cache"
+
+    previews = await _build_workbook_previews_async(uncached)
+    fresh_roles, source = await _classify_workbooks_with_lm(
+        previews,
+        lm_timeout_seconds=_CLASSIFY_LM_TIMEOUT_SECONDS,
     )
-    detailed_extract = await asyncio.to_thread(
-        _extract_detailed_production_schedule, workbooks, role_map
+    for filename, role in fresh_roles.items():
+        role_map[filename] = role
+        content_key = key_by_filename.get(filename)
+        if content_key is not None and role in UPLOAD_FILE_ROLES:
+            _role_cache_put(content_key, role)
+
+    if len(role_map) > len(fresh_roles):
+        source = f"cache+{source}"
+
+    return role_map, source
+
+
+def _schedule_diff_message(
+    schedule_diff: Any | None,
+    *,
+    compared_with_saved: bool,
+    baseline_saved: bool,
+) -> str:
+    if baseline_saved:
+        return (
+            "График производства сохранён как базовая версия. "
+            "При следующем анализе изменения будут сравниваться с этой версией."
+        )
+    if not schedule_diff or not compared_with_saved:
+        return ""
+    if schedule_diff.has_changes:
+        months = (
+            ", ".join(schedule_diff.changed_months)
+            if schedule_diff.changed_months
+            else "есть расхождения"
+        )
+        return (
+            f"Планы изменились относительно сохранённой версии "
+            f"{schedule_diff.old_version_label} → новая {schedule_diff.new_version_label}: {months}"
+        )
+    return (
+        f"Сохранённая версия {schedule_diff.old_version_label} и новая "
+        f"{schedule_diff.new_version_label} совпадают по планам"
+    )
+
+
+def _detailed_diff_message(
+    detailed_diff: Any | None,
+    *,
+    compared_with_saved: bool,
+    baseline_saved: bool,
+    baseline_month: str = "",
+) -> str:
+    month_suffix = f" за {baseline_month}" if baseline_month else ""
+    if baseline_saved:
+        return (
+            f"Детальный график{month_suffix} сохранён как базовая версия. "
+            "При следующем анализе изменения будут сравниваться с этой версией."
+        )
+    if not detailed_diff or not compared_with_saved:
+        return ""
+    if detailed_diff.has_changes:
+        dates = (
+            ", ".join(detailed_diff.changed_months)
+            if detailed_diff.changed_months
+            else "есть расхождения"
+        )
+        return (
+            f"Детальный план изменился относительно сохранённой версии "
+            f"{detailed_diff.old_version_label} → новая {detailed_diff.new_version_label}: {dates}"
+        )
+    return (
+        f"Сохранённая версия детального графика {detailed_diff.old_version_label} и новая "
+        f"{detailed_diff.new_version_label} совпадают по планам"
+    )
+
+
+async def analyze_aveon_excel_files(
+    workbooks: list[UploadedWorkbook],
+    db: "AsyncSession | None" = None,
+    user_id: Any | None = None,
+) -> AveonAnalysisResult:
+    """Роли → изделия графика → спецификации (БД 1С) → материалы → result.xlsx."""
+    from app.agents.document_analysis_agent.onec_db_sources import (
+        build_country_index_from_db,
+        build_stock_index_from_db,
+        build_unit_index_from_db,
+        load_db_spec_catalog,
+        preload_spec_materials_for_links,
+    )
+
+    if db is None:
+        raise ValueError("Для анализа нужна сессия БД (остатки и спецификации из 1С)")
+
+    from app.services.onec_db_schema import ensure_onec_agent_tables
+
+    await ensure_onec_agent_tables()
+
+    workbooks = _normalize_uploaded_workbooks(workbooks)
+    role_map, source = await _resolve_role_map_for_analysis(workbooks)
+
+    # AsyncSession cannot service concurrent queries on the same connection.
+    db_stock_index = await build_stock_index_from_db(db)
+    db_country_index = await build_country_index_from_db(db)
+    db_unit_index = await build_unit_index_from_db(db)
+    db_spec_catalog = await load_db_spec_catalog(db)
+    if not db_stock_index:
+        logger.warning("document_analysis_agent.db_stock_empty")
+    if not db_spec_catalog:
+        logger.warning("document_analysis_agent.db_spec_catalog_empty")
+
+    from app.agents.document_analysis_agent.production_schedule_diff import (
+        prune_workbooks_to_latest_schedules,
+    )
+    from app.agents.document_analysis_agent.detailed_schedule_diff import (
+        infer_detailed_workbook_month,
+        prune_workbooks_to_latest_detailed,
+    )
+    from app.agents.document_analysis_agent.schedule_snapshot import (
+        detailed_month_key,
+        get_saved_detailed_file,
+        get_saved_production_file,
+        save_schedule_snapshot,
+    )
+
+    saved_production = get_saved_production_file(user_id)
+
+    detailed_upload_month: tuple[int, int] | None = None
+    for uploaded in workbooks:
+        if role_map.get(uploaded.filename) != ROLE_DETAILED_PRODUCTION_SCHEDULE:
+            continue
+        detailed_upload_month = infer_detailed_workbook_month(uploaded.content)
+        if detailed_upload_month is not None:
+            break
+
+    saved_detailed = (
+        get_saved_detailed_file(user_id, detailed_upload_month[0], detailed_upload_month[1])
+        if detailed_upload_month is not None
+        else None
+    )
+
+    workbooks, role_map, schedule_diff, schedule_compared_with_saved = await asyncio.to_thread(
+        prune_workbooks_to_latest_schedules,
+        workbooks,
+        role_map,
+        saved_file=saved_production,
+    )
+    workbooks, role_map, detailed_diff, detailed_compared_with_saved = await asyncio.to_thread(
+        prune_workbooks_to_latest_detailed,
+        workbooks,
+        role_map,
+        saved_file=saved_detailed,
+    )
+
+    has_production_upload = any(
+        role_map.get(wb.filename) == ROLE_PRODUCTION_SCHEDULE for wb in workbooks
+    )
+    has_detailed_upload = any(
+        role_map.get(wb.filename) == ROLE_DETAILED_PRODUCTION_SCHEDULE for wb in workbooks
+    )
+    schedule_baseline_saved = has_production_upload and not schedule_compared_with_saved
+    detailed_baseline_saved = has_detailed_upload and not detailed_compared_with_saved
+
+    (schedule_files, schedule_plans), detailed_extract = await asyncio.gather(
+        asyncio.to_thread(_extract_production_schedule_products, workbooks, role_map),
+        asyncio.to_thread(_extract_detailed_production_schedule, workbooks, role_map),
     )
     products = [plan.product for plan in schedule_plans]
-    product_spec_links = await _resolve_schedule_products_to_specs(products)
+    product_spec_links = await _resolve_schedule_products_to_specs(
+        products,
+        db_spec_catalog=db_spec_catalog,
+    )
+    db_materials_by_ref = await preload_spec_materials_for_links(db, product_spec_links)
+    shipment_bundle = await asyncio.to_thread(
+        _load_shipment_schedule_bundle, workbooks, role_map
+    )
     (
         material_usages,
         merged_nomenclatures,
@@ -439,6 +721,7 @@ async def analyze_aveon_excel_files(workbooks: list[UploadedWorkbook]) -> AveonA
         stock_files,
         shipment_files,
         logistics_risks,
+        coverage_dashboard,
     ) = await asyncio.to_thread(
         _collect_and_merge_spec_materials,
         product_spec_links,
@@ -446,6 +729,12 @@ async def analyze_aveon_excel_files(workbooks: list[UploadedWorkbook]) -> AveonA
         role_map,
         schedule_plans,
         detailed_extract,
+        db_stock_index,
+        db_materials_by_ref,
+        db_country_index,
+        db_unit_index,
+        user_id,
+        shipment_bundle,
     )
     price_matched = sum(
         1 for row in merged_nomenclatures if row.price_match not in ("", "unmatched")
@@ -494,14 +783,22 @@ async def analyze_aveon_excel_files(workbooks: list[UploadedWorkbook]) -> AveonA
     )
     from app.agents.document_analysis_agent.shift_assignment import (
         SHIFT_ASSIGNMENT_FILE_NAME,
-        build_shift_assignment_xlsx,
+        build_shift_assignment_bundle,
     )
 
-    shift_assignment_xlsx = await build_shift_assignment_xlsx(
+    schedule_name_index = _schedule_name_index_from_shipment_bundle(shipment_bundle)
+    if not schedule_name_index:
+        schedule_name_index = await _resolve_shipment_schedule_name_index(
+            workbooks, role_map, shipment_bundle=shipment_bundle
+        )
+    shift_assignment_bundle = await build_shift_assignment_bundle(
         merged_nomenclatures,
         logistics_risks,
         detailed_extract,
+        schedule_name_index=schedule_name_index,
     )
+    shift_assignment_xlsx = shift_assignment_bundle.xlsx_bytes
+    shift_assignment_preview = shift_assignment_bundle.preview
     logger.info(
         "document_analysis_agent.spec_materials_merged",
         usages=len(material_usages),
@@ -516,6 +813,54 @@ async def analyze_aveon_excel_files(workbooks: list[UploadedWorkbook]) -> AveonA
         result_bytes=len(result_xlsx) if result_xlsx else 0,
         shift_assignment_bytes=len(shift_assignment_xlsx),
     )
+    production_wb = next(
+        (wb for wb in workbooks if role_map.get(wb.filename) == ROLE_PRODUCTION_SCHEDULE),
+        None,
+    )
+    detailed_wb = next(
+        (
+            wb
+            for wb in workbooks
+            if role_map.get(wb.filename) == ROLE_DETAILED_PRODUCTION_SCHEDULE
+        ),
+        None,
+    )
+    if production_wb is not None or detailed_wb is not None:
+        detailed_payload: tuple[int, int, str, bytes] | None = None
+        if detailed_wb is not None:
+            month_info = detailed_upload_month or infer_detailed_workbook_month(
+                detailed_wb.content
+            )
+            if month_info is not None:
+                detailed_payload = (
+                    month_info[0],
+                    month_info[1],
+                    detailed_wb.filename,
+                    detailed_wb.content,
+                )
+            else:
+                logger.warning(
+                    "document_analysis_agent.detailed_snapshot_month_unknown",
+                    filename=detailed_wb.filename,
+                )
+        try:
+            save_schedule_snapshot(
+                user_id,
+                production=(
+                    (production_wb.filename, production_wb.content) if production_wb else None
+                ),
+                detailed=detailed_payload,
+            )
+        except OSError:
+            logger.warning("document_analysis_agent.schedule_snapshot_save_failed")
+
+    detailed_baseline_month = ""
+    if detailed_baseline_saved and detailed_extract.year > 0 and detailed_extract.month > 0:
+        detailed_baseline_month = detailed_month_key(
+            detailed_extract.year,
+            detailed_extract.month,
+        )
+
     return AveonAnalysisResult(
         roles=role_map,
         source=source,
@@ -528,20 +873,96 @@ async def analyze_aveon_excel_files(workbooks: list[UploadedWorkbook]) -> AveonA
             if detailed_extract.year and detailed_extract.month
             else ""
         ),
+        detailed_schedule_year=detailed_extract.year,
+        detailed_schedule_month_num=detailed_extract.month,
+        detailed_schedule_day_keys=list(detailed_extract.day_keys),
+        detailed_schedule_plans=list(detailed_extract.plans),
         product_spec_links=product_spec_links,
         material_usages=material_usages,
         merged_nomenclatures=merged_nomenclatures,
         result_xlsx_bytes=result_xlsx,
         shift_assignment_xlsx_bytes=shift_assignment_xlsx,
         shift_assignment_file_name=SHIFT_ASSIGNMENT_FILE_NAME,
+        shift_assignment_values=list(shift_assignment_preview.values),
+        shift_assignment_row_priorities=list(shift_assignment_preview.row_priorities),
+        shift_assignment_row_kinds=list(shift_assignment_preview.row_kinds),
+        shift_assignment_meta={
+            "as_of": shift_assignment_preview.as_of,
+            "week_period": shift_assignment_preview.week_period,
+            "week_in_period": shift_assignment_preview.week_in_period,
+            "task_count": shift_assignment_preview.task_count,
+            "urgent_count": shift_assignment_preview.urgent_count,
+            "today_count": shift_assignment_preview.today_count,
+            "week_count": shift_assignment_preview.week_count,
+        },
         stock_files=stock_files,
         shipment_files=shipment_files,
         logistics_risks=logistics_risks,
+        schedule_diff_has_changes=bool(schedule_diff and schedule_diff.has_changes),
+        schedule_diff_changed_months=list(schedule_diff.changed_months) if schedule_diff else [],
+        schedule_diff_changed_cells=schedule_diff.changed_cells if schedule_diff else 0,
+        schedule_diff_file_name=(
+            schedule_diff.file_name if schedule_diff else "график_производства_изменения.xlsx"
+        ),
+        schedule_diff_xlsx_bytes=(
+            schedule_diff.file_bytes if schedule_diff and schedule_diff.has_changes else None
+        ),
+        schedule_diff_old_version=schedule_diff.old_version_label if schedule_diff else "",
+        schedule_diff_new_version=schedule_diff.new_version_label if schedule_diff else "",
+        schedule_diff_message=_schedule_diff_message(
+            schedule_diff,
+            compared_with_saved=schedule_compared_with_saved,
+            baseline_saved=schedule_baseline_saved,
+        ),
+        schedule_baseline_saved=schedule_baseline_saved,
+        schedule_compared_with_saved=schedule_compared_with_saved,
+        detailed_diff_has_changes=bool(detailed_diff and detailed_diff.has_changes),
+        detailed_diff_changed_dates=list(detailed_diff.changed_months) if detailed_diff else [],
+        detailed_diff_changed_cells=detailed_diff.changed_cells if detailed_diff else 0,
+        detailed_diff_file_name=(
+            detailed_diff.file_name if detailed_diff else "детальный_график_изменения.xlsx"
+        ),
+        detailed_diff_xlsx_bytes=(
+            detailed_diff.file_bytes if detailed_diff and detailed_diff.has_changes else None
+        ),
+        detailed_diff_old_version=detailed_diff.old_version_label if detailed_diff else "",
+        detailed_diff_new_version=detailed_diff.new_version_label if detailed_diff else "",
+        detailed_diff_message=_detailed_diff_message(
+            detailed_diff,
+            compared_with_saved=detailed_compared_with_saved,
+            baseline_saved=detailed_baseline_saved,
+            baseline_month=detailed_baseline_month,
+        ),
+        detailed_baseline_saved=detailed_baseline_saved,
+        detailed_compared_with_saved=detailed_compared_with_saved,
+        coverage_dashboard=coverage_dashboard,
     )
 
 
-# Быстрый classify на UI: не держим запрос минутами, если LM Studio недоступна/занята.
-_CLASSIFY_LM_TIMEOUT_SECONDS = 12
+# Классификация ролей на UI: LM Studio, короткий таймаут — иначе axios обрывает запрос.
+_CLASSIFY_LM_TIMEOUT_SECONDS = 45
+# Кэш ролей по содержимому файла (повторная загрузка / debounce на UI).
+_ROLE_CACHE_MAX = 64
+_role_cache: OrderedDict[str, WorkbookRole] = OrderedDict()
+
+
+def _workbook_content_key(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _role_cache_get(content_key: str) -> WorkbookRole | None:
+    role = _role_cache.get(content_key)
+    if role is None:
+        return None
+    _role_cache.move_to_end(content_key)
+    return role
+
+
+def _role_cache_put(content_key: str, role: WorkbookRole) -> None:
+    _role_cache[content_key] = role
+    _role_cache.move_to_end(content_key)
+    while len(_role_cache) > _ROLE_CACHE_MAX:
+        _role_cache.popitem(last=False)
 
 
 async def classify_aveon_excel_files(
@@ -549,36 +970,63 @@ async def classify_aveon_excel_files(
 ) -> tuple[dict[str, WorkbookRole], str]:
     """Только определение ролей файлов (без полного пайплайна анализа)."""
     workbooks = _normalize_uploaded_workbooks(workbooks)
+
+    role_map: dict[str, WorkbookRole] = {}
+    uncached: list[UploadedWorkbook] = []
+    key_by_filename: dict[str, str] = {}
+    for wb in workbooks:
+        key = _workbook_content_key(wb.content)
+        key_by_filename[wb.filename] = key
+        cached = _role_cache_get(key)
+        if cached is not None:
+            role_map[wb.filename] = cached
+        else:
+            uncached.append(wb)
+
+    if not uncached:
+        logger.info(
+            "document_analysis_agent.roles_classified_only",
+            source="cache",
+            roles=role_map,
+        )
+        return role_map, "cache"
+
     try:
-        previews = await asyncio.to_thread(_build_workbook_previews, workbooks)
+        previews = await _build_workbook_previews_async(uncached)
     except OSError as exc:
         # Windows: битый cwd / tempfile у uvicorn --reload → Errno 22; fallback по именам.
         logger.warning(
             "document_analysis_agent.preview_build_failed",
             error=str(exc),
         )
-        role_map = {wb.filename: _classify_filename_locally(wb.filename) for wb in workbooks}
+        for wb in uncached:
+            role_map[wb.filename] = ROLE_OTHER
         return role_map, "filename_fallback"
 
     try:
-        # Сначала локально (мгновенно), LM — только для неопределённых и с коротким таймаутом.
-        # Иначе после анализа UI «повторно грузит роли», ждёт LM до 600с, axios рвёт через 120с
-        # и показывает «Нет связи с сервером».
-        role_map, source = await _classify_workbooks_with_lm(
+        fresh_roles, source = await _classify_workbooks_with_lm(
             previews,
             lm_timeout_seconds=_CLASSIFY_LM_TIMEOUT_SECONDS,
-            prefer_local=True,
         )
     except Exception as exc:
         logger.warning(
             "document_analysis_agent.classify_failed_fallback_local",
             error=str(exc),
         )
-        role_map = {
+        fresh_roles = {
             str(preview["filename"]): _classify_preview_locally(preview)
             for preview in previews
         }
         source = "local_parser_fallback"
+
+    for filename, role in fresh_roles.items():
+        role_map[filename] = role
+        key = key_by_filename.get(filename)
+        if key is not None and role in UPLOAD_FILE_ROLES:
+            _role_cache_put(key, role)
+
+    if role_map.keys() - fresh_roles.keys():
+        source = f"cache+{source}"
 
     logger.info(
         "document_analysis_agent.roles_classified_only",
@@ -608,110 +1056,148 @@ def _normalize_uploaded_workbooks(workbooks: list[UploadedWorkbook]) -> list[Upl
 
 
 def _classify_filename_locally(filename: str) -> WorkbookRole:
-    name = _normalize(filename)
-    if "отгруз" in name:
-        return ROLE_SHIPMENT_SCHEDULE
-    if "остат" in name:
-        return ROLE_STOCK
-    if "недельн" in name or "по дням" in name or "detailed" in name:
-        return ROLE_DETAILED_PRODUCTION_SCHEDULE
-    if "отчет" in name or "отчёт" in name:
-        return ROLE_DETAILED_PRODUCTION_SCHEDULE
-    if "производ" in name or "график" in name:
-        return ROLE_PRODUCTION_SCHEDULE
-    if "спец" in name or "spec" in name:
-        return ROLE_SPECIFICATION
+    """Fallback только при полном отсутствии превью — без эвристик по имени."""
+    _ = _normalize(filename)
     return ROLE_OTHER
 
 
-def _build_workbook_previews(workbooks: list[UploadedWorkbook]) -> list[dict[str, Any]]:
-    previews: list[dict[str, Any]] = []
-    for uploaded in workbooks:
-        try:
-            workbook = load_workbook(
-                BytesIO(uploaded.content),
-                data_only=True,
-                read_only=True,
-            )
-        except OSError:
-            # read_only на Windows иногда падает с Errno 22 — обычный режим.
-            workbook = load_workbook(BytesIO(uploaded.content), data_only=True)
-        try:
-            sheet_previews: list[dict[str, Any]] = []
-            for sheet in workbook.worksheets[:8]:
-                max_row = sheet.max_row or 1
-                max_col = sheet.max_column or 1
-                rows: list[list[str | None]] = []
-                for row in sheet.iter_rows(
-                    min_row=1,
-                    max_row=min(max_row, 12),
-                    max_col=min(max_col, 14),
-                    values_only=True,
-                ):
-                    rows.append(
-                        [
-                            _short(_clean_text(value), 120) if value is not None else None
-                            for value in row
-                        ]
-                    )
-                sheet_previews.append(
-                    {
-                        "sheet": sheet.title,
-                        "max_row": max_row,
-                        "max_column": max_col,
-                        "sample_rows": rows,
-                    }
-                )
-            previews.append({"filename": uploaded.filename, "sheets": sheet_previews})
-        finally:
+def _coerce_upload_role(role: WorkbookRole | None) -> WorkbookRole | None:
+    if role in UPLOAD_FILE_ROLES:
+        return role
+    return None
+
+
+def _load_workbook_for_preview(content: bytes):
+    """read_only быстрее, но на части файлов (ТАМОЖНЯ.xlsx) max_row/max_column = 1 — fallback."""
+    try:
+        workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
+    except OSError:
+        return load_workbook(BytesIO(content), data_only=True, read_only=False)
+    try:
+        suspicious = True
+        for sheet in workbook.worksheets[:4]:
+            max_row = sheet.max_row or 0
+            max_col = sheet.max_column or 0
+            if max_row > 3 or max_col > 3:
+                suspicious = False
+                break
+        if suspicious and len(content) > 12_000:
             workbook.close()
-    return previews
+            return load_workbook(BytesIO(content), data_only=True, read_only=False)
+    except Exception:
+        workbook.close()
+        return load_workbook(BytesIO(content), data_only=True, read_only=False)
+    return workbook
+
+
+def _build_one_workbook_preview(uploaded: UploadedWorkbook) -> dict[str, Any]:
+    workbook = _load_workbook_for_preview(uploaded.content)
+    try:
+        sheet_previews: list[dict[str, Any]] = []
+        for sheet in workbook.worksheets[:8]:
+            max_row = sheet.max_row or 1
+            max_col = sheet.max_column or 1
+            rows: list[list[str | None]] = []
+            for row in sheet.iter_rows(
+                min_row=1,
+                max_row=min(max_row, 12),
+                max_col=min(max_col, 14),
+                values_only=True,
+            ):
+                rows.append(
+                    [
+                        _short(_clean_text(value), 120) if value is not None else None
+                        for value in row
+                    ]
+                )
+            sheet_previews.append(
+                {
+                    "sheet": sheet.title,
+                    "max_row": max_row,
+                    "max_column": max_col,
+                    "sample_rows": rows,
+                }
+            )
+        return {"filename": uploaded.filename, "sheets": sheet_previews}
+    finally:
+        workbook.close()
+
+
+def _build_workbook_previews(workbooks: list[UploadedWorkbook]) -> list[dict[str, Any]]:
+    return [_build_one_workbook_preview(uploaded) for uploaded in workbooks]
+
+
+async def _build_workbook_previews_async(
+    workbooks: list[UploadedWorkbook],
+) -> list[dict[str, Any]]:
+    """Параллельный разбор превью по файлам (openpyxl в thread pool)."""
+    if not workbooks:
+        return []
+    if len(workbooks) == 1:
+        return [await asyncio.to_thread(_build_one_workbook_preview, workbooks[0])]
+    return list(
+        await asyncio.gather(
+            *[
+                asyncio.to_thread(_build_one_workbook_preview, uploaded)
+                for uploaded in workbooks
+            ]
+        )
+    )
 
 
 async def _classify_workbooks_with_lm(
     previews: list[dict[str, Any]],
     *,
     lm_timeout_seconds: int | float | None = None,
-    prefer_local: bool = False,
 ) -> tuple[dict[str, WorkbookRole], str]:
-    local_map = {
-        str(preview["filename"]): _classify_preview_locally(preview) for preview in previews
-    }
-    needs_lm = (not prefer_local) or any(role == ROLE_OTHER for role in local_map.values())
-    lm_role_map: dict[str, WorkbookRole] = {}
-    if needs_lm:
-        lm_role_map = (
-            await _try_lm_classify_workbooks(previews, timeout=lm_timeout_seconds) or {}
-        )
-
+    """Local-first: уверенные локальные роли без LM; LM только для other/сомнительных."""
     resolved: dict[str, WorkbookRole] = {}
+    pending: list[dict[str, Any]] = []
+
     for preview in previews:
         filename = str(preview["filename"])
-        role = lm_role_map.get(filename)
-        if role not in KNOWN_ROLES:
-            role = local_map.get(filename) or _classify_preview_locally(preview)
-        resolved[filename] = role
+        local = _classify_preview_locally(preview)
+        if local in UPLOAD_FILE_ROLES:
+            resolved[filename] = local
+        else:
+            pending.append(preview)
 
-    required_roles = {
-        ROLE_SPECIFICATION,
-        ROLE_STOCK,
-        ROLE_PRODUCTION_SCHEDULE,
-        ROLE_SHIPMENT_SCHEDULE,
-    }
-    missing_roles = required_roles - set(resolved.values())
-    if missing_roles:
-        for preview in previews:
+    lm_role_map: dict[str, WorkbookRole] = {}
+    if pending:
+        lm_role_map = (
+            await _try_lm_classify_workbooks(pending, timeout=lm_timeout_seconds) or {}
+        )
+        for preview in pending:
             filename = str(preview["filename"])
-            local_role = local_map.get(filename) or _classify_preview_locally(preview)
-            if local_role in missing_roles:
-                resolved[filename] = local_role
-                missing_roles.discard(local_role)
-            if not missing_roles:
-                break
+            lm_role = _coerce_upload_role(_normalize_lm_role(lm_role_map.get(filename)))
+            if lm_role is not None:
+                resolved[filename] = lm_role
+            else:
+                fallback = _classify_preview_locally(preview)
+                resolved[filename] = (
+                    fallback if fallback in UPLOAD_FILE_ROLES else ROLE_OTHER
+                )
 
-    reconciled = _reconcile_role_map_from_content(previews, resolved)
-    source = "lm_studio" if lm_role_map else "local_parser"
-    return reconciled, source
+    local_confident = len(previews) - len(pending)
+    if local_confident > 0 and not pending:
+        source = "local_fast"
+    elif local_confident > 0 and lm_role_map:
+        source = "local+lm"
+    elif local_confident > 0 and pending and not lm_role_map:
+        source = "local_parser"
+    elif local_confident == 0 and lm_role_map:
+        source = "lm_studio"
+    else:
+        source = "local_parser"
+
+    logger.info(
+        "document_analysis_agent.classify_local_first",
+        local_confident=local_confident,
+        lm_pending=len(pending),
+        lm_answered=len(lm_role_map),
+        source=source,
+    )
+    return resolved, source
 
 
 def _preview_text(preview: dict[str, Any]) -> str:
@@ -725,12 +1211,27 @@ def _preview_looks_like_shipment_schedule(preview: dict[str, Any]) -> bool:
     filename = _normalize(preview.get("filename"))
     if "отгруз" in filename:
         return True
-    # расширенный график: номенклатура + даты поставки / логистика
+    sheet_names = _preview_sheet_names(preview)
+    if any("тамож" in name for name in sheet_names):
+        return True
+    if any("итц" in name for name in sheet_names):
+        return True
+    if any("реестр" in name and "заказ" in name for name in sheet_names):
+        return True
+    # расширенный график / ИТЦ: номенклатура + даты поставки / логистика
     if "номенклатура" in text and (
         "примерная дата поставки" in text
         or ("дата заказа" in text and "логистика" in text)
         or ("заказано" in text and "поставк" in text)
     ):
+        return True
+    if (
+        "позици" in text
+        and "модел" in text
+        and ("отгруз" in text or "спецификац" in text or "итц" in text)
+    ):
+        return True
+    if "тип операции" in text and "основание" in text:
         return True
     return False
 
@@ -847,24 +1348,8 @@ def _preview_looks_like_stock(preview: dict[str, Any]) -> bool:
     return False
 
 
-def _reconcile_role_map_from_content(
-    previews: list[dict[str, Any]], role_map: dict[str, WorkbookRole]
-) -> dict[str, WorkbookRole]:
-    reconciled = dict(role_map)
-    for preview in previews:
-        filename = str(preview["filename"])
-        # Порядок: отгрузки → остатки материалов → детальный → помесячный → спеки
-        if _preview_looks_like_shipment_schedule(preview):
-            reconciled[filename] = ROLE_SHIPMENT_SCHEDULE
-        elif _preview_looks_like_stock(preview):
-            reconciled[filename] = ROLE_STOCK
-        elif _preview_looks_like_detailed_production_schedule(preview):
-            reconciled[filename] = ROLE_DETAILED_PRODUCTION_SCHEDULE
-        elif _preview_looks_like_production_schedule(preview):
-            reconciled[filename] = ROLE_PRODUCTION_SCHEDULE
-        elif _preview_looks_like_specification(preview):
-            reconciled[filename] = ROLE_SPECIFICATION
-    return reconciled
+def _preview_sheet_names(preview: dict[str, Any]) -> list[str]:
+    return [_normalize(str(sheet.get("sheet") or "")) for sheet in preview.get("sheets") or []]
 
 
 async def _try_lm_classify_workbooks(
@@ -878,23 +1363,21 @@ async def _try_lm_classify_workbooks(
     base_url, model = payload
     prompt = (
         "Ты классифицируешь Excel-файлы для агента закупок Авион. "
-        "На входе превью файлов: имя, листы, первые строки. "
-        "Для каждого файла выбери одну роль:\n"
-        "- shipment_schedule — график отгрузок материалов (номенклатура, логистика, даты поставки в Москву);\n"
-        "- stock — остатки МАТЕРИАЛОВ: колонки «Номенклатура» + «Остаток…» "
-        "(даже если сверху есть небольшой план изделий — это всё равно stock);\n"
-        "- production_schedule — ОБЫЧНЫЙ график производства ПО МЕСЯЦАМ "
-        "(колонки Июль/Август/…, «Наименования изделий», без дневной/недельной разбивки);\n"
-        "- detailed_production_schedule — ДЕТАЛЬНЫЙ график/отчёт выпуска "
-        "(«График выпуска готовой продукции», колонки-дни 1..31 / даты, "
-        "или отчёт «Модель/изделие» со стадиями П/ф·ОТК·Склад и план/факт по дням; "
-        "имя вроде «План по недельно» / «Отчет 07_2026…»; "
-        "НЕ путать с stock и НЕ путать с помесячным графиком);\n"
-        "- specification — спецификация / ведомость материалов;\n"
-        "- other.\n"
-        "Приоритет: если есть таблица Номенклатура+Остаток материалов → stock. "
-        "Детальный график идёт в лист ежедневного обеспечения (строки П/ф). "
-        "Имя файла может врать — смотри на структуру колонок. "
+        "На входе превью: имя файла, названия листов, первые строки таблиц. "
+        "Для КАЖДОГО файла выбери РОВНО ОДНУ из четырёх ролей (других нет):\n"
+        "1) shipment_schedule — график отгрузок материалов и всё, что к нему относится: "
+        "номенклатура + колонки дат поставки, логистика до МСК/Ростов, заказано/остаток; "
+        "файлы с листами «ТАМОЖНЯ», «ИТЦ В РАБОТЕ», «Реестр Заказов» (позиция+модель, партии, "
+        "таможенные операции) — это тоже shipment_schedule, дополнение к отгрузкам;\n"
+        "2) stock — остатки МАТЕРИАЛОВ на складе: «Номенклатура» + «Остаток…» "
+        "(даже если сверху есть небольшой план изделий);\n"
+        "3) production_schedule — помесячный график производства "
+        "(колонки месяцев, «Наименования изделий», Заказ/Опытные/Склад × План/Факт, "
+        "без дневной/недельной сетки);\n"
+        "4) detailed_production_schedule — детальный график/отчёт выпуска по дням или неделям "
+        "(«График выпуска готовой продукции», колонки-даты, отчёт «Модель/изделие» П/ф·ОТК·Склад).\n"
+        "Имя файла может вводить в заблуждение — опирайся на структуру листов и заголовков. "
+        "Не используй роли specification, customs, other.\n"
         "Верни строго JSON: {\"files\":[{\"filename\":\"...\",\"role\":\"...\",\"reason\":\"...\"}]}.\n\n"
         f"FILES={json.dumps(previews, ensure_ascii=False)}"
     )
@@ -923,45 +1406,21 @@ async def _try_lm_classify_workbooks(
 
 
 def _classify_preview_locally(preview: dict[str, Any]) -> WorkbookRole:
-    text = _preview_text(preview)
-    filename = _normalize(preview.get("filename"))
-
-    if "график отгрузок" in text or "график отгрузки" in text or "отгруз" in filename:
+    """Fallback если LM недоступна — только по превью содержимого."""
+    if _preview_looks_like_shipment_schedule(preview):
         return ROLE_SHIPMENT_SCHEDULE
-    # Остатки материалов — до детального (гибрид «план + остатки» → stock)
     if _preview_looks_like_stock(preview):
         return ROLE_STOCK
     if _preview_looks_like_detailed_production_schedule(preview):
         return ROLE_DETAILED_PRODUCTION_SCHEDULE
     if _preview_looks_like_production_schedule(preview):
         return ROLE_PRODUCTION_SCHEDULE
-    if "график производства" in text:
-        return ROLE_PRODUCTION_SCHEDULE
-    if (
-        "наименования изделий" in text
-        and sum(1 for month in _MONTH_LOWER if month in text) >= 2
-    ):
-        return ROLE_PRODUCTION_SCHEDULE
-    if (
-        "наименование тмц" in text
-        or "цена по спецификации" in text
-        or "manufacturer partno" in text
-        or ("description" in text and "designator" in text)
-        or "спецификация" in text
-        or "спек" in filename
-    ):
-        return ROLE_SPECIFICATION
     return ROLE_OTHER
 
 
 def _normalize_lm_role(value: Any) -> WorkbookRole:
     role = _normalize(value)
     aliases = {
-        "specs": ROLE_SPECIFICATION,
-        "spec": ROLE_SPECIFICATION,
-        "specification": ROLE_SPECIFICATION,
-        "спецификация": ROLE_SPECIFICATION,
-        "спецификации": ROLE_SPECIFICATION,
         "stock": ROLE_STOCK,
         "inventory": ROLE_STOCK,
         "остатки": ROLE_STOCK,
@@ -985,11 +1444,21 @@ def _normalize_lm_role(value: Any) -> WorkbookRole:
         "delivery_schedule": ROLE_SHIPMENT_SCHEDULE,
         "график отгрузок": ROLE_SHIPMENT_SCHEDULE,
         "график отгрузки": ROLE_SHIPMENT_SCHEDULE,
+        "customs_itc": ROLE_SHIPMENT_SCHEDULE,
+        "customs": ROLE_SHIPMENT_SCHEDULE,
+        "таможня": ROLE_SHIPMENT_SCHEDULE,
+        "itc": ROLE_SHIPMENT_SCHEDULE,
+        "итц": ROLE_SHIPMENT_SCHEDULE,
+        "specs": ROLE_OTHER,
+        "spec": ROLE_OTHER,
+        "specification": ROLE_OTHER,
+        "спецификация": ROLE_OTHER,
+        "спецификации": ROLE_OTHER,
         "unknown": ROLE_OTHER,
         "other": ROLE_OTHER,
-        # общий «schedule» без уточнения — не маппим (иначе путаем типы)
     }
-    return aliases.get(role, ROLE_OTHER)
+    mapped = aliases.get(role, ROLE_OTHER)
+    return mapped if mapped in UPLOAD_FILE_ROLES or mapped == ROLE_OTHER else ROLE_OTHER
 
 
 def _lm_settings() -> tuple[str, str] | None:
@@ -1123,6 +1592,20 @@ def _sheet_cell_value(sheet: Worksheet, row: int, col: int) -> Any:
         if merged.min_row <= row <= merged.max_row and merged.min_col <= col <= merged.max_col:
             return sheet.cell(merged.min_row, merged.min_col).value
     return value
+
+
+def _safe_set_cell_value(sheet: Worksheet, row: int, col: int, value: Any) -> Any:
+    """Записать value, разъединив merge если ячейка read-only (не верхняя левая)."""
+    from openpyxl.cell.cell import MergedCell
+
+    cell = sheet.cell(row, col)
+    if isinstance(cell, MergedCell):
+        for merged in list(sheet.merged_cells.ranges):
+            if merged.min_row <= row <= merged.max_row and merged.min_col <= col <= merged.max_col:
+                sheet.unmerge_cells(str(merged))
+        cell = sheet.cell(row, col)
+    cell.value = value
+    return cell
 
 
 def _filled_month_labels(sheet: Worksheet, row: int, max_col: int) -> dict[int, str]:
@@ -1477,8 +1960,8 @@ def _infer_detailed_sheet_year_month(sheet: Worksheet, default_year: int) -> tup
     if title_year:
         year = title_year
 
-    for row_idx in range(1, min(sheet.max_row, 12) + 1):
-        for col_idx in range(1, min(sheet.max_column, 8) + 1):
+    for row_idx in range(1, min(sheet.max_row, 24) + 1):
+        for col_idx in range(1, min(sheet.max_column, 16) + 1):
             text = _clean_text(sheet.cell(row_idx, col_idx).value)
             if not text:
                 continue
@@ -1493,11 +1976,16 @@ def _infer_detailed_sheet_year_month(sheet: Worksheet, default_year: int) -> tup
     if pf_days:
         return pf_days[0].year, pf_days[0].month
 
+    text_year = year
     for header_idx, _name_col, day_cols in _iter_detailed_schedule_tables(sheet, year, month or 0):
         if not day_cols:
             continue
         first_day = day_cols[0][1]
-        return first_day.year, first_day.month
+        if month is None:
+            month = first_day.month
+        if text_year < 2000:
+            year = first_day.year
+        break
 
     if month is None:
         return 0, 0
@@ -1506,10 +1994,18 @@ def _infer_detailed_sheet_year_month(sheet: Worksheet, default_year: int) -> tup
 
 def _year_from_text(value: Any) -> int | None:
     text = _clean_text(value)
-    match = re.search(r"(20\d{2})", text)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        candidate = int(value)
+        if 2020 <= candidate <= 2035:
+            return candidate
+        return None
+    match = re.search(r"\b(20\d{2})\b", text)
     if not match:
         return None
-    return int(match.group(1))
+    year = int(match.group(1))
+    if year < 2020 or year > 2035:
+        return None
+    return year
 
 
 def _sheet_has_daily_day_columns(sheet: Worksheet, year: int, month: int) -> bool:
@@ -1660,13 +2156,19 @@ def _detailed_header_to_day(value: Any, year: int, month: int) -> date | None:
     # datetime/date в шапке (лист «Апрель») — до разбора чисел 1..31
     if isinstance(value, datetime):
         parsed = value.date()
-        if year > 0 and month > 0 and (parsed.year != year or parsed.month != month):
-            return None
+    elif isinstance(value, date):
+        parsed = value
+    else:
+        parsed = None
+
+    if parsed is not None:
+        if year > 0 and month > 0:
+            # Excel иногда отдаёт «3» как 2000-08-03 — день месяца важнее года ячейки
+            if parsed.month == month and 1 <= parsed.day <= monthrange(year, month)[1]:
+                return date(year, month, parsed.day)
+            if parsed.year != year or parsed.month != month:
+                return None
         return parsed
-    if isinstance(value, date):
-        if year > 0 and month > 0 and (value.year != year or value.month != month):
-            return None
-        return value
 
     # Номер дня месяца: НЕ через from_excel(1) → 1899/1900
     day_num: int | None = None
@@ -1823,12 +2325,47 @@ class _PfMetricPair:
         return out
 
 
+@dataclass(frozen=True)
+class _DetailedDayColumn:
+    """Одна дневная колонка обычного «Графика выпуска»."""
+
+    col: int
+    day: date
+
+
+@dataclass
+class _DetailedStageSeries:
+    """Одна строка выпуска изделия из детального отчёта, до выбора рабочей стадии."""
+
+    product: str
+    stage: str
+    row: int
+    priority: int
+    daily_qty: dict[str, float] = field(default_factory=dict)
+    daily_fact: dict[str, float] = field(default_factory=dict)
+    plan_cells: list[DetailedPlanCellRef] = field(default_factory=list)
+
+    @property
+    def total_qty(self) -> float:
+        return sum(float(value) for value in self.daily_qty.values())
+
+    @property
+    def total_fact(self) -> float:
+        return sum(float(value) for value in self.daily_fact.values())
+
+    @property
+    def has_nonzero(self) -> bool:
+        return self.total_qty > 1e-12 or self.total_fact > 1e-12
+
+
 def _sheet_is_pf_stage_report(sheet: Worksheet) -> bool:
-    """Отчёт со стадиями П/ф / ОТК / Склад (и обычно «Модель / изделие»)."""
+    """Отчёт план/факт по изделиям: со стадиями или без явного П/ф."""
     max_r = min(sheet.max_row, 60)
     max_c = min(sheet.max_column, 12)
     has_pf = False
     has_model = False
+    plan_hits = 0
+    fact_hits = 0
     for row_idx in range(1, max_r + 1):
         for col_idx in range(1, max_c + 1):
             text = _normalize(sheet.cell(row_idx, col_idx).value)
@@ -1838,9 +2375,14 @@ def _sheet_is_pf_stage_report(sheet: Worksheet) -> bool:
                 has_pf = True
             if "модель" in text and "изделие" in text:
                 has_model = True
+            metric = _classify_schedule_metric(text)
+            if metric == "план":
+                plan_hits += 1
+            elif metric == "факт":
+                fact_hits += 1
             if has_pf and has_model:
                 return True
-    return has_pf
+    return has_pf or (has_model and plan_hits >= 2 and fact_hits >= 1)
 
 
 def _pf_header_is_skip(value: Any) -> bool:
@@ -2031,12 +2573,50 @@ def _add_distributed_qty(
         target[day_key] = target.get(day_key, 0.0) + qty
 
 
+def _detailed_release_stage_priority(stage: str) -> int | None:
+    """Приоритет строки выпуска: П/ф лучше, но при его отсутствии берём строку плана."""
+    text = _normalize(stage)
+    if text in _PF_STAGE_KEYS or text.startswith("п/ф"):
+        return 0
+    if any(token in text for token in _DETAILED_SKIP_STAGE_TOKENS):
+        return None
+    if any(token in text for token in _DETAILED_RELEASE_STAGE_TOKENS):
+        return 1
+    # В детальных планах без стадий колонка рядом с изделием часто пустая/числовая.
+    return 2
+
+
+def _choose_detailed_stage_series(
+    series: list[_DetailedStageSeries],
+) -> list[_DetailedStageSeries]:
+    """Из всех строк изделия выбирает единую рабочую строку выпуска для расчёта."""
+    by_product: dict[str, list[_DetailedStageSeries]] = {}
+    for item in series:
+        if item.has_nonzero or item.plan_cells:
+            by_product.setdefault(_normalize(item.product), []).append(item)
+
+    chosen: list[_DetailedStageSeries] = []
+    for items in by_product.values():
+        best = sorted(
+            items,
+            key=lambda item: (
+                item.priority,
+                -item.total_qty,
+                -item.total_fact,
+                item.row,
+            ),
+        )[0]
+        if best.has_nonzero:
+            chosen.append(best)
+    return chosen
+
+
 def _parse_pf_stage_report_sheet(
     sheet: Worksheet,
     year: int,
     month: int,
 ) -> tuple[list[DetailedScheduleProductPlan], list[DetailedPlanCellRef]]:
-    """Отчёт «Модель/изделие»: qty только со строк стадии П/ф; ОТК/Склад игнорируются.
+    """Отчёт «Модель/изделие»: собираем строки выпуска и выбираем плановую стадию.
 
     План: все дни из колонок/диапазонов (далее extract дозаполняет месяц нулями).
     Факт: только дни/периоды, для которых в файле есть значение факта.
@@ -2051,21 +2631,22 @@ def _parse_pf_stage_report_sheet(
         date(year, month, monthrange(year, month)[1]) if year > 0 and month > 0 else None
     )
 
-    plans: list[DetailedScheduleProductPlan] = []
-    plan_cells: list[DetailedPlanCellRef] = []
+    series: list[_DetailedStageSeries] = []
     current_product = ""
     for row_idx in range(metric_row + 1, sheet.max_row + 1):
         stage = _normalize(sheet.cell(row_idx, stage_col).value)
         name = _clean_text(sheet.cell(row_idx, name_col).value)
         if name and _is_schedule_product_name(name):
             current_product = name
-        if stage not in _PF_STAGE_KEYS:
+        priority = _detailed_release_stage_priority(stage)
+        if priority is None:
             continue
         if not current_product:
             continue
 
         daily_qty: dict[str, float] = {}
         daily_fact: dict[str, float] = {}
+        row_plan_cells: list[DetailedPlanCellRef] = []
         has_any = False
         for pair in pairs:
             days = pair.days()
@@ -2079,7 +2660,7 @@ def _parse_pf_stage_report_sheet(
             if plan_qty is not None:
                 has_any = has_any or plan_qty != 0
                 _add_distributed_qty(daily_qty, plan_qty, days, only_if_present=False)
-                plan_cells.append(
+                row_plan_cells.append(
                     DetailedPlanCellRef(
                         product=current_product,
                         row=row_idx,
@@ -2091,7 +2672,7 @@ def _parse_pf_stage_report_sheet(
             elif pair.day is not None:
                 # явная дневная колонка без числа → план 0 на этот день
                 daily_qty[pair.day.isoformat()] = daily_qty.get(pair.day.isoformat(), 0.0)
-                plan_cells.append(
+                row_plan_cells.append(
                     DetailedPlanCellRef(
                         product=current_product,
                         row=row_idx,
@@ -2112,20 +2693,33 @@ def _parse_pf_stage_report_sheet(
 
         if not daily_qty and not daily_fact:
             continue
-        # пустые слоты (номер есть, изделия нет) — без чисел в П/ф
+        # пустые слоты (номер есть, изделия нет) — без чисел выпуска
         if not has_any:
             continue
-        plans.append(
-            DetailedScheduleProductPlan(
+        series.append(
+            _DetailedStageSeries(
                 product=current_product,
+                stage=stage,
+                row=row_idx,
+                priority=priority,
                 daily_qty=daily_qty,
                 daily_fact=daily_fact,
-                year=year,
-                month=month,
+                plan_cells=row_plan_cells,
             )
         )
-        current_product = ""  # следующий блок должен задать имя заново
 
+    chosen = _choose_detailed_stage_series(series)
+    plans = [
+        DetailedScheduleProductPlan(
+            product=item.product,
+            daily_qty=item.daily_qty,
+            daily_fact=item.daily_fact,
+            year=year,
+            month=month,
+        )
+        for item in chosen
+    ]
+    plan_cells = [cell for item in chosen for cell in item.plan_cells]
     return plans, plan_cells
 
 
@@ -2184,6 +2778,15 @@ def _month_number_from_header(header: str) -> int | None:
     for idx, name in enumerate(_MONTH_LOWER):
         if normalized == name or normalized.startswith(name):
             return idx + 1
+    # «График выпуска … Август 2026», «"___" августа 2026 г.»
+    tokens = re.findall(r"[a-zа-яё]+", normalized)
+    for token in tokens:
+        for idx, name in enumerate(_MONTH_LOWER):
+            if token == name or token.startswith(name):
+                return idx + 1
+    for idx, name in enumerate(_MONTH_LOWER):
+        if len(name) >= 4 and name in normalized:
+            return idx + 1
     return None
 
 
@@ -2208,46 +2811,71 @@ def _is_schedule_product_name(value: str) -> bool:
         return False
     if lowered in {"наименование", "наименования изделий", "изделие"}:
         return False
+    if re.search(r"производство\s*№", lowered):
+        return False
     if any(token in lowered for token in ("руководитель", "начальник", "подпись", "утверждаю")):
         return False
     return len(value) > 1
 
 
-async def _resolve_schedule_products_to_specs(products: list[str]) -> list[ProductSpecLink]:
+async def _resolve_schedule_products_to_specs(
+    products: list[str],
+    *,
+    db_spec_catalog: list | None = None,
+) -> list[ProductSpecLink]:
+    from app.agents.document_analysis_agent.onec_db_sources import (
+        DbSpecCatalogEntry,
+        match_product_to_db_spec,
+    )
+
     mapping_rows = await asyncio.to_thread(_load_nomenclature_mapping)
-    sheet_names = await asyncio.to_thread(_load_spec_sheet_names)
+    use_db_specs = db_spec_catalog is not None
+    catalog: list[DbSpecCatalogEntry] = list(db_spec_catalog or [])
+
     if not products:
         return []
-    if not mapping_rows or not sheet_names:
-        logger.warning(
-            "document_analysis_agent.spec_resolve_skipped",
-            mapping_exists=_MAPPING_FILE.exists(),
-            specs_exists=_SPECS_FILE.exists(),
-            mapping_rows=len(mapping_rows),
-            sheets=len(sheet_names),
-        )
+    if not mapping_rows and not use_db_specs:
+        logger.warning("document_analysis_agent.spec_resolve_skipped", mapping_exists=_MAPPING_FILE.exists())
         return [
             ProductSpecLink(
                 schedule_product=product,
                 status="unmatched",
-                reason="Нет файла сопоставления или спецификаций в data/aveon",
+                reason="Нет сопоставления номенклатур и спецификаций в БД",
+            )
+            for product in products
+        ]
+    if use_db_specs and not catalog:
+        return [
+            ProductSpecLink(
+                schedule_product=product,
+                status="unmatched",
+                reason="Спецификации в БД отсутствуют — выполните синхронизацию из 1С",
             )
             for product in products
         ]
 
-    unique_nomenclatures = list(dict.fromkeys(row.nomenclature for row in mapping_rows))
-    local_nomenclature_map = _match_schedule_to_nomenclatures_locally(products, mapping_rows)
+    unique_nomenclatures = list(dict.fromkeys(row.nomenclature for row in mapping_rows)) if mapping_rows else []
+    local_nomenclature_map = (
+        _match_schedule_to_nomenclatures_locally(products, mapping_rows) if mapping_rows else {}
+    )
     ambiguous = [
         product
         for product in products
         if local_nomenclature_map.get(product) is None
         or local_nomenclature_map[product][1] < 0.62
     ]
-    lm_nomenclature_map = await _match_schedule_to_nomenclatures_with_lm(
-        ambiguous, mapping_rows
+    lm_nomenclature_map = (
+        await _match_schedule_to_nomenclatures_with_lm(ambiguous, mapping_rows) if mapping_rows else {}
+    )
+
+    legacy_sheet_names = (
+        await asyncio.to_thread(_load_spec_sheet_names) if not use_db_specs else []
     )
 
     links: list[ProductSpecLink] = []
+    db_spec_pending: list[tuple[str, str, str]] = []
+    legacy_spec_pending: list[tuple[str, str, str]] = []
+
     for product in products:
         nomenclature: str | None = None
         reason = ""
@@ -2262,6 +2890,21 @@ async def _resolve_schedule_products_to_specs(products: list[str]) -> list[Produ
             nomenclature, score = local[0], local[1]
             reason = f"слабый локальный матч номенклатуры ({score:.2f})"
 
+        if not nomenclature and use_db_specs:
+            entry, direct_reason = match_product_to_db_spec(product, product, catalog)
+            if entry is not None:
+                links.append(
+                    ProductSpecLink(
+                        schedule_product=product,
+                        nomenclature=entry.main_product_name or entry.description or product,
+                        spec_sheet=entry.description or entry.label,
+                        spec_ref_key=entry.ref_key,
+                        status="matched",
+                        reason=f"прямой матч к БД; {direct_reason}",
+                    )
+                )
+                continue
+
         if not nomenclature:
             links.append(
                 ProductSpecLink(
@@ -2272,40 +2915,118 @@ async def _resolve_schedule_products_to_specs(products: list[str]) -> list[Produ
             )
             continue
 
-        if nomenclature not in unique_nomenclatures:
-            # LM мог вернуть близкое имя — подтянуть к ближайшему из mapping
+        if nomenclature not in unique_nomenclatures and unique_nomenclatures:
             best_name, best_score = _best_text_match(nomenclature, unique_nomenclatures)
             if best_name and best_score >= 0.55:
                 nomenclature = best_name
                 reason = f"{reason}; нормализовано к mapping"
 
-        sheet, sheet_reason = _match_nomenclature_to_sheet(product, nomenclature, sheet_names)
-        if not sheet:
-            lm_sheet = await _match_nomenclature_to_sheet_with_lm(nomenclature, sheet_names)
-            if lm_sheet:
-                sheet = lm_sheet
-                sheet_reason = "LM Studio: лист спецификации"
+        if use_db_specs:
+            entry, db_reason = match_product_to_db_spec(product, nomenclature, catalog)
+            if entry is not None:
+                links.append(
+                    ProductSpecLink(
+                        schedule_product=product,
+                        nomenclature=nomenclature,
+                        spec_sheet=entry.description or entry.label,
+                        spec_ref_key=entry.ref_key,
+                        status="matched",
+                        reason=f"{reason}; {db_reason}".strip("; "),
+                    )
+                )
+                continue
+            db_spec_pending.append((product, nomenclature, reason))
+            continue
 
-        if not sheet:
+        if not legacy_sheet_names:
             links.append(
                 ProductSpecLink(
                     schedule_product=product,
                     nomenclature=nomenclature,
                     status="no_sheet",
-                    reason=f"{reason}; лист не найден",
+                    reason=f"{reason}; нет спецификаций",
                 )
             )
             continue
 
-        links.append(
-            ProductSpecLink(
-                schedule_product=product,
-                nomenclature=nomenclature,
-                spec_sheet=sheet,
-                status="matched",
-                reason=f"{reason}; {sheet_reason}".strip("; "),
+        sheet, sheet_reason = _match_nomenclature_to_sheet(product, nomenclature, legacy_sheet_names)
+        if sheet:
+            links.append(
+                ProductSpecLink(
+                    schedule_product=product,
+                    nomenclature=nomenclature,
+                    spec_sheet=sheet,
+                    status="matched",
+                    reason=f"{reason}; {sheet_reason}".strip("; "),
+                )
             )
+            continue
+        legacy_spec_pending.append((product, nomenclature, reason))
+
+    if use_db_specs and db_spec_pending:
+        catalog_labels = [entry.label for entry in catalog]
+        lm_sheets = await _match_nomenclatures_to_sheets_with_lm(
+            [nomenclature for _, nomenclature, _ in db_spec_pending],
+            catalog_labels,
         )
+        for product, nomenclature, reason in db_spec_pending:
+            sheet_name = lm_sheets.get(nomenclature)
+            entry = None
+            db_reason = "спецификация не найдена в БД"
+            if sheet_name:
+                for item in catalog:
+                    if item.label == sheet_name or _normalize(item.label) == _normalize(sheet_name):
+                        entry = item
+                        db_reason = "LM Studio: спецификация БД"
+                        break
+            if entry is None:
+                links.append(
+                    ProductSpecLink(
+                        schedule_product=product,
+                        nomenclature=nomenclature,
+                        status="no_sheet",
+                        reason=f"{reason}; {db_reason}",
+                    )
+                )
+                continue
+            links.append(
+                ProductSpecLink(
+                    schedule_product=product,
+                    nomenclature=nomenclature,
+                    spec_sheet=entry.description or entry.label,
+                    spec_ref_key=entry.ref_key,
+                    status="matched",
+                    reason=f"{reason}; {db_reason}".strip("; "),
+                )
+            )
+
+    if legacy_spec_pending and legacy_sheet_names:
+        lm_sheets = await _match_nomenclatures_to_sheets_with_lm(
+            [nomenclature for _, nomenclature, _ in legacy_spec_pending],
+            legacy_sheet_names,
+        )
+        for product, nomenclature, reason in legacy_spec_pending:
+            sheet = lm_sheets.get(nomenclature)
+            if not sheet:
+                links.append(
+                    ProductSpecLink(
+                        schedule_product=product,
+                        nomenclature=nomenclature,
+                        status="no_sheet",
+                        reason=f"{reason}; лист не найден",
+                    )
+                )
+                continue
+            links.append(
+                ProductSpecLink(
+                    schedule_product=product,
+                    nomenclature=nomenclature,
+                    spec_sheet=sheet,
+                    status="matched",
+                    reason=f"{reason}; LM Studio: лист спецификации",
+                )
+            )
+
     return links
 
 
@@ -2315,6 +3036,12 @@ def _collect_and_merge_spec_materials(
     role_map: dict[str, WorkbookRole],
     schedule_plans: list[ScheduleProductPlan],
     detailed_extract: DetailedScheduleExtract | None = None,
+    db_stock_index: dict[str, StockEntry] | None = None,
+    db_materials_by_ref: dict[str, list[SpecMaterialItem]] | None = None,
+    db_country_index: dict[str, Any] | None = None,
+    db_unit_index: dict[str, Any] | None = None,
+    user_id: Any | None = None,
+    shipment_bundle: ShipmentScheduleBundle | None = None,
 ) -> tuple[
     list[SpecMaterialItem],
     list[MergedNomenclatureRow],
@@ -2322,8 +3049,10 @@ def _collect_and_merge_spec_materials(
     list[str],
     list[str],
     LogisticsRiskBoard,
+    dict[str, Any] | None,
 ]:
     """Разбор листов → merge → цены → остатки → потребность → поступления → риски → result.xlsx."""
+    from app.agents.document_analysis_agent.coverage_dashboard import build_coverage_dashboard
     from app.agents.document_analysis_agent.order_plan import compute_order_plan
     from app.agents.document_analysis_agent.product_coverage import (
         compute_daily_plan_coverage,
@@ -2332,17 +3061,33 @@ def _collect_and_merge_spec_materials(
 
     if detailed_extract is None:
         detailed_extract = DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
-    usages = _extract_materials_from_matched_specs(links)
+    if shipment_bundle is None:
+        shipment_bundle = _load_shipment_schedule_bundle(workbooks, role_map)
+    usages = _extract_materials_from_matched_specs(links, db_materials_by_ref=db_materials_by_ref)
     merged = _merge_material_usages(usages)
+    _restrict_merged_rows_to_schedule_products(merged, schedule_plans)
     _enrich_merged_with_purchase_prices(merged)
-    stock_files = _enrich_merged_with_stock(merged, workbooks, role_map)
+    _enrich_merged_with_country_of_origin(merged, db_country_index)
+    _enrich_merged_with_units(merged, db_unit_index)
+    stock_files = _enrich_merged_with_stock(
+        merged,
+        workbooks,
+        role_map,
+        db_stock_index=db_stock_index,
+    )
     _enrich_merged_with_monthly_demand(merged, schedule_plans)
-    shipment_files = _enrich_merged_with_monthly_receipts(merged, workbooks, role_map)
+    shipment_files = _enrich_merged_with_monthly_receipts(
+        merged, workbooks, role_map, shipment_bundle=shipment_bundle
+    )
     _enrich_merged_with_monthly_forecast(merged)
     _enrich_merged_with_daily_demand(merged, detailed_extract)
-    _enrich_merged_with_daily_receipts(merged, workbooks, role_map, detailed_extract)
+    _enrich_merged_with_daily_receipts(
+        merged, workbooks, role_map, detailed_extract, shipment_bundle=shipment_bundle
+    )
     _enrich_merged_with_daily_forecast(merged, detailed_extract)
-    logistics_risks = _build_logistics_risk_board(merged, workbooks, role_map)
+    logistics_risks = _build_logistics_risk_board(
+        merged, workbooks, role_map, shipment_bundle=shipment_bundle
+    )
     _strip_excluded_suppliers_from_rows(merged)
     months = _months_for_coverage_sheet(merged, schedule_plans)
     product_coverage = compute_product_coverage(schedule_plans, merged, months)
@@ -2351,7 +3096,9 @@ def _collect_and_merge_spec_materials(
         merged,
         detailed_extract.day_keys,
     )
-    logistics_leads = _load_shipment_logistics_leads(workbooks, role_map)
+    logistics_leads = _load_shipment_logistics_leads(
+        workbooks, role_map, shipment_bundle=shipment_bundle
+    )
     order_year = detailed_extract.year if detailed_extract.year > 0 else date.today().year
     order_plan = compute_order_plan(merged, months, order_year, logistics_leads)
     result_bytes = _build_result_xlsx(
@@ -2360,8 +3107,29 @@ def _collect_and_merge_spec_materials(
         product_coverage,
         order_plan,
         daily_plan_coverage,
+        user_id=user_id,
     )
-    return usages, merged, result_bytes, stock_files, shipment_files, logistics_risks
+    schedule_month = (
+        f"{detailed_extract.year:04d}-{detailed_extract.month:02d}"
+        if detailed_extract.year and detailed_extract.month
+        else ""
+    )
+    as_of_day = date.today()
+    if logistics_risks and logistics_risks.as_of:
+        try:
+            as_of_day = date.fromisoformat(str(logistics_risks.as_of))
+        except ValueError:
+            pass
+    coverage_dashboard = build_coverage_dashboard(
+        daily_plan_coverage=daily_plan_coverage,
+        product_coverage=product_coverage,
+        merged=merged,
+        day_keys=detailed_extract.day_keys,
+        detailed_plans=detailed_extract.plans,
+        as_of=as_of_day,
+        schedule_month=schedule_month,
+    )
+    return usages, merged, result_bytes, stock_files, shipment_files, logistics_risks, coverage_dashboard
 
 
 def _months_for_coverage_sheet(
@@ -2382,7 +3150,34 @@ def _months_for_coverage_sheet(
 
 def _extract_materials_from_matched_specs(
     links: list[ProductSpecLink],
+    *,
+    db_materials_by_ref: dict[str, list[SpecMaterialItem]] | None = None,
 ) -> list[SpecMaterialItem]:
+    if db_materials_by_ref is not None:
+        usages: list[SpecMaterialItem] = []
+        for link in links:
+            if link.status != "matched" or not link.spec_ref_key:
+                continue
+            items = db_materials_by_ref.get(link.spec_ref_key, [])
+            product_items = [
+                SpecMaterialItem(
+                    nomenclature=item.nomenclature,
+                    quantity=item.quantity,
+                    product=link.schedule_product,
+                    unit=item.unit,
+                    spec_sheet=link.spec_sheet or item.spec_sheet,
+                )
+                for item in items
+            ]
+            usages.extend(product_items)
+            logger.info(
+                "document_analysis_agent.db_spec_materials_used",
+                product=link.schedule_product,
+                ref_key=link.spec_ref_key,
+                materials=len(product_items),
+            )
+        return usages
+
     matched = [link for link in links if link.status == "matched" and link.spec_sheet]
     if not matched:
         return []
@@ -2602,6 +3397,50 @@ def _merge_material_usages(usages: list[SpecMaterialItem]) -> list[MergedNomencl
     return rows
 
 
+def _restrict_merged_rows_to_schedule_products(
+    rows: list[MergedNomenclatureRow],
+    schedule_plans: list[ScheduleProductPlan],
+) -> None:
+    """Оставляет в строке только изделия из графика производства (есть в schedule_plans)."""
+    if not schedule_plans:
+        return
+
+    allowed_keys = {_normalize(plan.product) for plan in schedule_plans}
+    canonical_name = {_normalize(plan.product): plan.product for plan in schedule_plans}
+    trimmed_rows = 0
+
+    for row in rows:
+        kept_by_product: dict[str, float | None] = {}
+        kept_products: list[str] = []
+        for product, qty in row.by_product.items():
+            key = _normalize(product)
+            if key not in allowed_keys:
+                continue
+            canonical = canonical_name[key]
+            kept_by_product[canonical] = qty
+            kept_products.append(canonical)
+
+        if len(kept_by_product) != len(row.by_product):
+            trimmed_rows += 1
+
+        row.by_product = kept_by_product
+        row.products = sorted(kept_products, key=_normalize)
+        known = [value for value in kept_by_product.values() if value is not None]
+        if not known:
+            row.quantity = None
+        elif all(abs(value - known[0]) < 1e-9 for value in known):
+            row.quantity = known[0]
+        else:
+            row.quantity = None
+
+    logger.info(
+        "document_analysis_agent.merged_rows_schedule_filtered",
+        rows=len(rows),
+        trimmed_rows=trimmed_rows,
+        schedule_products=len(schedule_plans),
+    )
+
+
 # Поставщики, которых нельзя показывать в итоговой таблице (колонка «Поставщик»).
 # Цена из их строк прайса может остаться; в колонку C пишем пусто.
 _EXCLUDED_SUPPLIER_EXACT = frozenset(
@@ -2776,13 +3615,76 @@ def _enrich_merged_with_purchase_prices(rows: list[MergedNomenclatureRow]) -> No
     )
 
 
+def _enrich_merged_with_country_of_origin(
+    rows: list[MergedNomenclatureRow],
+    db_country_index: dict[str, Any] | None,
+) -> None:
+    """Подставляет страну происхождения из onec_nomenclature по названию номенклатуры."""
+    if not db_country_index:
+        for row in rows:
+            row.country_of_origin = None
+        return
+
+    candidates = [entry.nomenclature for entry in db_country_index.values()]
+    matched = 0
+    for row in rows:
+        entry, _method = _match_catalog_entry(row.nomenclature, db_country_index, candidates)
+        if entry is None:
+            row.country_of_origin = None
+            continue
+        country = _clean_text(getattr(entry, "country_of_origin", None) or "")
+        row.country_of_origin = country or None
+        if row.country_of_origin:
+            matched += 1
+    logger.info(
+        "document_analysis_agent.country_enriched",
+        matched=matched,
+        total=len(rows),
+        catalog=len(db_country_index),
+    )
+
+
+def _enrich_merged_with_units(
+    rows: list[MergedNomenclatureRow],
+    db_unit_index: dict[str, Any] | None,
+) -> None:
+    """Дополняет ед. изм. из onec_nomenclature, если в материалах спецификации пусто."""
+    if not db_unit_index:
+        return
+
+    candidates = [entry.nomenclature for entry in db_unit_index.values()]
+    matched = 0
+    for row in rows:
+        if row.unit and str(row.unit).strip():
+            continue
+        entry, _method = _match_catalog_entry(row.nomenclature, db_unit_index, candidates)
+        if entry is None:
+            continue
+        unit = _clean_text(getattr(entry, "unit", None) or "")
+        if unit:
+            row.unit = unit
+            matched += 1
+    logger.info(
+        "document_analysis_agent.unit_enriched",
+        matched=matched,
+        total=len(rows),
+        catalog=len(db_unit_index),
+    )
+
+
 def _enrich_merged_with_stock(
     rows: list[MergedNomenclatureRow],
     workbooks: list[UploadedWorkbook],
     role_map: dict[str, WorkbookRole],
+    *,
+    db_stock_index: dict[str, StockEntry] | None = None,
 ) -> list[str]:
-    """Дополняет итоговую структуру остатками и «заказано» из файлов роли stock."""
-    index, stock_files = _load_stock_index(workbooks, role_map)
+    """Дополняет итоговую структуру остатками из БД 1С (или legacy Excel stock)."""
+    if db_stock_index is not None:
+        index = db_stock_index
+        stock_files = ["1С → PostgreSQL (onec_stock_balances)"]
+    else:
+        index, stock_files = _load_stock_index(workbooks, role_map)
     if not index:
         for row in rows:
             row.stock = 0.0
@@ -2958,6 +3860,7 @@ def _enrich_merged_with_monthly_demand(
         return
 
     plans_by_key = {_normalize(plan.product): plan for plan in schedule_plans}
+    plan_names = [plan.product for plan in schedule_plans]
     months: list[str] = []
     for plan in schedule_plans:
         for month in plan.monthly_qty:
@@ -2972,7 +3875,7 @@ def _enrich_merged_with_monthly_demand(
     for row in rows:
         demand = {month: _empty_month_bucket() for month in months}
         for product, spec_qty in row.by_product.items():
-            plan = plans_by_key.get(_normalize(product))
+            plan = _match_schedule_plan_for_product(product, plans_by_key, plan_names)
             if plan is None:
                 continue
             per_unit = float(spec_qty) if spec_qty is not None else 0.0
@@ -3012,9 +3915,15 @@ def _enrich_merged_with_monthly_receipts(
     rows: list[MergedNomenclatureRow],
     workbooks: list[UploadedWorkbook],
     role_map: dict[str, WorkbookRole],
+    *,
+    shipment_bundle: ShipmentScheduleBundle | None = None,
 ) -> list[str]:
     """Ожидаемое поступление по месяцам и неделям из графика отгрузок."""
-    index, shipment_files = _load_shipment_receipts_index(workbooks, role_map)
+    if shipment_bundle is None:
+        index, shipment_files = _load_shipment_receipts_index(workbooks, role_map)
+    else:
+        index = shipment_bundle.receipt_index
+        shipment_files = shipment_bundle.shipment_files
     months = sorted(
         {month for entry in index.values() for month in entry.monthly_qty},
         key=lambda name: _MONTH_NOMINATIVE.index(name) if name in _MONTH_NOMINATIVE else 99,
@@ -3065,6 +3974,7 @@ def _enrich_merged_with_monthly_receipts(
         entry, _method = _match_catalog_entry(row.nomenclature, index, candidates)
         if entry is not None:
             matched += 1
+            row.shipment_nomenclature = _shipment_schedule_display_name(entry.nomenclature)
             for month, qty in entry.monthly_qty.items():
                 receipts[month] = receipts.get(month, 0.0) + float(qty)
             daily = entry.daily_qty
@@ -3126,12 +4036,12 @@ def _enrich_merged_with_monthly_forecast(rows: list[MergedNomenclatureRow]) -> N
     )
 
 
-def _match_detailed_plan_for_product(
+def _match_plan_product_name(
     product: str,
-    plans_by_key: dict[str, DetailedScheduleProductPlan],
+    plans_by_key: dict[str, Any],
     plan_names: list[str],
-) -> DetailedScheduleProductPlan | None:
-    """Сопоставляет изделие из спеки/помесячного графика с коротким именем детального плана."""
+) -> Any | None:
+    """Сопоставляет изделие из спеки с коротким/полным именем в графике."""
     key = _normalize(product)
     plan = plans_by_key.get(key)
     if plan is not None:
@@ -3141,8 +4051,7 @@ def _match_detailed_plan_for_product(
     if contains_key is not None:
         return plans_by_key[contains_key]
 
-    # короткое «Сокол И» ⊂ длинного имени изделия из помесячного графика
-    best_plan: DetailedScheduleProductPlan | None = None
+    best_plan = None
     best_len = -1
     for plan_key, candidate in plans_by_key.items():
         if len(plan_key) < 4:
@@ -3160,6 +4069,85 @@ def _match_detailed_plan_for_product(
     if best_name and score >= 0.72:
         return plans_by_key[_normalize(best_name)]
     return None
+
+
+def _match_schedule_plan_for_product(
+    product: str,
+    plans_by_key: dict[str, ScheduleProductPlan],
+    plan_names: list[str],
+) -> ScheduleProductPlan | None:
+    return _match_plan_product_name(product, plans_by_key, plan_names)
+
+
+def _detailed_plan_name_aliases(key: str) -> list[str]:
+    aliases = [key]
+    if key.endswith(" ист"):
+        base = key[: -len(" ист")].rstrip()
+        aliases.extend([f"{base} ис -т", f"{base} ис-т", f"{base} ис т"])
+    if key.endswith(" ит"):
+        base = key[: -len(" ит")].rstrip()
+        aliases.append(f"{base} т")
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in aliases:
+        normalized = _match_key(item)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
+    return ordered
+
+
+def _alias_fits_product(alias: str, product_key: str) -> bool:
+    if not alias or not product_key:
+        return False
+    start = 0
+    while True:
+        idx = product_key.find(alias, start)
+        if idx < 0:
+            return False
+        after = idx + len(alias)
+        before_ok = idx == 0 or not product_key[idx - 1].isalnum()
+        after_ok = after >= len(product_key) or not product_key[after].isalnum()
+        if before_ok and after_ok:
+            return True
+        start = idx + 1
+
+
+def _match_detailed_plan_by_alias(
+    product: str,
+    plans_by_key: dict[str, DetailedScheduleProductPlan],
+    plan_names: list[str],
+) -> DetailedScheduleProductPlan | None:
+    product_key = _match_key(product)
+    best_key: str | None = None
+    best_rank: tuple[int, float] = (-1, 0.0)
+    for plan_name in plan_names:
+        plan_key = _normalize(plan_name)
+        match_key = _match_key(plan_name)
+        for alias in _detailed_plan_name_aliases(match_key):
+            if not (
+                _alias_fits_product(alias, product_key)
+                or _alias_fits_product(product_key, alias)
+            ):
+                continue
+            rank = (len(alias), _product_match_score(product, plan_name))
+            if rank > best_rank:
+                best_key = plan_key
+                best_rank = rank
+    if best_key is None:
+        return None
+    return plans_by_key.get(best_key)
+
+
+def _match_detailed_plan_for_product(
+    product: str,
+    plans_by_key: dict[str, DetailedScheduleProductPlan],
+    plan_names: list[str],
+) -> DetailedScheduleProductPlan | None:
+    alias_match = _match_detailed_plan_by_alias(product, plans_by_key, plan_names)
+    if alias_match is not None:
+        return alias_match
+    return _match_plan_product_name(product, plans_by_key, plan_names)
 
 
 def _enrich_merged_with_daily_demand(
@@ -3229,6 +4217,8 @@ def _enrich_merged_with_daily_receipts(
     workbooks: list[UploadedWorkbook],
     role_map: dict[str, WorkbookRole],
     detailed: DetailedScheduleExtract,
+    *,
+    shipment_bundle: ShipmentScheduleBundle | None = None,
 ) -> None:
     """Ожидаемые поступления по дням выбранного месяца из графика отгрузок."""
     day_keys = list(detailed.day_keys) or _month_day_keys(detailed.year, detailed.month)
@@ -3239,7 +4229,11 @@ def _enrich_merged_with_daily_receipts(
             row.daily_receipts = {}
         return
 
-    index, shipment_files = _load_shipment_receipts_index(workbooks, role_map)
+    if shipment_bundle is None:
+        index, shipment_files = _load_shipment_receipts_index(workbooks, role_map)
+    else:
+        index = shipment_bundle.receipt_index
+        shipment_files = shipment_bundle.shipment_files
     day_set = set(day_keys)
     if not index:
         for row in rows:
@@ -3253,6 +4247,8 @@ def _enrich_merged_with_daily_receipts(
         entry, _method = _match_catalog_entry(row.nomenclature, index, candidates)
         if entry is not None:
             matched += 1
+            if not row.shipment_nomenclature:
+                row.shipment_nomenclature = _shipment_schedule_display_name(entry.nomenclature)
             for day_key, qty in entry.daily_qty.items():
                 if day_key in day_set:
                     receipts[day_key] = receipts.get(day_key, 0.0) + float(qty)
@@ -3305,35 +4301,209 @@ def _enrich_merged_with_daily_forecast(
     )
 
 
-def _load_shipment_receipts_index(
+def _load_shipment_schedule_bundle(
     workbooks: list[UploadedWorkbook],
     role_map: dict[str, WorkbookRole],
-) -> tuple[dict[str, ShipmentReceiptEntry], list[str]]:
+) -> ShipmentScheduleBundle:
+    """Один проход по файлам отгрузок: поступления, сроки логистики, листы для рисков."""
     shipment_files = [
         uploaded.filename
         for uploaded in workbooks
         if role_map.get(uploaded.filename) == ROLE_SHIPMENT_SCHEDULE
     ]
     if not shipment_files:
-        return {}, []
+        return ShipmentScheduleBundle()
 
-    index: dict[str, ShipmentReceiptEntry] = {}
+    receipt_index: dict[str, ShipmentReceiptEntry] = {}
+    logistics_leads: dict[str, tuple[int, int]] = {}
+    parsed_sheets: list[ShipmentParsedSheet] = []
+
     for uploaded in workbooks:
         if role_map.get(uploaded.filename) != ROLE_SHIPMENT_SCHEDULE:
             continue
         workbook = load_workbook(BytesIO(uploaded.content), data_only=True, read_only=True)
         try:
             for worksheet in workbook.worksheets:
-                _consume_shipment_sheet(worksheet, index)
+                _consume_shipment_sheet(worksheet, receipt_index)
+                _consume_shipment_logistics_leads(worksheet, logistics_leads)
+                parsed = _parse_shipment_sheet_layout(worksheet)
+                if parsed is None:
+                    continue
+                header_idx, name_col, msk_col, rostov_col, date_cols = parsed
+                if msk_col is None or rostov_col is None:
+                    continue
+                parsed_sheets.append(
+                    ShipmentParsedSheet(
+                        title=worksheet.title,
+                        header_idx=header_idx,
+                        name_col=name_col,
+                        msk_col=msk_col,
+                        rostov_col=rostov_col,
+                        date_cols=list(date_cols),
+                        rows=list(worksheet.iter_rows(values_only=True)),
+                    )
+                )
         finally:
             workbook.close()
 
     logger.info(
-        "document_analysis_agent.shipment_receipts_loaded",
+        "document_analysis_agent.shipment_bundle_loaded",
         files=shipment_files,
-        unique=len(index),
+        unique=len(receipt_index),
+        parsed_sheets=len(parsed_sheets),
+        logistics_leads=len(logistics_leads),
     )
-    return index, shipment_files
+    return ShipmentScheduleBundle(
+        receipt_index=receipt_index,
+        shipment_files=shipment_files,
+        logistics_leads=logistics_leads,
+        parsed_sheets=parsed_sheets,
+    )
+
+
+def _load_shipment_receipts_index(
+    workbooks: list[UploadedWorkbook],
+    role_map: dict[str, WorkbookRole],
+) -> tuple[dict[str, ShipmentReceiptEntry], list[str]]:
+    bundle = _load_shipment_schedule_bundle(workbooks, role_map)
+    return bundle.receipt_index, bundle.shipment_files
+
+
+def _shipment_schedule_display_name(value: str) -> str:
+    """Каноническое имя номенклатуры как в объединённом графике отгрузок."""
+    text = re.sub(r"\s+", " ", (value or "").strip())
+    return re.sub(
+        r"\s*\(\d+\)(?:\s+[A-Za-zА-Яа-я0-9._-]{1,20})?\s*$",
+        "",
+        text,
+    ).strip()
+
+
+def _is_merged_shipment_workbook(content: bytes) -> bool:
+    workbook = load_workbook(BytesIO(content), read_only=True)
+    try:
+        return "График" in workbook.sheetnames and "Источник" in workbook.sheetnames
+    finally:
+        workbook.close()
+
+
+def _read_merged_shipment_grafik_names(content: bytes) -> list[str]:
+    workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
+    try:
+        if "График" not in workbook.sheetnames:
+            return []
+        worksheet = workbook["График"]
+        names: list[str] = []
+        seen: set[str] = set()
+        for row in worksheet.iter_rows(min_row=2, values_only=True):
+            if not row:
+                continue
+            name = _clean_text(row[0]).strip()
+            if not name:
+                continue
+            key = _normalize(name)
+            if key in {"номенклатура", "наименование", "итого"} or key in seen:
+                continue
+            seen.add(key)
+            names.append(name)
+        return names
+    finally:
+        workbook.close()
+
+
+def _schedule_name_index_from_shipment_bundle(
+    bundle: ShipmentScheduleBundle,
+) -> dict[str, str]:
+    """Индекс имён номенклатуры для сменного задания из уже распарсенного графика отгрузок."""
+    from app.agents.document_analysis_agent.temp_schedule_merge import build_schedule_name_index
+
+    if not bundle.receipt_index:
+        return {}
+    names = [entry.nomenclature for entry in bundle.receipt_index.values()]
+    index = build_schedule_name_index(names)
+    logger.info(
+        "document_analysis_agent.shift_schedule_names_from_bundle",
+        count=len(index),
+    )
+    return index
+
+
+async def _resolve_shipment_schedule_name_index(
+    workbooks: list[UploadedWorkbook],
+    role_map: dict[str, WorkbookRole],
+    *,
+    shipment_bundle: ShipmentScheduleBundle | None = None,
+) -> dict[str, str]:
+    """Канонические имена номенклатуры из объединённого графика отгрузок."""
+    from app.agents.document_analysis_agent.temp_schedule_merge import (
+        build_schedule_name_index,
+        merge_schedule_files,
+    )
+
+    shipment_files = [
+        uploaded
+        for uploaded in workbooks
+        if role_map.get(uploaded.filename) == ROLE_SHIPMENT_SCHEDULE
+    ]
+    if not shipment_files:
+        return {}
+
+    merged_candidates = [
+        uploaded for uploaded in shipment_files if _is_merged_shipment_workbook(uploaded.content)
+    ]
+    if merged_candidates:
+        names: list[str] = []
+        seen: set[str] = set()
+        for uploaded in merged_candidates:
+            for name in _read_merged_shipment_grafik_names(uploaded.content):
+                key = _normalize(name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                names.append(name)
+        if names:
+            index = build_schedule_name_index(names)
+            logger.info(
+                "document_analysis_agent.shift_schedule_names_from_merged_file",
+                files=[item.filename for item in merged_candidates],
+                count=len(index),
+            )
+            return index
+
+    merge_payload = [
+        (uploaded.filename, uploaded.content)
+        for uploaded in shipment_files
+        if not uploaded.filename.startswith("~$")
+        and not _is_merged_shipment_workbook(uploaded.content)
+    ]
+    if len(merge_payload) > 1:
+        merge_result = await merge_schedule_files(merge_payload)
+        if merge_result.get("ok"):
+            file_base64 = merge_result.get("file_base64")
+            if isinstance(file_base64, str) and file_base64:
+                names = _read_merged_shipment_grafik_names(base64.b64decode(file_base64))
+                if names:
+                    index = build_schedule_name_index(names)
+                    logger.info(
+                        "document_analysis_agent.shift_schedule_names_from_merge",
+                        source_files=len(merge_payload),
+                        count=len(index),
+                    )
+                    return index
+
+    if shipment_bundle is not None and shipment_bundle.receipt_index:
+        index = _schedule_name_index_from_shipment_bundle(shipment_bundle)
+        if index:
+            return index
+
+    index, _files = _load_shipment_receipts_index(workbooks, role_map)
+    names = [entry.nomenclature for entry in index.values()]
+    built = build_schedule_name_index(names)
+    logger.info(
+        "document_analysis_agent.shift_schedule_names_from_receipts_fallback",
+        count=len(built),
+    )
+    return built
 
 
 def _consume_shipment_sheet(
@@ -3422,29 +4592,14 @@ def _parse_logistics_range(value: Any) -> tuple[int, int] | None:
 def _load_shipment_logistics_leads(
     workbooks: list[UploadedWorkbook],
     role_map: dict[str, WorkbookRole],
+    *,
+    shipment_bundle: ShipmentScheduleBundle | None = None,
 ) -> dict[str, tuple[int, int]]:
     """norm → (long_MSK, long_Ростов); по дубликатам берём max каждого плеча."""
-    index: dict[str, tuple[int, int]] = {}
-    shipment_files = [
-        uploaded.filename
-        for uploaded in workbooks
-        if role_map.get(uploaded.filename) == ROLE_SHIPMENT_SCHEDULE
-    ]
-    for uploaded in workbooks:
-        if role_map.get(uploaded.filename) != ROLE_SHIPMENT_SCHEDULE:
-            continue
-        workbook = load_workbook(BytesIO(uploaded.content), data_only=True, read_only=True)
-        try:
-            for worksheet in workbook.worksheets:
-                _consume_shipment_logistics_leads(worksheet, index)
-        finally:
-            workbook.close()
-    logger.info(
-        "document_analysis_agent.shipment_logistics_leads_loaded",
-        files=shipment_files,
-        unique=len(index),
-    )
-    return index
+    if shipment_bundle is not None:
+        return dict(shipment_bundle.logistics_leads)
+    bundle = _load_shipment_schedule_bundle(workbooks, role_map)
+    return dict(bundle.logistics_leads)
 
 
 def _consume_shipment_logistics_leads(
@@ -3550,6 +4705,8 @@ def _build_logistics_risk_board(
     workbooks: list[UploadedWorkbook],
     role_map: dict[str, WorkbookRole],
     as_of: date | None = None,
+    *,
+    shipment_bundle: ShipmentScheduleBundle | None = None,
 ) -> LogisticsRiskBoard:
     """Собирает номенклатуры+поставщиков на контрольных точках логистики на сегодня."""
     as_of_day = as_of or date.today()
@@ -3563,96 +4720,97 @@ def _build_logistics_risk_board(
     # aggregate: (stage_key, nom_key, moscow_iso) -> item
     buckets: dict[tuple[str, str, str], LogisticsRiskItem] = {}
 
-    for uploaded in workbooks:
-        if role_map.get(uploaded.filename) != ROLE_SHIPMENT_SCHEDULE:
+    parsed_sheets: list[ShipmentParsedSheet] = []
+    if shipment_bundle is not None:
+        parsed_sheets = list(shipment_bundle.parsed_sheets)
+    else:
+        bundle = _load_shipment_schedule_bundle(workbooks, role_map)
+        parsed_sheets = list(bundle.parsed_sheets)
+
+    for sheet in parsed_sheets:
+        header_idx = sheet.header_idx
+        name_col = sheet.name_col
+        msk_col = sheet.msk_col
+        rostov_col = sheet.rostov_col
+        date_cols = sheet.date_cols
+        rows = sheet.rows
+        sheet_name = sheet.title
+        if msk_col is None or rostov_col is None:
             continue
-        workbook = load_workbook(BytesIO(uploaded.content), data_only=True, read_only=True)
-        try:
-            for worksheet in workbook.worksheets:
-                parsed = _parse_shipment_sheet_layout(worksheet)
-                if parsed is None:
-                    continue
-                header_idx, name_col, msk_col, rostov_col, date_cols = parsed
-                if msk_col is None or rostov_col is None:
-                    continue
-                rows = list(worksheet.iter_rows(values_only=True))
-                sheet_name = worksheet.title
-                for row in rows[header_idx + 1 :]:
-                    if name_col >= len(row):
-                        continue
-                    name = _clean_text(row[name_col]).rstrip("*").strip()
-                    if not name or _normalize(name) in {
-                        "номенклатура",
-                        "наименование",
-                        "итого",
-                    }:
-                        continue
-                    msk_range = (
-                        _parse_logistics_range(row[msk_col]) if msk_col < len(row) else None
-                    )
-                    rostov_range = (
-                        _parse_logistics_range(row[rostov_col])
-                        if rostov_col < len(row)
-                        else None
-                    )
-                    if msk_range is None or rostov_range is None:
-                        continue
-                    short_msk, long_msk = msk_range
-                    short_rostov, long_rostov = rostov_range
+        for row in rows[header_idx + 1 :]:
+            if name_col >= len(row):
+                continue
+            name = _clean_text(row[name_col]).rstrip("*").strip()
+            if not name or _normalize(name) in {
+                "номенклатура",
+                "наименование",
+                "итого",
+            }:
+                continue
+            msk_range = (
+                _parse_logistics_range(row[msk_col]) if msk_col < len(row) else None
+            )
+            rostov_range = (
+                _parse_logistics_range(row[rostov_col])
+                if rostov_col < len(row)
+                else None
+            )
+            if msk_range is None or rostov_range is None:
+                continue
+            short_msk, long_msk = msk_range
+            short_rostov, long_rostov = rostov_range
 
-                    nom_key = _normalize(name)
-                    supplier = _sanitize_result_supplier(supplier_by_key.get(nom_key))
-                    if supplier is None and merged_index:
-                        matched, _method = _match_catalog_entry(
-                            name, merged_index, supplier_candidates
-                        )
-                        if matched is not None:
-                            supplier = _sanitize_result_supplier(matched.supplier)
+            nom_key = _normalize(name)
+            supplier = _sanitize_result_supplier(supplier_by_key.get(nom_key))
+            if supplier is None and merged_index:
+                matched, _method = _match_catalog_entry(
+                    name, merged_index, supplier_candidates
+                )
+                if matched is not None:
+                    supplier = _sanitize_result_supplier(matched.supplier)
 
-                    for col_idx, moscow_date in date_cols:
-                        if col_idx >= len(row):
-                            continue
-                        qty = _to_float(row[col_idx])
-                        if qty is None or qty == 0:
-                            continue
-                        windows = _logistics_stage_windows(
-                            moscow_date,
-                            short_msk,
-                            long_msk,
-                            short_rostov,
-                            long_rostov,
+            for col_idx, moscow_date in date_cols:
+                if col_idx >= len(row):
+                    continue
+                qty = _to_float(row[col_idx])
+                if qty is None or qty == 0:
+                    continue
+                windows = _logistics_stage_windows(
+                    moscow_date,
+                    short_msk,
+                    long_msk,
+                    short_rostov,
+                    long_rostov,
+                )
+                for stage_key, (window_start, window_end) in windows.items():
+                    if not (window_start <= as_of_day <= window_end):
+                        continue
+                    days_remaining, risk_ratio, risk_level = _logistics_risk_metrics(
+                        as_of_day, window_start, window_end
+                    )
+                    moscow_iso = moscow_date.isoformat()
+                    bucket_key = (stage_key, nom_key, moscow_iso)
+                    existing = buckets.get(bucket_key)
+                    if existing is None:
+                        buckets[bucket_key] = LogisticsRiskItem(
+                            nomenclature=name,
+                            supplier=supplier,
+                            quantity=float(qty),
+                            moscow_date=moscow_iso,
+                            milestone_date=window_end.isoformat(),
+                            sheet=sheet_name,
+                            window_start=window_start.isoformat(),
+                            window_end=window_end.isoformat(),
+                            days_remaining=days_remaining,
+                            risk_ratio=risk_ratio,
+                            risk_level=risk_level,
                         )
-                        for stage_key, (window_start, window_end) in windows.items():
-                            if not (window_start <= as_of_day <= window_end):
-                                continue
-                            days_remaining, risk_ratio, risk_level = _logistics_risk_metrics(
-                                as_of_day, window_start, window_end
-                            )
-                            moscow_iso = moscow_date.isoformat()
-                            bucket_key = (stage_key, nom_key, moscow_iso)
-                            existing = buckets.get(bucket_key)
-                            if existing is None:
-                                buckets[bucket_key] = LogisticsRiskItem(
-                                    nomenclature=name,
-                                    supplier=supplier,
-                                    quantity=float(qty),
-                                    moscow_date=moscow_iso,
-                                    milestone_date=window_end.isoformat(),
-                                    sheet=sheet_name,
-                                    window_start=window_start.isoformat(),
-                                    window_end=window_end.isoformat(),
-                                    days_remaining=days_remaining,
-                                    risk_ratio=risk_ratio,
-                                    risk_level=risk_level,
-                                )
-                            else:
-                                existing.quantity = round(existing.quantity + float(qty), 6)
-                                if sheet_name not in existing.sheet.split(" · "):
-                                    existing.sheet = f"{existing.sheet} · {sheet_name}"
-                                if not existing.supplier and supplier:
-                                    existing.supplier = supplier
-        finally:
-            workbook.close()
+                    else:
+                        existing.quantity = round(existing.quantity + float(qty), 6)
+                        if sheet_name not in existing.sheet.split(" · "):
+                            existing.sheet = f"{existing.sheet} · {sheet_name}"
+                        if not existing.supplier and supplier:
+                            existing.supplier = supplier
 
     stage_order = {key: idx for idx, (key, _) in enumerate(_LOGISTICS_STAGE_DEFS)}
     for (stage_key, _nom_key, _moscow_iso), item in sorted(
@@ -3827,12 +4985,53 @@ def _next_month_forecast_label(month: str) -> str:
     return f"Прогнозируемый остаток на 01.{next_month_num:02d}.{year}"
 
 
-def _daily_assurance_sheet_title(month: int) -> str:
-    """Имя дневного листа: «обеспечение (Июль)» и т.п."""
+def _daily_assurance_sheet_title(month: int, *, year: int | None = None) -> str:
+    """Имя дневного листа: «2-произв. план (Июль)» или с годом для архивных месяцев."""
     if 1 <= month <= 12:
-        return f"{_SHEET_DAILY_ASSURANCE_PREFIX}{_MONTH_NOMINATIVE[month - 1]})"
-    today = date.today()
-    return f"{_SHEET_DAILY_ASSURANCE_PREFIX}{_MONTH_NOMINATIVE[today.month - 1]})"
+        month_name = _MONTH_NOMINATIVE[month - 1]
+    else:
+        today = date.today()
+        month_name = _MONTH_NOMINATIVE[today.month - 1]
+    if year is not None:
+        title = f"{_SHEET_DAILY_ASSURANCE_PREFIX}{month_name} {year})"
+        if len(title) > 31:
+            title = f"{_SHEET_DAILY_ASSURANCE_PREFIX}{month_name} '{year % 100:02d})"
+        return title[:31]
+    return f"{_SHEET_DAILY_ASSURANCE_PREFIX}{month_name})"
+
+
+def _build_daily_plan_snapshot_payload(
+    rows: list[MergedNomenclatureRow],
+    detailed: DetailedScheduleExtract,
+) -> dict[str, Any]:
+    """Сериализует дневной лист за месяц для последующих анализов."""
+    year = detailed.year if detailed.year > 0 else date.today().year
+    month = detailed.month if detailed.month > 0 else date.today().month
+    day_keys = list(detailed.day_keys) or _month_day_keys(year, month)
+    snapshot_rows: list[dict[str, Any]] = []
+    for row in rows:
+        snapshot_rows.append(
+            {
+                "nomenclature": row.nomenclature,
+                "products": list(row.products),
+                "supplier": row.supplier,
+                "country_of_origin": row.country_of_origin,
+                "unit": row.unit,
+                "price": row.price,
+                "stock": row.stock,
+                "ordered": row.ordered,
+                "daily_demand": dict(row.daily_demand),
+                "daily_demand_fact": dict(row.daily_demand_fact),
+                "daily_receipts": dict(row.daily_receipts),
+                "daily_forecast": dict(row.daily_forecast),
+            }
+        )
+    return {
+        "year": year,
+        "month": month,
+        "day_keys": day_keys,
+        "rows": snapshot_rows,
+    }
 
 
 def _build_result_xlsx(
@@ -3841,8 +5040,15 @@ def _build_result_xlsx(
     product_coverage: Any | None = None,
     order_plan: Any | None = None,
     daily_plan_coverage: Any | None = None,
+    user_id: Any | None = None,
 ) -> bytes:
-    """Собирает result.xlsx: помесячное + по дням + приоритет сборки + обеспеченность + план заказов."""
+    """Собирает result.xlsx: произв. план (мес.) + дневные листы + по обеспеч. + обеспеченность + план заказов."""
+    from app.agents.document_analysis_agent.daily_plan_snapshot import (
+        list_daily_plan_snapshots,
+        period_key as daily_plan_period_key,
+        save_daily_plan_snapshot,
+    )
+
     _strip_excluded_suppliers_from_rows(rows)
     if detailed is None:
         today = date.today()
@@ -3854,13 +5060,52 @@ def _build_result_xlsx(
             day_keys=_month_day_keys(today.year, today.month),
         )
 
+    current_year = detailed.year if detailed.year > 0 else date.today().year
+    current_month = detailed.month if detailed.month > 0 else date.today().month
+    current_period = daily_plan_period_key(current_year, current_month)
+
+    historical_snapshots: list[dict[str, Any]] = []
+    if current_year > 0 and current_month > 0:
+        # Все дневные листы, кроме текущего месяца детального графика — из снимков (не пересчёт).
+        historical_snapshots = list_daily_plan_snapshots(
+            user_id,
+            exclude_period=current_period,
+        )
+
     workbook = Workbook()
     monthly_ws = workbook.active
     monthly_layout = _write_monthly_assurance_sheet(monthly_ws, rows)
 
-    daily_month = detailed.month if detailed.month > 0 else date.today().month
-    daily_ws = workbook.create_sheet(_daily_assurance_sheet_title(daily_month))
+    daily_sheet_titles: list[str] = []
+    for snapshot in historical_snapshots:
+        snap_month = int(snapshot.get("month") or 0)
+        snap_year = int(snapshot.get("year") or 0)
+        historical_ws = workbook.create_sheet(
+            _daily_assurance_sheet_title(snap_month, year=snap_year)
+        )
+        _write_daily_assurance_sheet_from_snapshot(historical_ws, snapshot)
+        daily_sheet_titles.append(historical_ws.title)
+
+    daily_month = current_month
+    daily_ws = workbook.create_sheet(
+        _daily_assurance_sheet_title(daily_month, year=current_year)
+    )
     _write_daily_assurance_sheet(daily_ws, rows, detailed)
+    daily_sheet_titles.append(daily_ws.title)
+
+    if user_id is not None and current_year > 0 and current_month > 0 and rows:
+        try:
+            save_daily_plan_snapshot(
+                user_id,
+                _build_daily_plan_snapshot_payload(rows, detailed),
+            )
+        except Exception as exc:
+            logger.warning(
+                "document_analysis_agent.daily_plan_snapshot_save_failed",
+                user_id=str(user_id),
+                period=current_period,
+                error=str(exc),
+            )
 
     priority_title: str | None = None
     if detailed.source_bytes and detailed.source_sheet_name:
@@ -3884,7 +5129,7 @@ def _build_result_xlsx(
         monthly_data_start_row=_MONTHLY_DATA_START_ROW,
     )
 
-    sheet_names = [monthly_ws.title, daily_ws.title]
+    sheet_names = [monthly_ws.title, *daily_sheet_titles]
     if priority_title:
         sheet_names.append(priority_title)
     sheet_names.extend([coverage_ws.title, order_ws.title])
@@ -3893,8 +5138,9 @@ def _build_result_xlsx(
         "document_analysis_agent.result_xlsx_built",
         rows=len(rows),
         sheets=sheet_names,
-        daily_month=f"{detailed.year:04d}-{detailed.month:02d}",
+        daily_month=current_period,
         daily_days=len(detailed.day_keys),
+        daily_historical_sheets=len(historical_snapshots),
         coverage_products=(
             len(product_coverage.products_in_order) if product_coverage is not None else 0
         ),
@@ -3908,8 +5154,48 @@ def _build_result_xlsx(
     return buffer.getvalue()
 
 
-def _clone_worksheet_into(target: Worksheet, source: Worksheet) -> None:
+def _collect_schedule_total_rows(source: Worksheet) -> set[int]:
+    """Строки «Итого …» в детальном графике — сохраняем исходную заливку."""
+    rows: set[int] = set()
+    max_row = int(source.max_row or 0)
+    for row_idx in range(1, max_row + 1):
+        for col_idx in range(1, min(int(source.max_column or 0), 5) + 1):
+            text = _normalize(source.cell(row_idx, col_idx).value)
+            if text.startswith("итого") or text.startswith("итог:"):
+                rows.add(row_idx)
+                break
+    return rows
+
+
+def _collect_schedule_total_columns(source: Worksheet) -> set[int]:
+    """Колонки «Итог» в шапке детального графика — сохраняем исходную заливку."""
+    total_rows = _collect_schedule_total_rows(source)
+    cols: set[int] = set()
+    scan_rows = min(int(source.max_row or 0), 15)
+    max_col = int(source.max_column or 0)
+    for row_idx in range(1, scan_rows + 1):
+        if row_idx in total_rows:
+            continue
+        for col_idx in range(1, max_col + 1):
+            text = _normalize(source.cell(row_idx, col_idx).value)
+            if text and "итог" in text:
+                cols.add(col_idx)
+    return cols
+
+
+def _clone_worksheet_into(
+    target: Worksheet,
+    source: Worksheet,
+    *,
+    strip_fills_except_totals: bool = False,
+) -> None:
     """Копирует ячейки, стили, merges, размеры в уже созданный лист target."""
+    total_rows: set[int] = set()
+    total_cols: set[int] = set()
+    if strip_fills_except_totals:
+        total_rows = _collect_schedule_total_rows(source)
+        total_cols = _collect_schedule_total_columns(source)
+
     target.sheet_view.showGridLines = source.sheet_view.showGridLines
     for row in source.iter_rows():
         for cell in row:
@@ -3917,7 +5203,13 @@ def _clone_worksheet_into(target: Worksheet, source: Worksheet) -> None:
             if cell.has_style:
                 dest.font = cell.font.copy()
                 dest.border = cell.border.copy()
-                dest.fill = cell.fill.copy()
+                if strip_fills_except_totals:
+                    if cell.row in total_rows or cell.column in total_cols:
+                        dest.fill = cell.fill.copy()
+                    else:
+                        dest.fill = _FILL_NONE
+                else:
+                    dest.fill = cell.fill.copy()
                 dest.number_format = cell.number_format
                 dest.protection = cell.protection.copy()
                 dest.alignment = cell.alignment.copy()
@@ -3941,12 +5233,552 @@ def _priority_fill_for_status(status: str | None) -> PatternFill | None:
     return None
 
 
+def _unmerge_header_over_columns(
+    worksheet: Worksheet,
+    start_col: int,
+    end_col: int,
+    *,
+    max_row: int = 20,
+) -> None:
+    to_remove: list[str] = []
+    for merged in list(worksheet.merged_cells.ranges):
+        if merged.min_row > max_row:
+            continue
+        if merged.max_col < start_col or merged.min_col > end_col:
+            continue
+        to_remove.append(str(merged))
+    for ref in to_remove:
+        worksheet.unmerge_cells(ref)
+
+
+def _insert_row_preserving_merges(worksheet: Worksheet, row_idx: int) -> None:
+    """openpyxl does not reliably move merged ranges on insert_rows."""
+    shifted: list[tuple[int, int, int, int]] = []
+    for merged in list(worksheet.merged_cells.ranges):
+        if merged.max_row < row_idx:
+            continue
+        min_row = merged.min_row
+        max_row = merged.max_row
+        if merged.min_row >= row_idx:
+            min_row += 1
+            max_row += 1
+        else:
+            max_row += 1
+        shifted.append(
+            (
+                min_row,
+                max_row,
+                merged.min_col,
+                merged.max_col,
+            )
+        )
+        worksheet.unmerge_cells(str(merged))
+
+    worksheet.insert_rows(row_idx)
+
+    for min_row, max_row, min_col, max_col in shifted:
+        worksheet.merge_cells(
+            start_row=min_row,
+            start_column=min_col,
+            end_row=max_row,
+            end_column=max_col,
+        )
+
+
+def _insert_cols_preserving_merges(worksheet: Worksheet, col_idx: int, amount: int) -> None:
+    """insert_cols без потери/съезда объединённых дневных шапок."""
+    if amount <= 0:
+        return
+
+    shifted: list[tuple[int, int, int, int]] = []
+    for merged in list(worksheet.merged_cells.ranges):
+        if merged.max_col < col_idx:
+            continue
+        min_col = merged.min_col
+        max_col = merged.max_col
+        if merged.min_col >= col_idx:
+            min_col += amount
+            max_col += amount
+        else:
+            max_col += amount
+        shifted.append(
+            (
+                merged.min_row,
+                merged.max_row,
+                min_col,
+                max_col,
+            )
+        )
+        worksheet.unmerge_cells(str(merged))
+
+    worksheet.insert_cols(col_idx, amount)
+
+    for min_row, max_row, min_col, max_col in shifted:
+        worksheet.merge_cells(
+            start_row=min_row,
+            start_column=min_col,
+            end_row=max_row,
+            end_column=max_col,
+        )
+
+
+def _style_priority_metric_header(worksheet: Worksheet, row_idx: int, col_idx: int, label: str) -> None:
+    cell = worksheet.cell(row_idx, col_idx, label)
+    cell.font = Font(bold=True, size=10)
+    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell.fill = _HEADER_METRIC_FILL
+    cell.border = _PRIORITY_GRID_BORDER
+
+
+def _style_priority_fixed_headers(
+    worksheet: Worksheet,
+    *,
+    header_row: int,
+    metric_row: int,
+    end_col: int,
+) -> None:
+    for col_idx in range(1, end_col + 1):
+        _unmerge_header_over_columns(worksheet, col_idx, col_idx, max_row=metric_row)
+        worksheet.merge_cells(
+            start_row=header_row,
+            start_column=col_idx,
+            end_row=metric_row,
+            end_column=col_idx,
+        )
+        cell = worksheet.cell(header_row, col_idx)
+        cell.font = copy(_HEADER_GROUP_FONT)
+        cell.fill = _HEADER_GROUP_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = _PRIORITY_GRID_BORDER
+
+
+def _style_priority_day_header(
+    worksheet: Worksheet,
+    date_row: int,
+    metric_row: int,
+    cov_col: int,
+    plan_col: int,
+    fact_col: int | None,
+    day: date,
+    *,
+    unmerge_max_row: int | None = None,
+) -> None:
+    end_col = fact_col if fact_col is not None else plan_col
+    _unmerge_header_over_columns(
+        worksheet,
+        cov_col,
+        end_col,
+        max_row=metric_row if unmerge_max_row is None else unmerge_max_row,
+    )
+    label = f"{day.day:02d}.{day.month:02d}"
+    worksheet.merge_cells(
+        start_row=date_row,
+        start_column=cov_col,
+        end_row=date_row,
+        end_column=end_col,
+    )
+    date_cell = worksheet.cell(date_row, cov_col, label)
+    date_cell.font = copy(_HEADER_GROUP_FONT)
+    date_cell.fill = _HEADER_GROUP_FILL
+    date_cell.border = _PRIORITY_GRID_BORDER
+    date_cell.alignment = Alignment(horizontal="center", vertical="center")
+    for col_idx in range(cov_col, end_col + 1):
+        worksheet.cell(date_row, col_idx).border = _PRIORITY_GRID_BORDER
+    worksheet.column_dimensions[get_column_letter(cov_col)].width = 10
+    worksheet.column_dimensions[get_column_letter(plan_col)].width = 10
+    if fact_col is not None:
+        worksheet.column_dimensions[get_column_letter(fact_col)].width = 10
+    _style_priority_metric_header(worksheet, metric_row, cov_col, "обесп")
+    _style_priority_metric_header(worksheet, metric_row, plan_col, "план")
+    if fact_col is not None:
+        _style_priority_metric_header(worksheet, metric_row, fact_col, "факт")
+
+
+def _resolve_pf_row_product(
+    worksheet: Worksheet,
+    row_idx: int,
+    *,
+    name_col: int,
+    metric_row: int,
+) -> str:
+    current = ""
+    for scan_row in range(metric_row + 1, row_idx + 1):
+        name = _clean_text(worksheet.cell(scan_row, name_col).value)
+        if name and _is_schedule_product_name(name):
+            current = name
+    return current
+
+
+def _style_priority_value_cell(cell: Any) -> None:
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    cell.border = _PRIORITY_GRID_BORDER
+    cell.number_format = "0"
+
+
+def _priority_border(
+    *,
+    left: Side = _PRIORITY_GRID_SIDE,
+    right: Side = _PRIORITY_GRID_SIDE,
+    top: Side = _PRIORITY_GRID_SIDE,
+    bottom: Side = _PRIORITY_GRID_SIDE,
+) -> Border:
+    return Border(left=left, right=right, top=top, bottom=bottom)
+
+
+def _apply_priority_day_grid(
+    worksheet: Worksheet,
+    *,
+    start_row: int,
+    start_col: int,
+    end_col: int,
+) -> None:
+    """Единая тонкая сетка для всего дневного блока, включая пустые и итоговые строки."""
+    for row_idx in range(start_row, int(worksheet.max_row or 0) + 1):
+        for col_idx in range(start_col, end_col + 1):
+            cell = worksheet.cell(row_idx, col_idx)
+            cell.border = _PRIORITY_GRID_BORDER
+            if row_idx > start_row:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+    for merged in worksheet.merged_cells.ranges:
+        if merged.max_row < start_row:
+            continue
+        if merged.max_col < start_col or merged.min_col > end_col:
+            continue
+        worksheet.cell(merged.min_row, merged.min_col).border = _PRIORITY_GRID_BORDER
+
+
+def _apply_priority_day_side_borders(
+    worksheet: Worksheet,
+    *,
+    start_row: int,
+    day_columns: list[tuple[int, date]],
+) -> None:
+    """Толстые боковые границы вокруг каждого дневного блока."""
+    max_row = int(worksheet.max_row or 0)
+    for row_idx in range(start_row, max_row + 1):
+        for cov_col, _day in day_columns:
+            plan_col = cov_col + 1
+            fact_col = cov_col + 2
+            if row_idx == start_row:
+                worksheet.cell(row_idx, cov_col).border = _priority_border(
+                    left=_PRIORITY_DAY_SIDE,
+                    right=_PRIORITY_DAY_SIDE,
+                )
+                continue
+            worksheet.cell(row_idx, cov_col).border = _priority_border(
+                left=_PRIORITY_DAY_SIDE
+            )
+            worksheet.cell(row_idx, plan_col).border = _PRIORITY_GRID_BORDER
+            worksheet.cell(row_idx, fact_col).border = _priority_border(
+                right=_PRIORITY_DAY_SIDE
+            )
+
+
+def _fill_priority_coverage_plan_block(
+    worksheet: Worksheet,
+    *,
+    metric_row: int,
+    name_col: int,
+    stage_col: int,
+    base_col: int,
+    days: list[date],
+    daily_plan_coverage: Any,
+) -> int:
+    today_iso = date.today().isoformat()
+    filled = 0
+    for row_idx in range(metric_row + 1, int(worksheet.max_row or 0) + 1):
+        stage = _normalize(worksheet.cell(row_idx, stage_col).value)
+        if _detailed_release_stage_priority(stage) is None:
+            continue
+        product = _resolve_pf_row_product(
+            worksheet, row_idx, name_col=name_col, metric_row=metric_row
+        )
+        if not product:
+            continue
+        for index, day in enumerate(days):
+            cov_col = base_col + index * 3
+            plan_col = base_col + index * 3 + 1
+            fact_col = base_col + index * 3 + 2
+            day_iso = day.isoformat()
+            day_cell = daily_plan_coverage.cell(product, day_iso)
+            covered = float(day_cell.covered)
+            plan = float(day_cell.plan)
+            fact = float(getattr(day_cell, "fact", 0.0) or 0.0)
+            cov_value = _round_qty(covered) if (plan > 1e-12 or covered > 1e-12) else None
+            plan_value = _round_qty(plan) if plan > 1e-12 else None
+            fact_value = _round_qty(fact) if fact > 1e-12 else None
+            cov_cell = worksheet.cell(row_idx, cov_col)
+            plan_cell = worksheet.cell(row_idx, plan_col)
+            fact_cell = worksheet.cell(row_idx, fact_col)
+            _safe_set_cell_value(worksheet, row_idx, cov_col, cov_value)
+            _safe_set_cell_value(worksheet, row_idx, plan_col, plan_value)
+            _safe_set_cell_value(worksheet, row_idx, fact_col, fact_value)
+            _style_priority_value_cell(cov_cell)
+            _style_priority_value_cell(plan_cell)
+            _style_priority_value_cell(fact_cell)
+            if day_iso >= today_iso and plan > 1e-12:
+                status = daily_plan_coverage.status_for_plan_cell(
+                    product, [day_iso], plan
+                )
+                fill = _priority_fill_for_status(status)
+                if fill is not None:
+                    cov_cell.fill = fill
+            filled += 1
+    return filled
+
+
+def _fill_priority_generic_day_block(
+    worksheet: Worksheet,
+    *,
+    first_data_row: int,
+    name_col: int,
+    day_columns: list[tuple[int, date]],
+    daily_plan_coverage: Any,
+) -> int:
+    today_iso = date.today().isoformat()
+    filled = 0
+    for row_idx in range(first_data_row, int(worksheet.max_row or 0) + 1):
+        product = _clean_text(worksheet.cell(row_idx, name_col).value)
+        if not _is_schedule_product_name(product):
+            continue
+        for cov_col, day in day_columns:
+            plan_col = cov_col + 1
+            fact_col = cov_col + 2
+            day_iso = day.isoformat()
+            day_cell = daily_plan_coverage.cell(product, day_iso)
+            covered = float(day_cell.covered)
+            plan = float(day_cell.plan)
+            daily_fact = float(getattr(day_cell, "fact", 0.0) or 0.0)
+            cov_cell = worksheet.cell(row_idx, cov_col)
+            plan_cell = worksheet.cell(row_idx, plan_col)
+            fact_cell = worksheet.cell(row_idx, fact_col)
+            _safe_set_cell_value(
+                worksheet,
+                row_idx,
+                cov_col,
+                _round_qty(covered) if (plan > 1e-12 or covered > 1e-12) else None,
+            )
+            _safe_set_cell_value(
+                worksheet, row_idx, plan_col, _round_qty(plan) if plan > 1e-12 else None
+            )
+            _safe_set_cell_value(
+                worksheet,
+                row_idx,
+                fact_col,
+                _round_qty(daily_fact) if daily_fact > 1e-12 else None,
+            )
+            _style_priority_value_cell(cov_cell)
+            _style_priority_value_cell(plan_cell)
+            _style_priority_value_cell(fact_cell)
+            if day_iso >= today_iso and plan > 1e-12:
+                status = daily_plan_coverage.status_for_plan_cell(product, [day_iso], plan)
+                fill = _priority_fill_for_status(status)
+                if fill is not None:
+                    cov_cell.fill = fill
+            filled += 1
+    return filled
+
+
+def _expand_priority_generic_schedule_columns(
+    worksheet: Worksheet,
+    *,
+    detailed: DetailedScheduleExtract,
+    daily_plan_coverage: Any,
+) -> dict[str, int]:
+    """Разворачивает обычный «График выпуска»: день → обесп | план | факт."""
+    tables = _iter_detailed_schedule_tables(worksheet, detailed.year, detailed.month)
+    if not tables:
+        return {"pairs": 0, "day_slots": 0, "cells_filled": 0}
+
+    metric_rows: set[int] = set()
+    for header_row, _name_col, _day_cols in tables:
+        if header_row not in metric_rows:
+            _insert_row_preserving_merges(worksheet, header_row + 1)
+            metric_rows.add(header_row)
+
+    shifted_tables: list[tuple[int, int, list[_DetailedDayColumn]]] = []
+    for header_row, name_col, day_cols in tables:
+        shift = sum(1 for row_idx in metric_rows if row_idx < header_row)
+        shifted_tables.append(
+            (
+                header_row + shift,
+                name_col,
+                [_DetailedDayColumn(col=col_idx, day=day) for col_idx, day in day_cols],
+            )
+        )
+
+    month_start = (
+        date(detailed.year, detailed.month, 1)
+        if detailed.year > 0 and detailed.month > 0
+        else None
+    )
+    month_end = (
+        date(detailed.year, detailed.month, monthrange(detailed.year, detailed.month)[1])
+        if month_start is not None
+        else None
+    )
+
+    day_slots = 0
+    cells_filled = 0
+    for header_row, name_col, day_cols in sorted(
+        shifted_tables, key=lambda item: item[0], reverse=True
+    ):
+        metric_row = header_row + 1
+        first_data_row = metric_row + 1
+        cols = day_cols
+        if month_start and month_end:
+            cols = [item for item in cols if month_start <= item.day <= month_end]
+        if not cols:
+            continue
+        cols = sorted(cols, key=lambda item: item.col)
+        days = [item.day for item in cols]
+        fixed_end_col = max(0, cols[0].col - 1)
+        if fixed_end_col:
+            _style_priority_fixed_headers(
+                worksheet,
+                header_row=header_row,
+                metric_row=metric_row,
+                end_col=fixed_end_col,
+            )
+        for item in sorted(cols, key=lambda item: item.col, reverse=True):
+            _unmerge_header_over_columns(
+                worksheet,
+                item.col,
+                item.col + 2,
+                max_row=header_row,
+            )
+            _insert_cols_preserving_merges(worksheet, item.col, 2)
+        day_columns = [
+            (item.col + index * 2, item.day)
+            for index, item in enumerate(cols)
+        ]
+        _unmerge_header_over_columns(
+            worksheet,
+            day_columns[0][0],
+            day_columns[-1][0] + 2,
+            max_row=header_row,
+        )
+        for cov_col, day in day_columns:
+            _style_priority_day_header(
+                worksheet,
+                header_row,
+                metric_row,
+                cov_col,
+                cov_col + 1,
+                cov_col + 2,
+                day,
+                unmerge_max_row=header_row,
+            )
+        cells_filled += _fill_priority_generic_day_block(
+            worksheet,
+            first_data_row=first_data_row,
+            name_col=name_col,
+            day_columns=day_columns,
+            daily_plan_coverage=daily_plan_coverage,
+        )
+        _apply_priority_day_grid(
+            worksheet,
+            start_row=header_row,
+            start_col=day_columns[0][0],
+            end_col=day_columns[-1][0] + 2,
+        )
+        _apply_priority_day_side_borders(
+            worksheet,
+            start_row=header_row,
+            day_columns=day_columns,
+        )
+        day_slots += len(days)
+
+    return {"pairs": len(shifted_tables), "day_slots": day_slots, "cells_filled": cells_filled}
+
+
+def _expand_priority_sheet_coverage_columns(
+    worksheet: Worksheet,
+    *,
+    detailed: DetailedScheduleExtract,
+    daily_plan_coverage: Any,
+) -> dict[str, int]:
+    """Для каждого дня вставляет колонки обеспеченности, плана и факта."""
+    layout = _find_pf_report_layout(worksheet, detailed.year, detailed.month)
+    if layout is None:
+        return _expand_priority_generic_schedule_columns(
+            worksheet,
+            detailed=detailed,
+            daily_plan_coverage=daily_plan_coverage,
+        )
+
+    metric_row, name_col, stage_col, pairs = layout
+    date_row = metric_row - 1 if metric_row > 1 else metric_row
+    month_start = (
+        date(detailed.year, detailed.month, 1)
+        if detailed.year > 0 and detailed.month > 0
+        else None
+    )
+    month_end = (
+        date(detailed.year, detailed.month, monthrange(detailed.year, detailed.month)[1])
+        if month_start is not None
+        else None
+    )
+
+    day_slots = 0
+    cells_filled = 0
+    for pair in sorted(pairs, key=lambda item: item.plan_col, reverse=True):
+        days = pair.days()
+        if month_start and month_end:
+            days = [item for item in days if month_start <= item <= month_end]
+        if not days:
+            continue
+        days = sorted(days)
+        original_width = 2 if pair.fact_col is not None else 1
+        insert_count = max(len(days) * 3 - original_width, 0)
+        _unmerge_header_over_columns(
+            worksheet,
+            pair.plan_col,
+            pair.plan_col + insert_count + original_width,
+            max_row=metric_row + 2,
+        )
+        _insert_cols_preserving_merges(worksheet, pair.plan_col, insert_count)
+        for index, day in enumerate(days):
+            cov_col = pair.plan_col + index * 3
+            plan_col = pair.plan_col + index * 3 + 1
+            fact_col = pair.plan_col + index * 3 + 2
+            _style_priority_day_header(
+                worksheet, date_row, metric_row, cov_col, plan_col, fact_col, day
+            )
+        cells_filled += _fill_priority_coverage_plan_block(
+            worksheet,
+            metric_row=metric_row,
+            name_col=name_col,
+            stage_col=stage_col,
+            base_col=pair.plan_col,
+            days=days,
+            daily_plan_coverage=daily_plan_coverage,
+        )
+        _apply_priority_day_grid(
+            worksheet,
+            start_row=date_row,
+            start_col=pair.plan_col,
+            end_col=pair.plan_col + len(days) * 3 - 1,
+        )
+        _apply_priority_day_side_borders(
+            worksheet,
+            start_row=date_row,
+            day_columns=[
+                (pair.plan_col + index * 3, day)
+                for index, day in enumerate(days)
+            ],
+        )
+        day_slots += len(days)
+
+    return {"pairs": len(pairs), "day_slots": day_slots, "cells_filled": cells_filled}
+
+
 def _write_detailed_schedule_priority_sheet(
     worksheet: Worksheet,
     detailed: DetailedScheduleExtract,
     daily_plan_coverage: Any | None,
 ) -> None:
-    """Точная копия листа Отчёта + заливка плана П/ф по дневной обеспеченности."""
+    """Копия листа Отчёта + колонки обесп/план по каждому дню."""
     worksheet.title = _SHEET_DETAILED_PRIORITY
     if not detailed.source_bytes or not detailed.source_sheet_name:
         worksheet["A1"] = "Нет исходного детального графика для копии"
@@ -3958,7 +5790,7 @@ def _write_detailed_schedule_priority_sheet(
             source_ws = source_wb[detailed.source_sheet_name]
         else:
             source_ws = source_wb.worksheets[0]
-        _clone_worksheet_into(worksheet, source_ws)
+        _clone_worksheet_into(worksheet, source_ws, strip_fills_except_totals=True)
     finally:
         source_wb.close()
 
@@ -3968,62 +5800,41 @@ def _write_detailed_schedule_priority_sheet(
     worksheet.cell(legend_row, legend_col, "Обеспеченность плана П/ф")
     worksheet.cell(legend_row, legend_col).font = Font(bold=True)
     legend_items = (
-        (legend_row + 1, _FILL_COVER_GREEN, "зелёный — план покрыт (covered ≥ plan)"),
-        (legend_row + 2, _FILL_COVER_YELLOW, "жёлтый — частично (0 < covered < plan)"),
+        (legend_row + 1, _FILL_COVER_GREEN, "зелёный — обеспеченность ≥ план"),
+        (legend_row + 2, _FILL_COVER_YELLOW, "жёлтый — частично (0 < обесп < план)"),
         (legend_row + 3, _FILL_COVER_RED, "красный — не покрыт / нет спеки"),
-        (legend_row + 4, None, "Окраска только с сегодняшней даты (прошлые дни без заливки)"),
+        (legend_row + 4, None, "Колонки дня: обесп | план; заливка только в «обесп»"),
+        (legend_row + 5, None, "Прошлые дни без заливки"),
     )
     for row_idx, fill, label in legend_items:
         cell = worksheet.cell(row_idx, legend_col, label)
         if fill is not None:
             cell.fill = fill
 
+    # Закрепляем до заливки — даже если coverage нет.
+    worksheet.freeze_panes = "D4"
+
     if daily_plan_coverage is None:
         return
 
-    today_iso = date.today().isoformat()
-    colored = 0
-    skipped_past = 0
-    for ref in detailed.plan_cells:
-        # Красим только ячейки, у которых есть дни ≥ сегодня
-        future_days = [day for day in ref.day_keys if day >= today_iso]
-        if not future_days:
-            skipped_past += 1
-            continue
-        # План/covered считаем только по оставшимся дням (для периодов, пересекающих «сегодня»)
-        plan_remaining = sum(
-            float(daily_plan_coverage.cell(ref.product, day).plan) for day in future_days
-        )
-        if plan_remaining <= 1e-12 and float(ref.plan_qty) > 1e-12:
-            # дневной план в coverage мог быть 0 при пустой разбивке — fallback на долю ячейки
-            share = len(future_days) / max(len(ref.day_keys), 1)
-            plan_remaining = float(ref.plan_qty) * share
-        status = daily_plan_coverage.status_for_plan_cell(
-            ref.product, future_days, plan_remaining
-        )
-        fill = _priority_fill_for_status(status)
-        if fill is None:
-            continue
-        cell = worksheet.cell(ref.row, ref.plan_col)
-        # MergedCell нельзя красить — красим верхний левый угол диапазона
-        if type(cell).__name__ == "MergedCell":
-            for merged_range in worksheet.merged_cells.ranges:
-                if cell.coordinate in merged_range:
-                    cell = worksheet.cell(merged_range.min_row, merged_range.min_col)
-                    break
-            else:
-                continue
-        cell.fill = fill
-        colored += 1
+    expand_stats = _expand_priority_sheet_coverage_columns(
+        worksheet,
+        detailed=detailed,
+        daily_plan_coverage=daily_plan_coverage,
+    )
+
+    # Колонки A–C (№ / изделие·модель / П·ф) + шапка дат остаются при горизонтальном скролле.
+    worksheet.freeze_panes = "D4"
 
     logger.info(
         "document_analysis_agent.detailed_priority_sheet_written",
         source_file=detailed.source_filename,
         source_sheet=detailed.source_sheet_name,
         plan_cells=len(detailed.plan_cells),
-        colored=colored,
-        skipped_past=skipped_past,
-        as_of=today_iso,
+        pairs_expanded=expand_stats.get("pairs", 0),
+        day_slots=expand_stats.get("day_slots", 0),
+        cells_filled=expand_stats.get("cells_filled", 0),
+        as_of=date.today().isoformat(),
     )
 
 
@@ -4051,7 +5862,7 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
 
     months = list(coverage.months)
     products = list(coverage.products_in_order)
-    last_col = max(1, 1 + len(months) * 2)
+    last_col = max(1, 1 + len(months) * 3)
 
     if worksheet.sheet_properties.outlinePr is None:
         worksheet.sheet_properties.outlinePr = Outline(
@@ -4082,10 +5893,11 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
         1,
         "Строка изделия: Обеспеченность = сколько изделий можно собрать "
         "(нужны ВСЕ позиции спеки: остаток+приход ≥ qty×число изделий); "
-        "План = Σ(Заказ+Опытные+Склад)·План из графика. "
+        "План = Σ(Заказ+Опытные+Склад)·План из графика производства; "
+        "Факт = Σ(Заказ+Опытные+Склад)·Факт из графика производства. "
         "Раскройте «+» слева — номенклатуры спеки: "
         "Обеспеченность = остаток на начало + поступления месяца; "
-        "План = потребность = план изделия × qty. "
+        "План = план изделия × qty; Факт = факт изделия × qty. "
         "Общие комплектующие — пропорционально планам, остаток квот сверху вниз.",
     )
     _style_header_cell(
@@ -4099,7 +5911,7 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
             alignment=left,
         )
 
-    # Row 3: Изделие + month group headers; Row 4: Обеспеченность | План
+    # Row 3: Изделие + month group headers; Row 4: Обеспеченность | План | Факт
     worksheet.merge_cells(start_row=3, start_column=1, end_row=4, end_column=1)
     for row_idx in (3, 4):
         c = worksheet.cell(row_idx, 1, "Изделие / номенклатура" if row_idx == 3 else None)
@@ -4107,15 +5919,15 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
         c.border = header_border
 
     for month_index, month in enumerate(months):
-        base = 2 + month_index * 2
-        worksheet.merge_cells(start_row=3, start_column=base, end_row=3, end_column=base + 1)
-        for offset in range(2):
+        base = 2 + month_index * 3
+        worksheet.merge_cells(start_row=3, start_column=base, end_row=3, end_column=base + 2)
+        for offset in range(3):
             cell = worksheet.cell(3, base + offset, month if offset == 0 else None)
             _style_header_cell(
                 cell, fill=_HEADER_GROUP_FILL, font=_HEADER_GROUP_FONT, alignment=center
             )
             cell.border = header_border
-        for offset, label in enumerate(("Обеспеченность", "План")):
+        for offset, label in enumerate(("Обеспеченность", "План", "Факт")):
             cell = worksheet.cell(4, base + offset, label)
             _style_header_cell(
                 cell, fill=_HEADER_METRIC_FILL, font=_HEADER_METRIC_FONT, alignment=center
@@ -4132,18 +5944,23 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
         name_cell.font = product_font
         name_cell.fill = product_fill
         for month_index, month in enumerate(months):
-            base = 2 + month_index * 2
+            base = 2 + month_index * 3
             cell_data = coverage.cell(product, month)
             covered_cell = worksheet.cell(product_row, base, cell_data.covered)
             plan_cell = worksheet.cell(product_row, base + 1, cell_data.plan)
+            fact_cell = worksheet.cell(product_row, base + 2, cell_data.fact)
             covered_cell.alignment = center
             plan_cell.alignment = center
+            fact_cell.alignment = center
             covered_cell.border = data_border
             plan_cell.border = data_border
+            fact_cell.border = data_border
             covered_cell.font = product_font
             plan_cell.font = product_font
+            fact_cell.font = product_font
             covered_cell.fill = product_fill
             plan_cell.fill = product_fill
+            fact_cell.fill = product_fill
             if cell_data.plan > 0 and cell_data.covered + 1e-9 < cell_data.plan:
                 covered_cell.fill = warn_fill
 
@@ -4159,19 +5976,25 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
             mat_cell.font = detail_font
             mat_cell.fill = detail_fill
             for month_index, month in enumerate(months):
-                base = 2 + month_index * 2
+                base = 2 + month_index * 3
                 available = coverage.material_available(month, line.norm_key)
                 plan_need = coverage.material_plan(product, month, line.norm_key)
+                fact_need = coverage.material_fact(product, month, line.norm_key)
                 avail_cell = worksheet.cell(detail_row, base, available)
                 plan_cell = worksheet.cell(detail_row, base + 1, plan_need)
+                fact_cell = worksheet.cell(detail_row, base + 2, fact_need)
                 avail_cell.alignment = center
                 plan_cell.alignment = center
+                fact_cell.alignment = center
                 avail_cell.border = data_border
                 plan_cell.border = data_border
+                fact_cell.border = data_border
                 avail_cell.font = detail_font
                 plan_cell.font = detail_font
+                fact_cell.font = detail_font
                 avail_cell.fill = detail_fill
                 plan_cell.fill = detail_fill
+                fact_cell.fill = detail_fill
                 if plan_need > 0 and available + 1e-9 < plan_need:
                     avail_cell.fill = warn_fill
             dim = worksheet.row_dimensions[detail_row]
@@ -4290,7 +6113,7 @@ def _write_order_plan_sheet(
     worksheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
     link_note = (
         " Как пользоваться: скопируйте «Количество» отсюда → вставьте в "
-        "«Ожидаемое поступление» на листе «помесячное обеспечение» для той же "
+        "«Ожидаемое поступление» на листе «1-производственный план (мес.)» для той же "
         "номенклатуры и месяца — количество заказа здесь пересчитается "
         "(формула MAX(0; потребность − остаток − поступление))."
         if link_formulas
@@ -4478,6 +6301,7 @@ def _build_monthly_assurance_header(
         "Номенклатура",
         "В каких изделиях используется",
         "Поставщик",
+        "Страна",
         "Ед. изм.",
         "Цена, руб./ед.",
         "Остаток",
@@ -4666,10 +6490,11 @@ def _build_monthly_assurance_header(
     worksheet.column_dimensions["A"].width = 50
     worksheet.column_dimensions["B"].width = 43
     worksheet.column_dimensions["C"].width = 36
-    worksheet.column_dimensions["D"].width = 10
-    worksheet.column_dimensions["E"].width = 14
-    worksheet.column_dimensions["F"].width = 12
+    worksheet.column_dimensions["D"].width = 16
+    worksheet.column_dimensions["E"].width = 10
+    worksheet.column_dimensions["F"].width = 14
     worksheet.column_dimensions["G"].width = 12
+    worksheet.column_dimensions["H"].width = 12
     for col_idx in range(_FIXED_RESULT_COLS + 1, last_col + 1):
         letter = get_column_letter(col_idx)
         dim = worksheet.column_dimensions[letter]
@@ -4705,6 +6530,7 @@ def _write_monthly_assurance_sheet(
     width_a = 50.0
     width_b = 43.0
     width_c = 36.0
+    width_d = 16.0
     forecast_cols: list[int] = []
     receipt_cols: list[int] = []
 
@@ -4714,10 +6540,11 @@ def _write_monthly_assurance_sheet(
             1: row.nomenclature,
             2: "; ".join(row.products),
             3: _sanitize_result_supplier(row.supplier),
-            4: row.unit,
-            5: row.price,
-            6: 0.0 if row.stock is None else row.stock,
-            7: 0.0 if row.ordered is None else row.ordered,
+            4: row.country_of_origin,
+            5: row.unit,
+            6: row.price,
+            7: 0.0 if row.stock is None else row.stock,
+            8: 0.0 if row.ordered is None else row.ordered,
         }
         for month_index, month in enumerate(months):
             cols = layout[month]
@@ -4781,8 +6608,13 @@ def _write_monthly_assurance_sheet(
                 cell.fill = receipt_edit_fill
 
         worksheet.row_dimensions[excel_row].height = _estimate_wrapped_row_height(
-            [str(values[1] or ""), str(values[2] or ""), str(values[3] or "")],
-            [width_a, width_b, width_c],
+            [
+                str(values[1] or ""),
+                str(values[2] or ""),
+                str(values[3] or ""),
+                str(values[4] or ""),
+            ],
+            [width_a, width_b, width_c, width_d],
         )
 
     if rows and forecast_cols:
@@ -4794,7 +6626,8 @@ def _write_monthly_assurance_sheet(
             last_data_row,
         )
 
-    worksheet.freeze_panes = f"A{_MONTHLY_DATA_START_ROW}"
+    # Как на «план заказов»: колонка A (номенклатура) + шапка остаются при скролле.
+    worksheet.freeze_panes = f"B{_MONTHLY_DATA_START_ROW}"
     logger.info(
         "document_analysis_agent.monthly_assurance_sheet_written",
         rows=len(rows),
@@ -4874,6 +6707,7 @@ def _build_daily_assurance_header(worksheet: Worksheet, year: int, month: int) -
         "Номенклатура",
         "В каких изделиях используется",
         "Поставщик",
+        "Страна",
         "Ед. изм.",
         "Цена, руб./ед.",
         "Остаток",
@@ -4925,10 +6759,11 @@ def _build_daily_assurance_header(worksheet: Worksheet, year: int, month: int) -
     worksheet.column_dimensions["A"].width = 50
     worksheet.column_dimensions["B"].width = 43
     worksheet.column_dimensions["C"].width = 36
-    worksheet.column_dimensions["D"].width = 10
-    worksheet.column_dimensions["E"].width = 14
-    worksheet.column_dimensions["F"].width = 12
+    worksheet.column_dimensions["D"].width = 16
+    worksheet.column_dimensions["E"].width = 10
+    worksheet.column_dimensions["F"].width = 14
     worksheet.column_dimensions["G"].width = 12
+    worksheet.column_dimensions["H"].width = 12
     for day_index in range(len(day_keys)):
         base_col = _FIXED_RESULT_COLS + 1 + day_index * _DAILY_COLS_PER_DAY
         for offset in range(_DAILY_COLS_PER_DAY):
@@ -4960,6 +6795,7 @@ def _write_daily_assurance_sheet(
     width_a = float(worksheet.column_dimensions["A"].width or 50)
     width_b = float(worksheet.column_dimensions["B"].width or 43)
     width_c = float(worksheet.column_dimensions["C"].width or 36)
+    width_d = float(worksheet.column_dimensions["D"].width or 16)
     forecast_cols: list[int] = []
 
     for offset, row in enumerate(rows):
@@ -4968,10 +6804,11 @@ def _write_daily_assurance_sheet(
             1: row.nomenclature,
             2: "; ".join(row.products),
             3: _sanitize_result_supplier(row.supplier),
-            4: row.unit,
-            5: row.price,
-            6: 0.0 if row.stock is None else row.stock,
-            7: 0.0 if row.ordered is None else row.ordered,
+            4: row.country_of_origin,
+            5: row.unit,
+            6: row.price,
+            7: 0.0 if row.stock is None else row.stock,
+            8: 0.0 if row.ordered is None else row.ordered,
         }
         for day_index, day_key in enumerate(day_keys):
             base_col = _FIXED_RESULT_COLS + 1 + day_index * _DAILY_COLS_PER_DAY
@@ -5006,8 +6843,13 @@ def _write_daily_assurance_sheet(
             cell.border = data_border
 
         worksheet.row_dimensions[excel_row].height = _estimate_wrapped_row_height(
-            [str(values[1] or ""), str(values[2] or ""), str(values[3] or "")],
-            [width_a, width_b, width_c],
+            [
+                str(values[1] or ""),
+                str(values[2] or ""),
+                str(values[3] or ""),
+                str(values[4] or ""),
+            ],
+            [width_a, width_b, width_c, width_d],
         )
 
     if rows and forecast_cols:
@@ -5019,7 +6861,8 @@ def _write_daily_assurance_sheet(
             last_data_row,
         )
 
-    worksheet.freeze_panes = f"A{_RESULT_DATA_START_ROW}"
+    # Как на «план заказов»: колонка A (номенклатура) + шапка остаются при скролле.
+    worksheet.freeze_panes = f"B{_RESULT_DATA_START_ROW}"
     logger.info(
         "document_analysis_agent.daily_assurance_sheet_written",
         rows=len(rows),
@@ -5027,6 +6870,106 @@ def _write_daily_assurance_sheet(
         days=len(day_keys),
         cols_per_day=_DAILY_COLS_PER_DAY,
         forecast_cols=len(forecast_cols),
+    )
+
+
+def _write_daily_assurance_sheet_from_snapshot(
+    worksheet: Worksheet,
+    snapshot: dict[str, Any],
+) -> None:
+    """Дневной лист из сохранённого снимка (зафиксированные значения, без формул прогноза)."""
+    year = int(snapshot.get("year") or 0)
+    month = int(snapshot.get("month") or 0)
+    day_keys = list(snapshot.get("day_keys") or [])
+    rows_data = list(snapshot.get("rows") or [])
+    if year <= 0 or month <= 0:
+        today = date.today()
+        year, month = today.year, today.month
+    if not day_keys:
+        day_keys = _month_day_keys(year, month)
+
+    worksheet.title = _daily_assurance_sheet_title(month, year=year)
+    header_day_keys = _build_daily_assurance_header(worksheet, year, month)
+    if header_day_keys != day_keys:
+        day_keys = header_day_keys
+
+    data_alignment = Alignment(vertical="top", wrap_text=True, horizontal="left")
+    thin = Side(style="thin", color="B0B0B0")
+    data_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    width_a = float(worksheet.column_dimensions["A"].width or 50)
+    width_b = float(worksheet.column_dimensions["B"].width or 43)
+    width_c = float(worksheet.column_dimensions["C"].width or 36)
+    width_d = float(worksheet.column_dimensions["D"].width or 16)
+    forecast_cols: list[int] = []
+
+    for offset, row_data in enumerate(rows_data):
+        excel_row = _RESULT_DATA_START_ROW + offset
+        products = row_data.get("products") or []
+        if isinstance(products, str):
+            products_text = products
+        else:
+            products_text = "; ".join(str(item) for item in products if item)
+
+        values: dict[int, Any] = {
+            1: row_data.get("nomenclature"),
+            2: products_text,
+            3: _sanitize_result_supplier(row_data.get("supplier")),
+            4: row_data.get("country_of_origin"),
+            5: row_data.get("unit"),
+            6: row_data.get("price"),
+            7: 0.0 if row_data.get("stock") is None else row_data.get("stock"),
+            8: 0.0 if row_data.get("ordered") is None else row_data.get("ordered"),
+        }
+        daily_demand = row_data.get("daily_demand") or {}
+        daily_demand_fact = row_data.get("daily_demand_fact") or {}
+        daily_receipts = row_data.get("daily_receipts") or {}
+        daily_forecast = row_data.get("daily_forecast") or {}
+
+        for day_index, day_key in enumerate(day_keys):
+            base_col = _FIXED_RESULT_COLS + 1 + day_index * _DAILY_COLS_PER_DAY
+            demand_plan_col = base_col
+            demand_fact_col = base_col + 1
+            receipt_col = base_col + 2
+            forecast_col = base_col + 3
+            values[demand_plan_col] = float(daily_demand.get(day_key, 0.0))
+            values[demand_fact_col] = float(daily_demand_fact.get(day_key, 0.0))
+            values[receipt_col] = float(daily_receipts.get(day_key, 0.0))
+            values[forecast_col] = float(daily_forecast.get(day_key, 0.0))
+            if offset == 0:
+                forecast_cols.append(forecast_col)
+
+        last_col = _FIXED_RESULT_COLS + len(day_keys) * _DAILY_COLS_PER_DAY
+        for col_idx in range(1, last_col + 1):
+            cell = worksheet.cell(excel_row, col_idx, values.get(col_idx))
+            cell.alignment = data_alignment
+            cell.border = data_border
+
+        worksheet.row_dimensions[excel_row].height = _estimate_wrapped_row_height(
+            [
+                str(values[1] or ""),
+                str(values[2] or ""),
+                str(values[3] or ""),
+                str(values[4] or ""),
+            ],
+            [width_a, width_b, width_c, width_d],
+        )
+
+    if rows_data and forecast_cols:
+        last_data_row = _RESULT_DATA_START_ROW + len(rows_data) - 1
+        _apply_forecast_deficit_formatting(
+            worksheet,
+            forecast_cols,
+            _RESULT_DATA_START_ROW,
+            last_data_row,
+        )
+
+    worksheet.freeze_panes = f"B{_RESULT_DATA_START_ROW}"
+    logger.info(
+        "document_analysis_agent.daily_assurance_sheet_from_snapshot",
+        rows=len(rows_data),
+        month=f"{year:04d}-{month:02d}",
+        days=len(day_keys),
+        period=snapshot.get("period_key"),
     )
 
 
@@ -5364,6 +7307,67 @@ async def _match_schedule_to_nomenclatures_with_lm(
     except Exception as exc:
         logger.warning("document_analysis_agent.schedule_nomenclature_lm_failed", error=str(exc))
         return {}
+
+
+async def _match_nomenclatures_to_sheets_with_lm(
+    nomenclatures: list[str],
+    sheet_names: list[str],
+) -> dict[str, str | None]:
+    """Batch LM: номенклатура → лист спецификации."""
+    unique = list(dict.fromkeys(n for n in nomenclatures if n))
+    if not unique or not sheet_names:
+        return {}
+    payload = _lm_settings()
+    if payload is None:
+        return {}
+    base_url, model = payload
+    prompt = (
+        "Для каждой NOMENCLATURE выбери один sheet_name из SHEETS или null. "
+        "Имя листа может быть укороченным вариантом номенклатуры. "
+        'Верни строго JSON: {"matches":[{"nomenclature":"...","sheet_name":"..."|null}]}'
+        f"\n\nNOMENCLATURES={json.dumps(unique, ensure_ascii=False)}"
+        f"\n\nSHEETS={json.dumps(sheet_names, ensure_ascii=False)}"
+    )
+    try:
+        data = await _post_lm_json(
+            base_url, model, prompt, timeout=settings.AVEON_LM_STUDIO_TIMEOUT_SECONDS
+        )
+        matches = data.get("matches")
+        if not isinstance(matches, list):
+            return {}
+        allowed = {_normalize(name): name for name in sheet_names}
+        result: dict[str, str | None] = {}
+        for item in matches:
+            if not isinstance(item, dict):
+                continue
+            nomenclature = _clean_text(item.get("nomenclature"))
+            sheet_name = _clean_text(item.get("sheet_name"))
+            if not nomenclature:
+                continue
+            result[nomenclature] = allowed.get(_normalize(sheet_name)) if sheet_name else None
+        return result
+    except Exception as exc:
+        logger.warning("document_analysis_agent.nomenclatures_sheet_lm_failed", error=str(exc))
+        return {}
+
+
+async def _match_nomenclature_to_db_spec_with_lm(
+    nomenclature: str, catalog: list
+) -> "DbSpecCatalogEntry | None":
+    from app.agents.document_analysis_agent.onec_db_sources import DbSpecCatalogEntry
+
+    labels = [entry.label for entry in catalog]
+    sheet = await _match_nomenclature_to_sheet_with_lm(nomenclature, labels)
+    if not sheet:
+        return None
+    for entry in catalog:
+        if entry.label == sheet:
+            return entry
+    norm = _normalize(sheet)
+    for entry in catalog:
+        if _normalize(entry.label) == norm:
+            return entry
+    return None
 
 
 async def _match_nomenclature_to_sheet_with_lm(
