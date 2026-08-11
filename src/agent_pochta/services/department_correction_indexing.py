@@ -47,7 +47,7 @@ def sync_department_correction_records(
         try:
             vectors = embed_texts([text], settings=settings)
         except EmbeddingClientError as exc:
-            logger.warning("dept_correction_embed_failed", error=str(exc))
+            logger.warning("dept_correction_embed_failed error=%s", exc)
             errors += 1
             continue
 

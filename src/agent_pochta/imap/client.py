@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ssl
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 
@@ -16,6 +18,7 @@ except ImportError:  # pragma: no cover — outside Celery worker
 from agent_pochta.config import Settings, get_settings
 from agent_pochta.imap.parser import parse_raw_email
 from agent_pochta.imap.attachment_parts import ImapAttachmentPart, list_attachment_parts
+from agent_pochta.imap.resilience import call_with_imap_retries, imap_concurrency_slot
 from agent_pochta.schemas import EmailMessage
 from agent_pochta.services.vault import VaultClient
 
@@ -79,7 +82,7 @@ class ImapMailboxClient:
         self.credentials = credentials
         self.settings = settings or get_settings()
 
-    def _connect(self, *, timeout_sec: int | None = None) -> IMAPClient:
+    def _connect_once(self, *, timeout_sec: int | None = None) -> IMAPClient:
         context = ssl.create_default_context()
         client = IMAPClient(
             self.settings.imap_host,
@@ -90,6 +93,50 @@ class ImapMailboxClient:
         )
         client.login(self.credentials.username, self.credentials.password)
         return client
+
+    def _connect(self, *, timeout_sec: int | None = None) -> IMAPClient:
+        """Login с короткими retry при transient-ошибках."""
+        return call_with_imap_retries(
+            lambda: self._connect_once(timeout_sec=timeout_sec),
+            settings=self.settings,
+            what="imap_connect",
+        )
+
+    @contextmanager
+    def _open_session(
+        self,
+        *,
+        folder: str = "INBOX",
+        readonly: bool = True,
+        timeout_sec: int | None = None,
+    ) -> Iterator[IMAPClient]:
+        """Одно соединение под concurrency-slot с retry connect+SELECT."""
+
+        def _open() -> IMAPClient:
+            client = self._connect_once(timeout_sec=timeout_sec)
+            try:
+                client.select_folder(folder, readonly=readonly)
+            except Exception:
+                try:
+                    client.logout()
+                except Exception:
+                    pass
+                raise
+            return client
+
+        with imap_concurrency_slot(self.settings):
+            client = call_with_imap_retries(
+                _open,
+                settings=self.settings,
+                what=f"imap_session:{folder}",
+            )
+            try:
+                yield client
+            finally:
+                try:
+                    client.logout()
+                except Exception:
+                    pass
 
     def fetch_unseen(self, mark_seen: bool = True) -> list[EmailMessage]:
         """Возвращает непрочитанные письма INBOX."""
@@ -124,9 +171,7 @@ class ImapMailboxClient:
         mark_seen: bool,
         exclude_message_id_bases: set[str] | None = None,
     ) -> list[EmailMessage]:
-        client = self._connect()
-        try:
-            client.select_folder("INBOX", readonly=not mark_seen)
+        with self._open_session(folder="INBOX", readonly=not mark_seen) as client:
             uids = client.search(criteria)
             if not uids:
                 return []
@@ -184,15 +229,18 @@ class ImapMailboxClient:
                 if SoftTimeLimitExceeded is None or not isinstance(exc, SoftTimeLimitExceeded):
                     raise
             return emails
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
-    def _find_uid_by_message_id(self, client: IMAPClient, message_id: str, *, folder: str) -> int | None:
+
+    def _find_uid_by_message_id(
+        self,
+        client: IMAPClient,
+        message_id: str,
+        *,
+        folder: str | None = None,
+    ) -> int | None:
+        """Ищет UID. Папка уже должна быть выбрана (_open_session / SELECT)."""
+        del folder  # совместимость вызовов; SELECT делает _open_session
         header_id = imap_header_message_id(message_id)
         bare_id = header_id.strip("<>")
-        client.select_folder(folder, readonly=True)
         for candidate in (header_id, bare_id):
             uids = client.search(["HEADER", "Message-ID", candidate])
             if uids:
@@ -204,13 +252,13 @@ class ImapMailboxClient:
         client: IMAPClient,
         subject: str,
         *,
-        folder: str,
+        folder: str | None = None,
         sender_email: str | None = None,
     ) -> int | None:
+        del folder
         subject = " ".join((subject or "").split()).strip()
         if not subject:
             return None
-        client.select_folder(folder, readonly=True)
         criteria: list = ["SUBJECT", subject]
         if sender_email:
             criteria.extend(["FROM", sender_email.strip()])
@@ -252,6 +300,54 @@ class ImapMailboxClient:
         item = fetch_data.get(uid) or {}
         return self._extract_fetch_bytes(item, f"BODY[{part_id}]") or self._extract_fetch_bytes(item, "BODY")
 
+    def _fetch_body_part_range(
+        self,
+        client: IMAPClient,
+        uid: int,
+        part_id: str,
+        *,
+        offset: int,
+        length: int,
+    ) -> bytes | None:
+        spec = f"BODY.PEEK[{part_id}]<{offset}.{length}>"
+        fetch_data = client.fetch([uid], [spec])
+        item = fetch_data.get(uid) or {}
+        return (
+            self._extract_fetch_bytes(item, f"BODY[{part_id}]")
+            or self._extract_fetch_bytes(item, "BODY")
+        )
+
+    def _iter_body_part_chunks(
+        self,
+        client: IMAPClient,
+        uid: int,
+        part: ImapAttachmentPart,
+        *,
+        chunk_size: int,
+    ) -> Iterator[bytes]:
+        size = part.size_bytes
+        if not size or size <= chunk_size:
+            content = self._fetch_body_part(client, uid, part.part_id)
+            if content:
+                yield content
+            return
+        offset = 0
+        while offset < size:
+            length = min(chunk_size, size - offset)
+            chunk = self._fetch_body_part_range(
+                client,
+                uid,
+                part.part_id,
+                offset=offset,
+                length=length,
+            )
+            if not chunk:
+                break
+            yield chunk
+            if len(chunk) < length:
+                break
+            offset += len(chunk)
+
     @staticmethod
     def _pick_attachment_part(
         parts: list[ImapAttachmentPart],
@@ -269,6 +365,32 @@ class ImapMailboxClient:
             return parts[index]
         return parts[0]
 
+    def _attachment_from_rfc822(
+        self,
+        client: IMAPClient,
+        uid: int,
+        *,
+        filename: str,
+        attachment_index: int,
+    ) -> tuple[bytes, str, str] | None:
+        fetch_data = client.fetch([uid], ["RFC822"])
+        item = fetch_data.get(uid) or {}
+        raw = item.get(b"RFC822")
+        if not raw:
+            return None
+        email = parse_raw_email(raw, self.mailbox, load_oversized_attachments=True)
+        by_name = {a.filename: a for a in email.attachments if a.filename}
+        matched = by_name.get(filename)
+        if matched is None and 0 <= attachment_index < len(email.attachments):
+            matched = email.attachments[attachment_index]
+        if matched is None or not matched.content:
+            return None
+        return (
+            matched.content,
+            matched.mime_type or "application/octet-stream",
+            matched.filename or filename,
+        )
+
     def fetch_attachment_bytes(
         self,
         message_id: str,
@@ -279,14 +401,40 @@ class ImapMailboxClient:
         timeout_sec: int | None = None,
     ) -> tuple[bytes, str, str] | None:
         """Загружает одно вложение: сначала BODY.PEEK[part], иначе полный RFC822."""
-        client = self._connect(timeout_sec=timeout_sec)
-        try:
+        chunks: list[bytes] = []
+        mime_type = "application/octet-stream"
+        resolved_name = filename
+        for chunk, meta_mime, meta_name in self.iter_attachment_chunks(
+            message_id,
+            filename=filename,
+            attachment_index=attachment_index,
+            folder=folder,
+            timeout_sec=timeout_sec,
+        ):
+            chunks.append(chunk)
+            mime_type = meta_mime
+            resolved_name = meta_name
+        if not chunks:
+            return None
+        return b"".join(chunks), mime_type, resolved_name
+
+    def iter_attachment_chunks(
+        self,
+        message_id: str,
+        *,
+        filename: str,
+        attachment_index: int = 0,
+        folder: str = "INBOX",
+        timeout_sec: int | None = None,
+    ) -> Iterator[tuple[bytes, str, str]]:
+        """Стримит вложение чанками: (bytes, mime, filename) на каждый chunk."""
+        chunk_size = max(16_384, int(getattr(self.settings, "imap_fetch_chunk_bytes", 262_144) or 262_144))
+        with self._open_session(folder=folder, readonly=True, timeout_sec=timeout_sec) as client:
             uid = self._find_uid_by_message_id(client, message_id, folder=folder)
             if uid is None:
-                return None
+                return
 
-            settings = self.settings
-            if settings.attachment_imap_partial_fetch:
+            if self.settings.attachment_imap_partial_fetch:
                 structure = self._fetch_bodystructure(client, uid)
                 if structure is not None:
                     parts = list_attachment_parts(structure)
@@ -296,31 +444,76 @@ class ImapMailboxClient:
                         index=attachment_index,
                     )
                     if chosen is not None:
-                        content = self._fetch_body_part(client, uid, chosen.part_id)
-                        if content:
-                            mime_type = chosen.mime_type or "application/octet-stream"
-                            resolved_name = chosen.filename or filename
-                            return content, mime_type, resolved_name
+                        mime_type = chosen.mime_type or "application/octet-stream"
+                        resolved_name = chosen.filename or filename
+                        yielded = False
+                        for chunk in self._iter_body_part_chunks(
+                            client, uid, chosen, chunk_size=chunk_size
+                        ):
+                            yielded = True
+                            yield chunk, mime_type, resolved_name
+                        if yielded:
+                            return
 
-            fetch_data = client.fetch([uid], ["RFC822"])
-            raw = fetch_data[uid][b"RFC822"]
-            email = parse_raw_email(raw, self.mailbox, load_oversized_attachments=True)
-            by_name = {a.filename: a for a in email.attachments if a.filename}
-            matched = by_name.get(filename)
-            if matched is None and 0 <= attachment_index < len(email.attachments):
-                matched = email.attachments[attachment_index]
-            if matched is None or not matched.content:
-                return None
-            return (
-                matched.content,
-                matched.mime_type or "application/octet-stream",
-                matched.filename or filename,
+            fetched = self._attachment_from_rfc822(
+                client,
+                uid,
+                filename=filename,
+                attachment_index=attachment_index,
             )
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
+            if fetched is None:
+                return
+            content, mime_type, resolved_name = fetched
+            # Отдаём крупный RFC822-fallback кусками для HTTP-стрима.
+            if len(content) <= chunk_size:
+                yield content, mime_type, resolved_name
+                return
+            for offset in range(0, len(content), chunk_size):
+                yield content[offset : offset + chunk_size], mime_type, resolved_name
+
+    def fetch_attachments_batch(
+        self,
+        message_id: str,
+        items: list[tuple[int, str]],
+        *,
+        folder: str = "INBOX",
+        timeout_sec: int | None = None,
+    ) -> dict[int, tuple[bytes, str, str]]:
+        """Загружает несколько вложений в одном IMAP-соединении (prefetch)."""
+        if not items:
+            return {}
+        result: dict[int, tuple[bytes, str, str]] = {}
+        with self._open_session(folder=folder, readonly=True, timeout_sec=timeout_sec) as client:
+            uid = self._find_uid_by_message_id(client, message_id, folder=folder)
+            if uid is None:
+                return {}
+
+            parts: list[ImapAttachmentPart] = []
+            if self.settings.attachment_imap_partial_fetch:
+                structure = self._fetch_bodystructure(client, uid)
+                if structure is not None:
+                    parts = list_attachment_parts(structure)
+
+            for index, filename in items:
+                chosen = self._pick_attachment_part(parts, filename=filename, index=index)
+                if chosen is not None:
+                    content = self._fetch_body_part(client, uid, chosen.part_id)
+                    if content:
+                        result[index] = (
+                            content,
+                            chosen.mime_type or "application/octet-stream",
+                            chosen.filename or filename,
+                        )
+                        continue
+                fetched = self._attachment_from_rfc822(
+                    client,
+                    uid,
+                    filename=filename,
+                    attachment_index=index,
+                )
+                if fetched is not None:
+                    result[index] = fetched
+        return result
 
     def fetch_raw_rfc822_bytes(
         self,
@@ -330,8 +523,7 @@ class ImapMailboxClient:
         timeout_sec: int | None = None,
     ) -> bytes | None:
         """Возвращает сырой RFC822 (.eml) письма из IMAP."""
-        client = self._connect(timeout_sec=timeout_sec)
-        try:
+        with self._open_session(folder=folder, readonly=True, timeout_sec=timeout_sec) as client:
             uid = self._find_uid_by_message_id(client, message_id, folder=folder)
             if uid is None:
                 return None
@@ -339,11 +531,6 @@ class ImapMailboxClient:
             item = fetch_data.get(uid) or {}
             raw = item.get(b"RFC822")
             return bytes(raw) if raw else None
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
 
     def fetch_by_message_id(
         self,
@@ -355,6 +542,7 @@ class ImapMailboxClient:
         timeout_sec: int | None = None,
     ) -> EmailMessage | None:
         """Ищет письмо по заголовку Message-ID и возвращает распарсенное содержимое."""
+        del mark_seen  # readonly session; флаги не меняем в on-demand путях
         raw = self.fetch_raw_rfc822_bytes(
             message_id,
             folder=folder,
@@ -379,8 +567,8 @@ class ImapMailboxClient:
         timeout_sec: int | None = None,
     ) -> EmailMessage | None:
         """Ищет письмо по теме (и опционально отправителю) в IMAP."""
-        client = self._connect(timeout_sec=timeout_sec)
-        try:
+        del mark_seen
+        with self._open_session(folder=folder, readonly=True, timeout_sec=timeout_sec) as client:
             uid = self._find_uid_by_subject(
                 client,
                 subject,
@@ -399,11 +587,6 @@ class ImapMailboxClient:
                 self.mailbox,
                 load_oversized_attachments=load_oversized_attachments,
             )
-        finally:
-            try:
-                client.logout()
-            except Exception:
-                pass
 
 
 def fetch_unseen_messages(

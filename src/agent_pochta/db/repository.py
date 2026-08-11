@@ -18,6 +18,9 @@ from agent_pochta.db.message_filters import (
     only_info_to_sql_filter,
     operator_review_state_sql_flags,
     recipient_q_sql_filter,
+    routing_base_message_id_sql,
+    safe_payload_jsonb,
+    turbo_don_routing_sql_filter,
 )
 from agent_pochta.demo_filter import demo_row_filter
 
@@ -107,8 +110,162 @@ class EmailRepository:
                     EmailMessageRow.raw_payload_json,
                 )
             )
+        query = query.filter(
+            turbo_don_routing_sql_filter(
+                EmailMessageRow.mailbox,
+                EmailMessageRow.raw_payload_json,
+            )
+        )
         query = query.filter(~demo_row_filter(EmailMessageRow))
         return query
+
+    def _routing_dedupe_ranked_subquery(self, query):
+        """ROW_NUMBER() по базовому Message-ID — основа dedupe-фильтра."""
+        base_id = routing_base_message_id_sql(EmailMessageRow.message_id)
+        payload = safe_payload_jsonb(EmailMessageRow.raw_payload_json)
+        routing = func.lower(func.coalesce(payload["routing_recipient"].astext, ""))
+        mailbox_l = func.lower(EmailMessageRow.mailbox)
+        prefer_mailbox = case((routing == mailbox_l, 0), else_=1)
+        return (
+            query.with_entities(
+                EmailMessageRow.id.label("row_id"),
+                func.row_number()
+                .over(
+                    partition_by=base_id,
+                    order_by=(prefer_mailbox.asc(), EmailMessageRow.received_at.desc()),
+                )
+                .label("rn"),
+            )
+        ).subquery()
+
+    def _deduped_messages_cte(self, filtered_query):
+        """CTE id строк после dedupe — один проход window function на запрос."""
+        ranked = self._routing_dedupe_ranked_subquery(filtered_query)
+        return (
+            self._session.query(ranked.c.row_id.label("row_id"))
+            .filter(ranked.c.rn == 1)
+            .cte("deduped_message_ids")
+        )
+
+    def _apply_routing_dedupe(self, query):
+        """Одна строка на физическое письмо (без дублей рассылки по #recipient@)."""
+        ranked = self._routing_dedupe_ranked_subquery(query)
+        return query.filter(
+            EmailMessageRow.id.in_(
+                self._session.query(ranked.c.row_id).filter(ranked.c.rn == 1)
+            )
+        )
+
+    def list_messages_paginated(
+        self,
+        *,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[EmailMessageRow], int]:
+        """Список + total за один SQL (COUNT(*) OVER(), без второго dedupe-count)."""
+        filtered = self._session.query(EmailMessageRow)
+        filtered = self._apply_message_filters(
+            filtered,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
+        )
+        ranked = self._routing_dedupe_ranked_subquery(filtered)
+        page_rows = (
+            self._session.query(
+                EmailMessageRow,
+                func.count().over().label("total_count"),
+            )
+            .join(ranked, EmailMessageRow.id == ranked.c.row_id)
+            .filter(ranked.c.rn == 1)
+            .order_by(EmailMessageRow.received_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        if not page_rows:
+            total = (
+                self._session.query(func.count())
+                .select_from(
+                    self._session.query(ranked.c.row_id)
+                    .filter(ranked.c.rn == 1)
+                    .subquery()
+                )
+                .scalar()
+                or 0
+            )
+            return [], int(total)
+        return [row for row, _total in page_rows], int(page_rows[0][1])
+
+    def message_stats_bundle(
+        self,
+        *,
+        status: str | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        search: str | None = None,
+        recipient_q: str | None = None,
+        info_recipient_only: bool = False,
+        only_info_to_test_ii: bool = False,
+        only_info_to: bool = False,
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """by_status и operator_review_counts с одним dedupe CTE."""
+        filtered = self._session.query(EmailMessageRow)
+        filtered = self._apply_message_filters(
+            filtered,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            recipient_q=recipient_q,
+            info_recipient_only=info_recipient_only,
+            only_info_to_test_ii=only_info_to_test_ii,
+            only_info_to=only_info_to,
+        )
+        deduped_cte = self._deduped_messages_cte(filtered)
+        messages = self._session.query(EmailMessageRow).join(
+            deduped_cte, EmailMessageRow.id == deduped_cte.c.row_id
+        )
+
+        by_status_rows = (
+            messages.with_entities(EmailMessageRow.status, func.count(EmailMessageRow.id))
+            .group_by(EmailMessageRow.status)
+            .all()
+        )
+        by_status = {status_value: int(count) for status_value, count in by_status_rows}
+
+        review_query = messages
+        if status:
+            review_query = review_query.filter(EmailMessageRow.status == status)
+        is_corrected, is_verified, is_pending = operator_review_state_sql_flags(
+            EmailMessageRow.raw_payload_json,
+            EmailMessageRow.id,
+        )
+        review_row = review_query.with_entities(
+            func.count(EmailMessageRow.id).label("all"),
+            func.sum(case((is_corrected, 1), else_=0)).label("corrected"),
+            func.sum(case((is_verified, 1), else_=0)).label("verified"),
+            func.sum(case((is_pending, 1), else_=0)).label("pending"),
+        ).one()
+        review_counts = {
+            "all": int(review_row.all or 0),
+            "corrected": int(review_row.corrected or 0),
+            "verified": int(review_row.verified or 0),
+            "pending": int(review_row.pending or 0),
+        }
+        return by_status, review_counts
 
     def list_messages(
         self,
@@ -136,6 +293,7 @@ class EmailRepository:
             only_info_to_test_ii=only_info_to_test_ii,
             only_info_to=only_info_to,
         )
+        query = self._apply_routing_dedupe(query)
         return query.offset(offset).limit(limit).all()
 
     def list_all_messages(
@@ -163,6 +321,7 @@ class EmailRepository:
             only_info_to_test_ii=only_info_to_test_ii,
             only_info_to=only_info_to,
         )
+        query = self._apply_routing_dedupe(query)
         return query.all()
 
     def count_erp_created(
@@ -239,7 +398,7 @@ class EmailRepository:
         only_info_to_test_ii: bool = False,
         only_info_to: bool = False,
     ) -> int:
-        query = self._session.query(func.count(EmailMessageRow.id))
+        query = self._session.query(EmailMessageRow)
         query = self._apply_message_filters(
             query,
             status=status,
@@ -251,7 +410,8 @@ class EmailRepository:
             only_info_to_test_ii=only_info_to_test_ii,
             only_info_to=only_info_to,
         )
-        return int(query.scalar() or 0)
+        query = self._apply_routing_dedupe(query)
+        return int(query.count())
 
     def delete_demo_messages(self) -> int:
         """Удаляет демо/тестовые записи из email_messages (вложения — CASCADE)."""
@@ -271,7 +431,7 @@ class EmailRepository:
         only_info_to_test_ii: bool = False,
         only_info_to: bool = False,
     ) -> dict[str, int]:
-        query = self._session.query(EmailMessageRow.status, func.count(EmailMessageRow.id))
+        query = self._session.query(EmailMessageRow)
         query = self._apply_message_filters(
             query,
             date_from=date_from,
@@ -282,7 +442,10 @@ class EmailRepository:
             only_info_to_test_ii=only_info_to_test_ii,
             only_info_to=only_info_to,
         )
-        rows = query.group_by(EmailMessageRow.status).all()
+        query = self._apply_routing_dedupe(query)
+        rows = query.with_entities(EmailMessageRow.status, func.count(EmailMessageRow.id)).group_by(
+            EmailMessageRow.status
+        ).all()
         return {status: int(count) for status, count in rows}
 
     def count_operator_review_states(
@@ -301,12 +464,7 @@ class EmailRepository:
             EmailMessageRow.raw_payload_json,
             EmailMessageRow.id,
         )
-        query = self._session.query(
-            func.count(EmailMessageRow.id).label("all"),
-            func.sum(case((is_corrected, 1), else_=0)).label("corrected"),
-            func.sum(case((is_verified, 1), else_=0)).label("verified"),
-            func.sum(case((is_pending, 1), else_=0)).label("pending"),
-        )
+        query = self._session.query(EmailMessageRow)
         query = self._apply_message_filters(
             query,
             status=status,
@@ -318,7 +476,13 @@ class EmailRepository:
             only_info_to_test_ii=only_info_to_test_ii,
             only_info_to=only_info_to,
         )
-        row = query.one()
+        query = self._apply_routing_dedupe(query)
+        row = query.with_entities(
+            func.count(EmailMessageRow.id).label("all"),
+            func.sum(case((is_corrected, 1), else_=0)).label("corrected"),
+            func.sum(case((is_verified, 1), else_=0)).label("verified"),
+            func.sum(case((is_pending, 1), else_=0)).label("pending"),
+        ).one()
         return {
             "all": int(row.all or 0),
             "corrected": int(row.corrected or 0),

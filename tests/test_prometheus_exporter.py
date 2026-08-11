@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 
 from agent_pochta.metrics.prometheus_exporter import (
+    _bge_routing_source_predicate,
     _change_percent,
     _count_routing_corrections_by_department,
     _department_label,
@@ -19,6 +20,14 @@ from agent_pochta.metrics.prometheus_exporter import (
     refresh_prometheus_metrics,
     rolling_24h_window_utc,
 )
+
+
+def test_bge_routing_source_predicate_avoids_jsonb_cast() -> None:
+    pred = _bge_routing_source_predicate("em.raw_payload_json")
+    assert "::jsonb" not in pred
+    assert "bge_correction" in pred
+    assert "em.raw_payload_json" in pred
+    assert "LIKE" in pred
 
 
 def test_change_percent_zero_messages() -> None:
@@ -51,10 +60,32 @@ def test_rolling_24h_window_is_24_hours() -> None:
     assert 23.9 <= delta.total_seconds() / 3600 <= 24.1
 
 
-def test_collect_metrics_snapshot_with_mock_session() -> None:
+def test_collect_metrics_snapshot_with_mock_session(monkeypatch: pytest.MonkeyPatch) -> None:
     session = MagicMock()
-    # 10 change/message counts + operator_saved + operator_changed
-    session.scalar.side_effect = [10, 100, 50, 500, 2, 20, 1, 5, 3, 15, 4, 12, 20, 3]
+    session.scalar.side_effect = [
+        10,
+        100,
+        50,
+        500,
+        2,
+        20,
+        1,
+        5,
+        3,
+        15,
+        4,
+        12,
+        20,
+        3,
+    ]
+    monkeypatch.setattr(
+        "agent_pochta.metrics.prometheus_exporter._count_operator_events_recent",
+        lambda session, *, limit: (6, 8),
+    )
+    monkeypatch.setattr(
+        "agent_pochta.metrics.prometheus_exporter.get_settings",
+        lambda: MagicMock(operator_accuracy_window=200, bge_routing_enabled_since=""),
+    )
 
     snapshot = collect_metrics_snapshot(session=session)
 
@@ -69,6 +100,13 @@ def test_collect_metrics_snapshot_with_mock_session() -> None:
     assert snapshot["agent_pochta_spam_mark_total"] == 5.0
     assert snapshot["agent_pochta_not_spam_mark_last_24h"] == 3.0
     assert snapshot["agent_pochta_not_spam_mark_total"] == 15.0
+    assert snapshot["agent_pochta_operator_accuracy_window"] == 200.0
+    assert snapshot["agent_pochta_operator_saved_last_actions"] == 6.0
+    assert snapshot["agent_pochta_operator_changed_last_actions"] == 8.0
+    assert snapshot["agent_pochta_operator_keep_rate_last_actions"] == 0.4286
+    assert snapshot["agent_pochta_operator_saved_last_24h"] == 6.0
+    assert snapshot["agent_pochta_operator_changed_last_24h"] == 8.0
+    assert snapshot["agent_pochta_operator_keep_rate_last_24h"] == 0.4286
     assert snapshot["agent_pochta_operator_saved_total"] == 4.0
     assert snapshot["agent_pochta_operator_changed_total"] == 12.0
     assert snapshot["agent_pochta_operator_keep_rate"] == 0.25
@@ -123,11 +161,18 @@ def test_metrics_names_exported() -> None:
     names = metrics_snapshot_for_tests()["metrics"]
     labeled = metrics_snapshot_for_tests()["labeled_metrics"]
     assert "agent_pochta_changes_last_24h" in names
+    assert "agent_pochta_operator_accuracy_window" in names
+    assert "agent_pochta_operator_saved_last_actions" in names
+    assert "agent_pochta_operator_changed_last_actions" in names
+    assert "agent_pochta_operator_keep_rate_last_actions" in names
+    assert "agent_pochta_operator_saved_last_24h" in names
+    assert "agent_pochta_operator_changed_last_24h" in names
+    assert "agent_pochta_operator_keep_rate_last_24h" in names
     assert "agent_pochta_operator_saved_total" in names
     assert "agent_pochta_operator_changed_total" in names
     assert "agent_pochta_operator_keep_rate" in names
     assert "agent_pochta_bge_operator_keep_rate" in names
-    assert len(names) == 19
+    assert len(names) == 26
     assert "agent_pochta_routed_by_department" in labeled
     assert "agent_pochta_routing_corrections_by_department" in labeled
     assert "agent_pochta_emails_by_department" not in labeled

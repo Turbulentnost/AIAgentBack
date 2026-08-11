@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from agent_pochta.config import get_settings
-from agent_pochta.db.message_filters import INFO_MAILBOX, email_eligible_for_erp
+from agent_pochta.db.message_filters import INFO_MAILBOX, email_eligible_for_erp, is_dialog_message
 from agent_pochta.schemas import ErpTaskResult, ProcessingStatus
 from agent_pochta.services import ServiceContainer
 from agent_pochta.state import AgentState
@@ -31,6 +31,16 @@ def node_create_erp_task(state: AgentState, container: ServiceContainer) -> Agen
     summary = state.get("summary_ru", "")
     meta = dict(state.get("meta") or {})
     xml_document = meta.get("xml_document")
+
+    status = state.get("status")
+    status_value = status.value if hasattr(status, "value") else str(status or "")
+
+    if is_dialog_message(status=status_value, payload=meta) or routing.document_kind == "dialog":
+        return _skip_erp_result(
+            trace=trace,
+            meta=meta,
+            reason="Категория «Диалог»: регистрация входящей в 1С ERP не требуется",
+        )
 
     if meta.get("skip_erp") or not routing.register_erp:
         return _skip_erp_result(

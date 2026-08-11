@@ -10,13 +10,9 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from agent_pochta.api.app import app
-from agent_pochta.attachments.download import (
-    AttachmentDownloadResult,
-    content_disposition_header,
-)
+from agent_pochta.attachments.download import content_disposition_header
 from agent_pochta.db.models import EmailAttachmentRow, EmailMessageRow
 from agent_pochta.db.repository import EmailRepository
-from agent_pochta.schemas import Attachment, EmailMessage
 
 
 def test_content_disposition_header_supports_unicode():
@@ -26,8 +22,10 @@ def test_content_disposition_header_supports_unicode():
     assert "%D0%90%D0%BA%D1%82" in header or "Акт" not in header.split("filename*=", 1)[0]
 
 
-@patch("agent_pochta.api.app.fetch_attachment_for_download")
-def test_download_attachment_endpoint_streams_bytes(mock_fetch):
+@patch("agent_pochta.api.app.stream_attachment_for_download")
+def test_download_attachment_endpoint_streams_bytes(mock_stream):
+    from agent_pochta.attachments.download import AttachmentStreamResult
+
     row_id = uuid.uuid4()
     att_id = uuid.uuid4()
     row = EmailMessageRow(
@@ -50,12 +48,12 @@ def test_download_attachment_endpoint_streams_bytes(mock_fetch):
     repo = MagicMock(spec=EmailRepository)
     repo.get_by_id.return_value = row
 
-    mock_fetch.return_value = AttachmentDownloadResult(
+    mock_stream.return_value = AttachmentStreamResult(
         ok=True,
         row_id=str(row_id),
         filename="invoice.pdf",
         mime_type="application/pdf",
-        content=b"%PDF",
+        _chunks=iter([b"%PDF"]),
     )
 
     with patch("agent_pochta.api.app.get_session_factory") as mock_factory:
@@ -68,11 +66,13 @@ def test_download_attachment_endpoint_streams_bytes(mock_fetch):
     assert response.content == b"%PDF"
     assert response.headers["content-type"].startswith("application/pdf")
     assert "invoice.pdf" in response.headers["content-disposition"]
-    mock_fetch.assert_called_once_with(row_id, 0)
+    mock_stream.assert_called_once_with(row_id, 0)
 
 
-@patch("agent_pochta.api.app.fetch_attachment_for_download")
-def test_download_attachment_endpoint_not_found(mock_fetch):
+@patch("agent_pochta.api.app.stream_attachment_for_download")
+def test_download_attachment_endpoint_not_found(mock_stream):
+    from agent_pochta.attachments.download import AttachmentStreamResult
+
     row_id = uuid.uuid4()
     row = EmailMessageRow(
         id=row_id,
@@ -94,7 +94,7 @@ def test_download_attachment_endpoint_not_found(mock_fetch):
     repo = MagicMock(spec=EmailRepository)
     repo.get_by_id.return_value = row
 
-    mock_fetch.return_value = AttachmentDownloadResult(
+    mock_stream.return_value = AttachmentStreamResult(
         ok=False,
         row_id=str(row_id),
         filename="missing.docx",
@@ -138,7 +138,9 @@ def test_fetch_attachment_for_download_restores_from_imap(mock_creds, mock_clien
     repo.get_by_id.return_value = row
 
     mock_client = MagicMock()
-    mock_client.fetch_attachment_bytes.return_value = (b"PDF", "application/pdf", "scan.pdf")
+    mock_client.iter_attachment_chunks.return_value = iter(
+        [(b"PDF", "application/pdf", "scan.pdf")]
+    )
     mock_client_cls.return_value = mock_client
     mock_creds.return_value = MagicMock()
 
@@ -150,8 +152,8 @@ def test_fetch_attachment_for_download_restores_from_imap(mock_creds, mock_clien
     assert result.ok is True
     assert result.content == b"PDF"
     assert result.filename == "scan.pdf"
-    mock_client.fetch_attachment_bytes.assert_called_once()
-    kwargs = mock_client.fetch_attachment_bytes.call_args.kwargs
+    mock_client.iter_attachment_chunks.assert_called_once()
+    kwargs = mock_client.iter_attachment_chunks.call_args.kwargs
     assert kwargs.get("filename") == "scan.pdf"
     assert kwargs.get("attachment_index") == 0
     assert kwargs.get("timeout_sec") == 120
@@ -189,10 +191,8 @@ def test_fetch_attachment_falls_back_to_payload_when_db_empty(mock_creds, mock_c
     repo.get_by_id.return_value = row
 
     mock_client = MagicMock()
-    mock_client.fetch_attachment_bytes.return_value = (
-        b"PDF",
-        "application/pdf",
-        "from-payload.pdf",
+    mock_client.iter_attachment_chunks.return_value = iter(
+        [(b"PDF", "application/pdf", "from-payload.pdf")]
     )
     mock_client_cls.return_value = mock_client
     mock_creds.return_value = MagicMock()

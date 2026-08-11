@@ -22,6 +22,7 @@ def test_list_attachment_parts_mixed_text_and_pdf():
     assert parts[0].part_id == "2"
     assert parts[0].filename == "invoice.pdf"
     assert parts[0].mime_type == "application/pdf"
+    assert parts[0].size_bytes == 4096
 
 
 def test_list_attachment_parts_image_attachment():

@@ -10,20 +10,22 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent_pochta.config import get_settings
 from agent_pochta.demo_filter import is_demo_message
 from agent_pochta.db.message_filters import (
     MSK,
+    is_dialog_message,
+    load_payload_dict,
     msk_day_end_exclusive_utc,
     msk_day_start_utc,
     parse_optional_date,
 )
 from agent_pochta.stats.classification_log import (
     collect_classification_summary,
-    collect_operator_approvals,
+    collect_operator_approvals_dashboard,
     operator_approval_fields_changed,
 )
 from agent_pochta.db.catalog_repository import CatalogRepository
@@ -58,7 +60,8 @@ from agent_pochta.services.rag_qdrant import search_contractors as qdrant_search
 from agent_pochta.routing.xml_parser import parse_document_xml
 from agent_pochta.attachments.download import (
     content_disposition_header,
-    fetch_attachment_for_download,
+    schedule_attachment_prefetch,
+    stream_attachment_for_download,
 )
 from agent_pochta.imap.body_fetch import fetch_and_cache_email_body, payload_body_text, row_has_cached_body
 from agent_pochta.metrics.prometheus_exporter import refresh_prometheus_metrics
@@ -332,9 +335,15 @@ def health() -> dict[str, str]:
 @app.get("/metrics")
 def metrics() -> Response:
     """Prometheus scrape endpoint (обновляет Gauges из PostgreSQL при каждом запросе)."""
+    import logging
+
     from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-    refresh_prometheus_metrics()
+    try:
+        refresh_prometheus_metrics()
+    except Exception:
+        # Не роняем scrape: иначе Grafana «No data» и target down.
+        logging.getLogger(__name__).exception("prometheus_metrics_refresh_failed")
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -458,21 +467,26 @@ def email_messages_stats(
             "only_info_to_test_ii": only_info_to_test_ii,
             "only_info_to": only_info_to,
         }
-        by_status = repo.count_by_status(**filter_kwargs)
-        operator_review_counts = repo.count_operator_review_states(
+        by_status, operator_review_counts = repo.message_stats_bundle(
             status=status,
             **filter_kwargs,
         )
-        operator_approvals = collect_operator_approvals(
+        accuracy_window = max(1, int(get_settings().operator_accuracy_window or 200))
+        operator_approvals, operator_approvals_recent = collect_operator_approvals_dashboard(
             session,
             start_utc=approvals_start,
             end_utc=approvals_end,
+            recent_limit=accuracy_window,
         )
         return {
             "total": sum(by_status.values()),
             "by_status": by_status,
             "operator_review_counts": operator_review_counts,
             "operator_approvals": operator_approvals,
+            "operator_approvals_last_actions": operator_approvals_recent,
+            "operator_accuracy_window": accuracy_window,
+            # Alias для старого UI: семантика = последние N действий, не 24ч.
+            "operator_approvals_last_24h": operator_approvals_recent,
         }
 
 
@@ -551,7 +565,7 @@ def list_email_messages(
     parsed_from, parsed_to = _message_list_filters(date_from=date_from, date_to=date_to)
     with get_session_factory()() as session:
         repo = EmailRepository(session)
-        rows = repo.list_messages(
+        rows, total = repo.list_messages_paginated(
             status=status,
             date_from=parsed_from,
             date_to=parsed_to,
@@ -562,16 +576,6 @@ def list_email_messages(
             only_info_to=only_info_to,
             limit=limit,
             offset=offset,
-        )
-        total = repo.count_messages(
-            status=status,
-            date_from=parsed_from,
-            date_to=parsed_to,
-            search=q,
-            recipient_q=recipient_q,
-            info_recipient_only=info_recipient_only,
-            only_info_to_test_ii=only_info_to_test_ii,
-            only_info_to=only_info_to,
         )
         event_hints = repo.batch_operator_review_event_hints([row.id for row in rows])
         return {
@@ -647,6 +651,7 @@ def fetch_email_body(row_id: uuid.UUID) -> dict[str, Any]:
 
         if row_has_cached_body(row):
             payload = json.loads(row.raw_payload_json or "{}")
+            schedule_attachment_prefetch(row_id)
             return {
                 "status": "ready",
                 "id": str(row_id),
@@ -654,7 +659,16 @@ def fetch_email_body(row_id: uuid.UUID) -> dict[str, Any]:
                 "cached": True,
             }
 
-    result = fetch_and_cache_email_body(row_id)
+    try:
+        result = fetch_and_cache_email_body(row_id)
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).exception("fetch_body_unhandled row_id=%s", row_id)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Не удалось загрузить текст письма: {exc}",
+        ) from exc
 
     if not result.ok:
         status_code = 404 if result.reason in {"not_found", "not_in_mailbox", "empty_body"} else 503
@@ -662,6 +676,9 @@ def fetch_email_body(row_id: uuid.UUID) -> dict[str, Any]:
             status_code=status_code,
             detail=_fetch_body_error_detail(result.reason),
         )
+
+    # Пока оператор читает тело — прогреваем вложения в кэш одним IMAP-соединением.
+    schedule_attachment_prefetch(row_id)
 
     return {
         "status": "ready",
@@ -673,7 +690,7 @@ def fetch_email_body(row_id: uuid.UUID) -> dict[str, Any]:
 
 @app.get("/api/v1/email-messages/{row_id}/attachments/{index}")
 def download_email_attachment(row_id: uuid.UUID, index: int) -> Response:
-    """Скачивает вложение по индексу: байты подтягиваются из IMAP (в БД не хранятся)."""
+    """Скачивает вложение: IMAP partial/chunk stream → HTTP StreamingResponse + memory cache."""
     if index < 0:
         raise HTTPException(status_code=404, detail=_attachment_download_error_detail("attachment_not_found"))
 
@@ -684,9 +701,9 @@ def download_email_attachment(row_id: uuid.UUID, index: int) -> Response:
         if is_demo_message(message_id=row.message_id, sender_email=row.sender_email):
             raise HTTPException(status_code=404, detail="Message not found")
 
-    result = fetch_attachment_for_download(row_id, index)
+    result = stream_attachment_for_download(row_id, index)
 
-    if not result.ok or result.content is None:
+    if not result.has_content:
         not_found_reasons = {
             "not_found",
             "attachment_not_found",
@@ -699,10 +716,13 @@ def download_email_attachment(row_id: uuid.UUID, index: int) -> Response:
             detail=_attachment_download_error_detail(result.reason),
         )
 
-    return Response(
-        content=result.content,
+    headers = {"Content-Disposition": content_disposition_header(result.filename)}
+    if result.cached:
+        headers["X-Attachment-Cache"] = "hit"
+    return StreamingResponse(
+        result.iter_bytes(),
         media_type=result.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": content_disposition_header(result.filename)},
+        headers=headers,
     )
 
 
@@ -777,6 +797,9 @@ def _schedule_erp_sync_if_needed(row) -> dict[str, Any]:
     """Планирует PATCH + догрузку вложений, если документ уже есть в 1С."""
     from agent_pochta.services.erp_attachments import existing_erp_document_ref_key
 
+    payload = load_payload_dict(row.raw_payload_json)
+    if is_dialog_message(status=str(row.status or ""), payload=payload):
+        return {}
     if not existing_erp_document_ref_key(row):
         return {}
     task = sync_erp_correction_task.delay(row.message_id)
@@ -921,23 +944,51 @@ def _apply_operator_routing_save(
                 "correct_dept_id": body.department_id,
                 "correct_dept_name": department_name,
             }
+        elif body.department_id and not fields_changed:
+            learning["bge_verified_task"] = {
+                "row_id": str(row.id),
+                "correct_dept_id": body.department_id,
+                "correct_dept_name": department_name,
+            }
     return learning
 
 
 def _enqueue_bge_correction_task(learning: dict[str, Any]) -> None:
-    task_info = learning.get("bge_correction_task")
-    if not task_info:
-        return
-    from agent_pochta.workers.tasks import index_department_correction_task
+    import logging
 
-    index_department_correction_task.delay(
-        task_info["row_id"],
-        wrong_dept_id=task_info.get("wrong_dept_id"),
-        wrong_dept_name=task_info.get("wrong_dept_name"),
-        correct_dept_id=task_info["correct_dept_id"],
-        correct_dept_name=task_info.get("correct_dept_name") or task_info["correct_dept_id"],
-        reextract=True,
-    )
+    logger = logging.getLogger(__name__)
+    task_info = learning.get("bge_correction_task")
+    if task_info:
+        try:
+            from agent_pochta.workers.tasks import index_department_correction_task
+
+            index_department_correction_task.delay(
+                task_info["row_id"],
+                wrong_dept_id=task_info.get("wrong_dept_id"),
+                wrong_dept_name=task_info.get("wrong_dept_name"),
+                correct_dept_id=task_info["correct_dept_id"],
+                correct_dept_name=task_info.get("correct_dept_name") or task_info["correct_dept_id"],
+                reextract=True,
+            )
+        except Exception:
+            logger.exception(
+                "bge_correction_enqueue_failed row_id=%s",
+                task_info.get("row_id"),
+            )
+    verified_info = learning.get("bge_verified_task")
+    if verified_info:
+        try:
+            from agent_pochta.workers.tasks import index_operator_verified_task
+
+            index_operator_verified_task.delay(
+                verified_info["row_id"],
+                reextract=True,
+            )
+        except Exception:
+            logger.exception(
+                "bge_verified_enqueue_failed row_id=%s",
+                verified_info.get("row_id"),
+            )
 
 
 @app.post("/api/v1/email-messages/{row_id}/resolve-human")
@@ -1147,6 +1198,12 @@ def retry_erp(
         row = repo.get_by_id(row_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Message not found")
+        payload = load_payload_dict(row.raw_payload_json)
+        if is_dialog_message(status=str(row.status or ""), payload=payload):
+            raise HTTPException(
+                status_code=400,
+                detail="Dialog messages are not registered in 1C ERP",
+            )
         message_id = row.message_id
         # Ручной повтор с UI — сброс лимита автоматических попыток.
         row.erp_retry_count = 0

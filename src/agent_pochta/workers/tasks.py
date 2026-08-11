@@ -11,7 +11,7 @@ from agent_pochta.config import get_settings
 from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.db.repository import EmailRepository, persist_processing_start
 from agent_pochta.db.session import get_session_factory
-from agent_pochta.demo_filter import is_demo_email
+from agent_pochta.demo_filter import is_demo_email, is_demo_message
 from agent_pochta.email_payload import email_from_task_payload, email_to_task_payload
 from agent_pochta.routing.recipients import (
     normalize_routing_email,
@@ -124,6 +124,7 @@ def recover_stale_processing(*, limit: int | None = None, force: bool = False) -
     skipped_fresh = 0
     skipped_no_payload = 0
     deleted_orphans = 0
+    deleted_demo = 0
     errors: list[str] = []
     to_enqueue: list[tuple[str, dict]] = []
 
@@ -138,6 +139,7 @@ def recover_stale_processing(*, limit: int | None = None, force: bool = False) -
             return {
                 "recovered": 0,
                 "deleted_orphans": 0,
+                "deleted_demo": 0,
                 "skipped_fresh": 0,
                 "skipped_no_payload": 0,
                 "skipped_backlog": processing_count,
@@ -155,6 +157,10 @@ def recover_stale_processing(*, limit: int | None = None, force: bool = False) -
         for row in rows:
             if recovered >= limit:
                 break
+            if is_demo_message(message_id=row.message_id, sender_email=row.sender_email or ""):
+                session.delete(row)
+                deleted_demo += 1
+                continue
             if not force:
                 started = _processing_started_at(row)
                 if started is not None:
@@ -166,6 +172,10 @@ def recover_stale_processing(*, limit: int | None = None, force: bool = False) -
             email = repo.load_email_from_row(row)
             if email is None:
                 skipped_no_payload += 1
+                continue
+            if is_demo_email(email):
+                session.delete(row)
+                deleted_demo += 1
                 continue
 
             email = normalize_routing_email(email)
@@ -192,11 +202,12 @@ def recover_stale_processing(*, limit: int | None = None, force: bool = False) -
         except Exception as exc:
             errors.append(f"{message_id}: {exc}")
 
-    if recovered or deleted_orphans:
+    if recovered or deleted_orphans or deleted_demo:
         logger.info(
             "stale_processing_recovered",
             recovered=recovered,
             deleted_orphans=deleted_orphans,
+            deleted_demo=deleted_demo,
             skipped_fresh=skipped_fresh,
             skipped_no_payload=skipped_no_payload,
             force=force,
@@ -205,6 +216,7 @@ def recover_stale_processing(*, limit: int | None = None, force: bool = False) -
     return {
         "recovered": recovered,
         "deleted_orphans": deleted_orphans,
+        "deleted_demo": deleted_demo,
         "skipped_fresh": skipped_fresh,
         "skipped_no_payload": skipped_no_payload,
         "errors": errors,
@@ -391,6 +403,17 @@ def process_email_task(self, email_payload: dict) -> dict:
     return {"multi_recipient": True, "results": results}
 
 
+def _celery_queue_depth(queue_name: str = "celery") -> int:
+    """Passive RabbitMQ declare — сколько задач ждёт в очереди."""
+    try:
+        with celery_app.connection_or_acquire() as conn:
+            channel = conn.default_channel
+            declared = channel.queue_declare(queue=queue_name, passive=True)
+            return int(getattr(declared, "message_count", 0) or 0)
+    except Exception:
+        return 0
+
+
 @celery_app.task(
     name="agent_pochta.poll_imap",
     queue="imap",
@@ -402,7 +425,19 @@ def poll_imap_task() -> dict:
     from agent_pochta.imap.poller import poll_mailboxes
 
     imap_result = poll_mailboxes()
-    recovery = recover_stale_processing()
+    queue_depth = _celery_queue_depth()
+    if queue_depth > 150:
+        recovery = {
+            "recovered": 0,
+            "deleted_orphans": 0,
+            "deleted_demo": 0,
+            "skipped_fresh": 0,
+            "skipped_no_payload": 0,
+            "skipped_queue_backlog": queue_depth,
+            "errors": [],
+        }
+    else:
+        recovery = recover_stale_processing()
     return {**imap_result, "stale_recovery": recovery}
 
 
@@ -447,7 +482,7 @@ def retry_erp_task(self, message_id: str, *, force_reattach_eml: bool = False) -
         if email is None or routing is None:
             return {"ok": False, "reason": "incomplete_record"}
 
-        from agent_pochta.db.message_filters import email_eligible_for_erp, load_payload_dict
+        from agent_pochta.db.message_filters import email_eligible_for_erp, is_dialog_message, load_payload_dict
 
         payload = load_payload_dict(row.raw_payload_json)
         if not email_eligible_for_erp(
@@ -456,8 +491,14 @@ def retry_erp_task(self, message_id: str, *, force_reattach_eml: bool = False) -
             cc=email.cc,
             routing_recipient=email.routing_recipient,
             payload=payload,
+            status=row.status or "",
         ):
-            return {"ok": True, "skipped": True, "reason": "not_info_mailbox"}
+            reason = (
+                "dialog"
+                if is_dialog_message(status=str(row.status or ""), payload=payload)
+                else "not_info_mailbox"
+            )
+            return {"ok": True, "skipped": True, "reason": reason}
 
         if not summary_ru:
             from agent_pochta.workers.hitl import continue_after_human_approval
@@ -623,7 +664,7 @@ def sync_erp_correction_task(message_id: str) -> dict:
         if email is None or routing is None:
             return {"ok": False, "reason": "incomplete_record"}
 
-        from agent_pochta.db.message_filters import email_eligible_for_erp, load_payload_dict
+        from agent_pochta.db.message_filters import email_eligible_for_erp, is_dialog_message, load_payload_dict
 
         payload = load_payload_dict(row.raw_payload_json)
         if not email_eligible_for_erp(
@@ -632,8 +673,14 @@ def sync_erp_correction_task(message_id: str) -> dict:
             cc=email.cc,
             routing_recipient=email.routing_recipient,
             payload=payload,
+            status=row.status or "",
         ):
-            return {"ok": True, "skipped": True, "reason": "not_info_mailbox"}
+            reason = (
+                "dialog"
+                if is_dialog_message(status=str(row.status or ""), payload=payload)
+                else "not_info_mailbox"
+            )
+            return {"ok": True, "skipped": True, "reason": reason}
 
         session.commit()
 
@@ -648,10 +695,18 @@ def sync_erp_correction_task(message_id: str) -> dict:
 
 
 def _hitl_meta_from_row(row: EmailMessageRow) -> dict:
+    from agent_pochta.db.message_filters import load_payload_dict
+
     meta: dict = {}
     xml = extract_xml_document_from_row(row)
     if xml:
         meta["xml_document"] = xml
+    payload = load_payload_dict(row.raw_payload_json)
+    if payload:
+        if dialog := payload.get("dialog"):
+            meta["dialog"] = dialog
+        if routing_decision := payload.get("routing_decision"):
+            meta["routing_decision"] = routing_decision
     return meta
 
 
@@ -939,6 +994,28 @@ def index_department_correction_task(
         return result
     except Exception as exc:
         logger.exception("index_department_correction_failed row_id=%s", row_id)
+        if self.request.retries >= self.max_retries:
+            return {"ok": False, "row_id": row_id, "error": str(exc)}
+        raise self.retry(exc=exc) from exc
+
+
+@celery_app.task(name="agent_pochta.index_operator_verified", bind=True, max_retries=3, default_retry_delay=120)
+def index_operator_verified_task(
+    self,
+    row_id: str,
+    *,
+    reextract: bool = True,
+) -> dict:
+    """Realtime upsert operator-verified email into department_corrections_bge."""
+    from agent_pochta.services.bge_correction_learning import upsert_verified_by_email_id
+
+    try:
+        result = upsert_verified_by_email_id(row_id, reextract=reextract)
+        if not result.get("ok") and not result.get("skipped"):
+            raise RuntimeError(result.get("reason") or result.get("error") or "upsert_failed")
+        return result
+    except Exception as exc:
+        logger.exception("index_operator_verified_failed row_id=%s", row_id)
         if self.request.retries >= self.max_retries:
             return {"ok": False, "row_id": row_id, "error": str(exc)}
         raise self.retry(exc=exc) from exc

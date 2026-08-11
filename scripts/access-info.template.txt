@@ -23,6 +23,21 @@ Email / логин:  {{EMAIL}}
 Каталог агентов (после входа):  {{LAN_BASE}}/agents
 Входящая корреспонденция:       {{LAN_BASE}}/agents/incoming-mail
 
+--- URL по имени ПК ({{HOSTNAME}}) — только Windows в домене turbo-don.ru ---
+Входящая корреспонденция:       http://{{HOSTNAME}}:{{FRONTEND_PORT}}/agents/incoming-mail
+
+--- URL для телефона / планшета (Wi‑Fi в офисе) ---
+Раздавайте ссылку по IP (короткое имя {{HOSTNAME}} на телефоне даст DNS_PROBE_FINISHED_NXDOMAIN):
+  {{LAN_BASE}}/agents/incoming-mail
+Если телефон в корп. Wi‑Fi с DNS turbo-don.ru, можно также:
+  http://{{HOSTNAME}}.turbo-don.ru:{{FRONTEND_PORT}}/agents/incoming-mail
+
+Если по имени ПК не открывается, а по IP работает — в AD DNS для {{HOSTNAME}}
+зарегистрированы лишние адреса Hyper-V/WSL (172.30.* / 172.28.*). Варианты:
+  1) IT: удалить лишние A-записи в зоне turbo-don.ru
+  2) На этом ПК: scripts\fix_lan_hostname_dns.ps1 (отключить регистрацию vEthernet)
+  3) На клиентском ПК: scripts\fix_lan_hosts_entry.ps1 (запись в hosts)
+
 {{PUBLIC_SECTION}}
 
 --- Порядок действий ---

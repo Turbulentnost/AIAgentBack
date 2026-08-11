@@ -22,6 +22,8 @@ from agent_pochta.db.message_filters import (
     is_info_to_test_ii_routing,
     is_only_info_to,
     email_eligible_for_erp,
+    is_dialog_message,
+    is_turbo_don_routing_row,
     matches_info_recipient_only,
     matches_recipient_q,
     only_info_to_sql_filter,
@@ -113,17 +115,18 @@ def _mock_repo(
     repo = MagicMock()
 
     repo.list_messages.return_value = rows
-
+    repo.list_messages_paginated.return_value = (rows, total)
     repo.count_messages.return_value = total
-
-    repo.count_by_status.return_value = by_status or {row.status: 1 for row in rows}
-
-    repo.count_operator_review_states.return_value = operator_review_counts or {
+    status_counts = by_status or {row.status: 1 for row in rows}
+    review_counts = operator_review_counts or {
         "all": total,
         "verified": 0,
         "corrected": 0,
         "pending": total,
     }
+    repo.count_by_status.return_value = status_counts
+    repo.count_operator_review_states.return_value = review_counts
+    repo.message_stats_bundle.return_value = (status_counts, review_counts)
 
     session = MagicMock()
 
@@ -182,10 +185,8 @@ def test_list_email_messages_passes_processing_status_filter():
     payload = response.json()
     assert payload["total"] == 1
     assert payload["items"][0]["status"] == "processing"
-    mock_repo.list_messages.assert_called_once()
-    assert mock_repo.list_messages.call_args.kwargs["status"] == "processing"
-    mock_repo.count_messages.assert_called_once()
-    assert mock_repo.count_messages.call_args.kwargs["status"] == "processing"
+    mock_repo.list_messages_paginated.assert_called_once()
+    assert mock_repo.list_messages_paginated.call_args.kwargs["status"] == "processing"
 
 
 
@@ -202,8 +203,11 @@ def test_email_messages_stats_endpoint():
         operator_review_counts={"all": 3, "verified": 1, "corrected": 1, "pending": 1},
     ):
         with patch(
-            "agent_pochta.api.app.collect_operator_approvals",
-            return_value={"saved": 4, "changed": 1, "rate": 0.8},
+            "agent_pochta.api.app.collect_operator_approvals_dashboard",
+            return_value=(
+                {"saved": 4, "changed": 1, "rate": 0.8},
+                {"saved": 2, "changed": 3, "rate": 0.4},
+            ),
         ):
             response = client.get("/api/v1/email-messages/stats")
 
@@ -225,19 +229,25 @@ def test_email_messages_stats_endpoint():
     }
 
     assert payload["operator_approvals"] == {"saved": 4, "changed": 1, "rate": 0.8}
+    assert payload["operator_approvals_last_actions"] == {"saved": 2, "changed": 3, "rate": 0.4}
+    assert payload["operator_approvals_last_24h"] == {"saved": 2, "changed": 3, "rate": 0.4}
+    assert payload["operator_accuracy_window"] == 200
 
 
 def test_email_messages_stats_passes_status_filter():
     client = TestClient(app)
     with _mock_repo(rows=[], total=2, by_status={"done": 2}) as mock_repo:
         with patch(
-            "agent_pochta.api.app.collect_operator_approvals",
-            return_value={"saved": 0, "changed": 0, "rate": None},
+            "agent_pochta.api.app.collect_operator_approvals_dashboard",
+            return_value=(
+                {"saved": 0, "changed": 0, "rate": None},
+                {"saved": 0, "changed": 0, "rate": None},
+            ),
         ):
             response = client.get("/api/v1/email-messages/stats", params={"status": "done"})
     assert response.status_code == 200
-    mock_repo.count_operator_review_states.assert_called_once()
-    assert mock_repo.count_operator_review_states.call_args.kwargs["status"] == "done"
+    mock_repo.message_stats_bundle.assert_called_once()
+    assert mock_repo.message_stats_bundle.call_args.kwargs["status"] == "done"
 
 
 
@@ -310,6 +320,39 @@ def test_is_info_to_test_ii_rejects_tender_routing():
         "routing_recipient": TENDER_MAILBOX,
     }
     assert is_info_to_test_ii_routing(mailbox=TEST_II_MAILBOX, payload=payload) is False
+
+
+def test_is_turbo_don_routing_row_accepts_turbo_recipient():
+    assert is_turbo_don_routing_row(
+        mailbox=INFO_MAILBOX,
+        payload={"routing_recipient": INFO_MAILBOX},
+    )
+    assert is_turbo_don_routing_row(mailbox=INFO_MAILBOX, payload={})
+
+
+def test_is_turbo_don_routing_row_rejects_external_recipient():
+    assert not is_turbo_don_routing_row(
+        mailbox=INFO_MAILBOX,
+        payload={"routing_recipient": "partner@example.ru"},
+    )
+
+
+def test_split_routing_recipients_skips_non_turbo_addresses():
+    from datetime import datetime, timezone
+
+    from agent_pochta.routing.recipients import split_routing_recipients
+    from agent_pochta.schemas import EmailMessage
+
+    email = EmailMessage(
+        message_id="<dl@test>",
+        mailbox=INFO_MAILBOX,
+        sender_email="sender@client.ru",
+        subject="Рассылка",
+        body_text="Текст",
+        received_at=datetime.now(timezone.utc),
+        to=["partner@example.ru", INFO_MAILBOX, "user@gmail.com"],
+    )
+    assert split_routing_recipients(email) == [INFO_MAILBOX]
 
 
 def test_is_info_to_test_ii_rejects_empty_to_wrong_mailbox():
@@ -387,6 +430,32 @@ def test_email_eligible_for_erp_accepts_info_to_test_ii_chain():
     ) is True
 
 
+def test_is_dialog_message_by_status():
+    assert is_dialog_message(status="dialog", payload=None) is True
+
+
+def test_is_dialog_message_by_payload_dialog_block():
+    payload = {"dialog": {"mode": "dormant", "document_kind": "dialog"}}
+    assert is_dialog_message(status="done", payload=payload) is True
+
+
+def test_is_dialog_message_by_routing_decision_kind():
+    payload = {"routing_decision": {"document_kind": "dialog"}}
+    assert is_dialog_message(status="done", payload=payload) is True
+
+
+def test_email_eligible_for_erp_rejects_dialog():
+    payload = {"dialog": {"mode": "activated", "document_kind": "dialog"}}
+    assert email_eligible_for_erp(
+        mailbox=INFO_MAILBOX,
+        to=[INFO_MAILBOX],
+        cc=[],
+        routing_recipient=INFO_MAILBOX,
+        payload=payload,
+        status="done",
+    ) is False
+
+
 def test_recipient_display_value_prefers_routing_recipient():
     payload = {
         "routing_recipient": "tender@turbo-don.ru",
@@ -447,10 +516,8 @@ def test_list_email_messages_passes_recipient_q_filter():
             params={"recipient_q": "info@turbo-don.ru"},
         )
         assert response.status_code == 200
-        mock_repo.list_messages.assert_called_once()
-        assert mock_repo.list_messages.call_args.kwargs["recipient_q"] == "info@turbo-don.ru"
-        mock_repo.count_messages.assert_called_once()
-        assert mock_repo.count_messages.call_args.kwargs["recipient_q"] == "info@turbo-don.ru"
+        mock_repo.list_messages_paginated.assert_called_once()
+        assert mock_repo.list_messages_paginated.call_args.kwargs["recipient_q"] == "info@turbo-don.ru"
 
 
 def test_list_email_messages_passes_only_info_to_filter():
@@ -461,10 +528,8 @@ def test_list_email_messages_passes_only_info_to_filter():
             params={"only_info_to": "true"},
         )
         assert response.status_code == 200
-        mock_repo.list_messages.assert_called_once()
-        assert mock_repo.list_messages.call_args.kwargs["only_info_to"] is True
-        mock_repo.count_messages.assert_called_once()
-        assert mock_repo.count_messages.call_args.kwargs["only_info_to"] is True
+        mock_repo.list_messages_paginated.assert_called_once()
+        assert mock_repo.list_messages_paginated.call_args.kwargs["only_info_to"] is True
 
 
 def test_list_email_messages_passes_only_info_to_test_ii_filter():
@@ -475,10 +540,8 @@ def test_list_email_messages_passes_only_info_to_test_ii_filter():
             params={"only_info_to_test_ii": "true"},
         )
         assert response.status_code == 200
-        mock_repo.list_messages.assert_called_once()
-        assert mock_repo.list_messages.call_args.kwargs["only_info_to_test_ii"] is True
-        mock_repo.count_messages.assert_called_once()
-        assert mock_repo.count_messages.call_args.kwargs["only_info_to_test_ii"] is True
+        mock_repo.list_messages_paginated.assert_called_once()
+        assert mock_repo.list_messages_paginated.call_args.kwargs["only_info_to_test_ii"] is True
 
 
 def test_list_email_messages_passes_info_recipient_only_filter():
@@ -489,10 +552,8 @@ def test_list_email_messages_passes_info_recipient_only_filter():
             params={"info_recipient_only": "true"},
         )
         assert response.status_code == 200
-        mock_repo.list_messages.assert_called_once()
-        assert mock_repo.list_messages.call_args.kwargs["info_recipient_only"] is True
-        mock_repo.count_messages.assert_called_once()
-        assert mock_repo.count_messages.call_args.kwargs["info_recipient_only"] is True
+        mock_repo.list_messages_paginated.assert_called_once()
+        assert mock_repo.list_messages_paginated.call_args.kwargs["info_recipient_only"] is True
 
 
 def _payload_json(*, to: list[str], cc: list[str] | None = None, routing: str | None = None) -> str:

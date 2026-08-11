@@ -76,7 +76,7 @@ def test_classify_activated_dialog_on_action_words():
 
     assert result.is_dialog is True
     assert result.mode == DialogMode.ACTIVATED
-    assert result.register_erp is True
+    assert result.register_erp is False
     assert result.activation_markers
     assert result.process_type in {"рассмотрение", "исполнение"}
 
@@ -263,3 +263,24 @@ def test_classify_dialog_allows_hard_spam_check_skip_for_restore():
     )
     assert result.is_dialog is True
     assert result.mode == DialogMode.DORMANT
+
+
+def test_graph_activated_dialog_skips_erp():
+    from agent_pochta.graph import build_graph
+
+    body = (
+        "Re: документы\n\n"
+        "Просим направить акт сверки до пятницы.\n"
+        "08.07.2026, info@turbo-don.ru пишет:\n"
+        "> Добрый день"
+    )
+    app = build_graph()
+    res = app.invoke(
+        {
+            "email": _email(subject="Re: документы", body_text=body),
+        }
+    )
+    assert (res.get("meta") or {}).get("dialog", {}).get("mode") == "activated"
+    assert res["routing"].register_erp is False
+    assert "create_erp_task" not in res["trace"]
+    assert res.get("erp") is None or res["erp"].erp_document_number == "SKIP-ERP"

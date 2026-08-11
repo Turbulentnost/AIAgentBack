@@ -25,11 +25,14 @@ def test_demo_domains_detected():
     assert is_demo_message(message_id="<x@y>", sender_email="zakaz@romashka.ru")
     assert is_demo_message(message_id="<x@y>", sender_email="promo@spam.example")
     assert is_demo_message(message_id="<x@y>", sender_email="no-reply@service.example")
+    assert is_demo_message(message_id="<x@y>", sender_email="partner@example.ru")
+    assert is_demo_message(message_id="<x@y>", sender_email="client@example.com")
 
 
 def test_demo_message_ids_detected():
     assert is_demo_message(message_id="<demo-1@romashka.ru>", sender_email="a@b.ru")
     assert is_demo_message(message_id="<enqueue-demo-1@local>", sender_email="a@b.ru")
+    assert is_demo_message(message_id="<hard-spam-dialog@test>", sender_email="partner@example.ru")
     assert is_demo_message(message_id="<tender-happy@example>", sender_email="zakaz@romashka.ru")
     assert is_demo_message(
         message_id="<g@example>#jurist@turbo-don.ru",

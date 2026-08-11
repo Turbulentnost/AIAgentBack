@@ -83,6 +83,35 @@ NOT_SPAM_MARK_TOTAL = Gauge(
     "agent_pochta_not_spam_mark_total",
     "Переход spam → not_spam (not_spam_mark + restore_from_spam) за всё время",
 )
+OPERATOR_ACCURACY_WINDOW = Gauge(
+    "agent_pochta_operator_accuracy_window",
+    "Размер окна точности оператора (последние N действий approve/change)",
+)
+OPERATOR_SAVED_LAST_ACTIONS = Gauge(
+    "agent_pochta_operator_saved_last_actions",
+    "Подтверждений без правок (operator_approve) среди последних N действий оператора",
+)
+OPERATOR_CHANGED_LAST_ACTIONS = Gauge(
+    "agent_pochta_operator_changed_last_actions",
+    "Подтверждений с правками (operator_change) среди последних N действий оператора",
+)
+OPERATOR_KEEP_RATE_LAST_ACTIONS = Gauge(
+    "agent_pochta_operator_keep_rate_last_actions",
+    "Доля сохранений без правок среди последних N действий: saved / (saved + changed), 0..1",
+)
+# Совместимость со старыми дашбордами Grafana (семантика = last_actions).
+OPERATOR_SAVED_LAST_24H = Gauge(
+    "agent_pochta_operator_saved_last_24h",
+    "DEPRECATED alias: то же, что agent_pochta_operator_saved_last_actions",
+)
+OPERATOR_CHANGED_LAST_24H = Gauge(
+    "agent_pochta_operator_changed_last_24h",
+    "DEPRECATED alias: то же, что agent_pochta_operator_changed_last_actions",
+)
+OPERATOR_KEEP_RATE_LAST_24H = Gauge(
+    "agent_pochta_operator_keep_rate_last_24h",
+    "DEPRECATED alias: то же, что agent_pochta_operator_keep_rate_last_actions",
+)
 OPERATOR_SAVED_TOTAL = Gauge(
     "agent_pochta_operator_saved_total",
     "Подтверждений оператора без правок (operator_approve) за всё время",
@@ -93,7 +122,7 @@ OPERATOR_CHANGED_TOTAL = Gauge(
 )
 OPERATOR_KEEP_RATE = Gauge(
     "agent_pochta_operator_keep_rate",
-    "Доля сохранений без правок: saved / (saved + changed), 0..1",
+    "Доля сохранений без правок за всё время: saved / (saved + changed), 0..1",
 )
 BGE_ROUTING_TOTAL_LAST_24H = Gauge(
     "agent_pochta_bge_routing_total_last_24h",
@@ -143,6 +172,13 @@ _GAUGE_MAP: dict[str, Gauge] = {
     "agent_pochta_spam_mark_total": SPAM_MARK_TOTAL,
     "agent_pochta_not_spam_mark_last_24h": NOT_SPAM_MARK_LAST_24H,
     "agent_pochta_not_spam_mark_total": NOT_SPAM_MARK_TOTAL,
+    "agent_pochta_operator_accuracy_window": OPERATOR_ACCURACY_WINDOW,
+    "agent_pochta_operator_saved_last_actions": OPERATOR_SAVED_LAST_ACTIONS,
+    "agent_pochta_operator_changed_last_actions": OPERATOR_CHANGED_LAST_ACTIONS,
+    "agent_pochta_operator_keep_rate_last_actions": OPERATOR_KEEP_RATE_LAST_ACTIONS,
+    "agent_pochta_operator_saved_last_24h": OPERATOR_SAVED_LAST_24H,
+    "agent_pochta_operator_changed_last_24h": OPERATOR_CHANGED_LAST_24H,
+    "agent_pochta_operator_keep_rate_last_24h": OPERATOR_KEEP_RATE_LAST_24H,
     "agent_pochta_operator_saved_total": OPERATOR_SAVED_TOTAL,
     "agent_pochta_operator_changed_total": OPERATOR_CHANGED_TOTAL,
     "agent_pochta_operator_keep_rate": OPERATOR_KEEP_RATE,
@@ -229,6 +265,35 @@ def _count_operator_events(
     return int(session.scalar(stmt) or 0)
 
 
+def _count_operator_events_recent(session: Session, *, limit: int) -> tuple[int, int]:
+    """(saved, changed) среди последних N действий оператора."""
+    window = max(1, int(limit))
+    recent = (
+        select(ClassificationEventRow.event_type.label("event_type"))
+        .where(
+            ClassificationEventRow.category == "department",
+            ClassificationEventRow.event_type.in_(
+                (OPERATOR_APPROVE_EVENT, OPERATOR_CHANGE_EVENT)
+            ),
+            ClassificationEventRow.actor == "operator",
+        )
+        .order_by(ClassificationEventRow.created_at.desc())
+        .limit(window)
+        .subquery()
+    )
+    rows = session.execute(
+        select(recent.c.event_type, func.count()).group_by(recent.c.event_type)
+    ).all()
+    saved = 0
+    changed = 0
+    for event_type, count in rows:
+        if event_type == OPERATOR_APPROVE_EVENT:
+            saved = int(count)
+        elif event_type == OPERATOR_CHANGE_EVENT:
+            changed = int(count)
+    return saved, changed
+
+
 def _change_percent(changes: int, messages: int) -> float:
     if messages <= 0:
         return 0.0
@@ -256,6 +321,21 @@ def _bge_enabled_since_utc() -> datetime | None:
         return None
 
 
+def _bge_routing_source_predicate(column_sql: str = "raw_payload_json") -> str:
+    """Фильтр routing_source=bge_correction без ::jsonb.
+
+    В raw_payload_json встречаются \\u0000 — Postgres падает на cast в jsonb
+    (UntranslatableCharacter / null character not permitted), из-за чего
+    /metrics отдавал 500 и Grafana показывала No data.
+    """
+    return (
+        f"("
+        f"{column_sql} LIKE '%\"routing_source\": \"bge_correction\"%' "
+        f"OR {column_sql} LIKE '%\"routing_source\":\"bge_correction\"%'"
+        f")"
+    )
+
+
 def _count_bge_routes(
     session: Session,
     *,
@@ -266,7 +346,7 @@ def _count_bge_routes(
     filters = [
         "processed_at >= :start_utc",
         "processed_at <= :end_utc",
-        "raw_payload_json::jsonb->>'routing_source' = 'bge_correction'",
+        _bge_routing_source_predicate("raw_payload_json"),
     ]
     params: dict[str, Any] = {"start_utc": start_utc, "end_utc": end_utc}
     if since is not None:
@@ -283,7 +363,7 @@ def _count_bge_routing_errors(
     end_utc: datetime,
 ) -> int:
     since = _bge_enabled_since_utc()
-    sql = """
+    sql = f"""
         SELECT COUNT(*)
         FROM classification_events ce
         JOIN email_messages em ON em.id = ce.email_id
@@ -291,7 +371,7 @@ def _count_bge_routing_errors(
           AND ce.event_type = 'operator_change'
           AND ce.created_at >= :start_utc
           AND ce.created_at <= :end_utc
-          AND em.raw_payload_json::jsonb->>'routing_source' = 'bge_correction'
+          AND {_bge_routing_source_predicate("em.raw_payload_json")}
           AND ce.old_department_id IS NOT NULL
           AND ce.new_department_id IS NOT NULL
           AND ce.old_department_id <> ce.new_department_id
@@ -447,6 +527,11 @@ def collect_metrics_snapshot(session: Session | None = None) -> dict[str, float]
             end_utc=end_24h,
         )
         not_spam_total = _count_change_events(db_session, event_types=NOT_SPAM_EVENTS)
+        accuracy_window = max(1, int(get_settings().operator_accuracy_window or 200))
+        operator_saved_recent, operator_changed_recent = _count_operator_events_recent(
+            db_session,
+            limit=accuracy_window,
+        )
         operator_saved = _count_operator_events(db_session, event_type=OPERATOR_APPROVE_EVENT)
         operator_changed = _count_operator_events(db_session, event_type=OPERATOR_CHANGE_EVENT)
         bge_total_24h = _count_bge_routes(db_session, start_utc=start_24h, end_utc=end_24h)
@@ -456,6 +541,7 @@ def collect_metrics_snapshot(session: Session | None = None) -> dict[str, float]
         bge_error_rate = _bge_error_rate(bge_total_24h, bge_errors_24h)
         bge_keep_rate = round(1.0 - bge_error_rate, 4) if bge_total_24h > 0 else 0.0
         holdout_accuracy = _read_bge_holdout_accuracy()
+        keep_recent = _keep_rate(operator_saved_recent, operator_changed_recent)
 
         return {
             "agent_pochta_changes_last_24h": float(changes_24h),
@@ -469,6 +555,14 @@ def collect_metrics_snapshot(session: Session | None = None) -> dict[str, float]
             "agent_pochta_spam_mark_total": float(spam_mark_total),
             "agent_pochta_not_spam_mark_last_24h": float(not_spam_24h),
             "agent_pochta_not_spam_mark_total": float(not_spam_total),
+            "agent_pochta_operator_accuracy_window": float(accuracy_window),
+            "agent_pochta_operator_saved_last_actions": float(operator_saved_recent),
+            "agent_pochta_operator_changed_last_actions": float(operator_changed_recent),
+            "agent_pochta_operator_keep_rate_last_actions": keep_recent,
+            # Aliases for legacy Grafana panels.
+            "agent_pochta_operator_saved_last_24h": float(operator_saved_recent),
+            "agent_pochta_operator_changed_last_24h": float(operator_changed_recent),
+            "agent_pochta_operator_keep_rate_last_24h": keep_recent,
             "agent_pochta_operator_saved_total": float(operator_saved),
             "agent_pochta_operator_changed_total": float(operator_changed),
             "agent_pochta_operator_keep_rate": _keep_rate(operator_saved, operator_changed),

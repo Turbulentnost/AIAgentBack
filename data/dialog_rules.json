@@ -7,7 +7,7 @@
   "dormant_theme_action": "Диалог",
   "dormant_process_type": "ознакомление",
   "register_erp_dormant": false,
-  "register_erp_activated": true,
+  "register_erp_activated": false,
   "queue_tier_dormant": 2,
   "queue_tier_activated": 1,
   "exclude_if_claim": true,

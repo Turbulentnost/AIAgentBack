@@ -132,7 +132,11 @@ def _load_latest_info_from_db() -> tuple[EmailMessage, RoutingResult, str, str |
                         payload = raw
                 except json.JSONDecodeError:
                     payload = None
-            if not email_eligible_for_erp(mailbox=row.mailbox or "", payload=payload):
+            if not email_eligible_for_erp(
+                mailbox=row.mailbox or "",
+                payload=payload,
+                status=row.status or "",
+            ):
                 continue
             xml_document = _extract_xml_from_row(row)
             if not xml_document:

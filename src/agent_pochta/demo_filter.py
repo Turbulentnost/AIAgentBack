@@ -9,20 +9,27 @@ from sqlalchemy import or_
 
 from agent_pochta.schemas import EmailMessage
 
-# Домены из демо-скриптов и unit-тестов (romashka.ru, spam.example, …).
+# Домены из демо-скриптов, enqueue_demo (@local) и unit-тестов (example.ru, …).
 DEMO_SENDER_DOMAINS: frozenset[str] = frozenset(
     {
         "romashka.ru",
         "spam.example",
         "service.example",
+        "example.ru",
+        "example.com",
+        "local",
     }
 )
 
-# Маркеры Message-ID из run_demo / enqueue_demo / tests/test_smoke.py.
+# Маркеры Message-ID из run_demo / enqueue_demo / pytest.
 DEMO_MESSAGE_ID_MARKERS: tuple[str, ...] = (
     "demo-",
     "enqueue-demo",
     "@example>",
+    "@example.ru>",
+    "@example.com>",
+    "@test>",
+    "@local>",
     "tender-happy@",
     "<t@example",
     "<s@example",

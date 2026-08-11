@@ -86,8 +86,9 @@ def test_fetch_and_cache_email_body_stores_text(mock_fetch):
     mock_fetch.assert_called_once()
 
 
+@patch("agent_pochta.api.app.schedule_attachment_prefetch")
 @patch("agent_pochta.api.app.fetch_and_cache_email_body")
-def test_fetch_body_endpoint_returns_cached_without_task(mock_fetch):
+def test_fetch_body_endpoint_returns_cached_without_task(mock_fetch, mock_prefetch):
     row_id = uuid.uuid4()
     row = EmailMessageRow(
         id=row_id,
@@ -112,10 +113,12 @@ def test_fetch_body_endpoint_returns_cached_without_task(mock_fetch):
     assert data["body_text"] == "Уже в кеше"
     assert data["cached"] is True
     mock_fetch.assert_not_called()
+    mock_prefetch.assert_called_once_with(row_id)
 
 
+@patch("agent_pochta.api.app.schedule_attachment_prefetch")
 @patch("agent_pochta.api.app.fetch_and_cache_email_body")
-def test_fetch_body_endpoint_fetches_from_imap(mock_fetch):
+def test_fetch_body_endpoint_fetches_from_imap(mock_fetch, mock_prefetch):
     row_id = uuid.uuid4()
     row = EmailMessageRow(
         id=row_id,
@@ -148,6 +151,7 @@ def test_fetch_body_endpoint_fetches_from_imap(mock_fetch):
     assert data["status"] == "ready"
     assert data["body_text"] == "Загружено из IMAP"
     mock_fetch.assert_called_once_with(row_id)
+    mock_prefetch.assert_called_once_with(row_id)
 
 
 @patch("agent_pochta.api.app.fetch_and_cache_email_body")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +19,14 @@ def _client(*, max_uids: int = 50) -> ImapMailboxClient:
     )
 
 
+def _patch_session(client: ImapMailboxClient, mock_imap: MagicMock):
+    @contextmanager
+    def _session(**_kwargs):
+        yield mock_imap
+
+    return patch.object(client, "_open_session", side_effect=lambda **kw: _session())
+
+
 def test_fetch_since_caps_scan_and_fetch_when_no_known_ids():
     client = _client(max_uids=3)
     mock_imap = MagicMock()
@@ -30,7 +39,7 @@ def test_fetch_since_caps_scan_and_fetch_when_no_known_ids():
         },
     ]
 
-    with patch.object(client, "_connect", return_value=mock_imap):
+    with _patch_session(client, mock_imap):
         with patch("agent_pochta.imap.client.parse_raw_email") as parse_raw:
             parse_raw.side_effect = lambda raw, mailbox: MagicMock(message_id=f"<{raw.decode()}>")
             emails = client.fetch_since(date(2026, 7, 20), exclude_message_id_bases=set())
@@ -58,7 +67,7 @@ def test_fetch_since_stops_after_max_unknown_targets():
         },
     ]
 
-    with patch.object(client, "_connect", return_value=mock_imap):
+    with _patch_session(client, mock_imap):
         with patch("agent_pochta.imap.client.parse_raw_email") as parse_raw:
             parse_raw.side_effect = lambda raw, mailbox: MagicMock(message_id=f"<{raw.decode()}>")
             emails = client.fetch_since(date(2026, 7, 20), exclude_message_id_bases={"<known>"})

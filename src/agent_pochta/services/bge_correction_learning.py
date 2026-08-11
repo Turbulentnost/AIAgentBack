@@ -1,4 +1,4 @@
-"""Realtime BGE learning: operator correction → department_corrections_bge."""
+"""Realtime BGE learning: operator correction / verified → department_corrections_bge."""
 
 from __future__ import annotations
 
@@ -6,13 +6,18 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterator
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from agent_pochta.api.list_table_fields import operator_review_state
 from agent_pochta.config import Settings, get_settings
-from agent_pochta.db.message_filters import load_payload_dict, resolved_turbo_recipient
+from agent_pochta.db.message_filters import (
+    load_payload_dict,
+    operator_review_state_sql_flags,
+    resolved_turbo_recipient,
+)
 from agent_pochta.db.models import EmailMessageRow
 from agent_pochta.db.repository import EmailRepository
 from agent_pochta.services.department_correction_indexing import sync_department_correction_records
@@ -168,6 +173,117 @@ def upsert_correction_by_email_id(
             correct_dept_name=correct_dept_name,
             reextract=reextract,
         )
+        if result.get("ok"):
+            session.commit()
+        return result
+
+
+def is_operator_verified_candidate(
+    row: EmailMessageRow,
+    *,
+    has_operator_approve: bool = False,
+    has_operator_change: bool = False,
+) -> bool:
+    """Письмо проверено оператором без правок отдела (как operator_review_state == verified)."""
+    if row.is_spam:
+        return False
+    if not (row.department_id or "").strip():
+        return False
+    payload = load_payload_dict(row.raw_payload_json) or {}
+    return operator_review_state(
+        payload,
+        has_operator_approve=has_operator_approve,
+        has_operator_change=has_operator_change,
+    ) == "verified"
+
+
+def is_already_bge_verified_indexed(row: EmailMessageRow) -> bool:
+    payload = load_payload_dict(row.raw_payload_json) or {}
+    return bool(str(payload.get("bge_verified_indexed_at") or "").strip())
+
+
+def iter_operator_verified_rows(
+    session: Session,
+    *,
+    limit: int | None = None,
+    skip_indexed: bool = True,
+) -> Iterator[EmailMessageRow]:
+    """Выборка проверенных оператором писем для BGE (verified, не corrected)."""
+    _, is_verified, _ = operator_review_state_sql_flags(
+        EmailMessageRow.raw_payload_json,
+        EmailMessageRow.id,
+    )
+    query = (
+        select(EmailMessageRow)
+        .where(is_verified)
+        .where(EmailMessageRow.department_id.isnot(None))
+        .where(EmailMessageRow.department_id != "")
+        .where(EmailMessageRow.is_spam.is_(False))
+        .order_by(EmailMessageRow.received_at.desc())
+        .options(selectinload(EmailMessageRow.attachments))
+    )
+    if limit is not None:
+        query = query.limit(limit)
+    for row in session.scalars(query):
+        if skip_indexed and is_already_bge_verified_indexed(row):
+            continue
+        yield row
+
+
+def upsert_verified_from_row(
+    repo: EmailRepository,
+    row: EmailMessageRow,
+    *,
+    reextract: bool = True,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Positive example: operator confirmed current department is correct."""
+    settings = settings or get_settings()
+    correct_id = (row.department_id or "").strip()
+    if not correct_id:
+        return {"ok": False, "skipped": True, "reason": "no_department"}
+
+    embed_text, embed_meta = resolve_embed_text_for_row(repo, row, reextract=reextract)
+    if len(embed_text.strip()) < settings.email_rag_min_chars:
+        return {"ok": False, "skipped": True, "reason": "text_too_short", **embed_meta}
+
+    record = build_correction_record(
+        row,
+        wrong_dept_id="",
+        wrong_dept_name="",
+        correct_dept_id=correct_id,
+        correct_dept_name=row.department_name or "",
+        embed_text=embed_text,
+        source="operator_verified",
+    )
+    result = sync_department_correction_records([record], settings=settings)
+    payload = load_payload_dict(row.raw_payload_json) or {}
+    payload["bge_verified_indexed_at"] = (
+        datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    )
+    row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+    return {**result, **embed_meta, "record_id": record.email_id}
+
+
+def upsert_verified_by_email_id(
+    email_id: uuid.UUID | str,
+    *,
+    reextract: bool = True,
+    session_factory=None,
+) -> dict[str, Any]:
+    from agent_pochta.db.session import get_session_factory
+
+    factory = session_factory or get_session_factory()
+    with factory() as session:
+        repo = EmailRepository(session)
+        row = session.scalar(
+            select(EmailMessageRow)
+            .where(EmailMessageRow.id == uuid.UUID(str(email_id)))
+            .options(selectinload(EmailMessageRow.attachments))
+        )
+        if row is None:
+            return {"ok": False, "reason": "not_found"}
+        result = upsert_verified_from_row(repo, row, reextract=reextract)
         if result.get("ok"):
             session.commit()
         return result

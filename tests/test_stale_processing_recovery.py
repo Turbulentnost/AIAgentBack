@@ -43,7 +43,7 @@ def _mock_settings(**overrides):
     return settings
 
 
-def _stale_row(*, message_id: str = "<stale@test>") -> EmailMessageRow:
+def _stale_row(*, message_id: str = "<stale-recovery@client.ru>") -> EmailMessageRow:
     started = (datetime.utcnow() - timedelta(minutes=20)).isoformat()
     payload = {
         "message_id": message_id,
@@ -150,3 +150,25 @@ def test_recover_stale_processing_skips_when_backlog_high():
     assert result["recovered"] == 0
     assert result["skipped_backlog"] == 120
     mock_task.delay.assert_not_called()
+
+
+def test_recover_stale_processing_deletes_demo_rows():
+    row = _stale_row(message_id="<hard-spam-dialog@test>")
+    row.sender_email = "partner@example.ru"
+    session = _mock_session_with_rows([row], processing_count=0)
+
+    factory = MagicMock()
+    factory.return_value.__enter__.return_value = session
+    factory.return_value.__exit__.return_value = False
+
+    with (
+        patch.object(worker_tasks, "get_session_factory", return_value=factory),
+        patch.object(worker_tasks, "get_settings", return_value=_mock_settings()),
+        patch.object(worker_tasks, "process_email_task") as mock_task,
+    ):
+        result = worker_tasks.recover_stale_processing(limit=10)
+
+    assert result["recovered"] == 0
+    assert result["deleted_demo"] == 1
+    mock_task.delay.assert_not_called()
+    session.delete.assert_called_once_with(row)

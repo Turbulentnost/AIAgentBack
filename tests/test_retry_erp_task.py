@@ -394,6 +394,41 @@ def test_retry_erp_task_skips_non_info_mailbox() -> None:
     integration.create_incoming_correspondence.assert_not_called()
 
 
+def test_retry_erp_task_skips_dialog() -> None:
+    row = _info_error_row()
+    payload = json.loads(row.raw_payload_json)
+    payload["dialog"] = {"mode": "dormant", "document_kind": "dialog"}
+    row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+    row.status = ProcessingStatus.DIALOG.value
+    integration = MagicMock()
+
+    with _mock_retry_deps(row=row, integration=integration):
+        task = retry_erp_task
+        task.push_request(retries=0, max_retries=5)
+        try:
+            result = task(row.message_id)
+        finally:
+            task.pop_request()
+
+    assert result == {"ok": True, "skipped": True, "reason": "dialog"}
+    integration.create_incoming_correspondence.assert_not_called()
+
+
+def test_api_retry_erp_rejects_dialog() -> None:
+    row = _info_error_row()
+    payload = json.loads(row.raw_payload_json)
+    payload["dialog"] = {"mode": "activated", "document_kind": "dialog"}
+    row.raw_payload_json = json.dumps(payload, ensure_ascii=False)
+    row.status = ProcessingStatus.DONE.value
+
+    client = TestClient(app)
+    with _mock_api_repo(row) as (_repo, _session):
+        response = client.post(f"/api/v1/email-messages/{row.id}/retry-erp")
+
+    assert response.status_code == 400
+    assert "dialog" in response.json()["detail"].lower()
+
+
 def test_retry_erp_task_full_payload_author_and_payer(monkeypatch: pytest.MonkeyPatch) -> None:
     """Повтор в 1С через ODataIntegrationService шлёт полный payload из XML."""
     from agent_pochta.services.odata_integration import ODataIntegrationService

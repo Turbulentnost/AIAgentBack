@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
 from agent_pochta.db.models import ClassificationEventRow, EmailMessageRow
@@ -435,12 +436,81 @@ def collect_operator_approvals(
 
     saved = 0
     changed = 0
-    for (event_type,) in query.with_entities(ClassificationEventRow.event_type).all():
+    for event_type, count in (
+        query.with_entities(ClassificationEventRow.event_type, func.count())
+        .group_by(ClassificationEventRow.event_type)
+        .all()
+    ):
+        if event_type == "operator_approve":
+            saved = int(count)
+        elif event_type == "operator_change":
+            changed = int(count)
+    return build_operator_approvals(saved, changed)
+
+
+def collect_operator_approvals_recent(
+    session: Session,
+    *,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Saved/changed среди последних N действий оператора (approve + change)."""
+    window = max(1, int(limit))
+    recent_types = (
+        session.query(ClassificationEventRow.event_type)
+        .filter(
+            ClassificationEventRow.category == "department",
+            ClassificationEventRow.event_type.in_(("operator_approve", "operator_change")),
+            ClassificationEventRow.actor == "operator",
+        )
+        .order_by(ClassificationEventRow.created_at.desc())
+        .limit(window)
+        .all()
+    )
+    saved = 0
+    changed = 0
+    for (event_type,) in recent_types:
         if event_type == "operator_approve":
             saved += 1
         elif event_type == "operator_change":
             changed += 1
     return build_operator_approvals(saved, changed)
+
+
+def collect_operator_approvals_dashboard(
+    session: Session,
+    *,
+    start_utc: datetime | None = None,
+    end_utc: datetime | None = None,
+    recent_limit: int = 200,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Период (фильтр дат) + скользящее окно последних N действий оператора."""
+    approve = ClassificationEventRow.event_type == "operator_approve"
+    change = ClassificationEventRow.event_type == "operator_change"
+    in_period = True
+    if start_utc is not None:
+        in_period = ClassificationEventRow.created_at >= start_utc
+        if end_utc is not None:
+            in_period = and_(in_period, ClassificationEventRow.created_at <= end_utc)
+    elif end_utc is not None:
+        in_period = ClassificationEventRow.created_at <= end_utc
+
+    row = (
+        session.query(
+            func.sum(case((and_(in_period, approve), 1), else_=0)).label("period_saved"),
+            func.sum(case((and_(in_period, change), 1), else_=0)).label("period_changed"),
+        )
+        .filter(
+            ClassificationEventRow.category == "department",
+            ClassificationEventRow.event_type.in_(("operator_approve", "operator_change")),
+            ClassificationEventRow.actor == "operator",
+        )
+        .one()
+    )
+    recent = collect_operator_approvals_recent(session, limit=recent_limit)
+    return (
+        build_operator_approvals(int(row.period_saved or 0), int(row.period_changed or 0)),
+        recent,
+    )
 
 
 def collect_classification_summary_for_period(

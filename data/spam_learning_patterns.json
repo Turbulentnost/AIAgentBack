@@ -5458,6 +5458,51 @@
       ],
       "label": "spam",
       "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "4704538c-fc2c-4e8e-915c-f798ff0081ce",
+      "created_at": "2026-08-06T06:36:06.604049+00:00",
+      "message_id": "<9b20bdae-e3d2-4376-9c15-028be8fe92e2@timeweb.com>#info@turbo-don.ru",
+      "sender_email": "mop3@pro-metell.ru",
+      "keywords": [
+        "ооо прометелл детали",
+        "прометелл детали по",
+        "детали по чертежу",
+        "по чертежу отдел",
+        "чертежу отдел снабжения",
+        "отдел снабжения кооперации",
+        "mop3"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "5ddcd57a-3c93-4ab6-ab67-422c551b9dd0",
+      "created_at": "2026-08-06T07:42:31.588444+00:00",
+      "message_id": "<9981838E2C39004AB86F80F53A6A292C0110797BCD@MX-SERVER02.oaorsm.ru>#info@turbo-don.ru",
+      "sender_email": "op812382@oaorsm.ru",
+      "keywords": [
+        "презентация ооо комбинат",
+        "ооо комбинат питания",
+        "op812382"
+      ],
+      "label": "spam",
+      "reason": "Отмечено офис-менеджером"
+    },
+    {
+      "id": "59746298-4bc9-4840-bd4e-2a316b6929a0",
+      "created_at": "2026-08-10T06:55:45.325847+00:00",
+      "message_id": "<MjI2MTM3OQAC1684Y3282BAMTc4NjMxNjc1ODMyNjE4@nangs.org>#info@turbo-don.ru",
+      "sender_email": "mailer@nangs.org",
+      "keywords": [
+        "еженедельный нефтегазовый вестник",
+        "нефтегазовый вестник от",
+        "вестник от 10.08.2026",
+        "от 10.08.2026 г",
+        "mailer"
+      ],
+      "label": "spam",
+      "reason": "Доверенный корпоративный отправитель"
     }
   ]
 }

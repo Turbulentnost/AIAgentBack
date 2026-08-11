@@ -79,6 +79,44 @@ def test_create_erp_task_skips_non_info_mailbox(monkeypatch):
     container.integration.create_incoming_correspondence.assert_not_called()
 
 
+def test_create_erp_task_skips_dialog(monkeypatch):
+    container = MagicMock()
+    monkeypatch.setattr("agent_pochta.nodes.n7_create_erp_task.get_settings", lambda: MagicMock(agent_mode="live"))
+
+    state = _state()
+    state["status"] = ProcessingStatus.DIALOG
+    state["meta"] = {
+        **state["meta"],
+        "dialog": {"mode": "dormant", "document_kind": "dialog"},
+    }
+    state["routing"] = state["routing"].model_copy(update={"document_kind": "dialog", "register_erp": False})
+
+    result = node_create_erp_task(state, container)
+
+    assert result["erp"].success is True
+    assert result["erp"].erp_document_number == "SKIP-ERP"
+    assert result["meta"]["erp_skipped"] is True
+    assert "Диалог" in result["meta"]["erp_skip_reason"]
+    container.integration.create_incoming_correspondence.assert_not_called()
+
+
+def test_create_erp_task_skips_activated_dialog_in_meta(monkeypatch):
+    container = MagicMock()
+    monkeypatch.setattr("agent_pochta.nodes.n7_create_erp_task.get_settings", lambda: MagicMock(agent_mode="live"))
+
+    state = _state()
+    state["meta"] = {
+        **state["meta"],
+        "dialog": {"mode": "activated", "document_kind": "dialog"},
+    }
+    state["routing"] = state["routing"].model_copy(update={"document_kind": "dialog", "register_erp": False})
+
+    result = node_create_erp_task(state, container)
+
+    assert result["erp"].erp_document_number == "SKIP-ERP"
+    container.integration.create_incoming_correspondence.assert_not_called()
+
+
 def test_create_erp_task_attach_failure_schedules_retry(monkeypatch):
     container = MagicMock()
     container.integration.create_incoming_correspondence.return_value = {

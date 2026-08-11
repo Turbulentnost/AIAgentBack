@@ -72,7 +72,7 @@ def embed_texts(
             vectors.append([float(v) for v in vector])
         return vectors
     except httpx.HTTPError as exc:
-        logger.warning("embedding_request_failed", url=url, error=str(exc))
+        logger.warning("embedding_request_failed url=%s error=%s", url, exc)
         raise EmbeddingClientError(str(exc)) from exc
     finally:
         if own_client:

@@ -51,6 +51,7 @@ def predict_department_bge(
     settings: Settings | None = None,
     top_k: int | None = None,
     allowed_departments: set[str] | None = None,
+    exclude_email_ids: set[str] | None = None,
 ) -> BgeDepartmentPrediction:
     settings = settings or get_settings()
     text = (embed_text or "").strip()
@@ -73,6 +74,17 @@ def predict_department_bge(
 
     if not hits:
         return BgeDepartmentPrediction(ok=False, reason="no_hits")
+
+    if exclude_email_ids:
+        excluded = {str(item).strip() for item in exclude_email_ids if str(item).strip()}
+        if excluded:
+            hits = [
+                h
+                for h in hits
+                if str(h.get("record_id") or h.get("email_id") or "") not in excluded
+            ]
+            if not hits:
+                return BgeDepartmentPrediction(ok=False, reason="no_hits_after_exclude")
 
     if allowed_departments:
         hits = [

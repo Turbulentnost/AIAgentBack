@@ -10,6 +10,7 @@ class ImapAttachmentPart:
     part_id: str
     mime_type: str
     filename: str | None
+    size_bytes: int | None = None
 
 
 def _as_list(node: object) -> list:
@@ -105,15 +106,23 @@ def list_attachment_parts(structure: object) -> list[ImapAttachmentPart]:
         subtype = _decode_str(body[1]).lower() if len(body) > 1 else "octet-stream"
         params = body[2] if len(body) > 2 else None
         filename = _filename_from_params(params)
+        if filename is None and len(body) > 8:
+            disposition = body[8]
+            if isinstance(disposition, (list, tuple)) and len(disposition) > 1:
+                filename = _filename_from_params(disposition[1])
         mime_type = f"{maintype}/{subtype}"
         if not _is_attachment_leaf(body, filename=filename, mime_type=mime_type):
             return
+        size_bytes: int | None = None
+        if len(body) > 6 and isinstance(body[6], int) and body[6] >= 0:
+            size_bytes = int(body[6])
         part_id = prefix or "1"
         parts.append(
             ImapAttachmentPart(
                 part_id=part_id,
                 mime_type=mime_type,
                 filename=filename,
+                size_bytes=size_bytes,
             )
         )
 

@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     attachment_cache_ttl_sec: int = Field(default=1800, alias="ATTACHMENT_CACHE_TTL_SEC")
     attachment_cache_max_mb: int = Field(default=256, alias="ATTACHMENT_CACHE_MAX_MB")
     attachment_imap_partial_fetch: bool = Field(default=True, alias="ATTACHMENT_IMAP_PARTIAL_FETCH")
+    # UI/on-demand: короткие retry при SELECT Server Unavailable (не путать с IMAP_CONNECT_RETRY_DELAY_SEC).
+    imap_operation_retries: int = Field(default=3, alias="IMAP_OPERATION_RETRIES")
+    imap_operation_retry_delay_sec: float = Field(default=1.5, alias="IMAP_OPERATION_RETRY_DELAY_SEC")
+    imap_max_concurrent: int = Field(default=2, alias="IMAP_MAX_CONCURRENT")
+    imap_fetch_chunk_bytes: int = Field(default=262_144, alias="IMAP_FETCH_CHUNK_BYTES")
+    attachment_prefetch_on_body: bool = Field(default=True, alias="ATTACHMENT_PREFETCH_ON_BODY")
+    # Окно точности оператора: последние N действий (approve/change), не календарные 24ч.
+    operator_accuracy_window: int = Field(default=200, alias="OPERATOR_ACCURACY_WINDOW")
 
     # Повторы 1С (раздел 5.2)
     erp_retry_max: int = Field(default=5, alias="ERP_RETRY_MAX")
@@ -201,7 +209,9 @@ class Settings(BaseSettings):
         default="http://192.168.1.157:1234/v1",
         alias="EMBEDDING_BASE_URL",
     )
-    embedding_model: str = Field(default="BAAI/bge-m3", alias="EMBEDDING_MODEL")
+    embedding_model: str = Field(
+        default="text-embedding-user-bge-m3", alias="EMBEDDING_MODEL"
+    )
     embedding_vector_size: int = Field(default=1024, alias="EMBEDDING_VECTOR_SIZE")
     embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
     embedding_timeout_sec: float = Field(default=60.0, alias="EMBEDDING_TIMEOUT_SEC")

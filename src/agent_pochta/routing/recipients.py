@@ -12,13 +12,17 @@ def split_routing_recipients(email: EmailMessage) -> list[str]:
 
     for addr in email.to:
         normalized = addr.lower().strip()
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            recipients.append(normalized)
+        if not normalized or normalized in seen:
+            continue
+        if not normalized.endswith("@turbo-don.ru"):
+            continue
+        seen.add(normalized)
+        recipients.append(normalized)
 
     if email.routing_recipient:
         normalized = email.routing_recipient.lower().strip()
-        if normalized not in seen:
+        if normalized.endswith("@turbo-don.ru") and normalized not in seen:
+            seen.add(normalized)
             recipients.append(normalized)
 
     if not recipients:

@@ -110,6 +110,7 @@ $frontendPort = if ($Port -gt 0) { $Port } elseif ($envVars["FRONTEND_PORT"]) { 
 $apiHost = if ($envVars["PLATFORM_API_HOST"]) { $envVars["PLATFORM_API_HOST"] } else { $Defaults.ApiHost }
 
 $lanIp = Get-LanIPv4
+$hostname = ($env:COMPUTERNAME).ToLowerInvariant()
 $publicIp = Get-PublicIPv4
 $generatedAt = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
@@ -167,6 +168,7 @@ if (Test-Path -LiteralPath $templatePath) {
     $content = $content.Replace("{{EMAIL}}", $email)
     $content = $content.Replace("{{PASSWORD}}", $password)
     $content = $content.Replace("{{LAN_BASE}}", $lanBase)
+    $content = $content.Replace("{{HOSTNAME}}", $hostname)
     $content = $content.Replace("{{PUBLIC_SECTION}}", $publicSectionRu)
 }
 else {
