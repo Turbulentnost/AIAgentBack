@@ -1,0 +1,58 @@
+============================================================
+  Доступ к агенту «Авион» (закупки / Excel)
+  Сгенерировано: {{GENERATED_AT}}
+============================================================
+
+--- Сеть (ваш ПК-хост) ---
+LAN IP:                    {{LAN_IP}}
+Frontend (Vite):           {{LAN_BASE}}
+Backend API:               http://{{API_HOST}}
+
+--- URL для тестеров в LAN ---
+Страница входа:            {{LAN_BASE}}/login
+Агент Авион (после входа): {{LAN_BASE}}/agents/document-analysis
+
+Прямая ссылка после логина — можно добавить в закладки.
+
+--- Учётные записи для тестирования ---
+Руководитель (все задачи смен, дашборд):
+  Email:    rodionov.pavel@local.dev
+  Пароль:   Rodionov2026!
+
+Менеджеры (только свои задачи):
+  Email:    tishchenko.nadezhda@local.dev
+  Пароль:   Tishchenko2026!
+
+  Email:    aksinin.leonid@local.dev
+  Пароль:   Aksinin2026!
+
+Админ (полный доступ ко всей платформе):
+  Email:    temp.nd@local.dev
+  Пароль:   NdTemp2026!
+
+--- Порядок действий на ПК-хосте ---
+1. PostgreSQL запущен, БД ai_agents создана (scripts\bootstrap_local_db.py)
+2. Backend:  uvicorn app.main:app --host 0.0.0.0 --port 5454
+3. Frontend: npm run dev  (в AIAgentFront, слушает 0.0.0.0:5173)
+4. Firewall: scripts\open_aveon_lan_firewall.ps1  (порты 5173, 5454)
+
+--- Порядок для тестера ---
+1. ПК в той же корпоративной сети / VLAN, что видит {{LAN_IP}}
+2. Открыть {{LAN_BASE}}/login
+3. Войти одной из учёток выше
+4. Перейти в «Агент закупок (Авион)» или по прямой ссылке
+
+--- Проверка с ПК тестера (PowerShell) ---
+  ping {{LAN_IP}}
+  Invoke-WebRequest http://{{LAN_IP}}:5173/ -UseBasicParsing
+  Invoke-WebRequest http://{{LAN_IP}}:5454/api/v1/health -UseBasicParsing
+
+Если ping есть, а сайт не открывается — на хосте не запущен Vite или firewall.
+
+--- Примечания ---
+- OData 1С и Google Sheets обрабатываются на ПК-хосте, тестерам VPN к 1С не нужен.
+- Не используйте localhost на ПК тестера — только {{LAN_IP}}.
+- DOCUMENT_ANALYSIS_REQUIRE_AUTH=false на backend: API Авион работает без JWT,
+  но UI требует вход (ProtectedRoute).
+
+============================================================

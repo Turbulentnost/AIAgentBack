@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
-import smtplib
 import uuid
 import zipfile
 from datetime import date, datetime, timezone
-from typing import Annotated
+from pathlib import Path
+from urllib.parse import quote
+from typing import Annotated, Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession, DocumentAnalysisUser
 from app.agents.document_analysis_agent.excel_service import (
@@ -23,13 +25,28 @@ from app.agents.document_analysis_agent.excel_service import (
 )
 from app.agents.document_analysis_agent.dashboard_snapshot import (
     clear_dashboard_snapshot,
+    derive_dashboard_date_msk,
+    is_dashboard_stale_for_today,
     load_dashboard_snapshot,
     save_dashboard_snapshot,
+    snapshot_had_valid_shift_today,
     today_msk_iso,
+    update_dashboard_refresh_state,
     update_merged_shipment_snapshot,
     update_task_progress,
 )
+from app.agents.document_analysis_agent.shift_assignment import (
+    SHIFT_MANAGER_EMAILS,
+    SHIFT_MANAGER_REGIONS,
+    SHIFT_MANAGER_ROSTER,
+    resolve_shift_manager_name,
+)
+from app.agents.document_analysis_agent.shift_live_progress import (
+    has_any_live_shift_for_today,
+    resolve_manager_live_report,
+)
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.agents.document_analysis_agent.reveal_in_explorer import reveal_bytes_in_explorer
 from app.integrations.minio import MinioObjectError
 from app.models.shift_completion import ShiftCompletionReport
@@ -43,16 +60,33 @@ from app.schemas.agent import (
     AgentUpdate,
     AgentUserGrantRead,
 )
+from app.schemas.developer_feedback import (
+    DeveloperFeedbackAttachmentRead,
+    DeveloperFeedbackMessageRead,
+    DeveloperFeedbackMessagesResponse,
+    DeveloperFeedbackSendResponse,
+    DeveloperFeedbackThreadRead,
+    DeveloperFeedbackThreadsResponse,
+)
 from app.services.agent_access_service import AgentAccessService, AgentAccessServiceError
 from app.services.agent_icon_service import AgentIconService
 from app.services.agent_service import AgentService
+from app.services.aveon_shipment_schedule_schema import ensure_aveon_shipment_schedule_tables
+from app.services.aveon_shipment_schedule_service import (
+    AveonShipmentScheduleError,
+    AveonShipmentScheduleService,
+    shipment_change_idempotency_key,
+)
 from app.models.user import User
 from app.services.audit_service import AuditService
-from app.services.developer_feedback_email import (
-    FeedbackAttachment,
-    FeedbackEmailError,
-    is_feedback_send_available,
-    send_developer_feedback_email,
+from app.services.developer_feedback_email import FeedbackEmailError
+from app.services.developer_feedback_chat_service import (
+    DeveloperFeedbackAccessError,
+    DeveloperFeedbackChatService,
+    DeveloperFeedbackUpload,
+    DeveloperFeedbackValidationError,
+    is_developer_feedback_admin,
+    is_developer_feedback_participant,
 )
 from app.services.shift_completion_email import (
     ShiftCompletionAttachment,
@@ -60,16 +94,391 @@ from app.services.shift_completion_email import (
     ShiftCompletionTaskView,
     send_shift_completion_email,
 )
+from app.services.shift_start_email import ShiftStartSummary, send_shift_start_email
 from app.services.shift_completion_schema import ensure_shift_completion_tables
 from app.services.meeting_permission import append_meeting_agent_for_office_management
 from app.services.nd_control_permission import append_nd_control_agent_for_quality_deputy
 from app.services.permission_service import PermissionService
+from app.services.document_analysis_permission import filter_available_agents_for_avion_only_user
 from app.services.procurement_permission import (
     append_production_preparation_engineer_agent,
 )
 from app.services.profile_image_service import AvatarValidationError
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+logger = get_logger(__name__)
+
+_dashboard_refresh_locks: dict[str, asyncio.Lock] = {}
+
+
+def _is_shipment_schedule_filename(filename: str) -> bool:
+    name_lower = filename.lower()
+    return (
+        "merged_schedule" in name_lower
+        or "график отгруз" in name_lower
+        or "отгруз" in name_lower
+    )
+
+
+def _build_dashboard_refresh_inputs(uploaded: list[UploadedWorkbook]) -> dict[str, object]:
+    files: list[dict[str, object]] = []
+    for item in uploaded:
+        if _is_shipment_schedule_filename(item.filename):
+            continue
+        files.append(
+            {
+                "file_name": item.filename,
+                "file_base64": base64.b64encode(item.content).decode("ascii"),
+                "file_sha256": hashlib.sha256(item.content).hexdigest(),
+                "size": len(item.content),
+            }
+        )
+    return {"version": 1, "files": files}
+
+
+def _restore_dashboard_refresh_inputs_from_schedule_snapshot(
+    user_id: object | None,
+) -> list[UploadedWorkbook] | None:
+    from app.agents.document_analysis_agent.schedule_snapshot import (
+        get_saved_detailed_file,
+        get_saved_production_file,
+        list_saved_detailed_schedules,
+    )
+
+    restored: list[UploadedWorkbook] = []
+    production = get_saved_production_file(user_id)
+    if production is not None:
+        restored.append(UploadedWorkbook(filename=production[0], content=production[1]))
+    for entry in list_saved_detailed_schedules(user_id):
+        if not entry.get("has_file"):
+            continue
+        year = int(entry.get("year") or 0)
+        month = int(entry.get("month_num") or 0)
+        detailed = get_saved_detailed_file(user_id, year, month)
+        if detailed is None:
+            continue
+        restored.append(UploadedWorkbook(filename=detailed[0], content=detailed[1]))
+    return restored or None
+
+
+def _restore_dashboard_refresh_inputs(
+    snapshot: dict,
+    user_id: object | None = None,
+) -> list[UploadedWorkbook] | None:
+    merged: dict[str, UploadedWorkbook] = {}
+
+    def _add(workbook: UploadedWorkbook) -> None:
+        key = workbook.filename.strip().lower()
+        if key and key not in merged:
+            merged[key] = workbook
+
+    payload = snapshot.get("refresh_inputs")
+    if isinstance(payload, dict):
+        files = payload.get("files")
+        if isinstance(files, list):
+            for entry in files:
+                if not isinstance(entry, dict):
+                    continue
+                filename = str(entry.get("file_name") or "workbook.xlsx")
+                file_base64 = entry.get("file_base64")
+                if not isinstance(file_base64, str) or not file_base64:
+                    continue
+                try:
+                    raw = base64.b64decode(file_base64)
+                except Exception:
+                    continue
+                _add(UploadedWorkbook(filename=filename, content=raw))
+
+    for workbook in _restore_dashboard_refresh_inputs_from_schedule_snapshot(user_id) or []:
+        _add(workbook)
+
+    return list(merged.values()) or None
+
+
+async def _auto_refresh_inputs_error(uploaded: list[UploadedWorkbook]) -> str | None:
+    from app.agents.document_analysis_agent.excel_service import (
+        ROLE_DETAILED_PRODUCTION_SCHEDULE,
+        classify_aveon_excel_files,
+    )
+
+    try:
+        role_map, _ = await classify_aveon_excel_files(uploaded)
+    except Exception as exc:
+        return f"Не удалось определить роли файлов для автопересчёта: {exc}"
+    if not any(
+        role_map.get(workbook.filename) == ROLE_DETAILED_PRODUCTION_SCHEDULE
+        for workbook in uploaded
+    ):
+        return (
+            "Для автопересчёта дашборда «За день» нужен детальный график производства "
+            "(план по дням). Запустите анализ вручную с полным набором Excel-файлов."
+        )
+    return None
+
+
+def _coverage_day_plan_count(coverage: dict[str, Any] | None) -> int:
+    if not isinstance(coverage, dict):
+        return 0
+    periods = coverage.get("periods")
+    if not isinstance(periods, dict):
+        return 0
+    day = periods.get("day")
+    if not isinstance(day, dict):
+        return 0
+    products = day.get("products")
+    if not isinstance(products, dict):
+        return 0
+    tiles = products.get("tiles")
+    if not isinstance(tiles, dict):
+        return 0
+    return int(tiles.get("all") or 0)
+
+
+def _refresh_status_allows_retry(status: object | None) -> bool:
+    return status in {"missing_inputs", "missing_detailed_schedule"}
+
+
+def _dashboard_auto_refresh_incomplete(snapshot: dict[str, Any]) -> bool:
+    """Сегодняшний snapshot без дневного плана — вероятно неполный автопересчёт."""
+    if derive_dashboard_date_msk(snapshot) != today_msk_iso():
+        return False
+    return _coverage_day_plan_count(snapshot.get("coverage_dashboard")) == 0
+
+
+def _dashboard_refresh_lock_key(user_id: object | None, day: str) -> str:
+    return f"{user_id or 'anonymous'}:{day}"
+
+
+def _dashboard_refresh_lock(user_id: object | None, day: str) -> asyncio.Lock:
+    key = _dashboard_refresh_lock_key(user_id, day)
+    lock = _dashboard_refresh_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _dashboard_refresh_locks[key] = lock
+    return lock
+
+
+async def _prepare_aveon_uploaded_with_server_shipment(
+    uploaded: list[UploadedWorkbook],
+    db: DbSession,
+) -> tuple[list[UploadedWorkbook], dict]:
+    await ensure_aveon_shipment_schedule_tables()
+    shipment_service = AveonShipmentScheduleService(db)
+    active_russia_schedule = await shipment_service.get_active_russia()
+    if active_russia_schedule is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Российский график отгрузок не загружен в БД. Выполните служебную загрузку графика.",
+        )
+
+    from app.agents.document_analysis_agent.temp_schedule_merge import merge_schedule_files
+
+    shipment_merge = await merge_schedule_files(
+        [(active_russia_schedule.version.file_name, active_russia_schedule.raw)],
+        include_google_sheets=True,
+        include_merged_inputs=True,
+    )
+    if not shipment_merge.get("ok") or not shipment_merge.get("file_base64"):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            str(
+                shipment_merge.get("message")
+                or "Не удалось собрать график отгрузок из БД и Google Sheets"
+            ),
+        )
+    google_meta = ((shipment_merge.get("stats") or {}).get("google_sheets") or {})
+    if not google_meta.get("included"):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Не удалось получить актуальный график по Китаю из Google Sheets: "
+            + str(google_meta.get("error") or "Google Sheets не вернул данные"),
+        )
+
+    shipment_raw = base64.b64decode(str(shipment_merge["file_base64"]))
+    filtered = [item for item in uploaded if not _is_shipment_schedule_filename(item.filename)]
+    filtered.append(UploadedWorkbook(filename="merged_schedule.xlsx", content=shipment_raw))
+    return filtered, shipment_merge
+
+
+def _serialize_logistics_risks(result: Any) -> dict[str, Any]:
+    return {
+        "as_of": result.logistics_risks.as_of if result.logistics_risks else None,
+        "stages": [
+            {
+                "key": stage.key,
+                "label": stage.label,
+                "items": [
+                    {
+                        "nomenclature": item.nomenclature,
+                        "supplier": item.supplier,
+                        "quantity": item.quantity,
+                        "moscow_date": item.moscow_date,
+                        "milestone_date": item.milestone_date,
+                        "sheet": item.sheet,
+                        "window_start": item.window_start,
+                        "window_end": item.window_end,
+                        "days_remaining": item.days_remaining,
+                        "risk_ratio": item.risk_ratio,
+                        "risk_level": item.risk_level,
+                    }
+                    for item in stage.items
+                ],
+            }
+            for stage in (result.logistics_risks.stages if result.logistics_risks else [])
+        ],
+    }
+
+
+def _build_merged_shipment_payload(
+    uploaded: list[UploadedWorkbook],
+    shipment_merge: dict,
+) -> dict[str, Any] | None:
+    for wb in uploaded:
+        name_lower = wb.filename.lower()
+        if "merged_schedule" in name_lower or name_lower == "merged_schedule.xlsx":
+            shipment_b64 = base64.b64encode(wb.content).decode("ascii")
+            from app.agents.document_analysis_agent.temp_schedule_merge import (
+                build_merged_schedule_preview_values,
+            )
+
+            preview_values = build_merged_schedule_preview_values(wb.content)
+            header_len = len(preview_values[0]) if preview_values else 0
+            return {
+                "file_name": wb.filename,
+                "file_base64": shipment_b64,
+                "values": shipment_merge.get("preview_values") or preview_values,
+                "stats": shipment_merge.get("stats") or {
+                    "nomenclature_total": max(len(preview_values) - 1, 0),
+                    "date_columns": max(header_len - 12, 0),
+                },
+                "source_count": 2,
+            }
+    return None
+
+
+async def _auto_refresh_dashboard_snapshot(
+    *,
+    user_id: object | None,
+    db: DbSession,
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    today = today_msk_iso()
+    restored = _restore_dashboard_refresh_inputs(snapshot, user_id)
+    if not restored:
+        snapshot = update_dashboard_refresh_state(
+            user_id,
+            refresh_status="missing_inputs",
+            refresh_error="Нет сохранённых входных файлов для автопересчёта.",
+            refresh_attempted_date_msk=today,
+        ) or snapshot
+        snapshot["shift_today_msk"] = today
+        if not snapshot.get("dashboard_date_msk"):
+            snapshot["dashboard_date_msk"] = derive_dashboard_date_msk(snapshot)
+        return snapshot
+
+    inputs_error = await _auto_refresh_inputs_error(restored)
+    if inputs_error:
+        snapshot = update_dashboard_refresh_state(
+            user_id,
+            refresh_status="missing_detailed_schedule",
+            refresh_error=inputs_error,
+            refresh_attempted_date_msk=today,
+        ) or snapshot
+        snapshot["shift_today_msk"] = today
+        if not snapshot.get("dashboard_date_msk"):
+            snapshot["dashboard_date_msk"] = derive_dashboard_date_msk(snapshot)
+        return snapshot
+
+    refresh_inputs = _build_dashboard_refresh_inputs(restored)
+
+    lock = _dashboard_refresh_lock(user_id, today)
+    async with lock:
+        current = load_dashboard_snapshot(user_id)
+        if isinstance(current, dict) and derive_dashboard_date_msk(current) == today:
+            if _coverage_day_plan_count(current.get("coverage_dashboard")) > 0:
+                return current
+        if isinstance(current, dict) and current.get("refresh_attempted_date_msk") == today:
+            if (
+                not _refresh_status_allows_retry(current.get("refresh_status"))
+                and not _dashboard_auto_refresh_incomplete(current)
+            ):
+                return current
+
+        analyzed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        try:
+            uploaded, shipment_merge = await _prepare_aveon_uploaded_with_server_shipment(
+                restored,
+                db,
+            )
+            result = await analyze_aveon_excel_files(uploaded, db=db, user_id=user_id)
+            previous_day_plans = _coverage_day_plan_count(snapshot.get("coverage_dashboard"))
+            new_day_plans = _coverage_day_plan_count(result.coverage_dashboard)
+            if new_day_plans == 0 and previous_day_plans > 0:
+                raise ValueError(
+                    "Автопересчёт не нашёл дневной план в сохранённых файлах. "
+                    "Запустите анализ вручную с детальным графиком производства."
+                )
+        except Exception as exc:
+            snapshot = update_dashboard_refresh_state(
+                user_id,
+                refresh_status="error",
+                refresh_error=str(exc),
+                refresh_attempted_date_msk=today,
+            ) or snapshot
+            snapshot["shift_today_msk"] = today
+            return snapshot
+
+        shift_b64 = (
+            base64.b64encode(result.shift_assignment_xlsx_bytes).decode("ascii")
+            if result.shift_assignment_xlsx_bytes
+            else None
+        )
+        task_dashboard_payload = None
+        shift_assignment_payload = None
+        if result.shift_assignment_values:
+            task_dashboard_payload = {
+                "values": result.shift_assignment_values,
+                "row_priorities": result.shift_assignment_row_priorities,
+                "row_kinds": result.shift_assignment_row_kinds,
+                "meta": result.shift_assignment_meta,
+                "result_texts": {},
+                "result_evals": {},
+            }
+            if shift_b64:
+                shift_assignment_payload = {
+                    "valid_date": today,
+                    "file_name": result.shift_assignment_file_name,
+                    "file_base64": shift_b64,
+                }
+
+        refreshed = save_dashboard_snapshot(
+            user_id,
+            logistics_risks=_serialize_logistics_risks(result),
+            analyzed_at=analyzed_at,
+            task_dashboard=task_dashboard_payload,
+            shift_assignment=shift_assignment_payload,
+            merged_shipment_schedule=_build_merged_shipment_payload(uploaded, shipment_merge),
+            coverage_dashboard=result.coverage_dashboard,
+            meta={
+                "source": result.source,
+                "stock_files": result.stock_files,
+                "shipment_files": result.shipment_files,
+                "merged_nomenclatures_count": len(result.merged_nomenclatures),
+                "forecast_deficit_count": sum(
+                    1
+                    for row in result.merged_nomenclatures
+                    if any(value < 0 for value in row.monthly_forecast.values())
+                ),
+                "auto_refresh": True,
+            },
+            refresh_inputs=refresh_inputs,
+            dashboard_date_msk=today,
+            refresh_status="auto_refreshed",
+            auto_refreshed_at=datetime.now(timezone.utc).isoformat(),
+            refresh_source_analyzed_at=str(snapshot.get("analyzed_at") or ""),
+        )
+        refreshed["shift_today_msk"] = today
+        return refreshed
 
 
 async def _agent_read(db: DbSession, agent) -> AgentRead:
@@ -98,6 +507,7 @@ async def list_available_agents(db: DbSession, current_user: CurrentUser):
     agents = await append_nd_control_agent_for_quality_deputy(db, current_user, agents)
     agents = await append_meeting_agent_for_office_management(db, current_user, agents)
     agents = await append_production_preparation_engineer_agent(db, current_user, agents)
+    agents = await filter_available_agents_for_avion_only_user(db, current_user, agents)
     return [await _agent_access_read(db, agent, current_user) for agent in agents]
 
 
@@ -132,73 +542,235 @@ async def reveal_document_analysis_file_in_explorer(
     return {"ok": True, "path": path}
 
 
-def _document_analysis_author_name(user: User | None) -> str:
+def _require_feedback_user(user: User | None) -> User:
     if user is None:
-        return "Неизвестный пользователь"
-    parts = [user.last_name, user.first_name]
-    composed = " ".join(part.strip() for part in parts if part and part.strip())
-    if composed:
-        return composed
-    full_name = (user.full_name or "").strip()
-    if full_name:
-        return full_name
-    return user.email or "Неизвестный пользователь"
-
-
-@router.post("/document-analysis/developer-feedback")
-async def send_document_analysis_developer_feedback(
-    _user: DocumentAnalysisUser,
-    message: Annotated[str, Form(min_length=3)],
-    files: Annotated[list[UploadFile] | None, File()] = None,
-):
-    """Отправка обратной связи разработчикам Авиона на email."""
-    if not is_feedback_send_available():
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Для обратной связи нужно войти в систему.")
+    if not is_developer_feedback_admin(user) and not is_developer_feedback_participant(user):
         raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Отправка обратной связи недоступна. Откройте Outlook с ящиком "
-            f"{settings.FEEDBACK_RECIPIENT_EMAIL} или укажите OUTLOOK_EMAIL и OUTLOOK_PASSWORD в .env.",
+            status.HTTP_403_FORBIDDEN,
+            "Обратная связь доступна только в агенте «Авион».",
         )
+    return user
 
-    author_name = _document_analysis_author_name(_user)
-    author_email = (_user.email if _user is not None else "") or ""
 
-    attachments: list[FeedbackAttachment] = []
+async def _feedback_uploads_from_files(
+    files: list[UploadFile] | None,
+) -> list[DeveloperFeedbackUpload]:
+    chat_uploads: list[DeveloperFeedbackUpload] = []
     for upload in files or []:
         content = await upload.read()
         if not content:
             continue
-        attachments.append(
-            FeedbackAttachment(
-                filename=upload.filename or "attachment",
+        filename = upload.filename or "attachment"
+        chat_uploads.append(
+            DeveloperFeedbackUpload(
+                filename=filename,
                 content=content,
                 content_type=upload.content_type,
             )
         )
+    return chat_uploads
 
+
+def _feedback_attachment_read(attachment) -> DeveloperFeedbackAttachmentRead:
+    return DeveloperFeedbackAttachmentRead(
+        id=attachment.id,
+        original_filename=attachment.original_filename,
+        content_type=attachment.content_type,
+        file_size=attachment.file_size,
+        checksum=attachment.checksum,
+        download_url=(
+            f"{settings.API_V1_PREFIX}/agents/document-analysis/developer-feedback/"
+            f"attachments/{attachment.id}"
+        ),
+        created_at=attachment.created_at,
+    )
+
+
+def _feedback_message_read(message) -> DeveloperFeedbackMessageRead:
+    return DeveloperFeedbackMessageRead(
+        id=message.id,
+        thread_id=message.thread_id,
+        author_user_id=message.author_user_id,
+        author_role=message.author_role,
+        author_name=message.author_name,
+        author_email=message.author_email,
+        body=message.body,
+        created_at=message.created_at,
+        attachments=[_feedback_attachment_read(item) for item in (message.attachments or [])],
+    )
+
+
+def _feedback_thread_read(
+    service: DeveloperFeedbackChatService,
+    user: User,
+    thread,
+) -> DeveloperFeedbackThreadRead:
+    return DeveloperFeedbackThreadRead(
+        id=thread.id,
+        participant_user_id=thread.participant_user_id,
+        participant_name=thread.participant_name,
+        participant_email=thread.participant_email,
+        status=thread.status,
+        last_message_at=thread.last_message_at,
+        last_message_preview=service.last_message_preview(thread),
+        unread_count=service.unread_count(user, thread),
+        created_at=thread.created_at,
+        updated_at=thread.updated_at,
+    )
+
+
+def _feedback_exception(exc: Exception) -> HTTPException:
+    if isinstance(exc, DeveloperFeedbackAccessError):
+        return HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    if isinstance(exc, DeveloperFeedbackValidationError):
+        return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+    return HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
+
+
+@router.get(
+    "/document-analysis/developer-feedback/threads",
+    response_model=DeveloperFeedbackThreadsResponse,
+)
+async def list_document_analysis_developer_feedback_threads(
+    db: DbSession,
+    _user: DocumentAnalysisUser,
+):
+    """Список диалогов обратной связи: свой для пользователя, все разрешённые для разработчика."""
+    user = _require_feedback_user(_user)
+    service = DeveloperFeedbackChatService(db)
     try:
-        await send_developer_feedback_email(
-            author_name=author_name,
-            author_email=author_email,
-            message=message.strip(),
-            attachments=attachments,
-        )
-    except FeedbackEmailError as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Не удалось отправить обратную связь: {exc}",
-        ) from exc
-    except smtplib.SMTPException as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Не удалось отправить обратную связь: {exc}",
-        ) from exc
-    except OSError as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Не удалось отправить обратную связь: {exc}",
-        ) from exc
+        threads = await service.list_threads(user)
+    except (DeveloperFeedbackAccessError, DeveloperFeedbackValidationError) as exc:
+        raise _feedback_exception(exc) from exc
+    return DeveloperFeedbackThreadsResponse(
+        mode=service.user_mode(user),
+        threads=[_feedback_thread_read(service, user, thread) for thread in threads],
+    )
 
-    return {"ok": True}
+
+@router.get(
+    "/document-analysis/developer-feedback/threads/{thread_id}/messages",
+    response_model=DeveloperFeedbackMessagesResponse,
+)
+async def get_document_analysis_developer_feedback_messages(
+    thread_id: uuid.UUID,
+    db: DbSession,
+    _user: DocumentAnalysisUser,
+):
+    """История сообщений конкретного диалога."""
+    user = _require_feedback_user(_user)
+    service = DeveloperFeedbackChatService(db)
+    try:
+        thread = await service.get_thread_for_user(user, thread_id)
+    except (DeveloperFeedbackAccessError, DeveloperFeedbackValidationError) as exc:
+        raise _feedback_exception(exc) from exc
+    return DeveloperFeedbackMessagesResponse(
+        mode=service.user_mode(user),
+        thread=_feedback_thread_read(service, user, thread),
+        messages=[_feedback_message_read(message) for message in thread.messages],
+    )
+
+
+@router.post(
+    "/document-analysis/developer-feedback/threads/{thread_id}/messages",
+    response_model=DeveloperFeedbackSendResponse,
+)
+async def send_document_analysis_developer_feedback_thread_message(
+    thread_id: uuid.UUID,
+    db: DbSession,
+    _user: DocumentAnalysisUser,
+    message: Annotated[str, Form(min_length=1)],
+    files: Annotated[list[UploadFile] | None, File()] = None,
+):
+    """Новое сообщение в существующем диалоге."""
+    user = _require_feedback_user(_user)
+    service = DeveloperFeedbackChatService(db)
+    chat_uploads = await _feedback_uploads_from_files(files)
+    try:
+        thread, saved_message = await service.add_message(
+            user,
+            thread_id=thread_id,
+            body=message,
+            attachments=chat_uploads,
+        )
+    except (DeveloperFeedbackAccessError, DeveloperFeedbackValidationError) as exc:
+        raise _feedback_exception(exc) from exc
+    return DeveloperFeedbackSendResponse(
+        mode=service.user_mode(user),
+        thread=_feedback_thread_read(service, user, thread),
+        message=_feedback_message_read(saved_message),
+    )
+
+
+@router.post(
+    "/document-analysis/developer-feedback/threads/{thread_id}/read",
+    response_model=DeveloperFeedbackThreadRead,
+)
+async def mark_document_analysis_developer_feedback_thread_read(
+    thread_id: uuid.UUID,
+    db: DbSession,
+    _user: DocumentAnalysisUser,
+):
+    """Отметить диалог прочитанным для текущего пользователя."""
+    user = _require_feedback_user(_user)
+    service = DeveloperFeedbackChatService(db)
+    try:
+        thread = await service.mark_thread_read(user, thread_id)
+    except (DeveloperFeedbackAccessError, DeveloperFeedbackValidationError) as exc:
+        raise _feedback_exception(exc) from exc
+    return _feedback_thread_read(service, user, thread)
+
+
+@router.get("/document-analysis/developer-feedback/attachments/{attachment_id}")
+async def download_document_analysis_developer_feedback_attachment(
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    _user: DocumentAnalysisUser,
+):
+    """Скачать вложение диалога, если текущий пользователь является участником."""
+    user = _require_feedback_user(_user)
+    service = DeveloperFeedbackChatService(db)
+    try:
+        attachment = await service.get_attachment_for_user(user, attachment_id)
+        path = service.attachment_path(attachment)
+    except (DeveloperFeedbackAccessError, DeveloperFeedbackValidationError) as exc:
+        raise _feedback_exception(exc) from exc
+    if not path.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Файл вложения не найден.")
+    filename = quote(attachment.original_filename)
+    return Response(
+        content=path.read_bytes(),
+        media_type=attachment.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@router.post("/document-analysis/developer-feedback", response_model=DeveloperFeedbackSendResponse)
+async def send_document_analysis_developer_feedback(
+    db: DbSession,
+    _user: DocumentAnalysisUser,
+    message: Annotated[str, Form(min_length=3)],
+    files: Annotated[list[UploadFile] | None, File()] = None,
+):
+    """Создать/обновить пользовательский диалог обратной связи внутри агента Авион."""
+    user = _require_feedback_user(_user)
+    service = DeveloperFeedbackChatService(db)
+    chat_uploads = await _feedback_uploads_from_files(files)
+    try:
+        thread, saved_message = await service.add_message(
+            user,
+            body=message,
+            attachments=chat_uploads,
+        )
+    except (DeveloperFeedbackAccessError, DeveloperFeedbackValidationError) as exc:
+        raise _feedback_exception(exc) from exc
+
+    return DeveloperFeedbackSendResponse(
+        mode=service.user_mode(user),
+        thread=_feedback_thread_read(service, user, thread),
+        message=_feedback_message_read(saved_message),
+    )
 
 
 @router.post("/document-analysis/classify-excel")
@@ -240,12 +812,30 @@ async def classify_document_excel_files(
 
 
 @router.get("/document-analysis/dashboard-latest")
-async def get_document_analysis_dashboard_latest(_user: DocumentAnalysisUser):
+async def get_document_analysis_dashboard_latest(_user: DocumentAnalysisUser, db: DbSession):
     """Последний сохранённый дашборд (контрольные точки) после анализа Авион."""
     user_id = getattr(_user, "id", None) if _user is not None else None
     snapshot = load_dashboard_snapshot(user_id)
     if snapshot is None:
         return {"ok": False, "snapshot": None}
+    needs_refresh = is_dashboard_stale_for_today(snapshot) or _dashboard_auto_refresh_incomplete(
+        snapshot
+    )
+    if needs_refresh:
+        attempted_today = snapshot.get("refresh_attempted_date_msk") == today_msk_iso()
+        refresh_status = snapshot.get("refresh_status")
+        if (
+            not attempted_today
+            or _refresh_status_allows_retry(refresh_status)
+            or _dashboard_auto_refresh_incomplete(snapshot)
+        ):
+            snapshot = await _auto_refresh_dashboard_snapshot(
+                user_id=user_id,
+                db=db,
+                snapshot=snapshot,
+            )
+    if isinstance(snapshot, dict) and not snapshot.get("dashboard_date_msk"):
+        snapshot["dashboard_date_msk"] = derive_dashboard_date_msk(snapshot)
     return {"ok": True, "snapshot": snapshot}
 
 
@@ -505,6 +1095,61 @@ async def fetch_aveon_google_sheets(_user: DocumentAnalysisUser):
     return result
 
 
+@router.get("/document-analysis/shipment-schedule/current")
+async def get_current_aveon_shipment_schedule(_user: DocumentAnalysisUser, db: DbSession):
+    """Текущая активная российская версия графика отгрузок из БД."""
+    await ensure_aveon_shipment_schedule_tables()
+    active = await AveonShipmentScheduleService(db).get_active_russia()
+    return {
+        "ok": True,
+        "schedule": AveonShipmentScheduleService.serialize_version(active.version if active else None),
+    }
+
+
+@router.get("/document-analysis/shipment-schedule/versions")
+async def list_aveon_shipment_schedule_versions(current_user: CurrentUser, db: DbSession):
+    """История служебных загрузок и обновлений российского графика отгрузок."""
+    if not current_user.is_superuser:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+    await ensure_aveon_shipment_schedule_tables()
+    versions = await AveonShipmentScheduleService(db).list_russia_versions()
+    return {
+        "ok": True,
+        "versions": [AveonShipmentScheduleService.serialize_version(version) for version in versions],
+    }
+
+
+@router.post("/document-analysis/shipment-schedule/russia/upload")
+async def upload_aveon_russia_shipment_schedule(
+    current_user: CurrentUser,
+    db: DbSession,
+    file: Annotated[UploadFile, File(...)],
+):
+    """Служебная загрузка master-графика отгрузок по России."""
+    if not current_user.is_superuser:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+    await ensure_aveon_shipment_schedule_tables()
+    filename = file.filename or "russia_shipment_schedule.xlsx"
+    if not filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Файл должен быть Excel .xlsx/.xlsm")
+    raw = await file.read()
+    try:
+        version = await AveonShipmentScheduleService(db).save_russia_upload(
+            filename=filename,
+            raw=raw,
+            created_by_user_id=current_user.id,
+            reason="admin_upload",
+        )
+        await db.commit()
+    except AveonShipmentScheduleError as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    return {
+        "ok": True,
+        "schedule": AveonShipmentScheduleService.serialize_version(version),
+    }
+
+
 @router.post("/document-analysis/merge-shipment-schedules")
 async def merge_shipment_schedule_files(
     _user: DocumentAnalysisUser,
@@ -581,6 +1226,8 @@ async def save_merged_shipment_snapshot(
 class ShipmentDateChangeRequest(BaseModel):
     file_name: str = "merged_schedule.xlsx"
     file_base64: str = Field(min_length=1)
+    task_key: str | None = None
+    manager_name: str | None = None
     task_type: str = ""
     problem: str = ""
     solution: str = ""
@@ -591,17 +1238,44 @@ class ShipmentDateChangeRequest(BaseModel):
 @router.post("/document-analysis/shipment-schedule/apply-manager-date-change")
 async def apply_manager_date_change(
     _user: DocumentAnalysisUser,
+    db: DbSession,
     payload: ShipmentDateChangeRequest,
 ):
     """Применяет изменение даты из результата менеджера к объединённому графику отгрузок."""
+    await ensure_aveon_shipment_schedule_tables()
     from app.agents.document_analysis_agent.temp_schedule_merge import (
+        SUPPLIER_COUNTRY_CHINA,
+        SUPPLIER_COUNTRY_RUSSIA,
         apply_manager_date_change_to_schedule,
+        merge_schedule_files,
     )
 
     try:
         raw = base64.b64decode(payload.file_base64)
     except Exception as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Некорректный file_base64") from exc
+
+    user_id = getattr(_user, "id", None) if _user is not None else None
+    service = AveonShipmentScheduleService(db)
+    active_russia = await service.get_active_russia()
+    active_version_id = active_russia.version.id if active_russia else None
+    idempotency_key = shipment_change_idempotency_key(
+        task_key=payload.task_key,
+        manager_result=payload.manager_result,
+        active_version_id=active_version_id,
+        nomenclature=payload.nomenclature,
+    )
+    existing_event = await service.get_change_event_by_key(idempotency_key)
+    if existing_event is not None:
+        return {
+            "ok": True,
+            "applied": False,
+            "already_processed": True,
+            "persisted": existing_event.status == "persisted_russia",
+            "manual_action_required": existing_event.status == "manual_google_required_china",
+            "message": existing_event.message or "Изменение уже обработано.",
+            "country": existing_event.country,
+        }
 
     result = await apply_manager_date_change_to_schedule(
         raw=raw,
@@ -612,20 +1286,166 @@ async def apply_manager_date_change(
         manager_result=payload.manager_result,
     )
 
-    if result.get("applied"):
-        user_id = getattr(_user, "id", None) if _user is not None else None
-        update_merged_shipment_snapshot(
-            user_id,
-            merged_shipment_schedule={
-                "file_name": result.get("file_name") or payload.file_name,
-                "file_base64": result.get("file_base64") or payload.file_base64,
-                "values": result.get("preview_values") or [],
-                "stats": {},
-                "source_count": 0,
-                "changed_cells": result.get("changed_cells") or [],
-            },
+    if not result.get("applied"):
+        return result
+
+    country = str(result.get("country") or "").strip()
+    change = result.get("change") or {}
+    original_dates = list(change.get("remove_dates") or [])
+    add_batches = list(change.get("add_batches") or [])
+    quantity = sum(
+        float(batch.get("quantity") or 0)
+        for batch in add_batches
+        if isinstance(batch, dict)
+    ) or None
+    matched_nomenclature = str(change.get("nomenclature") or payload.nomenclature)
+    supplier = str(result.get("supplier") or "") or None
+
+    if country.casefold() == SUPPLIER_COUNTRY_CHINA.casefold():
+        new_dates = ", ".join(str(batch.get("date")) for batch in add_batches if isinstance(batch, dict))
+        old_dates = ", ".join(original_dates)
+        notice = (
+            f"После выполнения задания изменилась дата по номенклатуре "
+            f"«{matched_nomenclature}» с поставщиком Китай. "
+            f"Измените в Google форме: старая дата {old_dates or 'не определена'}, "
+            f"новая дата {new_dates or 'не определена'}."
         )
-    return result
+        await service.record_change_event(
+            idempotency_key=idempotency_key,
+            status="manual_google_required_china",
+            schedule_version_id=active_version_id,
+            manager_user_id=user_id,
+            manager_name=payload.manager_name,
+            task_key=payload.task_key,
+            task_type=payload.task_type,
+            nomenclature=matched_nomenclature,
+            country=country,
+            supplier=supplier,
+            original_dates=original_dates,
+            add_batches=add_batches,
+            quantity=quantity,
+            manager_result=payload.manager_result,
+            message=notice,
+            metadata={"local_only": True, "changed_cells": result.get("changed_cells") or []},
+        )
+        await db.commit()
+        return {
+            **result,
+            "persisted": False,
+            "manual_action_required": True,
+            "message": notice,
+        }
+
+    if not country or country.casefold() != SUPPLIER_COUNTRY_RUSSIA.casefold():
+        message = (
+            f"Страна поставщика «{country}» не поддерживает автоматическое сохранение в БД."
+            if country
+            else "Страна поставщика не определена, график не сохранён в БД."
+        )
+        await service.record_change_event(
+            idempotency_key=idempotency_key,
+            status="country_unknown",
+            schedule_version_id=active_version_id,
+            manager_user_id=user_id,
+            manager_name=payload.manager_name,
+            task_key=payload.task_key,
+            task_type=payload.task_type,
+            nomenclature=matched_nomenclature,
+            country=country,
+            supplier=supplier,
+            original_dates=original_dates,
+            add_batches=add_batches,
+            quantity=quantity,
+            manager_result=payload.manager_result,
+            message=message,
+            metadata={"changed_cells": result.get("changed_cells") or []},
+        )
+        await db.commit()
+        return {**result, "persisted": False, "manual_action_required": True, "message": message}
+
+    if active_russia is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Российский график отгрузок не загружен в БД.",
+        )
+
+    russia_result = await apply_manager_date_change_to_schedule(
+        raw=active_russia.raw,
+        task_type=payload.task_type,
+        problem=payload.problem,
+        solution=payload.solution,
+        nomenclature=payload.nomenclature,
+        manager_result=payload.manager_result,
+    )
+    if not russia_result.get("applied") or not russia_result.get("file_base64"):
+        return {
+            **result,
+            "persisted": False,
+            "message": russia_result.get("message") or result.get("message"),
+        }
+
+    updated_russia_raw = base64.b64decode(str(russia_result["file_base64"]))
+    next_version = await service.save_russia_version(
+        filename=str(russia_result.get("file_name") or active_russia.version.file_name),
+        raw=updated_russia_raw,
+        created_by_user_id=user_id,
+        reason="manager_result",
+        preview_values=russia_result.get("preview_values") or [],
+        stats={"source": "manager_result"},
+        changed_cells=russia_result.get("changed_cells") or [],
+        source_type="manager_result",
+    )
+    merged_result = await merge_schedule_files(
+        [(next_version.file_name, updated_russia_raw)],
+        include_google_sheets=True,
+        include_merged_inputs=True,
+    )
+    if not merged_result.get("ok") or not merged_result.get("file_base64"):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            str(merged_result.get("message") or "Не удалось пересобрать объединённый график"),
+        )
+
+    await service.record_change_event(
+        idempotency_key=idempotency_key,
+        status="persisted_russia",
+        schedule_version_id=active_russia.version.id,
+        next_schedule_version_id=next_version.id,
+        manager_user_id=user_id,
+        manager_name=payload.manager_name,
+        task_key=payload.task_key,
+        task_type=payload.task_type,
+        nomenclature=matched_nomenclature,
+        country=country or SUPPLIER_COUNTRY_RUSSIA,
+        supplier=supplier,
+        original_dates=original_dates,
+        add_batches=add_batches,
+        quantity=quantity,
+        manager_result=payload.manager_result,
+        message=str(result.get("message") or "График России обновлён."),
+        metadata={"changed_cells": russia_result.get("changed_cells") or []},
+    )
+    update_merged_shipment_snapshot(
+        user_id,
+        merged_shipment_schedule={
+            "file_name": merged_result.get("file_name") or payload.file_name,
+            "file_base64": merged_result.get("file_base64"),
+            "values": merged_result.get("preview_values") or [],
+            "stats": merged_result.get("stats") or {},
+            "source_count": 2,
+            "changed_cells": russia_result.get("changed_cells") or [],
+        },
+    )
+    await db.commit()
+    return {
+        **merged_result,
+        "applied": True,
+        "persisted": True,
+        "manual_action_required": False,
+        "country": country or SUPPLIER_COUNTRY_RUSSIA,
+        "change": russia_result.get("change") or change,
+        "changed_cells": russia_result.get("changed_cells") or [],
+    }
 
 
 @router.post("/document-analysis/prune-production-schedules")
@@ -698,6 +1518,9 @@ async def analyze_document_excel_files(
 
     user_id = getattr(_user, "id", None) if _user is not None else None
     analyzed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    refresh_inputs = _build_dashboard_refresh_inputs(uploaded)
+
+    uploaded, shipment_merge = await _prepare_aveon_uploaded_with_server_shipment(uploaded, db)
 
     try:
         result = await analyze_aveon_excel_files(uploaded, db=db, user_id=user_id)
@@ -851,12 +1674,12 @@ async def analyze_document_excel_files(
             merged_shipment_payload = {
                 "file_name": wb.filename,
                 "file_base64": shipment_b64,
-                "values": preview_values,
-                "stats": {
+                "values": shipment_merge.get("preview_values") or preview_values,
+                "stats": shipment_merge.get("stats") or {
                     "nomenclature_total": max(len(preview_values) - 1, 0),
                     "date_columns": max(header_len - 12, 0),
                 },
-                "source_count": 0,
+                "source_count": 2,
             }
             break
     if result.shift_assignment_values:
@@ -874,6 +1697,9 @@ async def analyze_document_excel_files(
                 "file_name": result.shift_assignment_file_name,
                 "file_base64": shift_b64,
             }
+    had_valid_shift_today = False
+    if result.shift_assignment_values and user_id is not None:
+        had_valid_shift_today = snapshot_had_valid_shift_today(user_id)
     try:
         save_dashboard_snapshot(
             user_id,
@@ -890,10 +1716,48 @@ async def analyze_document_excel_files(
                 "merged_nomenclatures_count": len(result.merged_nomenclatures),
                 "forecast_deficit_count": meta["forecast_deficit_count"],
             },
+            refresh_inputs=refresh_inputs,
+            dashboard_date_msk=today_msk_iso(),
+            refresh_status="manual",
         )
     except OSError:
         # дашборд не критичен для ответа анализа
         pass
+    else:
+        if result.shift_assignment_values and not had_valid_shift_today:
+            manager_name = resolve_shift_manager_name(
+                email=getattr(_user, "email", None) if _user is not None else None,
+                full_name=getattr(_user, "full_name", None) if _user is not None else None,
+            )
+            if manager_name:
+                shift_meta = result.shift_assignment_meta or {}
+                shift_attachment = (
+                    ShiftCompletionAttachment(
+                        filename=shift_name,
+                        content=result.shift_assignment_xlsx_bytes,
+                    )
+                    if result.shift_assignment_xlsx_bytes
+                    else None
+                )
+                try:
+                    sent_to = await send_shift_start_email(
+                        manager_name=manager_name,
+                        region_label=SHIFT_MANAGER_REGIONS.get(manager_name, ""),
+                        shift_date=date.fromisoformat(today_msk_iso()),
+                        summary=ShiftStartSummary(
+                            total=int(shift_meta.get("task_count") or 0),
+                            urgent=int(shift_meta.get("urgent_count") or 0)
+                            + int(shift_meta.get("today_count") or 0),
+                            week=int(shift_meta.get("week_count") or 0),
+                        ),
+                        week_period=str(shift_meta.get("week_period") or ""),
+                        attachment=shift_attachment,
+                    )
+                    meta["shift_start_email_sent_to"] = sent_to
+                except FeedbackEmailError as exc:
+                    logger.warning("shift_start_email_failed", error=str(exc))
+                except Exception as exc:
+                    logger.warning("shift_start_email_failed", error=str(exc))
     meta["dashboard_analyzed_at"] = analyzed_at
 
     if response_format == "zip":
@@ -1097,7 +1961,42 @@ class ShiftCompletionRequest(BaseModel):
     incomplete_reasons: dict[str, str] = Field(default_factory=dict)
 
 
-def _shift_completion_read_stats(reports: list[ShiftCompletionReport]) -> dict:
+def _empty_shift_completion_stats() -> dict[str, int]:
+    return {
+        "total": 0,
+        "resolved": 0,
+        "incomplete": 0,
+        "partial": 0,
+        "not_resolved": 0,
+        "active": 0,
+        "resolved_percent": 0,
+    }
+
+
+async def _shift_manager_user_ids(db: DbSession) -> dict[str, uuid.UUID]:
+    emails = list(SHIFT_MANAGER_EMAILS.values())
+    if not emails:
+        return {}
+    result = await db.execute(select(User.id, User.email).where(User.email.in_(emails)))
+    by_email = {str(row.email or "").lower(): row.id for row in result.all()}
+    return {
+        name: by_email[email.lower()]
+        for name, email in SHIFT_MANAGER_EMAILS.items()
+        if email.lower() in by_email
+    }
+
+
+def _shift_completion_read_stats(
+    reports: list[ShiftCompletionReport],
+    *,
+    report_date: date,
+    include_roster: bool = True,
+    manager_user_ids: dict[str, uuid.UUID] | None = None,
+) -> dict:
+    reports_by_name = {item.manager_name: item for item in reports}
+    roster = list(SHIFT_MANAGER_ROSTER) if include_roster else sorted(reports_by_name.keys())
+    manager_ids = manager_user_ids or {}
+
     managers = []
     total = 0
     resolved = 0
@@ -1105,43 +2004,87 @@ def _shift_completion_read_stats(reports: list[ShiftCompletionReport]) -> dict:
     partial = 0
     not_resolved = 0
     active = 0
+    submitted_count = 0
+    in_progress_count = 0
 
-    for report in sorted(reports, key=lambda item: item.manager_name):
-        stats = report.stats_json or {}
-        manager_total = int(stats.get("total") or 0)
-        manager_resolved = int(stats.get("resolved") or 0)
-        manager_incomplete = int(stats.get("incomplete") or 0)
-        manager_partial = int(stats.get("partial") or 0)
-        manager_not_resolved = int(stats.get("not_resolved") or 0)
-        manager_active = int(stats.get("active") or 0)
-        tasks = report.tasks_json or []
+    for name in roster:
+        report = reports_by_name.get(name)
+        region_label = SHIFT_MANAGER_REGIONS.get(name, "")
+        if report:
+            submitted_count += 1
+            stats = report.stats_json or {}
+            manager_total = int(stats.get("total") or 0)
+            manager_resolved = int(stats.get("resolved") or 0)
+            manager_incomplete = int(stats.get("incomplete") or 0)
+            manager_partial = int(stats.get("partial") or 0)
+            manager_not_resolved = int(stats.get("not_resolved") or 0)
+            manager_active = int(stats.get("active") or 0)
+            tasks = report.tasks_json or []
+            managers.append(
+                {
+                    "id": str(report.id),
+                    "manager_name": report.manager_name,
+                    "report_date": report.report_date.isoformat(),
+                    "report_status": "submitted",
+                    "region_label": region_label,
+                    "stats": {
+                        "total": manager_total,
+                        "resolved": manager_resolved,
+                        "incomplete": manager_incomplete,
+                        "partial": manager_partial,
+                        "not_resolved": manager_not_resolved,
+                        "active": manager_active,
+                        "resolved_percent": round((manager_resolved / manager_total) * 100)
+                        if manager_total
+                        else 0,
+                    },
+                    "tasks": tasks,
+                    "incomplete_tasks": [task for task in tasks if task.get("status") != "resolved"],
+                    "email_sent_to": report.email_sent_to,
+                    "email_sent_at": report.email_sent_at.isoformat() if report.email_sent_at else None,
+                }
+            )
+            total += manager_total
+            resolved += manager_resolved
+            incomplete += manager_incomplete
+            partial += manager_partial
+            not_resolved += manager_not_resolved
+            active += manager_active
+            continue
+
+        live_report = resolve_manager_live_report(
+            name,
+            report_date,
+            manager_user_id=manager_ids.get(name),
+        )
+        if live_report is not None:
+            in_progress_count += 1
+            live_stats = live_report.get("stats") or {}
+            managers.append(live_report)
+            total += int(live_stats.get("total") or 0)
+            resolved += int(live_stats.get("resolved") or 0)
+            incomplete += int(live_stats.get("incomplete") or 0)
+            partial += int(live_stats.get("partial") or 0)
+            not_resolved += int(live_stats.get("not_resolved") or 0)
+            active += int(live_stats.get("active") or 0)
+            continue
+
         managers.append(
             {
-                "id": str(report.id),
-                "manager_name": report.manager_name,
-                "report_date": report.report_date.isoformat(),
-                "stats": {
-                    "total": manager_total,
-                    "resolved": manager_resolved,
-                    "incomplete": manager_incomplete,
-                    "partial": manager_partial,
-                    "not_resolved": manager_not_resolved,
-                    "active": manager_active,
-                    "resolved_percent": round((manager_resolved / manager_total) * 100) if manager_total else 0,
-                },
-                "tasks": tasks,
-                "incomplete_tasks": [task for task in tasks if task.get("status") != "resolved"],
-                "email_sent_to": report.email_sent_to,
-                "email_sent_at": report.email_sent_at.isoformat() if report.email_sent_at else None,
+                "id": f"missing:{name}",
+                "manager_name": name,
+                "report_date": report_date.isoformat(),
+                "report_status": "missing",
+                "region_label": region_label,
+                "stats": _empty_shift_completion_stats(),
+                "tasks": [],
+                "incomplete_tasks": [],
+                "email_sent_to": "",
+                "email_sent_at": None,
             }
         )
-        total += manager_total
-        resolved += manager_resolved
-        incomplete += manager_incomplete
-        partial += manager_partial
-        not_resolved += manager_not_resolved
-        active += manager_active
 
+    missing_count = len(roster) - submitted_count - in_progress_count
     return {
         "total": total,
         "resolved": resolved,
@@ -1150,7 +2093,65 @@ def _shift_completion_read_stats(reports: list[ShiftCompletionReport]) -> dict:
         "not_resolved": not_resolved,
         "active": active,
         "resolved_percent": round((resolved / total) * 100) if total else 0,
+        "roster_total": len(roster),
+        "submitted_count": submitted_count,
+        "in_progress_count": in_progress_count,
+        "missing_count": missing_count,
+        "live_mode": report_date.isoformat() == today_msk_iso() and in_progress_count > 0,
         "managers": managers,
+    }
+
+
+@router.get("/document-analysis/shift-assignment/completion-dates")
+async def get_shift_completion_dates(
+    _user: DocumentAnalysisUser,
+    db: DbSession,
+    limit: int = 120,
+):
+    """Даты, за которые менеджеры завершали смены (для выбора в дашборде руководителя)."""
+    await ensure_shift_completion_tables()
+    safe_limit = max(1, min(limit, 365))
+    result = await db.execute(
+        select(
+            ShiftCompletionReport.report_date,
+            func.count(ShiftCompletionReport.id).label("reports_count"),
+        )
+        .group_by(ShiftCompletionReport.report_date)
+        .order_by(ShiftCompletionReport.report_date.desc())
+        .limit(safe_limit)
+    )
+    rows = result.all()
+    roster_total = len(SHIFT_MANAGER_ROSTER)
+    dates = [
+        {
+            "report_date": row.report_date.isoformat(),
+            "reports_count": int(row.reports_count or 0),
+            "roster_total": roster_total,
+            "has_live": False,
+        }
+        for row in rows
+    ]
+    today = today_msk_iso()
+    if has_any_live_shift_for_today() and not any(entry["report_date"] == today for entry in dates):
+        dates.insert(
+            0,
+            {
+                "report_date": today,
+                "reports_count": 0,
+                "roster_total": roster_total,
+                "has_live": True,
+            },
+        )
+    elif has_any_live_shift_for_today():
+        for entry in dates:
+            if entry["report_date"] == today:
+                entry["has_live"] = True
+                break
+    return {
+        "ok": True,
+        "today": today,
+        "roster_total": roster_total,
+        "dates": dates,
     }
 
 
@@ -1178,14 +2179,34 @@ async def get_shift_completion_dashboard(
         )
     )
     reports = list(result.scalars().all())
-    summary = _shift_completion_read_stats(reports)
+    manager_user_ids = await _shift_manager_user_ids(db)
+    summary = _shift_completion_read_stats(
+        reports,
+        report_date=target_date,
+        manager_user_ids=manager_user_ids,
+    )
     return {
         "ok": True,
         "report_date": target_date.isoformat(),
+        "live_mode": summary.get("live_mode", False),
         "summary": {
             key: value
             for key, value in summary.items()
-            if key != "managers"
+            if key
+            not in {
+                "managers",
+                "roster_total",
+                "submitted_count",
+                "in_progress_count",
+                "missing_count",
+                "live_mode",
+            }
+        },
+        "roster": {
+            "total": summary["roster_total"],
+            "submitted": summary["submitted_count"],
+            "in_progress": summary["in_progress_count"],
+            "missing": summary["missing_count"],
         },
         "managers": summary["managers"],
     }

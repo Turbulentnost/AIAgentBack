@@ -22,6 +22,7 @@ from app.core.config import settings
 _META_HEADERS = (
     "Номенклатура",
     "Изделие",
+    "Страна",
     "Заказано кол-во, шт",
     "Остаток недополученной",
     "Дата заказа",
@@ -33,6 +34,9 @@ _META_HEADERS = (
     "Сроки производства",
     "Сроки поставки в МСК",
 )
+COUNTRY_META_KEY = "Страна"
+SUPPLIER_COUNTRY_RUSSIA = "Россия"
+SUPPLIER_COUNTRY_CHINA = "Китай"
 _TEXT_META = (
     "Изделие",
     "Дата заказа",
@@ -247,6 +251,32 @@ def _model_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _country_for_sources(sources: list[str]) -> str:
+    if any(str(source).startswith("итц:") for source in sources):
+        return SUPPLIER_COUNTRY_CHINA
+    if any(str(source).startswith("график:") for source in sources):
+        return SUPPLIER_COUNTRY_RUSSIA
+    return ""
+
+
+def _apply_supplier_country(row: NomRow) -> None:
+    country = _country_for_sources(row.sources)
+    if country:
+        row.meta[COUNTRY_META_KEY] = country
+
+
+def _merge_supplier_country(existing: str, incoming: str) -> str:
+    left = (existing or "").strip()
+    right = (incoming or "").strip()
+    if not left:
+        return right
+    if not right or left.casefold() == right.casefold():
+        return left
+    if right == SUPPLIER_COUNTRY_CHINA:
+        return right
+    return left
+
+
 def _merge_text(*parts: Any) -> str:
     seen: set[str] = set()
     out: list[str] = []
@@ -387,6 +417,10 @@ class NomRow:
             self.remainder = (self.remainder or 0.0) + other.remainder
         for key in _TEXT_META:
             self.meta[key] = _merge_text(self.meta.get(key, ""), other.meta.get(key, ""))
+        self.meta[COUNTRY_META_KEY] = _merge_supplier_country(
+            self.meta.get(COUNTRY_META_KEY, ""),
+            other.meta.get(COUNTRY_META_KEY, ""),
+        )
         for day, qty in other.schedule.items():
             self.schedule[day] = self.schedule.get(day, 0.0) + qty
         for src in other.sources:
@@ -670,11 +704,12 @@ class SheetLayout:
     reason: str = ""
 
 
-_COPY_ONLY_SHEETS = frozenset({"ТАМОЖНЯ", "Реестр Заказов", "График", "Источник", "Проверки"})
+_COPY_ONLY_SHEETS = frozenset({"ТАМОЖНЯ", "Реестр Заказов", "Источник", "Проверки"})
 _NOM_KW = ("номенклатур", "наименован", "позици", "изделие", "наимен")
 _ORDER_KW = ("заказано", "кол-во", "количество", "qty", "заказ")
 _REMAINDER_KW = ("остаток", "недопол", "remainder")
 _META_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "Изделие": ("изделие", "product"),
     "Дата заказа": ("дата заказ",),
     "Срок обработки": ("срок обработ", "обработ"),
     "Дата спецификации": ("дата спец", "спецификац"),
@@ -683,6 +718,7 @@ _META_KEYWORDS: dict[str, tuple[str, ...]] = {
     "Логистика МСК-Ростов": ("мск-ростов", "ростов"),
     "Сроки производства": ("сроки производ", "производств"),
     "Сроки поставки в МСК": ("сроки постав", "поставк в"),
+    COUNTRY_META_KEY: ("страна",),
 }
 
 
@@ -990,6 +1026,8 @@ async def detect_sheet_layout(ws, sheet_title: str, filename: str) -> SheetLayou
         return skip
     sched = _heuristic_schedule_layout(rows, sheet_title)
     itc = _heuristic_itc_layout(rows)
+    if title_lower == "график" and sched:
+        return sched
     if itc and ("итц" in title_lower or itc.confidence >= 0.65):
         if not sched or len(sched.date_cols) < 3:
             return itc
@@ -1047,6 +1085,8 @@ def _parse_schedule_layout(
             meta=meta,
             sources=[f"график:{ws.title}"],
         )
+        if not item.meta.get(COUNTRY_META_KEY):
+            item.meta[COUNTRY_META_KEY] = SUPPLIER_COUNTRY_RUSSIA
         if name != raw_name:
             item.meta["Дата заказа"] = _merge_text(
                 item.meta.get("Дата заказа", ""), f"исх.имя: {raw_name}"
@@ -1092,7 +1132,7 @@ def _parse_itc_with_layout(
             name=full,
             ordered=0.0,
             remainder=remain,
-            meta={"Дата спецификации": ship_text, "Дата платежа": pay},
+            meta={"Дата спецификации": ship_text, "Дата платежа": pay, COUNTRY_META_KEY: SUPPLIER_COUNTRY_CHINA},
             sources=["итц:спецификация"],
         )
         for day, qty in _parse_qty_by_dates(ship_text).items():
@@ -1241,17 +1281,18 @@ def _build_workbook(
             ordered = schedule_sum
         ws.cell(r_idx, 1, item.name)
         ws.cell(r_idx, 2, item.meta.get("Изделие", ""))
-        ws.cell(r_idx, 3, ordered)
+        ws.cell(r_idx, 3, item.meta.get(COUNTRY_META_KEY, ""))
+        ws.cell(r_idx, 4, ordered)
         if item.remainder is not None:
-            ws.cell(r_idx, 4, item.remainder)
-        ws.cell(r_idx, 5, item.meta.get("Дата заказа", ""))
-        ws.cell(r_idx, 6, item.meta.get("Срок обработки", ""))
-        ws.cell(r_idx, 7, item.meta.get("Дата спецификации", ""))
-        ws.cell(r_idx, 8, item.meta.get("Дата платежа", ""))
-        ws.cell(r_idx, 9, item.meta.get("Логистика до МСК", ""))
-        ws.cell(r_idx, 10, item.meta.get("Логистика МСК-Ростов", ""))
-        ws.cell(r_idx, 11, item.meta.get("Сроки производства", ""))
-        ws.cell(r_idx, 12, item.meta.get("Сроки поставки в МСК", ""))
+            ws.cell(r_idx, 5, item.remainder)
+        ws.cell(r_idx, 6, item.meta.get("Дата заказа", ""))
+        ws.cell(r_idx, 7, item.meta.get("Срок обработки", ""))
+        ws.cell(r_idx, 8, item.meta.get("Дата спецификации", ""))
+        ws.cell(r_idx, 9, item.meta.get("Дата платежа", ""))
+        ws.cell(r_idx, 10, item.meta.get("Логистика до МСК", ""))
+        ws.cell(r_idx, 11, item.meta.get("Логистика МСК-Ростов", ""))
+        ws.cell(r_idx, 12, item.meta.get("Сроки производства", ""))
+        ws.cell(r_idx, 13, item.meta.get("Сроки поставки в МСК", ""))
         for d_idx, day in enumerate(dates):
             qty = item.schedule.get(day)
             if qty:
@@ -1953,6 +1994,25 @@ async def apply_manager_date_change_to_schedule(
         wb.close()
         return {"ok": True, "applied": False, "message": "Номенклатура не найдена в графике."}
 
+    country_col: int | None = None
+    supplier_col: int | None = None
+    for col, value in enumerate(header_values, start=1):
+        normalized_header = str(value or "").strip().casefold()
+        if normalized_header == COUNTRY_META_KEY.casefold():
+            country_col = col
+        elif normalized_header in {"поставщик", "supplier"}:
+            supplier_col = col
+    matched_country = (
+        str(ws.cell(row_idx, country_col).value or "").strip()
+        if country_col is not None
+        else ""
+    )
+    matched_supplier = (
+        str(ws.cell(row_idx, supplier_col).value or "").strip()
+        if supplier_col is not None
+        else ""
+    )
+
     schedule_options: list[dict[str, Any]] = []
     for day, col in sorted(date_cols.items()):
         qty = _to_number(ws.cell(row_idx, col).value)
@@ -1981,6 +2041,8 @@ async def apply_manager_date_change_to_schedule(
             "ok": True,
             "applied": False,
             "message": str(lm_result.get("comment") or "Изменение дат не найдено."),
+            "country": matched_country,
+            "supplier": matched_supplier,
         }
 
     remove_dates = [
@@ -1991,7 +2053,13 @@ async def apply_manager_date_change_to_schedule(
     add_batches = lm_result.get("add_batches") or []
     if not add_batches:
         wb.close()
-        return {"ok": True, "applied": False, "message": "Не удалось определить новые партии."}
+        return {
+            "ok": True,
+            "applied": False,
+            "message": "Не удалось определить новые партии.",
+            "country": matched_country,
+            "supplier": matched_supplier,
+        }
 
     matched_name = str(ws.cell(row_idx, 1).value or nomenclature)
     changed_cells: list[dict[str, int]] = []
@@ -2047,7 +2115,13 @@ async def apply_manager_date_change_to_schedule(
 
     if not applied_batches:
         wb.close()
-        return {"ok": True, "applied": False, "message": "Не удалось применить партии к графику."}
+        return {
+            "ok": True,
+            "applied": False,
+            "message": "Не удалось применить партии к графику.",
+            "country": matched_country,
+            "supplier": matched_supplier,
+        }
 
     date_cols = _reorder_grafik_date_columns(ws)
 
@@ -2064,6 +2138,9 @@ async def apply_manager_date_change_to_schedule(
         "file_base64": base64.b64encode(out).decode("ascii"),
         "preview_values": preview,
         "changed_cells": changed_cells,
+        "country": matched_country,
+        "supplier": matched_supplier,
+        "matched_row": row_idx,
         "change": {
             "nomenclature": matched_name,
             "remove_dates": [day.isoformat() for day in remove_dates],
@@ -2072,23 +2149,31 @@ async def apply_manager_date_change_to_schedule(
     }
 
 
-async def merge_schedule_files(files: list[tuple[str, bytes]]) -> dict[str, Any]:
+async def merge_schedule_files(
+    files: list[tuple[str, bytes]],
+    *,
+    include_google_sheets: bool = True,
+    include_merged_inputs: bool = False,
+) -> dict[str, Any]:
     google_sheets_meta: dict[str, Any] = {"included": False}
-    try:
-        from app.services.google_sheets_client import fetch_itc_sheet_workbook_payload
+    if include_google_sheets:
+        try:
+            from app.services.google_sheets_client import fetch_itc_sheet_workbook_payload
 
-        sheets_payload = fetch_itc_sheet_workbook_payload()
-        if sheets_payload:
-            filename, raw = sheets_payload
-            files = [*files, (filename, raw)]
-            google_sheets_meta = {
-                "included": True,
-                "file": filename,
-                "source": "google_sheets",
-                "sheet": "ИТЦ В РАБОТЕ",
-            }
-    except Exception as exc:
-        google_sheets_meta = {"included": False, "error": str(exc)}
+            sheets_payload = fetch_itc_sheet_workbook_payload()
+            if sheets_payload:
+                filename, raw = sheets_payload
+                files = [*files, (filename, raw)]
+                google_sheets_meta = {
+                    "included": True,
+                    "file": filename,
+                    "source": "google_sheets",
+                    "sheet": "ИТЦ В РАБОТЕ",
+                }
+        except Exception as exc:
+            google_sheets_meta = {"included": False, "error": str(exc)}
+    else:
+        google_sheets_meta = {"included": False, "source": "disabled"}
 
     grafik_items: list[NomRow] = []
     all_dates: set[date] = set()
@@ -2100,13 +2185,15 @@ async def merge_schedule_files(files: list[tuple[str, bytes]]) -> dict[str, Any]
 
     workbooks: list[tuple[str, openpyxl.Workbook]] = []
     for filename, raw in files:
-        if filename.startswith("~$") or filename.lower().startswith("merged_schedule"):
+        if filename.startswith("~$") or (
+            filename.lower().startswith("merged_schedule") and not include_merged_inputs
+        ):
             continue
         try:
             wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
         except Exception as exc:
             return {"ok": False, "message": f"Не читается {filename}: {exc}", "files": []}
-        if "График" in wb.sheetnames and "Источник" in wb.sheetnames:
+        if not include_merged_inputs and "График" in wb.sheetnames and "Источник" in wb.sheetnames:
             continue
         workbooks.append((filename, wb))
 
@@ -2230,6 +2317,7 @@ async def merge_schedule_files(files: list[tuple[str, bytes]]) -> dict[str, Any]
             matched_batches += 1
         else:
             row = NomRow(name=name, ordered=qty, sources=["итц:партия"])
+            row.meta[COUNTRY_META_KEY] = SUPPLIER_COUNTRY_CHINA
             if note:
                 row.meta["Дата заказа"] = note
             row.add_qty(day, qty)
@@ -2248,6 +2336,7 @@ async def merge_schedule_files(files: list[tuple[str, bytes]]) -> dict[str, Any]
             if s not in uniq:
                 uniq.append(s)
         row.sources = uniq
+        _apply_supplier_country(row)
 
     # контроль: все исходные имена графика должны находиться
     missing_check: list[str] = []

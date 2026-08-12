@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.db.base import Base
 from app.models import *  # noqa: F401,F403
-from app.models.user import User
+from app.services.document_analysis_permission import ensure_avion_only_user_agent_grant
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -92,24 +92,26 @@ async def ensure_schema_and_users() -> None:
         from sqlalchemy import select
 
         for spec in DEV_USERS:
-            existing = await session.scalar(select(User).where(User.email == spec.email))
-            if existing is None:
-                session.add(
-                    User(
-                        email=spec.email,
-                        full_name=spec.full_name,
-                        first_name=spec.first_name,
-                        last_name=spec.last_name,
-                        hashed_password=hash_password(spec.password),
-                        is_active=True,
-                        is_verified=True,
-                        is_superuser=spec.is_superuser,
-                        must_change_password=False,
-                    )
+            user = await session.scalar(select(User).where(User.email == spec.email))
+            if user is None:
+                user = User(
+                    email=spec.email,
+                    full_name=spec.full_name,
+                    first_name=spec.first_name,
+                    last_name=spec.last_name,
+                    hashed_password=hash_password(spec.password),
+                    is_active=True,
+                    is_verified=True,
+                    is_superuser=spec.is_superuser,
+                    must_change_password=False,
                 )
+                session.add(user)
+                await session.flush()
                 print(f"Created dev user {spec.email}")
             else:
                 print(f"Dev user {spec.email} already exists")
+            if await ensure_avion_only_user_agent_grant(session, user):
+                print(f"Granted Avion-only access for {spec.email}")
         await session.commit()
     await engine.dispose()
 

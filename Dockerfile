@@ -7,8 +7,10 @@ ENV PYTHONUNBUFFERED=1 \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md alembic.ini ./
 COPY app ./app
+COPY alembic ./alembic
+COPY scripts ./scripts
 RUN python -m venv "$VIRTUAL_ENV" \
     && python -m pip install --upgrade pip \
     && python -m pip install torch --index-url https://download.pytorch.org/whl/cpu \

@@ -369,6 +369,32 @@ def _resolve_canonical_row(
 
 MANAGER_RUSSIA = "Аксинин Леонид"
 MANAGER_CHINA = "Тищенко Надежда"
+SHIFT_MANAGER_ROSTER = (MANAGER_RUSSIA, MANAGER_CHINA)
+SHIFT_MANAGER_REGIONS = {
+    MANAGER_RUSSIA: "Россия",
+    MANAGER_CHINA: "Китай",
+}
+SHIFT_MANAGER_EMAILS = {
+    MANAGER_RUSSIA: "aksinin.leonid@local.dev",
+    MANAGER_CHINA: "tishchenko.nadezhda@local.dev",
+}
+
+
+def resolve_shift_manager_name(
+    *,
+    email: str | None = None,
+    full_name: str | None = None,
+) -> str | None:
+    """Определяет ФИО менеджера смены по email или полному имени пользователя."""
+    normalized_email = (email or "").strip().lower()
+    if normalized_email:
+        for name, manager_email in SHIFT_MANAGER_EMAILS.items():
+            if manager_email.lower() == normalized_email:
+                return name
+    normalized_name = (full_name or "").strip()
+    if normalized_name in SHIFT_MANAGER_ROSTER:
+        return normalized_name
+    return None
 
 
 def _responsible_manager(country: str) -> str:

@@ -10,6 +10,10 @@ from app.models.agent import Agent
 from app.models.document import Document
 from app.models.task import Task
 from app.models.user import DepartmentAgent, Permission, User, UserAgent, role_permissions, user_roles
+from app.services.document_analysis_permission import (
+    is_avion_only_platform_user,
+    list_agents_for_avion_only_user,
+)
 
 PUBLIC_DOCUMENT_ACCESS_SCOPES = {"public", "global", "all", "company"}
 
@@ -19,6 +23,9 @@ class PermissionService:
         self.db = db
 
     async def list_available_agents(self, user: User) -> list[Agent]:
+        if is_avion_only_platform_user(user):
+            return await list_agents_for_avion_only_user(self.db)
+
         if user.is_superuser:
             result = await self.db.execute(select(Agent).order_by(Agent.name))
             return list(result.scalars().unique().all())

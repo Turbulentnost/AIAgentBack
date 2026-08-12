@@ -35,7 +35,10 @@ class Settings(BaseSettings):
     ONEC_AUTH_API_BASE_URL: str = "http://192.168.0.247:8000/api/v1"
     ONEC_TOKEN_MAX_AGE_HOURS: int = 4
     BACKEND_CORS_ORIGINS: str = (
-        "http://localhost:5173,http://127.0.0.1:5173,http://192.168.1.157:5173"
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173,"
+        "http://192.168.1.157:5173,"
+        "http://192.168.2.225:5173"
     )
     BACKEND_CORS_ALLOW_CREDENTIALS: bool = True
     BACKEND_CORS_ALLOW_METHODS: str = "*"

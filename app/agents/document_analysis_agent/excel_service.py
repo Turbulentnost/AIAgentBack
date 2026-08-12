@@ -236,6 +236,7 @@ class ShipmentReceiptEntry:
     """Сводка ожидаемых поступлений по номенклатуре (сумма по всем листам/изделиям)."""
 
     nomenclature: str
+    country_of_origin: str | None = None
     monthly_qty: dict[str, float] = field(default_factory=dict)
     daily_qty: dict[str, float] = field(default_factory=dict)  # ISO date → qty
 
@@ -831,6 +832,8 @@ async def analyze_aveon_excel_files(
             month_info = detailed_upload_month or infer_detailed_workbook_month(
                 detailed_wb.content
             )
+            if month_info is None and detailed_extract.year > 0 and detailed_extract.month > 0:
+                month_info = (detailed_extract.year, detailed_extract.month)
             if month_info is not None:
                 detailed_payload = (
                     month_info[0],
@@ -3079,6 +3082,7 @@ def _collect_and_merge_spec_materials(
     shipment_files = _enrich_merged_with_monthly_receipts(
         merged, workbooks, role_map, shipment_bundle=shipment_bundle
     )
+    _enrich_merged_with_shipment_country(merged, shipment_bundle=shipment_bundle)
     _enrich_merged_with_monthly_forecast(merged)
     _enrich_merged_with_daily_demand(merged, detailed_extract)
     _enrich_merged_with_daily_receipts(
@@ -3641,6 +3645,32 @@ def _enrich_merged_with_country_of_origin(
         matched=matched,
         total=len(rows),
         catalog=len(db_country_index),
+    )
+
+
+def _enrich_merged_with_shipment_country(
+    rows: list[MergedNomenclatureRow],
+    *,
+    shipment_bundle: ShipmentScheduleBundle | None,
+) -> None:
+    """Страна поставщика из объединённого графика отгрузок (Россия / Китай)."""
+    if shipment_bundle is None or not shipment_bundle.receipt_index:
+        return
+
+    candidates = [entry.nomenclature for entry in shipment_bundle.receipt_index.values()]
+    matched = 0
+    for row in rows:
+        entry, _method = _match_catalog_entry(row.nomenclature, shipment_bundle.receipt_index, candidates)
+        if entry is None or not entry.country_of_origin:
+            continue
+        row.country_of_origin = entry.country_of_origin
+        matched += 1
+
+    logger.info(
+        "document_analysis_agent.shipment_country_enriched",
+        matched=matched,
+        total=len(rows),
+        files=shipment_bundle.shipment_files,
     )
 
 
@@ -4329,7 +4359,7 @@ def _load_shipment_schedule_bundle(
                 parsed = _parse_shipment_sheet_layout(worksheet)
                 if parsed is None:
                     continue
-                header_idx, name_col, msk_col, rostov_col, date_cols = parsed
+                header_idx, name_col, _country_col, msk_col, rostov_col, date_cols = parsed
                 if msk_col is None or rostov_col is None:
                     continue
                 parsed_sheets.append(
@@ -4514,7 +4544,7 @@ def _consume_shipment_sheet(
     parsed = _parse_shipment_sheet_layout(worksheet)
     if parsed is None:
         return
-    header_idx, name_col, _msk_col, _rostov_col, date_cols = parsed
+    header_idx, name_col, country_col, _msk_col, _rostov_col, date_cols = parsed
 
     rows = list(worksheet.iter_rows(values_only=True))
     for row in rows[header_idx + 1 :]:
@@ -4528,6 +4558,10 @@ def _consume_shipment_sheet(
         if entry is None:
             entry = ShipmentReceiptEntry(nomenclature=name)
             index[key] = entry
+        if country_col is not None and country_col < len(row):
+            country = _clean_text(row[country_col]).strip()
+            if country:
+                entry.country_of_origin = country
 
         for col_idx, delivery_date in date_cols:
             if col_idx >= len(row):
@@ -4543,14 +4577,15 @@ def _consume_shipment_sheet(
 
 def _parse_shipment_sheet_layout(
     worksheet: Worksheet,
-) -> tuple[int, int, int | None, int | None, list[tuple[int, date]]] | None:
-    """Шапка листа отгрузок: номенклатура, логистика МСК / МСК-Ростов, колонки дат."""
+) -> tuple[int, int, int | None, int | None, int | None, list[tuple[int, date]]] | None:
+    """Шапка листа отгрузок: номенклатура, страна, логистика МСК / МСК-Ростов, колонки дат."""
     rows = list(worksheet.iter_rows(values_only=True))
     if not rows:
         return None
 
     for idx, row in enumerate(rows[:15]):
         name_col: int | None = None
+        country_col: int | None = None
         msk_col: int | None = None
         rostov_col: int | None = None
         date_cols: list[tuple[int, date]] = []
@@ -4558,6 +4593,9 @@ def _parse_shipment_sheet_layout(
             text = _normalize(value)
             if name_col is None and text in {"номенклатура", "наименование"}:
                 name_col = col_idx
+                continue
+            if country_col is None and text == "страна":
+                country_col = col_idx
                 continue
             if "логистика" in text:
                 if "ростов" in text:
@@ -4570,7 +4608,7 @@ def _parse_shipment_sheet_layout(
             if delivery_date is not None:
                 date_cols.append((col_idx, delivery_date))
         if name_col is not None and date_cols:
-            return idx, name_col, msk_col, rostov_col, date_cols
+            return idx, name_col, country_col, msk_col, rostov_col, date_cols
     return None
 
 
@@ -4610,7 +4648,7 @@ def _consume_shipment_logistics_leads(
     parsed = _parse_shipment_sheet_layout(worksheet)
     if parsed is None:
         return
-    header_idx, name_col, msk_col, rostov_col, _date_cols = parsed
+    header_idx, name_col, _country_col, msk_col, rostov_col, _date_cols = parsed
     if msk_col is None and rostov_col is None:
         return
 

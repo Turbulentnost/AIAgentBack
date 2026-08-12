@@ -20,3 +20,11 @@ alembic/versions/*.py
 !alembic/versions/0052_procurement_source_synced_at.py
 !alembic/versions/0053_production_preparation_engineer_agent.py
 !alembic/versions/0054_shift_completion_reports.py
+!alembic/versions/0055_developer_feedback_chat.py
+!alembic/versions/0056_aveon_shipment_schedule_versions.py
+access-info-aveon.txt
+data/aveon/dashboard_snapshots/*.json
+data/aveon/schedule_snapshots/
+data/aveon/daily_plan_snapshots/
+scripts/_smoke_*
+scripts/_aveon_test/
