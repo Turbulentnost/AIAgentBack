@@ -626,6 +626,8 @@ async def analyze_aveon_excel_files(
         build_country_index_from_db,
         build_stock_index_from_db,
         build_unit_index_from_db,
+        load_latest_detailed_production_schedule_from_db,
+        load_latest_production_schedule_from_db,
         load_db_spec_catalog,
         preload_spec_materials_for_links,
     )
@@ -706,6 +708,15 @@ async def analyze_aveon_excel_files(
         asyncio.to_thread(_extract_production_schedule_products, workbooks, role_map),
         asyncio.to_thread(_extract_detailed_production_schedule, workbooks, role_map),
     )
+    if not schedule_plans:
+        db_schedule_files, db_schedule_plans = await load_latest_production_schedule_from_db(db)
+        if db_schedule_plans:
+            schedule_files = db_schedule_files
+            schedule_plans = db_schedule_plans
+    if not detailed_extract.plans:
+        db_detailed_extract = await load_latest_detailed_production_schedule_from_db(db)
+        if db_detailed_extract.plans:
+            detailed_extract = db_detailed_extract
     products = [plan.product for plan in schedule_plans]
     product_spec_links = await _resolve_schedule_products_to_specs(
         products,
@@ -4200,34 +4211,80 @@ def _enrich_merged_with_daily_demand(
 
     plans_by_key = {_normalize(plan.product): plan for plan in detailed.plans}
     plan_names = [plan.product for plan in detailed.plans]
+    rows_by_key = {_normalize(row.nomenclature): row for row in rows if _normalize(row.nomenclature)}
+
+    try:
+        from app.agents.document_analysis_agent.product_coverage import (
+            build_boms_for_detailed_products,
+        )
+
+        detailed_boms = build_boms_for_detailed_products(plan_names, rows)
+    except Exception:
+        detailed_boms = {}
 
     for row in rows:
-        demand_plan = {day: 0.0 for day in day_keys}
-        demand_fact = {day: 0.0 for day in day_keys}
-        for product, spec_qty in row.by_product.items():
-            plan = _match_detailed_plan_for_product(product, plans_by_key, plan_names)
-            if plan is None:
-                continue
-            per_unit = float(spec_qty) if spec_qty is not None else 0.0
-            if per_unit == 0:
-                continue
-            for day_key, product_qty in plan.daily_qty.items():
-                if day_key not in demand_plan:
-                    continue
-                demand_plan[day_key] = demand_plan.get(day_key, 0.0) + float(product_qty) * per_unit
-            for day_key, product_qty in plan.daily_fact.items():
-                if day_key not in demand_fact:
-                    continue
-                demand_fact[day_key] = demand_fact.get(day_key, 0.0) + float(product_qty) * per_unit
+        row.daily_demand = {day: 0.0 for day in day_keys}
+        row.daily_demand_fact = {day: 0.0 for day in day_keys}
 
-        def _round_map(src: dict[str, float]) -> dict[str, float]:
-            return {
-                day: round(value, 6) if abs(value - round(value)) > 1e-9 else float(round(value))
-                for day, value in src.items()
-            }
+    if detailed_boms:
+        for plan in detailed.plans:
+            bom = detailed_boms.get(plan.product)
+            if bom is None or not getattr(bom, "matched", False):
+                continue
+            for mat_key, spec_qty in bom.materials.items():
+                row = rows_by_key.get(mat_key)
+                if row is None:
+                    continue
+                per_unit = float(spec_qty) if spec_qty is not None else 0.0
+                if per_unit == 0:
+                    continue
+                for day_key, product_qty in plan.daily_qty.items():
+                    if day_key not in row.daily_demand:
+                        continue
+                    row.daily_demand[day_key] = (
+                        row.daily_demand.get(day_key, 0.0)
+                        + float(product_qty) * per_unit
+                    )
+                for day_key, product_qty in plan.daily_fact.items():
+                    if day_key not in row.daily_demand_fact:
+                        continue
+                    row.daily_demand_fact[day_key] = (
+                        row.daily_demand_fact.get(day_key, 0.0)
+                        + float(product_qty) * per_unit
+                    )
+    else:
+        for row in rows:
+            for product, spec_qty in row.by_product.items():
+                plan = _match_detailed_plan_for_product(product, plans_by_key, plan_names)
+                if plan is None:
+                    continue
+                per_unit = float(spec_qty) if spec_qty is not None else 0.0
+                if per_unit == 0:
+                    continue
+                for day_key, product_qty in plan.daily_qty.items():
+                    if day_key not in row.daily_demand:
+                        continue
+                    row.daily_demand[day_key] = (
+                        row.daily_demand.get(day_key, 0.0)
+                        + float(product_qty) * per_unit
+                    )
+                for day_key, product_qty in plan.daily_fact.items():
+                    if day_key not in row.daily_demand_fact:
+                        continue
+                    row.daily_demand_fact[day_key] = (
+                        row.daily_demand_fact.get(day_key, 0.0)
+                        + float(product_qty) * per_unit
+                    )
 
-        row.daily_demand = _round_map(demand_plan)
-        row.daily_demand_fact = _round_map(demand_fact)
+    def _round_map(src: dict[str, float]) -> dict[str, float]:
+        return {
+            day: round(value, 6) if abs(value - round(value)) > 1e-9 else float(round(value))
+            for day, value in src.items()
+        }
+
+    for row in rows:
+        row.daily_demand = _round_map(row.daily_demand)
+        row.daily_demand_fact = _round_map(row.daily_demand_fact)
 
     logger.info(
         "document_analysis_agent.daily_demand_enriched",

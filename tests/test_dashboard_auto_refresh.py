@@ -80,7 +80,10 @@ async def test_auto_refresh_rebuilds_stale_snapshot_once(monkeypatch: pytest.Mon
     monkeypatch.setattr(agents, "analyze_aveon_excel_files", fake_analyze)
     monkeypatch.setattr(agents, "load_dashboard_snapshot", lambda user_id: snapshot)
     monkeypatch.setattr(agents, "save_dashboard_snapshot", fake_save)
-    monkeypatch.setattr(agents, "_auto_refresh_inputs_error", lambda uploaded: None)
+    async def fake_inputs_ok(uploaded, db):
+        return None
+
+    monkeypatch.setattr(agents, "_auto_refresh_inputs_error", fake_inputs_ok)
 
     refreshed = await agents._auto_refresh_dashboard_snapshot(
         user_id="user-1",
@@ -100,6 +103,9 @@ async def test_dashboard_latest_does_not_refresh_current_day(monkeypatch: pytest
     today_snapshot = {
         "dashboard_date_msk": agents.today_msk_iso(),
         "logistics_risks": {"as_of": None, "stages": []},
+        "coverage_dashboard": {"periods": {"day": {"products": {"tiles": {"all": 3}}}}},
+        "refresh_attempted_date_msk": agents.today_msk_iso(),
+        "refresh_status": "auto_refreshed",
     }
 
     async def fail_refresh(**kwargs):
@@ -204,7 +210,10 @@ async def test_auto_refresh_google_error_marks_fallback(monkeypatch: pytest.Monk
     monkeypatch.setattr(agents, "_prepare_aveon_uploaded_with_server_shipment", fake_prepare)
     monkeypatch.setattr(agents, "load_dashboard_snapshot", lambda user_id: snapshot)
     monkeypatch.setattr(agents, "update_dashboard_refresh_state", fake_update)
-    monkeypatch.setattr(agents, "_auto_refresh_inputs_error", lambda uploaded: None)
+    async def fake_inputs_ok(uploaded, db):
+        return None
+
+    monkeypatch.setattr(agents, "_auto_refresh_inputs_error", fake_inputs_ok)
 
     refreshed = await agents._auto_refresh_dashboard_snapshot(
         user_id="user-1",
@@ -245,6 +254,49 @@ def test_restore_dashboard_refresh_inputs_merges_snapshot_and_schedule(
 
 
 @pytest.mark.asyncio
+async def test_auto_refresh_accepts_detailed_schedule_from_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agents.document_analysis_agent.excel_service import (
+        DetailedScheduleExtract,
+        DetailedScheduleProductPlan,
+        ROLE_PRODUCTION_SCHEDULE,
+    )
+
+    async def fake_classify(uploaded):
+        return {uploaded[0].filename: ROLE_PRODUCTION_SCHEDULE}, {}
+
+    async def fake_db_detailed(db):
+        return DetailedScheduleExtract(
+            files=["1C DB"],
+            plans=[
+                DetailedScheduleProductPlan(
+                    product="Product A",
+                    daily_qty={"2026-08-01": 1.0},
+                    daily_fact={},
+                )
+            ],
+            year=2026,
+            month=8,
+            day_keys=["2026-08-01"],
+        )
+
+    monkeypatch.setattr(
+        "app.agents.document_analysis_agent.excel_service.classify_aveon_excel_files",
+        fake_classify,
+    )
+    monkeypatch.setattr(
+        "app.agents.document_analysis_agent.onec_db_sources.load_latest_detailed_production_schedule_from_db",
+        fake_db_detailed,
+    )
+
+    error = await agents._auto_refresh_inputs_error(
+        [UploadedWorkbook(filename="production.xlsx", content=b"production")],
+        db=None,
+    )
+
+    assert error is None
+
+
+@pytest.mark.asyncio
 async def test_auto_refresh_requires_detailed_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
     snapshot = {
         "dashboard_date_msk": "2026-08-12",
@@ -252,7 +304,7 @@ async def test_auto_refresh_requires_detailed_schedule(monkeypatch: pytest.Monke
         "coverage_dashboard": {"periods": {"day": {"products": {"tiles": {"all": 0}}}}},
     }
 
-    async def fake_inputs_error(uploaded):
+    async def fake_inputs_error(uploaded, db):
         return "need detailed"
 
     def fake_update(user_id, **kwargs):

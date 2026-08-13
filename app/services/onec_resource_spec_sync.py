@@ -7,11 +7,15 @@ from datetime import date, datetime, timezone
 from urllib.parse import quote
 
 import requests
-from requests.auth import HTTPBasicAuth
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.onec_odata import normalize_odata_base
+from app.integrations.onec_odata import (
+    create_session,
+    format_onec_request_error,
+    get_json,
+    get_odata_base_url,
+)
 from app.models.onec_resource_spec import (
     OnecResourceSpec,
     OnecResourceSpecMaterial,
@@ -20,13 +24,9 @@ from app.models.onec_resource_spec import (
 )
 from app.models.onec_nomenclature import OnecNomenclature
 
-ONEC_BASE = normalize_odata_base("http://26.169.32.56/ERP2").rstrip("/")
-ONEC_USER = "odata.user"
-ONEC_PASSWORD = "npo852456"
 EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 PAGE_SIZE = 1000
 LOOKUP_BATCH = 40
-TIMEOUT_SEC = 120
 
 SPEC_CATALOG = "Catalog_РесурсныеСпецификации"
 MATERIALS_ENTITY = "Catalog_РесурсныеСпецификации_МатериалыИУслуги"
@@ -39,16 +39,8 @@ SPEC_EXCLUDED_DESCRIPTIONS = frozenset({"колесо под подшипник_
 ACTIVE_SPEC_STATUS = "действует"
 
 
-def _get_json(session: requests.Session, url: str) -> dict:
-    response = session.get(
-        url,
-        timeout=TIMEOUT_SEC,
-        headers={"Accept": "application/json"},
-    )
-    response.encoding = "utf-8"
-    if not response.ok:
-        raise RuntimeError(f"HTTP {response.status_code}: {(response.text or '')[:300]}")
-    return response.json()
+def _onec_base() -> str:
+    return get_odata_base_url().rstrip("/")
 
 
 def _fetch_all(http: requests.Session, entity: str, extra_query: str = "") -> list[dict]:
@@ -57,12 +49,12 @@ def _fetch_all(http: requests.Session, entity: str, extra_query: str = "") -> li
     while True:
         if extra_query:
             url = (
-                f"{ONEC_BASE}/{entity}?{extra_query}"
+                f"{_onec_base()}/{entity}?{extra_query}"
                 f"&$top={PAGE_SIZE}&$skip={skip}&$format=json"
             )
         else:
-            url = f"{ONEC_BASE}/{entity}?$top={PAGE_SIZE}&$skip={skip}&$format=json"
-        batch = _get_json(http, url).get("value") or []
+            url = f"{_onec_base()}/{entity}?$top={PAGE_SIZE}&$skip={skip}&$format=json"
+        batch = get_json(http, url).get("value") or []
         rows.extend(batch)
         if len(batch) < PAGE_SIZE:
             break
@@ -82,11 +74,11 @@ def _batch_lookup(
         chunk = unique[i : i + LOOKUP_BATCH]
         filt = " or ".join(f"Ref_Key eq guid'{key}'" for key in chunk)
         url = (
-            f"{ONEC_BASE}/{catalog}"
+            f"{_onec_base()}/{catalog}"
             f"?$filter={quote(filt, safe='')}"
             f"&$select={fields}&$format=json"
         )
-        for row in _get_json(http, url).get("value") or []:
+        for row in get_json(http, url).get("value") or []:
             ref = str(row.get("Ref_Key") or "")
             if ref:
                 result[ref] = row
@@ -206,11 +198,11 @@ def _collect_specs_under_folder(http: requests.Session, folder_key: str) -> tupl
         chunk = unique[i : i + LOOKUP_BATCH]
         filt = " or ".join(f"Ref_Key eq guid'{key}'" for key in chunk)
         url = (
-            f"{ONEC_BASE}/{SPEC_CATALOG}"
+            f"{_onec_base()}/{SPEC_CATALOG}"
             f"?$filter={quote(filt, safe='')}"
             f"&$format=json"
         )
-        headers.extend(_get_json(http, url).get("value") or [])
+        headers.extend(get_json(http, url).get("value") or [])
 
     # только не-папки (на всякий случай)
     headers = [h for h in headers if not h.get("IsFolder")]
@@ -234,11 +226,11 @@ def _fetch_tabular_for_specs(
         skip = 0
         while True:
             url = (
-                f"{ONEC_BASE}/{entity}"
+                f"{_onec_base()}/{entity}"
                 f"?$filter={quote(filt, safe='')}"
                 f"&$top={PAGE_SIZE}&$skip={skip}&$format=json"
             )
-            batch = _get_json(http, url).get("value") or []
+            batch = get_json(http, url).get("value") or []
             rows.extend(batch)
             if len(batch) < PAGE_SIZE:
                 break
@@ -250,8 +242,8 @@ def fetch_resource_specs_from_onec(
     folder_path: tuple[str, ...] = SPEC_FOLDER_PATH,
 ) -> dict:
     """Тянет листовые ресурсные спецификации только из указанной ветки папок."""
-    http = requests.Session()
-    http.auth = HTTPBasicAuth(ONEC_USER, ONEC_PASSWORD)
+    base = _onec_base()
+    http = create_session()
     try:
         folder = _resolve_folder_path(http, folder_path)
         folder_key = str(folder.get("Ref_Key") or "")
@@ -466,8 +458,8 @@ def fetch_resource_specs_from_onec(
                 f"материалов {materials_total}, выходных изделий {outputs_total}"
             ),
             "status_code": 200,
-            "url": f"{ONEC_BASE}/{SPEC_CATALOG}",
-            "base": ONEC_BASE,
+            "url": f"{base}/{SPEC_CATALOG}",
+            "base": base,
             "source": SPEC_CATALOG,
             "folder_path": list(folder_path),
             "folder_ref_key": folder_key,
@@ -481,12 +473,13 @@ def fetch_resource_specs_from_onec(
             "nomenclature_items": list(nomenclature_items.values()),
         }
     except (requests.RequestException, RuntimeError, ValueError, TypeError) as exc:
+        detail = format_onec_request_error(exc, base_url=base)
         return {
             "ok": False,
-            "message": f"Не удалось получить ресурсные спецификации из 1С: {exc}",
+            "message": f"Не удалось получить ресурсные спецификации из 1С: {detail}",
             "status_code": None,
-            "url": f"{ONEC_BASE}/{SPEC_CATALOG}",
-            "base": ONEC_BASE,
+            "url": f"{base}/{SPEC_CATALOG}",
+            "base": base,
             "source": SPEC_CATALOG,
             "folder_path": list(folder_path),
             "count": 0,
@@ -812,6 +805,7 @@ async def get_resource_spec_from_db(db: AsyncSession, ref_key: str) -> dict | No
                 "code": m.nomenclature_code,
                 "name": m.nomenclature_name,
                 "qty": m.qty,
+                "unit": m.unit,
                 "characteristic_key": m.characteristic_key,
                 "produced_in_process": m.produced_in_process,
                 "alternative": m.alternative,

@@ -22,6 +22,7 @@ alembic/versions/*.py
 !alembic/versions/0054_shift_completion_reports.py
 !alembic/versions/0055_developer_feedback_chat.py
 !alembic/versions/0056_aveon_shipment_schedule_versions.py
+!alembic/versions/0057_onec_production_plan_sync.py
 access-info-aveon.txt
 data/aveon/dashboard_snapshots/*.json
 data/aveon/schedule_snapshots/

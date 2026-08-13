@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.models.onec_resource_spec import OnecResourceSpec, OnecResourceSpecMaterial
 from app.models.onec_nomenclature import OnecNomenclature
+from app.models.onec_production_plan import OnecProductionPlanHeader, OnecProductionPlanItem
 from app.models.onec_stock import OnecStockBalance
+from app.services.onec_production_plan_sync import ensure_onec_production_plan_tables
 from app.services.onec_resource_spec_sync import ensure_onec_resource_spec_tables
 from app.services.onec_stock_sync import ensure_onec_stock_tables
 
@@ -148,6 +150,158 @@ async def load_db_spec_catalog(db: AsyncSession) -> list[DbSpecCatalogEntry]:
         )
     logger.info("document_analysis_agent.db_spec_catalog_loaded", count=len(catalog))
     return catalog
+
+
+async def load_latest_production_schedule_from_db(
+    db: AsyncSession,
+) -> tuple[list[str], list["ScheduleProductPlan"]]:
+    """Актуальный месячный план производства из БД в формате excel_service.ScheduleProductPlan."""
+    from app.agents.document_analysis_agent.excel_service import (
+        ScheduleProductPlan,
+        _empty_month_bucket,
+        _normalize,
+    )
+
+    await ensure_onec_production_plan_tables(db)
+    header = (
+        await db.execute(
+            select(OnecProductionPlanHeader).order_by(OnecProductionPlanHeader.plan_date.desc())
+        )
+    ).scalars().first()
+    if header is None:
+        return [], []
+    rows = (
+        await db.execute(
+            select(OnecProductionPlanItem)
+            .where(OnecProductionPlanItem.plan_ref_key == header.ref_key)
+            .order_by(OnecProductionPlanItem.month_key, OnecProductionPlanItem.line_number)
+        )
+    ).scalars().all()
+    plans_by_key: dict[str, ScheduleProductPlan] = {}
+    for row in rows:
+        product = (row.nomenclature_name or "").strip()
+        month = (row.month_key or "").strip()
+        if not product or not month:
+            continue
+        key = _normalize(product)
+        if not key:
+            continue
+        plan = plans_by_key.get(key)
+        if plan is None:
+            plan = ScheduleProductPlan(product=product, monthly_qty={})
+            plans_by_key[key] = plan
+        bucket = plan.monthly_qty.setdefault(month, _empty_month_bucket())
+        bucket["заказ"]["план"] = float(bucket["заказ"].get("план", 0.0)) + float(row.qty or 0.0)
+
+    plans = list(plans_by_key.values())
+    source = (
+        f"1С → БД: План производства №{header.number or '—'}"
+        f" ({header.plan_date.date().isoformat() if header.plan_date else 'без даты'})"
+    )
+    logger.info(
+        "document_analysis_agent.db_production_schedule_loaded",
+        products=len(plans),
+        rows=len(rows),
+        source=source,
+    )
+    return [source], plans
+
+
+async def load_latest_detailed_production_schedule_from_db(
+    db: AsyncSession,
+) -> "DetailedScheduleExtract":
+    """Актуальный дневной план производства из БД в формате DetailedScheduleExtract."""
+    from app.agents.document_analysis_agent.excel_service import (
+        DetailedScheduleExtract,
+        DetailedScheduleProductPlan,
+        _month_day_keys,
+        _normalize,
+    )
+
+    await ensure_onec_production_plan_tables(db)
+    header = (
+        await db.execute(
+            select(OnecProductionPlanHeader).order_by(OnecProductionPlanHeader.plan_date.desc())
+        )
+    ).scalars().first()
+    if header is None:
+        return DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
+
+    rows = (
+        await db.execute(
+            select(OnecProductionPlanItem)
+            .where(OnecProductionPlanItem.plan_ref_key == header.ref_key)
+            .where(OnecProductionPlanItem.product_date.is_not(None))
+            .order_by(
+                OnecProductionPlanItem.month_key,
+                OnecProductionPlanItem.line_number,
+                OnecProductionPlanItem.nomenclature_name,
+            )
+        )
+    ).scalars().all()
+    if not rows:
+        return DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
+
+    months = sorted({(row.month_key or "").strip() for row in rows if (row.month_key or "").strip()})
+    if not months:
+        return DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
+
+    from datetime import date
+
+    today = date.today()
+    target = f"{today.year:04d}-{today.month:02d}"
+    if target in months:
+        month_key = target
+    else:
+        future = [month for month in months if month >= target]
+        month_key = future[0] if future else months[-1]
+
+    try:
+        year, month_num = (int(part) for part in month_key.split("-", 1))
+    except ValueError:
+        return DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
+
+    plans_by_key: dict[str, DetailedScheduleProductPlan] = {}
+    for row in rows:
+        if (row.month_key or "").strip() != month_key or row.product_date is None:
+            continue
+        product = (row.nomenclature_name or "").strip()
+        if not product:
+            continue
+        key = _normalize(product)
+        if not key:
+            continue
+        plan = plans_by_key.get(key)
+        if plan is None:
+            plan = DetailedScheduleProductPlan(product=product, year=year, month=month_num)
+            plans_by_key[key] = plan
+        day_key = row.product_date.date().isoformat()
+        plan.daily_qty[day_key] = float(plan.daily_qty.get(day_key, 0.0)) + float(row.qty or 0.0)
+
+    day_keys = _month_day_keys(year, month_num)
+    for plan in plans_by_key.values():
+        for day_key in day_keys:
+            plan.daily_qty.setdefault(day_key, 0.0)
+
+    plans = list(plans_by_key.values())
+    source = (
+        f"1С → БД: План производства по дням №{header.number or '—'}"
+        f" ({month_key})"
+    )
+    logger.info(
+        "document_analysis_agent.db_detailed_production_schedule_loaded",
+        products=len(plans),
+        rows=sum(1 for row in rows if (row.month_key or "").strip() == month_key),
+        month=month_key,
+        source=source,
+    )
+    return DetailedScheduleExtract(
+        files=[source],
+        plans=plans,
+        year=year,
+        month=month_num,
+        day_keys=day_keys,
+    )
 
 
 def match_product_to_db_spec(

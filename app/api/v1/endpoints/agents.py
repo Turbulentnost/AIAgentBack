@@ -195,25 +195,36 @@ def _restore_dashboard_refresh_inputs(
     return list(merged.values()) or None
 
 
-async def _auto_refresh_inputs_error(uploaded: list[UploadedWorkbook]) -> str | None:
+async def _auto_refresh_inputs_error(
+    uploaded: list[UploadedWorkbook],
+    db: DbSession,
+) -> str | None:
     from app.agents.document_analysis_agent.excel_service import (
         ROLE_DETAILED_PRODUCTION_SCHEDULE,
         classify_aveon_excel_files,
+    )
+    from app.agents.document_analysis_agent.onec_db_sources import (
+        load_latest_detailed_production_schedule_from_db,
     )
 
     try:
         role_map, _ = await classify_aveon_excel_files(uploaded)
     except Exception as exc:
         return f"Не удалось определить роли файлов для автопересчёта: {exc}"
-    if not any(
+    if any(
         role_map.get(workbook.filename) == ROLE_DETAILED_PRODUCTION_SCHEDULE
         for workbook in uploaded
     ):
-        return (
-            "Для автопересчёта дашборда «За день» нужен детальный график производства "
-            "(план по дням). Запустите анализ вручную с полным набором Excel-файлов."
-        )
-    return None
+        return None
+
+    db_detailed = await load_latest_detailed_production_schedule_from_db(db)
+    if db_detailed.plans:
+        return None
+
+    return (
+        "Для автопересчёта дашборда «За день» нужен план производства по дням "
+        "(Excel или синхронизация из 1С в БД). Запустите анализ вручную или выгрузите план из 1С."
+    )
 
 
 def _coverage_day_plan_count(coverage: dict[str, Any] | None) -> int:
@@ -376,7 +387,7 @@ async def _auto_refresh_dashboard_snapshot(
             snapshot["dashboard_date_msk"] = derive_dashboard_date_msk(snapshot)
         return snapshot
 
-    inputs_error = await _auto_refresh_inputs_error(restored)
+    inputs_error = await _auto_refresh_inputs_error(restored, db)
     if inputs_error:
         snapshot = update_dashboard_refresh_state(
             user_id,
@@ -415,8 +426,8 @@ async def _auto_refresh_dashboard_snapshot(
             new_day_plans = _coverage_day_plan_count(result.coverage_dashboard)
             if new_day_plans == 0 and previous_day_plans > 0:
                 raise ValueError(
-                    "Автопересчёт не нашёл дневной план в сохранённых файлах. "
-                    "Запустите анализ вручную с детальным графиком производства."
+                    "Автопересчёт не нашёл дневной план. "
+                    "Проверьте синхронизацию плана из 1С или загрузите детальный график производства."
                 )
         except Exception as exc:
             snapshot = update_dashboard_refresh_state(
@@ -942,6 +953,27 @@ async def temp_aveon_resource_specs_sync(_user: DocumentAnalysisUser, db: DbSess
     return payload
 
 
+@router.get("/document-analysis/stock-balances")
+async def list_aveon_stock_balances(
+    _user: DocumentAnalysisUser,
+    db: DbSession,
+    q: str | None = None,
+    warehouse: str | None = None,
+    limit: int = 5000,
+    offset: int = 0,
+):
+    """Остатки товаров на складах из БД (после sync из 1С)."""
+    from app.services.onec_stock_sync import list_stock_balances_from_db
+
+    return await list_stock_balances_from_db(
+        db,
+        query=q,
+        warehouse=warehouse,
+        limit=min(max(limit, 1), 10000),
+        offset=max(offset, 0),
+    )
+
+
 @router.get("/document-analysis/resource-specs")
 async def list_aveon_resource_specs(
     _user: DocumentAnalysisUser,
@@ -992,16 +1024,21 @@ async def get_aveon_schedule_snapshot_status(_user: DocumentAnalysisUser):
 async def get_aveon_onec_sync_status(_user: DocumentAnalysisUser, db: DbSession):
     """Когда последний раз остатки и спецификации были загружены из 1С в БД."""
     from app.services.onec_db_schema import ensure_onec_agent_tables
+    from app.services.onec_production_plan_sync import get_production_plan_sync_status
     from app.services.onec_resource_spec_sync import get_resource_spec_sync_status
     from app.services.onec_stock_sync import get_stock_sync_status
 
     try:
         await ensure_onec_agent_tables()
-        stock, resource_specs = await asyncio.gather(
-            get_stock_sync_status(db, ensure=False),
-            get_resource_spec_sync_status(db, ensure=False),
-        )
-        return {"ok": True, "stock": stock, "resource_specs": resource_specs}
+        stock = await get_stock_sync_status(db, ensure=False)
+        resource_specs = await get_resource_spec_sync_status(db, ensure=False)
+        production_plan = await get_production_plan_sync_status(db, ensure=False)
+        return {
+            "ok": True,
+            "stock": stock,
+            "resource_specs": resource_specs,
+            "production_plan": production_plan,
+        }
     except Exception as exc:
         return {
             "ok": False,
@@ -1024,6 +1061,15 @@ async def get_aveon_onec_sync_status(_user: DocumentAnalysisUser, db: DbSession)
                 "db_outputs": 0,
                 "error_message": str(exc),
             },
+            "production_plan": {
+                "last_sync_at": None,
+                "status": "error",
+                "saved_count": 0,
+                "db_count": 0,
+                "plan_number": "",
+                "plan_date": None,
+                "error_message": str(exc),
+            },
         }
 
 
@@ -1043,6 +1089,15 @@ async def temp_aveon_google_sheets_probe(_user: DocumentAnalysisUser):
     from app.agents.document_analysis_agent.google_sheets_probe import probe_google_sheets
 
     return await asyncio.to_thread(probe_google_sheets)
+
+
+# TEMP(Aveon production plan OData probe) — удалить целиком без последствий
+@router.post("/document-analysis/temp-production-plan")
+async def temp_aveon_production_plan(_user: DocumentAnalysisUser, db: DbSession):
+    """TEMP: актуальный план производства из БД после синхронизации 1С."""
+    from app.services.onec_production_plan_sync import list_latest_production_plan_from_db
+
+    return await list_latest_production_plan_from_db(db)
 
 
 @router.get("/document-analysis/google-sheets/status")

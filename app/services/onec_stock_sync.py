@@ -7,44 +7,37 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 import requests
-from requests.auth import HTTPBasicAuth
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.onec_odata import normalize_odata_base
+from app.integrations.onec_odata import (
+    create_session,
+    format_onec_request_error,
+    get_json,
+    get_odata_base_url,
+)
 from app.models.onec_stock import OnecStockBalance, OnecStockSyncRun
 
-ONEC_BASE = normalize_odata_base("http://26.169.32.56/ERP2").rstrip("/")
-ONEC_USER = "odata.user"
-ONEC_PASSWORD = "npo852456"
 EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 PAGE_SIZE = 1000
 LOOKUP_BATCH = 40
-TIMEOUT_SEC = 120
 
 
-def _get_json(session: requests.Session, url: str) -> dict:
-    response = session.get(
-        url,
-        timeout=TIMEOUT_SEC,
-        headers={"Accept": "application/json"},
-    )
-    response.encoding = "utf-8"
-    if not response.ok:
-        raise RuntimeError(f"HTTP {response.status_code}: {(response.text or '')[:300]}")
-    return response.json()
+def _onec_base() -> str:
+    return get_odata_base_url().rstrip("/")
 
 
 def _fetch_all_balances(http: requests.Session) -> list[dict]:
     """Все строки Balance без фильтра — полный срез регистра ТоварыНаСкладах."""
+    base = _onec_base()
     rows: list[dict] = []
     skip = 0
     while True:
         url = (
-            f"{ONEC_BASE}/AccumulationRegister_ТоварыНаСкладах/Balance"
+            f"{base}/AccumulationRegister_ТоварыНаСкладах/Balance"
             f"?$top={PAGE_SIZE}&$skip={skip}&$format=json"
         )
-        batch = _get_json(http, url).get("value") or []
+        batch = get_json(http, url).get("value") or []
         rows.extend(batch)
         if len(batch) < PAGE_SIZE:
             break
@@ -64,11 +57,11 @@ def _batch_lookup(
         chunk = unique[i : i + LOOKUP_BATCH]
         filt = " or ".join(f"Ref_Key eq guid'{key}'" for key in chunk)
         url = (
-            f"{ONEC_BASE}/{catalog}"
+            f"{_onec_base()}/{catalog}"
             f"?$filter={quote(filt, safe='')}"
             f"&$select={fields}&$format=json"
         )
-        for row in _get_json(http, url).get("value") or []:
+        for row in get_json(http, url).get("value") or []:
             ref = str(row.get("Ref_Key") or "")
             if ref:
                 result[ref] = row
@@ -77,8 +70,8 @@ def _batch_lookup(
 
 def fetch_stock_items_from_onec() -> dict:
     """Тянет все остатки из 1С и резолвит названия. Без записи в БД."""
-    http = requests.Session()
-    http.auth = HTTPBasicAuth(ONEC_USER, ONEC_PASSWORD)
+    base = _onec_base()
+    http = create_session()
     try:
         raw_rows = _fetch_all_balances(http)
         nom_keys = [str(r.get("Номенклатура_Key") or "") for r in raw_rows]
@@ -124,8 +117,8 @@ def fetch_stock_items_from_onec() -> dict:
                 f"(в наличии > 0: {positive}, < 0: {negative})"
             ),
             "status_code": 200,
-            "url": f"{ONEC_BASE}/AccumulationRegister_ТоварыНаСкладах/Balance",
-            "base": ONEC_BASE,
+            "url": f"{base}/AccumulationRegister_ТоварыНаСкладах/Balance",
+            "base": base,
             "source": "AccumulationRegister_ТоварыНаСкладах/Balance",
             "count": len(items),
             "positive_count": positive,
@@ -133,12 +126,13 @@ def fetch_stock_items_from_onec() -> dict:
             "items": items,
         }
     except (requests.RequestException, RuntimeError, ValueError, TypeError) as exc:
+        detail = format_onec_request_error(exc, base_url=base)
         return {
             "ok": False,
-            "message": f"Не удалось получить остатки из 1С: {exc}",
+            "message": f"Не удалось получить остатки из 1С: {detail}",
             "status_code": None,
-            "url": f"{ONEC_BASE}/AccumulationRegister_ТоварыНаСкладах/Balance",
-            "base": ONEC_BASE,
+            "url": f"{base}/AccumulationRegister_ТоварыНаСкладах/Balance",
+            "base": base,
             "source": "AccumulationRegister_ТоварыНаСкладах/Balance",
             "count": 0,
             "positive_count": 0,
@@ -206,6 +200,53 @@ async def replace_stock_in_db(db: AsyncSession, items: list[dict]) -> dict:
         "sync_run_id": str(run.id),
         "saved_count": len(rows),
         "db_count": int(db_count or 0),
+    }
+
+
+async def list_stock_balances_from_db(
+    db: AsyncSession,
+    *,
+    query: str | None = None,
+    warehouse: str | None = None,
+    limit: int = 5000,
+    offset: int = 0,
+) -> dict:
+    """Остатки из БД для просмотра в UI (после sync из 1С)."""
+    await ensure_onec_stock_tables(db)
+    stmt = select(OnecStockBalance).order_by(
+        OnecStockBalance.warehouse, OnecStockBalance.code, OnecStockBalance.name
+    )
+    if query:
+        like = f"%{query.strip()}%"
+        stmt = stmt.where(
+            (OnecStockBalance.code.ilike(like))
+            | (OnecStockBalance.name.ilike(like))
+            | (OnecStockBalance.warehouse.ilike(like))
+        )
+    if warehouse:
+        stmt = stmt.where(OnecStockBalance.warehouse == warehouse)
+    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
+    synced_at = rows[0].synced_at.isoformat() if rows and rows[0].synced_at else None
+    return {
+        "ok": True,
+        "total": int(total or 0),
+        "limit": limit,
+        "offset": offset,
+        "synced_at": synced_at,
+        "items": [
+            {
+                "code": r.code,
+                "name": r.name,
+                "warehouse": r.warehouse,
+                "in_stock": r.in_stock,
+                "to_ship": r.to_ship,
+                "available": r.available,
+                "nomenclature_key": r.nomenclature_key,
+                "warehouse_key": r.warehouse_key,
+            }
+            for r in rows
+        ],
     }
 
 

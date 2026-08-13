@@ -95,6 +95,43 @@ async def sync_onec_resource_specs_to_db(db: AsyncSession) -> dict[str, Any]:
     return result
 
 
+async def sync_onec_production_plan_step(db: AsyncSession) -> dict[str, Any]:
+    # Keep the OData fetch off the event loop; DB writes stay on AsyncSession.
+    from app.services.onec_production_plan_probe import fetch_latest_production_plan_from_onec
+    from app.services.onec_production_plan_sync import replace_production_plan_in_db
+
+    payload = await asyncio.to_thread(fetch_latest_production_plan_from_onec)
+    if not payload.get("ok"):
+        return {
+            "step": "production_plan",
+            "ok": False,
+            "message": payload.get("message"),
+            "count": payload.get("count") or 0,
+        }
+    saved = await replace_production_plan_in_db(db, payload)
+    db_match = saved["db_count"] == payload["count"]
+    result = {
+        "step": "production_plan",
+        "ok": True,
+        "message": payload.get("message"),
+        "count": payload.get("count") or 0,
+        "saved_count": saved["saved_count"],
+        "db_count": saved["db_count"],
+        "sync_run_id": saved["sync_run_id"],
+        "db_match": db_match,
+        "plan_number": saved["plan_number"],
+        "plan_date": saved["plan_date"],
+    }
+    logger.info(
+        "onec_daily_sync.production_plan.completed",
+        count=result["count"],
+        saved_count=result["saved_count"],
+        db_match=db_match,
+        plan_number=result["plan_number"],
+    )
+    return result
+
+
 async def run_onec_daily_sync() -> dict[str, Any]:
     from app.db.session import AsyncSessionLocal
 
@@ -174,14 +211,24 @@ async def run_onec_daily_sync() -> dict[str, Any]:
             db_match=db_match,
         )
 
-    ok = bool(stock_result.get("ok")) and bool(specs_result.get("ok"))
+    async with AsyncSessionLocal() as db:
+        production_plan_result = await sync_onec_production_plan_step(db)
+        await db.commit()
+
+    ok = (
+        bool(stock_result.get("ok"))
+        and bool(specs_result.get("ok"))
+        and bool(production_plan_result.get("ok"))
+    )
     if not ok:
         logger.warning(
             "onec_daily_sync.failed",
             stock_ok=stock_result.get("ok"),
             specs_ok=specs_result.get("ok"),
+            production_plan_ok=production_plan_result.get("ok"),
             stock_message=stock_result.get("message"),
             specs_message=specs_result.get("message"),
+            production_plan_message=production_plan_result.get("message"),
         )
     else:
         logger.info("onec_daily_sync.completed")
@@ -190,4 +237,5 @@ async def run_onec_daily_sync() -> dict[str, Any]:
         "ok": ok,
         "stock": stock_result,
         "resource_specs": specs_result,
+        "production_plan": production_plan_result,
     }

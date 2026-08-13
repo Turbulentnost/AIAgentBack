@@ -27,6 +27,11 @@ async def ensure_onec_agent_tables() -> None:
             OnecResourceSpecOutput,
             OnecResourceSpecSyncRun,
         )
+        from app.models.onec_production_plan import (
+            OnecProductionPlanHeader,
+            OnecProductionPlanItem,
+            OnecProductionPlanSyncRun,
+        )
         from app.models.onec_stock import OnecStockBalance, OnecStockSyncRun
 
         def _create(sync_conn) -> None:
@@ -38,6 +43,9 @@ async def ensure_onec_agent_tables() -> None:
                     OnecResourceSpecOutput.__table__,
                     OnecResourceSpecSyncRun.__table__,
                     OnecNomenclature.__table__,
+                    OnecProductionPlanHeader.__table__,
+                    OnecProductionPlanItem.__table__,
+                    OnecProductionPlanSyncRun.__table__,
                     OnecStockBalance.__table__,
                     OnecStockSyncRun.__table__,
                 ],

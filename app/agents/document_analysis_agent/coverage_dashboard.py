@@ -496,18 +496,10 @@ def _serialize_period(
             product_coverage=product_coverage,
             month_label=month_label,
         )
-    elif period == "month":
-        product_rows = _serialize_product_rows_monthly(
-            product_coverage,
-            month_label,
-            merged=merged,
-        )
 
     nomenclature_rows: list[dict[str, Any]] = []
     if period_days and any(getattr(row, "daily_demand", None) for row in merged):
         nomenclature_rows = _serialize_nomenclature_rows(merged, period_days, all_day_keys)
-    if not nomenclature_rows and period == "month":
-        nomenclature_rows = _serialize_nomenclature_rows_monthly(merged, month_label)
 
     return {
         "key": period,
