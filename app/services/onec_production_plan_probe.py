@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
@@ -21,6 +21,7 @@ DOCUMENT_ENTITY = "Document_ПланПроизводства"
 EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 PAGE_SIZE = 200
 LOOKUP_BATCH = 40
+HEADER_SCAN_LIMIT = 500
 FALLBACK_TABLE_ENTITIES = [
     "Document_ПланПроизводства_Продукция",
     "Document_ПланПроизводства_ПродукцияПлан",
@@ -29,6 +30,8 @@ FALLBACK_TABLE_ENTITIES = [
     "Document_ПланПроизводства_Материалы",
     "Document_ПланПроизводства_Товары",
 ]
+HEADER_SELECT_MINIMAL = "Ref_Key,Number,Date,Posted,DeletionMark"
+HEADER_SELECT_WITH_PERIOD = f"{HEADER_SELECT_MINIMAL},НачалоПериода,ОкончаниеПериода"
 
 
 def _fetch_metadata(session: requests.Session, base: str) -> str:
@@ -102,8 +105,6 @@ def _is_approved_header(row: dict[str, Any]) -> bool:
         return False
     if row.get("Posted") is False:
         return False
-    # В ERP часто "утверждение" выражено проведением документа. Если в базе есть
-    # явный статус, не отбрасываем проведенный документ только из-за другого имени enum.
     for key in ("Статус", "Состояние", "СтатусДокумента"):
         value = str(row.get(key) or "").casefold().replace("ё", "е")
         if value and "отмен" in value:
@@ -111,29 +112,80 @@ def _is_approved_header(row: dict[str, Any]) -> bool:
     return True
 
 
-def _fetch_latest_approved_header(session: requests.Session, base: str) -> dict[str, Any] | None:
-    # Не используем server-side `$filter=Posted eq true ...`: на больших базах 1С
-    # такой запрос часто строит тяжёлый план. Берём последние документы и фильтруем тут.
+def _header_period_bounds(row: dict[str, Any]) -> tuple[date | None, date | None]:
+    period_start = _parse_odata_datetime(
+        row.get("НачалоПериода") or row.get("НачалоПериодаПланирования")
+    )
+    period_end = _parse_odata_datetime(row.get("ОкончаниеПериода"))
+    return (
+        period_start.date() if period_start else None,
+        period_end.date() if period_end else None,
+    )
+
+
+def _header_overlaps_year(row: dict[str, Any], year: int) -> bool:
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    period_start, period_end = _header_period_bounds(row)
+    if period_start is not None and period_end is not None:
+        return period_start <= year_end and period_end >= year_start
+    doc_date = _parse_odata_datetime(row.get("Date"))
+    return doc_date is not None and doc_date.year == year
+
+
+def _fetch_header_page(
+    session: requests.Session,
+    base: str,
+    *,
+    skip: int,
+    select: str,
+) -> list[dict[str, Any]]:
+    url = (
+        f"{base}/{DOCUMENT_ENTITY}"
+        f"?$orderby={quote('Date desc', safe='')}"
+        f"&$select={quote(select, safe=',')}"
+        f"&$top=50&$skip={skip}&$format=json"
+    )
+    return get_json(session, url).get("value") or []
+
+
+def _fetch_approved_headers(session: requests.Session, base: str, *, year: int) -> list[dict[str, Any]]:
+    """Проведённые планы производства, пересекающие указанный год."""
     skip = 0
-    select = "Ref_Key,Number,Date,Posted,DeletionMark"
-    while skip < 500:
-        url = (
-            f"{base}/{DOCUMENT_ENTITY}"
-            f"?$orderby={quote('Date desc', safe='')}"
-            f"&$select={quote(select, safe=',')}"
-            f"&$top=50&$skip={skip}&$format=json"
-        )
-        rows = get_json(session, url).get("value") or []
-        approved = [row for row in rows if isinstance(row, dict) and _is_approved_header(row)]
-        if approved:
-            return max(
-                approved,
-                key=lambda row: _parse_odata_datetime(row.get("Date")) or datetime.min,
-            )
+    approved: list[dict[str, Any]] = []
+    seen_refs: set[str] = set()
+    header_select = HEADER_SELECT_WITH_PERIOD
+    while skip < HEADER_SCAN_LIMIT:
+        try:
+            rows = _fetch_header_page(session, base, skip=skip, select=header_select)
+        except RuntimeError as exc:
+            if header_select != HEADER_SELECT_MINIMAL:
+                header_select = HEADER_SELECT_MINIMAL
+                skip = 0
+                approved.clear()
+                seen_refs.clear()
+                continue
+            raise exc
+        if not rows:
+            break
+        for row in rows:
+            if not isinstance(row, dict) or not _is_approved_header(row):
+                continue
+            ref_key = str(row.get("Ref_Key") or "")
+            if not ref_key or ref_key in seen_refs:
+                continue
+            if not _header_overlaps_year(row, year):
+                continue
+            seen_refs.add(ref_key)
+            approved.append(row)
         if len(rows) < 50:
             break
         skip += 50
-    return None
+    approved.sort(
+        key=lambda row: _parse_odata_datetime(row.get("Date")) or datetime.min,
+        reverse=True,
+    )
+    return approved
 
 
 def _fetch_plan_rows(session: requests.Session, base: str, entity: str, ref_key: str) -> list[dict[str, Any]]:
@@ -154,22 +206,46 @@ def _fetch_plan_rows(session: requests.Session, base: str, entity: str, ref_key:
     return rows
 
 
-def _try_fetch_plan_rows(
+def _fetch_all_plan_rows(
     session: requests.Session,
     base: str,
     entities: list[str],
     ref_key: str,
-) -> tuple[str, list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Читает строки из всех доступных табличных частей документа."""
     errors: list[str] = []
+    used_entities: list[str] = []
+    merged: list[dict[str, Any]] = []
+    seen_line_refs: set[str] = set()
+
     for entity in entities:
         try:
             rows = _fetch_plan_rows(session, base, entity, ref_key)
         except RuntimeError as exc:
             errors.append(f"{entity}: {exc}")
             continue
-        if rows:
-            return entity, rows, errors
-    return "", [], errors
+        if not rows:
+            continue
+        used_entities.append(entity)
+        for row in rows:
+            line_ref = str(row.get("Ref_Key") or "")
+            if line_ref:
+                if line_ref in seen_line_refs:
+                    continue
+                seen_line_refs.add(line_ref)
+            merged.append(row)
+    return merged, used_entities, errors
+
+
+def _try_fetch_plan_rows(
+    session: requests.Session,
+    base: str,
+    entities: list[str],
+    ref_key: str,
+) -> tuple[str, list[dict[str, Any]], list[str]]:
+    rows, used_entities, errors = _fetch_all_plan_rows(session, base, entities, ref_key)
+    source = used_entities[0] if used_entities else ""
+    return source, rows, errors
 
 
 def _batch_lookup_nomenclature(
@@ -229,7 +305,7 @@ def _normalize_plan_row(row: dict[str, Any], nomenclature: dict[str, dict[str, A
     return {
         "line": _first_existing(row, ("LineNumber", "НомерСтроки")),
         "date": _format_odata_datetime(
-            _first_existing(row, ("ДатаПотребности", "ДатаВыпуска", "Период", "Дата"))
+            _first_existing(row, ("Период", "ДатаПотребности", "ДатаВыпуска", "Дата"))
         ),
         "code": str(nom.get("Code") or ""),
         "name": str(nom.get("Description") or "").strip() or nom_key,
@@ -247,89 +323,143 @@ def _normalize_plan_row(row: dict[str, Any], nomenclature: dict[str, dict[str, A
     }
 
 
-def fetch_latest_production_plan_from_onec() -> dict[str, Any]:
-    """Возвращает последний проведенный план производства и строки его табличной части."""
+def _normalize_header(row: dict[str, Any]) -> dict[str, Any]:
+    ref_key = str(row.get("Ref_Key") or "")
+    period_start = _parse_odata_datetime(
+        row.get("НачалоПериода") or row.get("НачалоПериодаПланирования")
+    )
+    period_end = _parse_odata_datetime(row.get("ОкончаниеПериода"))
+    return {
+        "ref_key": ref_key,
+        "number": str(row.get("Number") or "").strip(),
+        "date": _format_odata_datetime(row.get("Date")),
+        "posted": bool(row.get("Posted")),
+        "deletion_mark": bool(row.get("DeletionMark")),
+        "period_start": period_start.isoformat() if period_start else "",
+        "period_end": period_end.isoformat() if period_end else "",
+    }
+
+
+def _build_document_payload(
+    session: requests.Session,
+    base: str,
+    header_row: dict[str, Any],
+    table_entities: list[str],
+) -> dict[str, Any] | None:
+    ref_key = str(header_row.get("Ref_Key") or "")
+    if not ref_key:
+        return None
+    rows, used_entities, table_errors = _fetch_all_plan_rows(session, base, table_entities, ref_key)
+    if not rows:
+        return None
+
+    nom_keys = [
+        str(
+            _first_existing(
+                row,
+                ("Номенклатура_Key", "Продукция_Key", "Изделие_Key", "Материал_Key"),
+            )
+            or ""
+        )
+        for row in rows
+    ]
+    nomenclature = _batch_lookup_nomenclature(session, base, nom_keys)
+    items = [_normalize_plan_row(row, nomenclature) for row in rows]
+    source = ", ".join(used_entities) if used_entities else DOCUMENT_ENTITY
+    header = _normalize_header(header_row)
+    number = header["number"]
+    header_date = header["date"]
+    return {
+        "header": header,
+        "items": items,
+        "source": source,
+        "count": len(items),
+        "message": f"План производства №{number} от {header_date}",
+        "table_entities": used_entities,
+        "table_errors": table_errors[:5],
+    }
+
+
+def fetch_production_plans_for_year(year: int | None = None) -> dict[str, Any]:
+    """Возвращает все проведённые планы производства, актуальные для указанного года."""
+    target_year = year or date.today().year
     base = get_odata_base_url().rstrip("/")
     session = create_session()
     try:
         entity_sets: set[str] = set()
         metadata_error = "metadata skipped: using known ERP entity names"
-
-        header = _fetch_latest_approved_header(session, base)
-        if header is None:
+        table_entities = _candidate_table_entities(entity_sets)
+        headers = _fetch_approved_headers(session, base, year=target_year)
+        if not headers:
             return {
                 "ok": False,
-                "message": "Проведённые планы производства не найдены.",
+                "year": target_year,
+                "message": f"Проведённые планы производства за {target_year} год не найдены.",
                 "base": base,
                 "source": DOCUMENT_ENTITY,
                 "count": 0,
+                "documents": [],
                 "header": None,
                 "items": [],
                 "values": [],
-                "table_entities": _candidate_table_entities(entity_sets),
+                "table_entities": table_entities,
                 "metadata_error": metadata_error,
             }
 
-        ref_key = str(header.get("Ref_Key") or "")
-        table_entities = _candidate_table_entities(entity_sets)
-        used_entity, rows, table_errors = _try_fetch_plan_rows(session, base, table_entities, ref_key)
+        documents: list[dict[str, Any]] = []
+        for header_row in headers:
+            document = _build_document_payload(session, base, header_row, table_entities)
+            if document is not None:
+                documents.append(document)
 
-        nom_keys = [
-            str(
-                _first_existing(
-                    row,
-                    ("Номенклатура_Key", "Продукция_Key", "Изделие_Key", "Материал_Key"),
-                )
-                or ""
-            )
-            for row in rows
-        ]
-        nomenclature = _batch_lookup_nomenclature(session, base, nom_keys)
-        items = [_normalize_plan_row(row, nomenclature) for row in rows]
-        values = [
-            ["Строка", "Дата", "Код", "Номенклатура", "Количество", "Ед.", "Подразделение"],
-            *[
-                [
-                    _to_display(item["line"]),
-                    _to_display(item["date"]),
-                    _to_display(item["code"]),
-                    _to_display(item["name"]),
-                    _to_display(item["quantity"]),
-                    _to_display(item["unit"]),
-                    _to_display(item["department"]),
-                ]
-                for item in items
-            ],
-        ]
-        number = str(header.get("Number") or "").strip()
-        header_date = _format_odata_datetime(header.get("Date"))
+        if not documents:
+            return {
+                "ok": False,
+                "year": target_year,
+                "message": f"Документы плана за {target_year} год найдены, но строк табличных частей нет.",
+                "base": base,
+                "source": DOCUMENT_ENTITY,
+                "count": 0,
+                "documents": [],
+                "header": None,
+                "items": [],
+                "values": [],
+                "table_entities": table_entities,
+                "metadata_error": metadata_error,
+            }
+
+        primary = documents[0]
+        total_count = sum(doc["count"] for doc in documents)
+        numbers = ", ".join(doc["header"]["number"] for doc in documents[:3])
+        if len(documents) > 3:
+            numbers = f"{numbers} и ещё {len(documents) - 3}"
         return {
             "ok": True,
-            "message": f"Найден актуальный проведённый план производства №{number} от {header_date}",
+            "year": target_year,
+            "message": (
+                f"Загружено {len(documents)} план(ов) производства за {target_year} год "
+                f"({numbers}), строк: {total_count}"
+            ),
             "base": base,
-            "source": used_entity or DOCUMENT_ENTITY,
-            "count": len(items),
-            "header": {
-                "ref_key": ref_key,
-                "number": number,
-                "date": header_date,
-                "posted": bool(header.get("Posted")),
-                "deletion_mark": bool(header.get("DeletionMark")),
-            },
-            "items": items,
-            "values": values,
+            "source": primary["source"],
+            "count": total_count,
+            "documents": documents,
+            "header": primary["header"],
+            "items": primary["items"],
+            "values": [],
             "table_entities": table_entities,
             "metadata_error": metadata_error,
-            "table_errors": table_errors[:5],
         }
     except (requests.RequestException, RuntimeError, ValueError, TypeError, ET.ParseError) as exc:
         detail = format_onec_request_error(exc, base_url=base)
         return {
             "ok": False,
+            "year": target_year,
             "message": f"Не удалось получить план производства из 1С: {detail}",
             "base": base,
             "source": DOCUMENT_ENTITY,
             "count": 0,
+            "documents": [],
             "header": None,
             "items": [],
             "values": [],
@@ -337,3 +467,8 @@ def fetch_latest_production_plan_from_onec() -> dict[str, Any]:
         }
     finally:
         session.close()
+
+
+def fetch_latest_production_plan_from_onec() -> dict[str, Any]:
+    """Обратная совместимость: актуальные планы текущего года."""
+    return fetch_production_plans_for_year(date.today().year)

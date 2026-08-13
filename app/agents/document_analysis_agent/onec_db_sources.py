@@ -13,6 +13,7 @@ from app.models.onec_nomenclature import OnecNomenclature
 from app.models.onec_production_plan import OnecProductionPlanHeader, OnecProductionPlanItem
 from app.models.onec_stock import OnecStockBalance
 from app.services.onec_production_plan_sync import ensure_onec_production_plan_tables
+from app.services.onec_production_plan_resolver import resolve_year_production_plan
 from app.services.onec_resource_spec_sync import ensure_onec_resource_spec_tables
 from app.services.onec_stock_sync import ensure_onec_stock_tables
 
@@ -152,31 +153,52 @@ async def load_db_spec_catalog(db: AsyncSession) -> list[DbSpecCatalogEntry]:
     return catalog
 
 
+async def _load_resolved_production_plan_rows(
+    db: AsyncSession,
+    *,
+    year: int | None = None,
+) -> tuple[list[OnecProductionPlanHeader], list[OnecProductionPlanItem], "ResolvedYearProductionPlan"]:
+    from datetime import date
+
+    from app.services.onec_production_plan_resolver import ResolvedYearProductionPlan
+
+    await ensure_onec_production_plan_tables(db)
+    target_year = year or date.today().year
+    headers = (
+        await db.execute(
+            select(OnecProductionPlanHeader).order_by(OnecProductionPlanHeader.plan_date.desc())
+        )
+    ).scalars().all()
+    if not headers:
+        return [], [], ResolvedYearProductionPlan(year=target_year)
+    rows = (
+        await db.execute(
+            select(OnecProductionPlanItem).order_by(
+                OnecProductionPlanItem.month_key,
+                OnecProductionPlanItem.line_number,
+                OnecProductionPlanItem.nomenclature_name,
+            )
+        )
+    ).scalars().all()
+    resolved = resolve_year_production_plan(headers, rows, year=target_year)
+    return headers, resolved.rows, resolved
+
+
 async def load_latest_production_schedule_from_db(
     db: AsyncSession,
 ) -> tuple[list[str], list["ScheduleProductPlan"]]:
-    """Актуальный месячный план производства из БД в формате excel_service.ScheduleProductPlan."""
+    """Актуальный помесячный план производства за текущий год из БД."""
+    from datetime import date
+
     from app.agents.document_analysis_agent.excel_service import (
         ScheduleProductPlan,
         _empty_month_bucket,
         _normalize,
     )
 
-    await ensure_onec_production_plan_tables(db)
-    header = (
-        await db.execute(
-            select(OnecProductionPlanHeader).order_by(OnecProductionPlanHeader.plan_date.desc())
-        )
-    ).scalars().first()
-    if header is None:
+    headers, rows, resolved = await _load_resolved_production_plan_rows(db, year=date.today().year)
+    if not headers or not rows:
         return [], []
-    rows = (
-        await db.execute(
-            select(OnecProductionPlanItem)
-            .where(OnecProductionPlanItem.plan_ref_key == header.ref_key)
-            .order_by(OnecProductionPlanItem.month_key, OnecProductionPlanItem.line_number)
-        )
-    ).scalars().all()
     plans_by_key: dict[str, ScheduleProductPlan] = {}
     for row in rows:
         product = (row.nomenclature_name or "").strip()
@@ -195,8 +217,8 @@ async def load_latest_production_schedule_from_db(
 
     plans = list(plans_by_key.values())
     source = (
-        f"1С → БД: План производства №{header.number or '—'}"
-        f" ({header.plan_date.date().isoformat() if header.plan_date else 'без даты'})"
+        f"1С → БД: План производства за {resolved.year} год "
+        f"({len(resolved.month_sources)} мес., документов: {len(headers)})"
     )
     logger.info(
         "document_analysis_agent.db_production_schedule_loaded",
@@ -210,7 +232,9 @@ async def load_latest_production_schedule_from_db(
 async def load_latest_detailed_production_schedule_from_db(
     db: AsyncSession,
 ) -> "DetailedScheduleExtract":
-    """Актуальный дневной план производства из БД в формате DetailedScheduleExtract."""
+    """Актуальный дневной план производства за текущий год из БД."""
+    from datetime import date
+
     from app.agents.document_analysis_agent.excel_service import (
         DetailedScheduleExtract,
         DetailedScheduleProductPlan,
@@ -218,35 +242,17 @@ async def load_latest_detailed_production_schedule_from_db(
         _normalize,
     )
 
-    await ensure_onec_production_plan_tables(db)
-    header = (
-        await db.execute(
-            select(OnecProductionPlanHeader).order_by(OnecProductionPlanHeader.plan_date.desc())
-        )
-    ).scalars().first()
-    if header is None:
+    headers, rows, resolved = await _load_resolved_production_plan_rows(db, year=date.today().year)
+    if not headers or not rows:
         return DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
 
-    rows = (
-        await db.execute(
-            select(OnecProductionPlanItem)
-            .where(OnecProductionPlanItem.plan_ref_key == header.ref_key)
-            .where(OnecProductionPlanItem.product_date.is_not(None))
-            .order_by(
-                OnecProductionPlanItem.month_key,
-                OnecProductionPlanItem.line_number,
-                OnecProductionPlanItem.nomenclature_name,
-            )
-        )
-    ).scalars().all()
-    if not rows:
+    dated_rows = [row for row in rows if row.product_date is not None]
+    if not dated_rows:
         return DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
 
-    months = sorted({(row.month_key or "").strip() for row in rows if (row.month_key or "").strip()})
+    months = sorted({(row.month_key or "").strip() for row in dated_rows if (row.month_key or "").strip()})
     if not months:
         return DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
-
-    from datetime import date
 
     today = date.today()
     target = f"{today.year:04d}-{today.month:02d}"
@@ -262,7 +268,7 @@ async def load_latest_detailed_production_schedule_from_db(
         return DetailedScheduleExtract(files=[], plans=[], year=0, month=0)
 
     plans_by_key: dict[str, DetailedScheduleProductPlan] = {}
-    for row in rows:
+    for row in dated_rows:
         if (row.month_key or "").strip() != month_key or row.product_date is None:
             continue
         product = (row.nomenclature_name or "").strip()
@@ -284,14 +290,15 @@ async def load_latest_detailed_production_schedule_from_db(
             plan.daily_qty.setdefault(day_key, 0.0)
 
     plans = list(plans_by_key.values())
+    month_source = resolved.month_sources.get(month_key)
     source = (
-        f"1С → БД: План производства по дням №{header.number or '—'}"
-        f" ({month_key})"
+        f"1С → БД: План производства по дням за {month_key}"
+        + (f" (№{month_source.number})" if month_source and month_source.number else "")
     )
     logger.info(
         "document_analysis_agent.db_detailed_production_schedule_loaded",
         products=len(plans),
-        rows=sum(1 for row in rows if (row.month_key or "").strip() == month_key),
+        rows=sum(1 for row in dated_rows if (row.month_key or "").strip() == month_key),
         month=month_key,
         source=source,
     )

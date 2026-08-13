@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -16,7 +16,8 @@ from app.models.onec_production_plan import (
     OnecProductionPlanSyncRun,
 )
 from app.services.onec_production_plan_matrix import build_production_plan_matrices
-from app.services.onec_production_plan_probe import fetch_latest_production_plan_from_onec
+from app.services.onec_production_plan_probe import fetch_production_plans_for_year
+from app.services.onec_production_plan_resolver import MonthPlanSource, resolve_year_production_plan
 
 
 def _parse_datetime(value: object) -> datetime | None:
@@ -78,54 +79,16 @@ async def ensure_onec_production_plan_tables(db: AsyncSession | None = None) -> 
     await ensure_onec_agent_tables()
 
 
-async def replace_production_plan_in_db(db: AsyncSession, payload: dict[str, Any]) -> dict[str, Any]:
-    """Заменяет текущий срез плана производства в БД на последний документ из 1С."""
-    await ensure_onec_production_plan_tables(db)
-    started = datetime.now(timezone.utc)
-    header = payload.get("header") or {}
-    items = payload.get("items") or []
-    plan_ref_key = str(header.get("ref_key") or "")
-    plan_number = str(header.get("number") or "")
-    plan_date = _parse_datetime(header.get("date"))
-
-    run = OnecProductionPlanSyncRun(
-        id=uuid.uuid4(),
-        source=str(payload.get("source") or "Document_ПланПроизводства"),
-        status="running",
-        plan_ref_key=plan_ref_key,
-        plan_number=plan_number,
-        plan_date=plan_date,
-        fetched_count=len(items),
-        saved_count=0,
-        started_at=started,
-    )
-    db.add(run)
-    await db.flush()
-
-    await db.execute(delete(OnecProductionPlanItem))
-    await db.execute(delete(OnecProductionPlanHeader))
-    now = datetime.now(timezone.utc)
-    db.add(
-        OnecProductionPlanHeader(
-            id=uuid.uuid4(),
-            ref_key=plan_ref_key,
-            number=plan_number,
-            plan_date=plan_date,
-            posted=bool(header.get("posted")),
-            deletion_mark=bool(header.get("deletion_mark")),
-            source_entity=str(payload.get("source") or ""),
-            raw_json=json.dumps(header, ensure_ascii=False),
-            synced_at=now,
-        )
-    )
-
-    saved_count = 0
+def _document_items(document: dict[str, Any], plan_ref_key: str) -> list[OnecProductionPlanItem]:
+    header = document.get("header") or {}
+    items = document.get("items") or []
+    result: list[OnecProductionPlanItem] = []
     for item in items:
         if not isinstance(item, dict):
             continue
         raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
         product_date = _parse_datetime(item.get("date"))
-        db.add(
+        result.append(
             OnecProductionPlanItem(
                 id=uuid.uuid4(),
                 plan_ref_key=plan_ref_key,
@@ -141,7 +104,121 @@ async def replace_production_plan_in_db(db: AsyncSession, payload: dict[str, Any
                 raw_json=json.dumps(raw, ensure_ascii=False),
             )
         )
-        saved_count += 1
+    return result
+
+
+async def upsert_production_plans_in_db(db: AsyncSession, payload: dict[str, Any]) -> dict[str, Any]:
+    """Сохраняет все документы плана за год и удаляет устаревшие срезы этого года."""
+    await ensure_onec_production_plan_tables(db)
+    started = datetime.now(timezone.utc)
+    year = int(payload.get("year") or date.today().year)
+    documents = payload.get("documents") or []
+    if not documents and payload.get("header"):
+        documents = [
+            {
+                "header": payload.get("header") or {},
+                "items": payload.get("items") or [],
+                "source": payload.get("source") or "Document_ПланПроизводства",
+            }
+        ]
+
+    ref_keys = [str((doc.get("header") or {}).get("ref_key") or "") for doc in documents]
+    ref_keys = [ref_key for ref_key in ref_keys if ref_key]
+    primary_header = (documents[0].get("header") or {}) if documents else {}
+    primary_ref_key = str(primary_header.get("ref_key") or "")
+    primary_number = str(primary_header.get("number") or "")
+    primary_date = _parse_datetime(primary_header.get("date"))
+
+    run = OnecProductionPlanSyncRun(
+        id=uuid.uuid4(),
+        source=str(payload.get("source") or "Document_ПланПроизводства"),
+        status="running",
+        plan_ref_key=primary_ref_key,
+        plan_number=primary_number,
+        plan_date=primary_date,
+        fetched_count=int(payload.get("count") or 0),
+        saved_count=0,
+        started_at=started,
+    )
+    db.add(run)
+    await db.flush()
+
+    existing_headers = (
+        await db.execute(select(OnecProductionPlanHeader))
+    ).scalars().all()
+    stale_ref_keys = [
+        header.ref_key
+        for header in existing_headers
+        if header.ref_key not in ref_keys
+        and (
+            (header.period_start and header.period_start.year == year)
+            or (header.period_end and header.period_end.year == year)
+            or (header.plan_date and header.plan_date.year == year)
+        )
+    ]
+    if stale_ref_keys:
+        await db.execute(
+            delete(OnecProductionPlanItem).where(
+                OnecProductionPlanItem.plan_ref_key.in_(stale_ref_keys)
+            )
+        )
+        await db.execute(
+            delete(OnecProductionPlanHeader).where(
+                OnecProductionPlanHeader.ref_key.in_(stale_ref_keys)
+            )
+        )
+
+    saved_count = 0
+    now = datetime.now(timezone.utc)
+    for document in documents:
+        header = document.get("header") or {}
+        plan_ref_key = str(header.get("ref_key") or "")
+        if not plan_ref_key:
+            continue
+        plan_number = str(header.get("number") or "")
+        plan_date = _parse_datetime(header.get("date"))
+        period_start = _parse_datetime(header.get("period_start"))
+        period_end = _parse_datetime(header.get("period_end"))
+        source_entity = str(document.get("source") or payload.get("source") or "")
+
+        existing = (
+            await db.execute(
+                select(OnecProductionPlanHeader).where(OnecProductionPlanHeader.ref_key == plan_ref_key)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(
+                OnecProductionPlanHeader(
+                    id=uuid.uuid4(),
+                    ref_key=plan_ref_key,
+                    number=plan_number,
+                    plan_date=plan_date,
+                    period_start=period_start,
+                    period_end=period_end,
+                    posted=bool(header.get("posted")),
+                    deletion_mark=bool(header.get("deletion_mark")),
+                    source_entity=source_entity,
+                    raw_json=json.dumps(header, ensure_ascii=False),
+                    synced_at=now,
+                )
+            )
+        else:
+            existing.number = plan_number
+            existing.plan_date = plan_date
+            existing.period_start = period_start
+            existing.period_end = period_end
+            existing.posted = bool(header.get("posted"))
+            existing.deletion_mark = bool(header.get("deletion_mark"))
+            existing.source_entity = source_entity
+            existing.raw_json = json.dumps(header, ensure_ascii=False)
+            existing.synced_at = now
+
+        await db.execute(
+            delete(OnecProductionPlanItem).where(OnecProductionPlanItem.plan_ref_key == plan_ref_key)
+        )
+        for item in _document_items(document, plan_ref_key):
+            db.add(item)
+            saved_count += 1
 
     run.status = "ok"
     run.saved_count = saved_count
@@ -150,14 +227,21 @@ async def replace_production_plan_in_db(db: AsyncSession, payload: dict[str, Any
         "saved_count": saved_count,
         "db_count": saved_count,
         "sync_run_id": str(run.id),
-        "plan_ref_key": plan_ref_key,
-        "plan_number": plan_number,
-        "plan_date": plan_date.isoformat() if plan_date else None,
+        "plan_ref_key": primary_ref_key,
+        "plan_number": primary_number,
+        "plan_date": primary_date.isoformat() if primary_date else None,
+        "documents_count": len(documents),
+        "year": year,
     }
 
 
+async def replace_production_plan_in_db(db: AsyncSession, payload: dict[str, Any]) -> dict[str, Any]:
+    """Обратная совместимость."""
+    return await upsert_production_plans_in_db(db, payload)
+
+
 async def sync_onec_production_plan_to_db(db: AsyncSession) -> dict[str, Any]:
-    payload = fetch_latest_production_plan_from_onec()
+    payload = fetch_production_plans_for_year(date.today().year)
     if not payload.get("ok"):
         return {
             "step": "production_plan",
@@ -165,7 +249,7 @@ async def sync_onec_production_plan_to_db(db: AsyncSession) -> dict[str, Any]:
             "message": payload.get("message"),
             "count": payload.get("count") or 0,
         }
-    saved = await replace_production_plan_in_db(db, payload)
+    saved = await upsert_production_plans_in_db(db, payload)
     db_match = saved["db_count"] == payload["count"]
     return {
         "step": "production_plan",
@@ -179,6 +263,8 @@ async def sync_onec_production_plan_to_db(db: AsyncSession) -> dict[str, Any]:
         "plan_ref_key": saved["plan_ref_key"],
         "plan_number": saved["plan_number"],
         "plan_date": saved["plan_date"],
+        "documents_count": saved["documents_count"],
+        "year": saved["year"],
     }
 
 
@@ -219,13 +305,14 @@ async def get_production_plan_sync_status(db: AsyncSession, *, ensure: bool = Tr
     }
 
 
-async def list_latest_production_plan_from_db(db: AsyncSession) -> dict[str, Any]:
-    await ensure_onec_production_plan_tables(db)
-    header = (
+async def _load_all_plan_rows(db: AsyncSession) -> tuple[list[OnecProductionPlanHeader], list[OnecProductionPlanItem]]:
+    headers = (
         await db.execute(
             select(OnecProductionPlanHeader).order_by(OnecProductionPlanHeader.plan_date.desc())
         )
-    ).scalars().first()
+    ).scalars().all()
+    if not headers:
+        return [], []
     rows = (
         await db.execute(
             select(OnecProductionPlanItem).order_by(
@@ -235,8 +322,42 @@ async def list_latest_production_plan_from_db(db: AsyncSession) -> dict[str, Any
             )
         )
     ).scalars().all()
+    return headers, rows
+
+
+async def list_latest_production_plan_from_db(
+    db: AsyncSession,
+    *,
+    year: int | None = None,
+) -> dict[str, Any]:
+    await ensure_onec_production_plan_tables(db)
+    target_year = year or date.today().year
+    headers, rows = await _load_all_plan_rows(db)
+    if not headers:
+        return {
+            "ok": False,
+            "year": target_year,
+            "message": "План производства ещё не синхронизирован в БД.",
+            "source": "onec_production_plan_items",
+            "count": 0,
+            "header": None,
+            "values": [],
+            "matrix_view": {
+                "month_keys": [],
+                "default_month": "",
+                "matrices": {},
+            },
+            "month_sources": {},
+            "gaps": [],
+            "documents_count": 0,
+            "table_entities": [],
+        }
+
+    resolved = resolve_year_production_plan(headers, rows, year=target_year)
+    primary_header = max(headers, key=lambda header: header.plan_date or datetime.min.replace(tzinfo=timezone.utc))
+    matrix_view = build_production_plan_matrices(resolved.rows)
     values = [
-        ["Строка", "Месяц", "Код", "Номенклатура", "Количество", "Ед.", "Подразделение"],
+        ["Строка", "Месяц", "Код", "Номенклатура", "Количество", "Ед.", "Подразделение", "Документ"],
         *[
             [
                 str(row.line_number),
@@ -246,35 +367,35 @@ async def list_latest_production_plan_from_db(db: AsyncSession) -> dict[str, Any
                 f"{row.qty:g}",
                 row.unit,
                 row.department,
+                resolved.month_sources.get(row.month_key, MonthPlanSource("", "", None, None, None)).number
+                if row.month_key in resolved.month_sources
+                else "",
             ]
-            for row in rows
+            for row in resolved.rows
         ],
     ]
-    matrix_view = build_production_plan_matrices(rows) if header else {
-        "month_keys": [],
-        "default_month": "",
-        "matrices": {},
-    }
     return {
-        "ok": header is not None,
+        "ok": True,
+        "year": target_year,
         "message": (
-            f"План производства из БД №{header.number} от "
-            f"{header.plan_date.strftime('%d.%m.%Y %H:%M:%S') if header.plan_date else '—'}"
-            if header
-            else "План производства ещё не синхронизирован в БД."
+            f"Актуальный план производства за {target_year} год: "
+            f"{len(resolved.month_sources)} мес. с данными, документов в БД: {len(headers)}"
         ),
-        "source": header.source_entity if header else "onec_production_plan_items",
-        "count": len(rows),
+        "source": primary_header.source_entity or "onec_production_plan_items",
+        "count": len(resolved.rows),
+        "documents_count": len(headers),
         "header": {
-            "ref_key": header.ref_key,
-            "number": header.number,
-            "date": header.plan_date.isoformat() if header.plan_date else "",
-            "posted": header.posted,
-            "deletion_mark": header.deletion_mark,
-        }
-        if header
-        else None,
-        "values": values if header else [],
+            "ref_key": primary_header.ref_key,
+            "number": primary_header.number,
+            "date": primary_header.plan_date.isoformat() if primary_header.plan_date else "",
+            "posted": primary_header.posted,
+            "deletion_mark": primary_header.deletion_mark,
+            "period_start": primary_header.period_start.isoformat() if primary_header.period_start else "",
+            "period_end": primary_header.period_end.isoformat() if primary_header.period_end else "",
+        },
+        "values": values,
         "matrix_view": matrix_view,
-        "table_entities": [header.source_entity] if header else [],
+        "month_sources": resolved.to_meta()["month_sources"],
+        "gaps": resolved.gaps,
+        "table_entities": sorted({header.source_entity for header in headers if header.source_entity}),
     }

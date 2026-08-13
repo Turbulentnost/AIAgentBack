@@ -961,6 +961,7 @@ async def list_aveon_stock_balances(
     warehouse: str | None = None,
     limit: int = 5000,
     offset: int = 0,
+    spec_materials_only: bool = True,
 ):
     """Остатки товаров на складах из БД (после sync из 1С)."""
     from app.services.onec_stock_sync import list_stock_balances_from_db
@@ -971,6 +972,7 @@ async def list_aveon_stock_balances(
         warehouse=warehouse,
         limit=min(max(limit, 1), 10000),
         offset=max(offset, 0),
+        spec_materials_only=spec_materials_only,
     )
 
 

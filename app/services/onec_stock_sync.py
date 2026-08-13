@@ -210,8 +210,11 @@ async def list_stock_balances_from_db(
     warehouse: str | None = None,
     limit: int = 5000,
     offset: int = 0,
+    spec_materials_only: bool = False,
 ) -> dict:
     """Остатки из БД для просмотра в UI (после sync из 1С)."""
+    from app.services.spec_nomenclature_match import load_spec_nomenclature_index, stock_row_matches_spec
+
     await ensure_onec_stock_tables(db)
     stmt = select(OnecStockBalance).order_by(
         OnecStockBalance.warehouse, OnecStockBalance.code, OnecStockBalance.name
@@ -225,12 +228,26 @@ async def list_stock_balances_from_db(
         )
     if warehouse:
         stmt = stmt.where(OnecStockBalance.warehouse == warehouse)
-    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
-    synced_at = rows[0].synced_at.isoformat() if rows and rows[0].synced_at else None
+
+    rows = (await db.execute(stmt)).scalars().all()
+    total_all = len(rows)
+    spec_index = None
+    if spec_materials_only:
+        spec_index = await load_spec_nomenclature_index(db)
+        rows = [row for row in rows if stock_row_matches_spec(row, spec_index)]
+
+    total = len(rows)
+    page_rows = rows[offset : offset + limit]
+    synced_at = page_rows[0].synced_at.isoformat() if page_rows and page_rows[0].synced_at else None
+    if synced_at is None and rows:
+        synced_at = rows[0].synced_at.isoformat() if rows[0].synced_at else None
+
     return {
         "ok": True,
-        "total": int(total or 0),
+        "total": total,
+        "total_all": total_all if spec_materials_only else total,
+        "spec_materials_only": spec_materials_only,
+        "spec_nomenclature_count": spec_index.size if spec_index else 0,
         "limit": limit,
         "offset": offset,
         "synced_at": synced_at,
@@ -245,7 +262,7 @@ async def list_stock_balances_from_db(
                 "nomenclature_key": r.nomenclature_key,
                 "warehouse_key": r.warehouse_key,
             }
-            for r in rows
+            for r in page_rows
         ],
     }
 

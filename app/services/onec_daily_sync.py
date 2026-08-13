@@ -97,10 +97,10 @@ async def sync_onec_resource_specs_to_db(db: AsyncSession) -> dict[str, Any]:
 
 async def sync_onec_production_plan_step(db: AsyncSession) -> dict[str, Any]:
     # Keep the OData fetch off the event loop; DB writes stay on AsyncSession.
-    from app.services.onec_production_plan_probe import fetch_latest_production_plan_from_onec
-    from app.services.onec_production_plan_sync import replace_production_plan_in_db
+    from app.services.onec_production_plan_probe import fetch_production_plans_for_year
+    from app.services.onec_production_plan_sync import upsert_production_plans_in_db
 
-    payload = await asyncio.to_thread(fetch_latest_production_plan_from_onec)
+    payload = await asyncio.to_thread(fetch_production_plans_for_year)
     if not payload.get("ok"):
         return {
             "step": "production_plan",
@@ -108,7 +108,7 @@ async def sync_onec_production_plan_step(db: AsyncSession) -> dict[str, Any]:
             "message": payload.get("message"),
             "count": payload.get("count") or 0,
         }
-    saved = await replace_production_plan_in_db(db, payload)
+    saved = await upsert_production_plans_in_db(db, payload)
     db_match = saved["db_count"] == payload["count"]
     result = {
         "step": "production_plan",

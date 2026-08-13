@@ -20,6 +20,8 @@ class OnecProductionPlanHeader(UUIDPrimaryKeyMixin, Base):
     ref_key: Mapped[str] = mapped_column(String(64), nullable=False)
     number: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     plan_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     posted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     deletion_mark: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     source_entity: Mapped[str] = mapped_column(String(255), default="", nullable=False)
@@ -36,7 +38,13 @@ class OnecProductionPlanItem(UUIDPrimaryKeyMixin, Base):
 
     __tablename__ = "onec_production_plan_items"
     __table_args__ = (
-        UniqueConstraint("plan_ref_key", "line_number", "nomenclature_key", name="uq_onec_prod_plan_line"),
+        UniqueConstraint(
+            "plan_ref_key",
+            "line_number",
+            "nomenclature_key",
+            "month_key",
+            name="uq_onec_prod_plan_line",
+        ),
         Index("ix_onec_production_plan_items_plan", "plan_ref_key"),
         Index("ix_onec_production_plan_items_nom", "nomenclature_key"),
         Index("ix_onec_production_plan_items_month", "month_key"),
