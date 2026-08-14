@@ -5,6 +5,7 @@ from __future__ import annotations
 from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+import json
 from typing import Any, Protocol
 
 
@@ -14,6 +15,7 @@ class _HeaderLike(Protocol):
     plan_date: datetime | None
     period_start: datetime | None
     period_end: datetime | None
+    raw_json: str
 
 
 class _ItemLike(Protocol):
@@ -35,6 +37,8 @@ class MonthPlanSource:
     plan_date: datetime | None
     period_start: datetime | None
     period_end: datetime | None
+    source_refs: tuple[str, ...] = ()
+    source_numbers: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +47,11 @@ class MonthPlanSource:
             "date": self.plan_date.isoformat() if self.plan_date else "",
             "period_start": self.period_start.isoformat() if self.period_start else "",
             "period_end": self.period_end.isoformat() if self.period_end else "",
+            "source_count": len(self.source_refs) or (1 if self.ref_key else 0),
+            "source_refs": list(self.source_refs or ((self.ref_key,) if self.ref_key else ())),
+            "source_numbers": list(
+                self.source_numbers or ((self.number,) if self.number else ())
+            ),
         }
 
 
@@ -101,14 +110,81 @@ def _header_sort_key(header: _HeaderLike) -> datetime:
     return datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _month_source_from_headers(headers: list[_HeaderLike]) -> MonthPlanSource:
+    ordered = sorted(headers, key=_header_sort_key, reverse=True)
+    primary = ordered[0]
+    source_refs = tuple(header.ref_key for header in ordered if header.ref_key)
+    source_numbers = tuple(header.number for header in ordered if header.number)
+    number = ", ".join(source_numbers[:3])
+    if len(source_numbers) > 3:
+        number = f"{number} и ещё {len(source_numbers) - 3}"
+    return MonthPlanSource(
+        ref_key=primary.ref_key,
+        number=number or primary.number,
+        plan_date=primary.plan_date,
+        period_start=primary.period_start,
+        period_end=primary.period_end,
+        source_refs=source_refs,
+        source_numbers=source_numbers,
+    )
+
+
+def _header_business_key(header: _HeaderLike) -> tuple[str, str, str, str]:
+    """Срез плана 1С: сценарий + вид плана + подразделение + ответственный.
+
+    В текущем месяце такие срезы из 1С надо суммировать между собой, но внутри одного
+    среза более поздний документ заменяет старую редакцию.
+    """
+    raw_text = str(getattr(header, "raw_json", "") or "").strip()
+    raw: dict[str, Any] = {}
+    if raw_text:
+        try:
+            parsed = json.loads(raw_text)
+            if isinstance(parsed, dict):
+                raw = parsed
+        except json.JSONDecodeError:
+            raw = {}
+
+    scenario = str(raw.get("scenario_key") or raw.get("Сценарий_Key") or "").strip()
+    plan_type = str(raw.get("plan_type_key") or raw.get("ВидПлана_Key") or "").strip()
+    department = str(
+        raw.get("dispatcher_department_key")
+        or raw.get("ПодразделениеДиспетчер_Key")
+        or raw.get("Подразделение_Key")
+        or ""
+    ).strip()
+    responsible = str(raw.get("responsible_key") or raw.get("Ответственный_Key") or "").strip()
+    if scenario or plan_type or department or responsible:
+        return scenario, plan_type, department, responsible
+    return ("ref", header.ref_key, "", "")
+
+
+def _latest_headers_by_business_key(headers: list[_HeaderLike]) -> list[_HeaderLike]:
+    latest: dict[tuple[str, str, str, str], _HeaderLike] = {}
+    for header in headers:
+        key = _header_business_key(header)
+        previous = latest.get(key)
+        if previous is None or _header_sort_key(header) > _header_sort_key(previous):
+            latest[key] = header
+    return sorted(latest.values(), key=_header_sort_key, reverse=True)
+
+
 def resolve_year_production_plan(
     headers: list[_HeaderLike],
     items: list[_ItemLike],
     *,
     year: int | None = None,
+    merge_month_keys: set[str] | None = None,
 ) -> ResolvedYearProductionPlan:
-    """Для каждого месяца года выбирает последний документ, покрывающий месяц."""
+    """Резолвит годовой план.
+
+    По умолчанию для месяца берётся последний документ, как в старой логике. Для месяцев
+    из merge_month_keys строки всех актуальных документов складываются в единый план.
+    Это нужно для текущего месяца 1С, где разные площадки/виды плана лежат отдельными
+    документами и вместе образуют реальный закупочный спрос месяца.
+    """
     target_year = year or date.today().year
+    merge_month_keys = set(merge_month_keys or set())
     items_by_plan_month: dict[tuple[str, str], list[_ItemLike]] = {}
     for item in items:
         month_key = (item.month_key or "").strip()
@@ -130,19 +206,27 @@ def resolve_year_production_plan(
                 continue
             candidates = [header for header in headers if header.ref_key in doc_refs_with_items]
 
-        winner = max(candidates, key=_header_sort_key)
-        month_items = items_by_plan_month.get((winner.ref_key, month_key), [])
+        if month_key in merge_month_keys:
+            candidates_with_items = [
+                header
+                for header in candidates
+                if items_by_plan_month.get((header.ref_key, month_key), [])
+            ]
+            selected = [
+                header
+                for header in _latest_headers_by_business_key(candidates_with_items)
+            ]
+        else:
+            selected = [max(candidates, key=_header_sort_key)]
+
+        month_items: list[_ItemLike] = []
+        for header in selected:
+            month_items.extend(items_by_plan_month.get((header.ref_key, month_key), []))
         if not month_items:
             resolved.gaps.append(month_key)
             continue
 
-        resolved.month_sources[month_key] = MonthPlanSource(
-            ref_key=winner.ref_key,
-            number=winner.number,
-            plan_date=winner.plan_date,
-            period_start=winner.period_start,
-            period_end=winner.period_end,
-        )
+        resolved.month_sources[month_key] = _month_source_from_headers(selected)
         resolved.rows.extend(month_items)
 
     return resolved

@@ -341,3 +341,59 @@ def clear_dashboard_snapshot(user_id: UUID | str | None) -> bool:
         return False
     path.unlink(missing_ok=True)
     return True
+
+
+def coverage_dashboard_has_data(coverage: Any) -> bool:
+    """True если в coverage_dashboard есть хотя бы одна позиция в изделиях или номенклатурах."""
+    if not isinstance(coverage, dict):
+        return False
+    periods = coverage.get("periods")
+    if not isinstance(periods, dict):
+        return False
+    for period in periods.values():
+        if not isinstance(period, dict):
+            continue
+        for side_key in ("products", "nomenclatures"):
+            side = period.get(side_key)
+            if not isinstance(side, dict):
+                continue
+            tiles = side.get("tiles")
+            if isinstance(tiles, dict) and int(tiles.get("all") or 0) > 0:
+                return True
+    return False
+
+
+def snapshot_recency_key(snapshot: dict[str, Any]) -> str:
+    for key in ("saved_at", "analyzed_at", "auto_refreshed_at", "progress_saved_at"):
+        value = snapshot.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _read_snapshot_dict(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def load_latest_coverage_dashboard() -> dict[str, Any] | None:
+    """Последний coverage_dashboard из любого пользовательского снимка."""
+    if not _SNAPSHOT_DIR.is_dir():
+        return None
+    best_key = ""
+    best_coverage: dict[str, Any] | None = None
+    for path in _SNAPSHOT_DIR.glob("*.json"):
+        data = _read_snapshot_dict(path)
+        if not data:
+            continue
+        coverage = data.get("coverage_dashboard")
+        if not coverage_dashboard_has_data(coverage):
+            continue
+        recency = snapshot_recency_key(data)
+        if recency >= best_key:
+            best_key = recency
+            best_coverage = coverage if isinstance(coverage, dict) else None
+    return best_coverage

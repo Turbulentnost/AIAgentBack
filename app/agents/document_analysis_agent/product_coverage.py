@@ -9,6 +9,11 @@ from typing import Any, Iterable
 
 import structlog
 
+from app.agents.document_analysis_agent.material_classification import (
+    MATERIAL_KIND_REQUIRED,
+    is_optional_material_kind,
+)
+
 logger = structlog.get_logger(__name__)
 
 _SCHEDULE_CATEGORIES = ("заказ", "опытные", "склад")
@@ -51,6 +56,10 @@ class ProductBomLine:
     nomenclature: str
     norm_key: str
     qty_per_unit: float
+    material_kind: str = MATERIAL_KIND_REQUIRED
+    material_kind_label: str = ""
+    material_kind_confidence: str = ""
+    material_kind_reason: str = ""
 
 
 @dataclass
@@ -58,6 +67,10 @@ class ProductBom:
     product: str
     materials: dict[str, float] = field(default_factory=dict)  # norm_name → qty per unit
     material_names: dict[str, str] = field(default_factory=dict)  # norm → display
+    material_kinds: dict[str, str] = field(default_factory=dict)
+    material_kind_labels: dict[str, str] = field(default_factory=dict)
+    material_kind_confidences: dict[str, str] = field(default_factory=dict)
+    material_kind_reasons: dict[str, str] = field(default_factory=dict)
     matched: bool = False
 
     def lines(self) -> list[ProductBomLine]:
@@ -66,6 +79,10 @@ class ProductBom:
                 nomenclature=self.material_names.get(key, key),
                 norm_key=key,
                 qty_per_unit=qty,
+                material_kind=self.material_kinds.get(key, MATERIAL_KIND_REQUIRED),
+                material_kind_label=self.material_kind_labels.get(key, ""),
+                material_kind_confidence=self.material_kind_confidences.get(key, ""),
+                material_kind_reason=self.material_kind_reasons.get(key, ""),
             )
             for key, qty in self.materials.items()
             if qty > 0
@@ -82,6 +99,8 @@ class ProductMonthCoverage:
     covered: float
     fact: float = 0.0
     cover_ratio: float = 0.0
+    conditional_covered: float = 0.0
+    conditional_cover_ratio: float = 0.0
     limiting_materials: list[str] = field(default_factory=list)
 
 
@@ -149,10 +168,13 @@ def build_boms_from_merged(
     merged: Iterable[Any],
 ) -> dict[str, ProductBom]:
     """BOM: изделие → {norm(материал): qty на 1 изделие} из MergedNomenclatureRow.by_product."""
+    from app.agents.document_analysis_agent.excel_service import _match_key
+
     boms: dict[str, ProductBom] = {
         product: ProductBom(product=product, matched=False) for product in products_in_order
     }
     product_keys = {_normalize(p): p for p in products_in_order}
+    product_match_keys = {_match_key(p): p for p in products_in_order if _match_key(p)}
 
     for row in merged:
         by_product = getattr(row, "by_product", None) or {}
@@ -165,6 +187,8 @@ def build_boms_from_merged(
         for product_name, qty in by_product.items():
             canonical = product_keys.get(_normalize(product_name))
             if canonical is None:
+                canonical = product_match_keys.get(_match_key(product_name))
+            if canonical is None:
                 continue
             if qty is None:
                 continue
@@ -175,9 +199,69 @@ def build_boms_from_merged(
             bom.materials[mat_key] = bom.materials.get(mat_key, 0.0) + q
             if display and mat_key not in bom.material_names:
                 bom.material_names[mat_key] = display
+            kind = _row_material_meta(row, product_name, canonical, "kind")
+            label = _row_material_meta(row, product_name, canonical, "label")
+            confidence = _row_material_meta(row, product_name, canonical, "confidence")
+            reason = _row_material_meta(row, product_name, canonical, "reason")
+            if mat_key not in bom.material_kinds or is_optional_material_kind(kind):
+                bom.material_kinds[mat_key] = kind or MATERIAL_KIND_REQUIRED
+                bom.material_kind_labels[mat_key] = label or ""
+                bom.material_kind_confidences[mat_key] = confidence or ""
+                bom.material_kind_reasons[mat_key] = reason or ""
             bom.matched = True
 
     return boms
+
+
+def _row_material_meta(row: Any, product_name: str, canonical: str, suffix: str) -> str:
+    by_product = getattr(row, f"coverage_material_{suffix}s_by_product", None) or {}
+    if by_product:
+        for key in (product_name, canonical):
+            if key in by_product:
+                return str(by_product.get(key) or "")
+        norm_index = {_normalize(key): value for key, value in by_product.items()}
+        for key in (product_name, canonical):
+            value = norm_index.get(_normalize(key))
+            if value:
+                return str(value)
+    return str(getattr(row, f"coverage_material_{suffix}", "") or "")
+
+
+def _relaxed_boms_without_optional_materials(
+    boms: dict[str, ProductBom],
+) -> dict[str, ProductBom]:
+    relaxed: dict[str, ProductBom] = {}
+    for product, bom in boms.items():
+        kept = {
+            mat: qty
+            for mat, qty in bom.materials.items()
+            if not is_optional_material_kind(bom.material_kinds.get(mat))
+        }
+        relaxed[product] = ProductBom(
+            product=bom.product,
+            materials=kept,
+            material_names={
+                mat: name for mat, name in bom.material_names.items() if mat in kept
+            },
+            material_kinds={
+                mat: kind for mat, kind in bom.material_kinds.items() if mat in kept
+            },
+            material_kind_labels={
+                mat: label for mat, label in bom.material_kind_labels.items() if mat in kept
+            },
+            material_kind_confidences={
+                mat: confidence
+                for mat, confidence in bom.material_kind_confidences.items()
+                if mat in kept
+            },
+            material_kind_reasons={
+                mat: reason
+                for mat, reason in bom.material_kind_reasons.items()
+                if mat in kept
+            },
+            matched=bom.matched,
+        )
+    return relaxed
 
 
 def _material_supply_maps(
@@ -320,6 +404,41 @@ def _select_active_for_alpha(
     return []
 
 
+def _compute_covered_for_candidates(
+    candidates: list[str],
+    plan_m: dict[str, float],
+    boms: dict[str, ProductBom],
+    available: dict[str, float],
+) -> tuple[dict[str, float], dict[str, float]]:
+    active = _select_active_for_alpha(candidates, plan_m, boms, available)
+
+    alpha = _alpha_for_active(active, plan_m, boms, available) if active else 0.0
+    covered: dict[str, float] = {
+        product: float(math.floor(alpha * plan_m[product] + 1e-9)) for product in active
+    }
+
+    pool = dict(available)
+    for product in active:
+        _consume(boms[product], pool, covered[product])
+
+    changed = True
+    safety = 0
+    max_iters = int(sum(plan_m[p] for p in candidates)) + len(candidates) + 10
+    while changed and safety < max_iters:
+        changed = False
+        safety += 1
+        for product in candidates:
+            current = covered.get(product, 0.0)
+            if current + 1 <= plan_m[product] + 1e-9 and _can_build_one(
+                boms[product], pool
+            ):
+                covered[product] = current + 1
+                _consume(boms[product], pool, 1)
+                changed = True
+
+    return covered, pool
+
+
 def compute_product_coverage(
     schedule_plans: list[Any],
     merged: list[Any],
@@ -333,13 +452,21 @@ def compute_product_coverage(
     products_in_order = [plan.product for plan in schedule_plans]
     plans_by_product = {plan.product: plan for plan in schedule_plans}
     boms = build_boms_from_merged(products_in_order, merged)
+    relaxed_boms = _relaxed_boms_without_optional_materials(boms)
     stock0, receipts_map = _material_supply_maps(merged)
 
     bom_keys = {key for bom in boms.values() for key in bom.materials}
+    relaxed_bom_keys = {key for bom in relaxed_boms.values() for key in bom.materials}
     opening: dict[str, float] = {key: float(stock0.get(key, 0.0)) for key in bom_keys}
+    relaxed_opening: dict[str, float] = {
+        key: float(stock0.get(key, 0.0)) for key in relaxed_bom_keys
+    }
     if months:
         opening = _seed_opening_with_pre_horizon_receipts(
             opening, receipts_map, bom_keys, months[0]
+        )
+        relaxed_opening = _seed_opening_with_pre_horizon_receipts(
+            relaxed_opening, receipts_map, relaxed_bom_keys, months[0]
         )
 
     cells: dict[tuple[str, str], ProductMonthCoverage] = {}
@@ -360,6 +487,11 @@ def compute_product_coverage(
             + max(0.0, float((receipts_map.get(key) or {}).get(month, 0.0)))
             for key in bom_keys
         }
+        relaxed_available: dict[str, float] = {
+            key: max(0.0, float(relaxed_opening.get(key, 0.0)))
+            + max(0.0, float((receipts_map.get(key) or {}).get(month, 0.0)))
+            for key in relaxed_bom_keys
+        }
         month_available[month] = dict(available)
 
         plan_m: dict[str, float] = {
@@ -377,41 +509,25 @@ def compute_product_coverage(
             for product in products_in_order
             if plan_m.get(product, 0.0) > 0 and boms.get(product, ProductBom(product)).matched
         ]
-        active = _select_active_for_alpha(candidates, plan_m, boms, available)
-
-        alpha = _alpha_for_active(active, plan_m, boms, available) if active else 0.0
-        covered: dict[str, float] = {
-            product: float(math.floor(alpha * plan_m[product] + 1e-9)) for product in active
-        }
-
-        pool = dict(available)
-        for product in active:
-            _consume(boms[product], pool, covered[product])
-
-        changed = True
-        safety = 0
-        max_iters = int(sum(plan_m[p] for p in candidates)) + len(candidates) + 10
-        while changed and safety < max_iters:
-            changed = False
-            safety += 1
-            for product in candidates:
-                current = covered.get(product, 0.0)
-                if current + 1 <= plan_m[product] + 1e-9 and _can_build_one(
-                    boms[product], pool
-                ):
-                    covered[product] = current + 1
-                    _consume(boms[product], pool, 1)
-                    changed = True
+        covered, pool = _compute_covered_for_candidates(candidates, plan_m, boms, available)
+        conditional_covered, relaxed_pool = _compute_covered_for_candidates(
+            candidates,
+            plan_m,
+            relaxed_boms,
+            relaxed_available,
+        )
 
         for product in products_in_order:
             plan = float(plan_m.get(product, 0.0))
             fact = float(fact_m.get(product, 0.0))
             cov = float(covered.get(product, 0.0))
+            conditional_cov = max(cov, float(conditional_covered.get(product, 0.0)))
             bom = boms.get(product) or ProductBom(product=product)
             limiting: list[str] = []
             if plan > 0 and bom.matched and cov + 1e-9 < plan:
                 limiting = _limiting_materials(bom, available, plan)
             ratio = (cov / plan) if plan > 0 else 0.0
+            conditional_ratio = (conditional_cov / plan) if plan > 0 else 0.0
             cells[(product, month)] = ProductMonthCoverage(
                 product=product,
                 month=month,
@@ -419,10 +535,15 @@ def compute_product_coverage(
                 fact=fact,
                 covered=cov,
                 cover_ratio=ratio,
+                conditional_covered=conditional_cov,
+                conditional_cover_ratio=conditional_ratio,
                 limiting_materials=limiting,
             )
 
         opening = {key: max(0.0, float(pool.get(key, 0.0))) for key in bom_keys}
+        relaxed_opening = {
+            key: max(0.0, float(relaxed_pool.get(key, 0.0))) for key in relaxed_bom_keys
+        }
 
     fully_covered = sum(
         1
@@ -457,6 +578,8 @@ class ProductDayCoverage:
     covered: float
     fact: float = 0.0
     cover_ratio: float = 0.0
+    conditional_covered: float = 0.0
+    conditional_cover_ratio: float = 0.0
     matched: bool = False
 
 
@@ -478,6 +601,13 @@ class DailyPlanCoverageResult:
     def covered_for_days(self, product: str, day_keys: list[str]) -> float:
         return sum(float(self.cell(product, day).covered) for day in day_keys)
 
+    def conditional_covered_for_days(self, product: str, day_keys: list[str]) -> float:
+        total = 0.0
+        for day in day_keys:
+            cell = self.cell(product, day)
+            total += max(float(cell.covered or 0.0), float(cell.conditional_covered or 0.0))
+        return total
+
     def status_for_plan_cell(
         self,
         product: str,
@@ -491,9 +621,10 @@ class DailyPlanCoverageResult:
         bom = self.boms.get(product)
         matched = bool(bom and bom.matched)
         covered = float(self.covered_for_days(product, day_keys))
+        conditional = float(self.conditional_covered_for_days(product, day_keys))
         if not matched or covered <= 1e-12:
-            return "red"
-        if covered + 1e-9 < plan:
+            return "yellow" if conditional > 1e-12 else "red"
+        if covered + 1e-9 < plan or conditional + 1e-9 < plan:
             return "yellow"
         return "green"
 
@@ -562,6 +693,10 @@ def _detailed_name_aliases(key: str) -> list[str]:
     if key.endswith(" ит"):
         base = key[: -len(" ит")].rstrip()
         aliases.append(f"{base} т")
+    if " z40" in key or "(z40)" in key or key.endswith(" z40"):
+        aliases.append(re.sub(r"\(?\s*z\s*-?\s*40\s*\)?", " z40", key))
+    if re.search(r"\bр\b", key) and " z40" in key:
+        aliases.append(re.sub(r"\bsokol\b|\bсокол\b", "сокол", key))
     # уникальные, длинные раньше коротких
     seen: set[str] = set()
     ordered: list[str] = []
@@ -593,11 +728,18 @@ def _match_detailed_to_catalog(detailed: str, catalog: list[str]) -> str | None:
     """Сопоставляет короткое имя детального плана с изделием из BOM/спеки."""
     if not detailed or not catalog:
         return None
+    from app.agents.document_analysis_agent.excel_service import _match_key
+
     key = _normalize(detailed)
     by_key = {_normalize(name): name for name in catalog}
     for alias in _detailed_name_aliases(key):
         if alias in by_key:
             return by_key[alias]
+
+    detailed_mk = _match_key(detailed)
+    by_match_key = {_match_key(name): name for name in catalog if _match_key(name)}
+    if detailed_mk and detailed_mk in by_match_key:
+        return by_match_key[detailed_mk]
 
     best_name: str | None = None
     best_len = -1
@@ -645,6 +787,10 @@ def build_boms_for_detailed_products(
             product=detailed,
             materials=dict(source.materials),
             material_names=dict(source.material_names),
+            material_kinds=dict(source.material_kinds),
+            material_kind_labels=dict(source.material_kind_labels),
+            material_kind_confidences=dict(source.material_kind_confidences),
+            material_kind_reasons=dict(source.material_kind_reasons),
             matched=source.matched,
         )
     return result
@@ -662,13 +808,21 @@ def compute_daily_plan_coverage(
         str(getattr(plan, "product", "") or ""): plan for plan in detailed_plans
     }
     boms = build_boms_for_detailed_products(products_in_order, merged)
+    relaxed_boms = _relaxed_boms_without_optional_materials(boms)
     stock0, receipts_map = _material_daily_supply_maps(merged)
 
     bom_keys = {key for bom in boms.values() for key in bom.materials}
+    relaxed_bom_keys = {key for bom in relaxed_boms.values() for key in bom.materials}
     opening: dict[str, float] = {key: float(stock0.get(key, 0.0)) for key in bom_keys}
+    relaxed_opening: dict[str, float] = {
+        key: float(stock0.get(key, 0.0)) for key in relaxed_bom_keys
+    }
     if day_keys:
         opening = _seed_opening_with_pre_horizon_daily_receipts(
             opening, receipts_map, bom_keys, day_keys[0]
+        )
+        relaxed_opening = _seed_opening_with_pre_horizon_daily_receipts(
+            relaxed_opening, receipts_map, relaxed_bom_keys, day_keys[0]
         )
 
     cells: dict[tuple[str, str], ProductDayCoverage] = {}
@@ -686,6 +840,11 @@ def compute_daily_plan_coverage(
             + max(0.0, float((receipts_map.get(key) or {}).get(day, 0.0)))
             for key in bom_keys
         }
+        relaxed_available: dict[str, float] = {
+            key: max(0.0, float(relaxed_opening.get(key, 0.0)))
+            + max(0.0, float((receipts_map.get(key) or {}).get(day, 0.0)))
+            for key in relaxed_bom_keys
+        }
 
         plan_d: dict[str, float] = {}
         fact_d: dict[str, float] = {}
@@ -701,37 +860,21 @@ def compute_daily_plan_coverage(
             for product in products_in_order
             if plan_d.get(product, 0.0) > 0 and boms.get(product, ProductBom(product)).matched
         ]
-        active = _select_active_for_alpha(candidates, plan_d, boms, available)
-
-        alpha = _alpha_for_active(active, plan_d, boms, available) if active else 0.0
-        covered: dict[str, float] = {
-            product: float(math.floor(alpha * plan_d[product] + 1e-9)) for product in active
-        }
-
-        pool = dict(available)
-        for product in active:
-            _consume(boms[product], pool, covered[product])
-
-        changed = True
-        safety = 0
-        max_iters = int(sum(plan_d[p] for p in candidates)) + len(candidates) + 10
-        while changed and safety < max_iters:
-            changed = False
-            safety += 1
-            for product in candidates:
-                current = covered.get(product, 0.0)
-                if current + 1 <= plan_d[product] + 1e-9 and _can_build_one(
-                    boms[product], pool
-                ):
-                    covered[product] = current + 1
-                    _consume(boms[product], pool, 1)
-                    changed = True
+        covered, pool = _compute_covered_for_candidates(candidates, plan_d, boms, available)
+        conditional_covered, relaxed_pool = _compute_covered_for_candidates(
+            candidates,
+            plan_d,
+            relaxed_boms,
+            relaxed_available,
+        )
 
         for product in products_in_order:
             plan = float(plan_d.get(product, 0.0))
             cov = float(covered.get(product, 0.0))
+            conditional_cov = max(cov, float(conditional_covered.get(product, 0.0)))
             bom = boms.get(product) or ProductBom(product=product)
             ratio = (cov / plan) if plan > 0 else 0.0
+            conditional_ratio = (conditional_cov / plan) if plan > 0 else 0.0
             cells[(product, day)] = ProductDayCoverage(
                 product=product,
                 day=day,
@@ -739,10 +882,15 @@ def compute_daily_plan_coverage(
                 covered=cov,
                 fact=float(fact_d.get(product, 0.0)),
                 cover_ratio=ratio,
+                conditional_covered=conditional_cov,
+                conditional_cover_ratio=conditional_ratio,
                 matched=bom.matched,
             )
 
         opening = {key: max(0.0, float(pool.get(key, 0.0))) for key in bom_keys}
+        relaxed_opening = {
+            key: max(0.0, float(relaxed_pool.get(key, 0.0))) for key in relaxed_bom_keys
+        }
 
     logger.info(
         "document_analysis_agent.daily_plan_coverage_computed",

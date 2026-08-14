@@ -103,3 +103,17 @@ def test_detailed_short_name_aliases():
     assert _match_detailed_to_catalog("Сокол ИС", catalog) == catalog[2]
     assert _match_detailed_to_catalog("Сокол ИСТ", catalog) == catalog[3]
 
+
+def test_detailed_z40_matches_by_match_key():
+    from app.agents.document_analysis_agent.product_coverage import compute_daily_plan_coverage
+
+    schedule_name = 'FPV-перехватчик "Сокол" Р (Z40)'
+    detailed_name = 'FPV-перехватчик "СОКОЛ" Р (Z40)'
+    merged = [
+        _row("Корпус Z40", {schedule_name: 1}, stock=100),
+    ]
+    plans = [_plan(detailed_name, {"2026-08-13": 10})]
+    result = compute_daily_plan_coverage(plans, merged, ["2026-08-13"])
+    assert result.boms[detailed_name].matched is True
+    assert result.cell(detailed_name, "2026-08-13").covered == 10
+

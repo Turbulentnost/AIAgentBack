@@ -62,6 +62,15 @@ async def ensure_onec_agent_tables() -> None:
                 "ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ",
                 "ALTER TABLE onec_production_plan_headers "
                 "ADD COLUMN IF NOT EXISTS period_end TIMESTAMPTZ",
+                "ALTER TABLE onec_production_plan_items "
+                "ADD COLUMN IF NOT EXISTS specification_key VARCHAR(64) NOT NULL DEFAULT ''",
+                "ALTER TABLE onec_production_plan_items "
+                "ADD COLUMN IF NOT EXISTS specification_name TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE onec_production_plan_items "
+                "DROP CONSTRAINT IF EXISTS uq_onec_prod_plan_line",
+                "ALTER TABLE onec_production_plan_items "
+                "ADD CONSTRAINT uq_onec_prod_plan_line "
+                "UNIQUE (plan_ref_key, line_number, nomenclature_key, product_date)",
             ):
                 sync_conn.execute(text(stmt))
 

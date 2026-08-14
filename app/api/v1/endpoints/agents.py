@@ -7,7 +7,7 @@ import io
 import json
 import uuid
 import zipfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 from typing import Annotated, Any
@@ -25,9 +25,11 @@ from app.agents.document_analysis_agent.excel_service import (
 )
 from app.agents.document_analysis_agent.dashboard_snapshot import (
     clear_dashboard_snapshot,
+    coverage_dashboard_has_data,
     derive_dashboard_date_msk,
     is_dashboard_stale_for_today,
     load_dashboard_snapshot,
+    load_latest_coverage_dashboard,
     save_dashboard_snapshot,
     snapshot_had_valid_shift_today,
     today_msk_iso,
@@ -42,8 +44,11 @@ from app.agents.document_analysis_agent.shift_assignment import (
     resolve_shift_manager_name,
 )
 from app.agents.document_analysis_agent.shift_live_progress import (
+    enrich_manager_dashboard_snapshot,
     has_any_live_shift_for_today,
+    iter_valid_shift_snapshots,
     resolve_manager_live_report,
+    _snapshot_sort_key,
 )
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -76,6 +81,9 @@ from app.services.aveon_shipment_schedule_service import (
     AveonShipmentScheduleError,
     AveonShipmentScheduleService,
     shipment_change_idempotency_key,
+)
+from app.services.aveon_executive_procurement_report import (
+    build_executive_procurement_report,
 )
 from app.models.user import User
 from app.services.audit_service import AuditService
@@ -272,23 +280,61 @@ def _dashboard_refresh_lock(user_id: object | None, day: str) -> asyncio.Lock:
 async def _prepare_aveon_uploaded_with_server_shipment(
     uploaded: list[UploadedWorkbook],
     db: DbSession,
-) -> tuple[list[UploadedWorkbook], dict]:
+    *,
+    user_id: object | None = None,
+) -> tuple[list[UploadedWorkbook], dict, dict[str, Any] | None]:
     await ensure_aveon_shipment_schedule_tables()
     shipment_service = AveonShipmentScheduleService(db)
-    active_russia_schedule = await shipment_service.get_active_russia()
-    if active_russia_schedule is None:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Российский график отгрузок не загружен в БД. Выполните служебную загрузку графика.",
-        )
 
     from app.agents.document_analysis_agent.temp_schedule_merge import merge_schedule_files
 
-    shipment_merge = await merge_schedule_files(
-        [(active_russia_schedule.version.file_name, active_russia_schedule.raw)],
-        include_google_sheets=True,
-        include_merged_inputs=True,
-    )
+    user_shipment_files = [
+        item for item in uploaded if _is_shipment_schedule_filename(item.filename)
+    ]
+    filtered = [item for item in uploaded if not _is_shipment_schedule_filename(item.filename)]
+    pending_russia_update: dict[str, Any] | None = None
+
+    if user_shipment_files:
+        russia_merge = await merge_schedule_files(
+            [(item.filename, item.content) for item in user_shipment_files],
+            include_google_sheets=False,
+            include_merged_inputs=True,
+        )
+        if not russia_merge.get("ok") or not russia_merge.get("file_base64"):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                str(
+                    russia_merge.get("message")
+                    or "Не удалось собрать пользовательский график отгрузок по России"
+                ),
+            )
+        russia_raw = base64.b64decode(str(russia_merge["file_base64"]))
+        pending_russia_update = {
+            "file_name": str(russia_merge.get("file_name") or "merged_schedule.xlsx"),
+            "raw": russia_raw,
+            "preview_values": russia_merge.get("preview_values") or [],
+            "stats": russia_merge.get("stats") or {},
+            "source_count": len(user_shipment_files),
+            "created_by_user_id": user_id if isinstance(user_id, uuid.UUID) else None,
+        }
+        shipment_merge = await merge_schedule_files(
+            [(pending_russia_update["file_name"], russia_raw)],
+            include_google_sheets=True,
+            include_merged_inputs=True,
+        )
+    else:
+        active_russia_schedule = await shipment_service.get_active_russia()
+        if active_russia_schedule is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Российский график отгрузок не загружен в БД. Выполните служебную загрузку графика.",
+            )
+        shipment_merge = await merge_schedule_files(
+            [(active_russia_schedule.version.file_name, active_russia_schedule.raw)],
+            include_google_sheets=True,
+            include_merged_inputs=True,
+        )
+
     if not shipment_merge.get("ok") or not shipment_merge.get("file_base64"):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -306,9 +352,9 @@ async def _prepare_aveon_uploaded_with_server_shipment(
         )
 
     shipment_raw = base64.b64decode(str(shipment_merge["file_base64"]))
-    filtered = [item for item in uploaded if not _is_shipment_schedule_filename(item.filename)]
-    filtered.append(UploadedWorkbook(filename="merged_schedule.xlsx", content=shipment_raw))
-    return filtered, shipment_merge
+    filename = "merged_schedule_uploaded.xlsx" if user_shipment_files else "merged_schedule.xlsx"
+    filtered.append(UploadedWorkbook(filename=filename, content=shipment_raw))
+    return filtered, shipment_merge, pending_russia_update
 
 
 def _serialize_logistics_risks(result: Any) -> dict[str, Any]:
@@ -417,9 +463,10 @@ async def _auto_refresh_dashboard_snapshot(
 
         analyzed_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
-            uploaded, shipment_merge = await _prepare_aveon_uploaded_with_server_shipment(
+            uploaded, shipment_merge, _pending_russia_update = await _prepare_aveon_uploaded_with_server_shipment(
                 restored,
                 db,
+                user_id=user_id,
             )
             result = await analyze_aveon_excel_files(uploaded, db=db, user_id=user_id)
             previous_day_plans = _coverage_day_plan_count(snapshot.get("coverage_dashboard"))
@@ -826,7 +873,38 @@ async def classify_document_excel_files(
 async def get_document_analysis_dashboard_latest(_user: DocumentAnalysisUser, db: DbSession):
     """Последний сохранённый дашборд (контрольные точки) после анализа Авион."""
     user_id = getattr(_user, "id", None) if _user is not None else None
+    manager_name = resolve_shift_manager_name(
+        email=getattr(_user, "email", None) if _user is not None else None,
+        full_name=getattr(_user, "full_name", None) if _user is not None else None,
+    )
     snapshot = load_dashboard_snapshot(user_id)
+    if snapshot is None and manager_name:
+        shared_coverage = load_latest_coverage_dashboard()
+        shared_shift_snapshots = sorted(
+            iter_valid_shift_snapshots(),
+            key=_snapshot_sort_key,
+            reverse=True,
+        )
+        shared_base = shared_shift_snapshots[0] if shared_shift_snapshots else None
+        if shared_coverage or shared_base:
+            snapshot = {
+                "version": 2,
+                "user_id": str(user_id) if user_id is not None else None,
+                "analyzed_at": (
+                    str(shared_base.get("analyzed_at"))
+                    if shared_base and shared_base.get("analyzed_at")
+                    else datetime.now().astimezone().isoformat(timespec="seconds")
+                ),
+                "logistics_risks": (
+                    shared_base.get("logistics_risks")
+                    if shared_base and isinstance(shared_base.get("logistics_risks"), dict)
+                    else {"as_of": None, "stages": []}
+                ),
+                "task_dashboard": None,
+                "shift_assignment": None,
+                "coverage_dashboard": shared_coverage,
+                "meta": {"source": "shared"},
+            }
     if snapshot is None:
         return {"ok": False, "snapshot": None}
     needs_refresh = is_dashboard_stale_for_today(snapshot) or _dashboard_auto_refresh_incomplete(
@@ -847,6 +925,12 @@ async def get_document_analysis_dashboard_latest(_user: DocumentAnalysisUser, db
             )
     if isinstance(snapshot, dict) and not snapshot.get("dashboard_date_msk"):
         snapshot["dashboard_date_msk"] = derive_dashboard_date_msk(snapshot)
+    if manager_name and isinstance(snapshot, dict):
+        snapshot = enrich_manager_dashboard_snapshot(
+            snapshot,
+            manager_name=manager_name,
+            manager_user_id=user_id,
+        )
     return {"ok": True, "snapshot": snapshot}
 
 
@@ -1084,6 +1168,14 @@ async def run_aveon_onec_sync_now(_user: DocumentAnalysisUser):
     return {"ok": bool(result.get("ok")), **result}
 
 
+@router.get("/document-analysis/onec-sync-progress")
+async def get_aveon_onec_sync_progress(_user: DocumentAnalysisUser):
+    """Текущий прогресс ручной/плановой выгрузки из 1С."""
+    from app.services.onec_sync_scheduler import get_onec_sync_progress
+
+    return {"ok": True, "progress": get_onec_sync_progress()}
+
+
 # TEMP(Aveon Google Sheets probe) — удалить целиком без последствий
 @router.post("/document-analysis/temp-google-sheets-probe")
 async def temp_aveon_google_sheets_probe(_user: DocumentAnalysisUser):
@@ -1211,6 +1303,7 @@ async def upload_aveon_russia_shipment_schedule(
 async def merge_shipment_schedule_files(
     _user: DocumentAnalysisUser,
     files: Annotated[list[UploadFile], File(...)],
+    include_google_sheets: bool = True,
 ):
     """Объединение нескольких файлов графика отгрузок (в т.ч. ТАМОЖНЯ/ИТЦ) в один."""
     if not files:
@@ -1223,7 +1316,7 @@ async def merge_shipment_schedule_files(
         raw = await file.read()
         payload.append((file.filename or "unnamed.xlsx", raw))
 
-    return await merge_schedule_files(payload)
+    return await merge_schedule_files(payload, include_google_sheets=include_google_sheets)
 
 
 @router.post("/document-analysis/shipment-schedule/preview")
@@ -1577,7 +1670,11 @@ async def analyze_document_excel_files(
     analyzed_at = datetime.now().astimezone().isoformat(timespec="seconds")
     refresh_inputs = _build_dashboard_refresh_inputs(uploaded)
 
-    uploaded, shipment_merge = await _prepare_aveon_uploaded_with_server_shipment(uploaded, db)
+    uploaded, shipment_merge, pending_russia_update = await _prepare_aveon_uploaded_with_server_shipment(
+        uploaded,
+        db,
+        user_id=user_id,
+    )
 
     try:
         result = await analyze_aveon_excel_files(uploaded, db=db, user_id=user_id)
@@ -1588,6 +1685,24 @@ async def analyze_document_excel_files(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             f"Не удалось проанализировать Excel: {exc}",
         ) from exc
+
+    if pending_russia_update is not None:
+        try:
+            service = AveonShipmentScheduleService(db)
+            await service.save_russia_version(
+                filename=str(pending_russia_update["file_name"]),
+                raw=pending_russia_update["raw"],
+                created_by_user_id=pending_russia_update.get("created_by_user_id"),
+                reason="analysis_upload",
+                preview_values=pending_russia_update.get("preview_values") or [],
+                stats=pending_russia_update.get("stats") or {},
+                changed_cells=[],
+                source_type="analysis_upload",
+            )
+            await db.commit()
+        except AveonShipmentScheduleError as exc:
+            await db.rollback()
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
     shift_name = (
         result.shift_assignment_file_name
@@ -1619,6 +1734,11 @@ async def analyze_document_excel_files(
             for stage in (result.logistics_risks.stages if result.logistics_risks else [])
         ],
     }
+    coverage_payload = result.coverage_dashboard
+    if not coverage_dashboard_has_data(coverage_payload):
+        shared_coverage = load_latest_coverage_dashboard()
+        if shared_coverage:
+            coverage_payload = shared_coverage
     meta: dict = {
         "source": result.source,
         "roles": [
@@ -1688,7 +1808,8 @@ async def analyze_document_excel_files(
         "detailed_diff_message": result.detailed_diff_message,
         "detailed_baseline_saved": result.detailed_baseline_saved,
         "detailed_compared_with_saved": result.detailed_compared_with_saved,
-        "coverage_dashboard": result.coverage_dashboard,
+        "coverage_dashboard": coverage_payload,
+        "input_sources": result.input_sources,
     }
     # compact / zip: без тяжёлых массивов, которые мобилка не использует.
     if not compact and response_format != "zip":
@@ -1765,7 +1886,7 @@ async def analyze_document_excel_files(
             task_dashboard=task_dashboard_payload,
             shift_assignment=shift_assignment_payload,
             merged_shipment_schedule=merged_shipment_payload,
-            coverage_dashboard=result.coverage_dashboard,
+            coverage_dashboard=coverage_payload,
             meta={
                 "source": result.source,
                 "stock_files": result.stock_files,
@@ -1815,6 +1936,7 @@ async def analyze_document_excel_files(
                     logger.warning("shift_start_email_failed", error=str(exc))
                 except Exception as exc:
                     logger.warning("shift_start_email_failed", error=str(exc))
+    meta["merged_shipment_schedule"] = merged_shipment_payload
     meta["dashboard_analyzed_at"] = analyzed_at
 
     if response_format == "zip":
@@ -2159,6 +2281,263 @@ def _shift_completion_read_stats(
     }
 
 
+def _dedupe_shift_reports(reports: list[ShiftCompletionReport]) -> dict[tuple[str, date], ShiftCompletionReport]:
+    deduped: dict[tuple[str, date], ShiftCompletionReport] = {}
+    for report in reports:
+        key = (report.manager_name, report.report_date)
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = report
+            continue
+        existing_sent = existing.email_sent_at
+        report_sent = report.email_sent_at
+        if report_sent and (existing_sent is None or report_sent > existing_sent):
+            deduped[key] = report
+    return deduped
+
+
+def _build_shift_daily_breakdown(
+    reports_by_manager_date: dict[tuple[str, date], ShiftCompletionReport],
+    *,
+    date_from: date,
+    date_to: date,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    current = date_from
+    while current <= date_to:
+        day_reports = [item for (manager_name, report_day), item in reports_by_manager_date.items() if report_day == current]
+        if day_reports:
+            total = resolved = incomplete = 0
+            for report in day_reports:
+                stats = report.stats_json or {}
+                total += int(stats.get("total") or 0)
+                resolved += int(stats.get("resolved") or 0)
+                incomplete += int(stats.get("incomplete") or 0)
+            rows.append(
+                {
+                    "report_date": current.isoformat(),
+                    "reports_count": len(day_reports),
+                    "managers": ", ".join(sorted({report.manager_name for report in day_reports})),
+                    "total": total,
+                    "resolved": resolved,
+                    "incomplete": incomplete,
+                    "resolved_percent": round((resolved / total) * 100) if total else 0,
+                }
+            )
+        current += timedelta(days=1)
+    return rows
+
+
+def _shift_completion_aggregate_period(
+    reports: list[ShiftCompletionReport],
+    *,
+    date_from: date,
+    date_to: date,
+    manager_user_ids: dict[str, uuid.UUID] | None = None,
+) -> dict[str, Any]:
+    in_range = [report for report in reports if date_from <= report.report_date <= date_to]
+    reports_by_manager_date = _dedupe_shift_reports(in_range)
+    roster = list(SHIFT_MANAGER_ROSTER)
+    manager_ids = manager_user_ids or {}
+
+    managers: list[dict[str, Any]] = []
+    total = resolved = incomplete = partial = not_resolved = active = 0
+    submitted_shift_days = 0
+    in_progress_count = 0
+
+    for name in roster:
+        manager_reports = sorted(
+            [item for (manager_name, _), item in reports_by_manager_date.items() if manager_name == name],
+            key=lambda item: item.report_date,
+        )
+        region_label = SHIFT_MANAGER_REGIONS.get(name, "")
+
+        if manager_reports:
+            submitted_shift_days += len(manager_reports)
+            manager_total = manager_resolved = manager_incomplete = 0
+            manager_partial = manager_not_resolved = manager_active = 0
+            all_tasks: list[dict[str, Any]] = []
+            latest_sent: datetime | None = None
+            for report in manager_reports:
+                stats = report.stats_json or {}
+                manager_total += int(stats.get("total") or 0)
+                manager_resolved += int(stats.get("resolved") or 0)
+                manager_incomplete += int(stats.get("incomplete") or 0)
+                manager_partial += int(stats.get("partial") or 0)
+                manager_not_resolved += int(stats.get("not_resolved") or 0)
+                manager_active += int(stats.get("active") or 0)
+                for task in report.tasks_json or []:
+                    if not isinstance(task, dict):
+                        continue
+                    task_copy = dict(task)
+                    task_copy["shift_date"] = report.report_date.isoformat()
+                    all_tasks.append(task_copy)
+                if report.email_sent_at and (latest_sent is None or report.email_sent_at > latest_sent):
+                    latest_sent = report.email_sent_at
+
+            managers.append(
+                {
+                    "id": f"aggregate:{name}:{date_from.isoformat()}:{date_to.isoformat()}",
+                    "manager_name": name,
+                    "report_date": date_to.isoformat(),
+                    "report_status": "submitted",
+                    "region_label": region_label,
+                    "days_with_reports": len(manager_reports),
+                    "stats": {
+                        "total": manager_total,
+                        "resolved": manager_resolved,
+                        "incomplete": manager_incomplete,
+                        "partial": manager_partial,
+                        "not_resolved": manager_not_resolved,
+                        "active": manager_active,
+                        "resolved_percent": round((manager_resolved / manager_total) * 100)
+                        if manager_total
+                        else 0,
+                    },
+                    "tasks": all_tasks,
+                    "incomplete_tasks": [task for task in all_tasks if task.get("status") != "resolved"],
+                    "email_sent_to": manager_reports[-1].email_sent_to,
+                    "email_sent_at": latest_sent.isoformat() if latest_sent else None,
+                }
+            )
+            total += manager_total
+            resolved += manager_resolved
+            incomplete += manager_incomplete
+            partial += manager_partial
+            not_resolved += manager_not_resolved
+            active += manager_active
+            continue
+
+        if date_to.isoformat() == today_msk_iso():
+            live_report = resolve_manager_live_report(
+                name,
+                date_to,
+                manager_user_id=manager_ids.get(name),
+            )
+            if live_report is not None:
+                in_progress_count += 1
+                live_report = dict(live_report)
+                live_report["days_with_reports"] = 0
+                managers.append(live_report)
+                live_stats = live_report.get("stats") or {}
+                total += int(live_stats.get("total") or 0)
+                resolved += int(live_stats.get("resolved") or 0)
+                incomplete += int(live_stats.get("incomplete") or 0)
+                partial += int(live_stats.get("partial") or 0)
+                not_resolved += int(live_stats.get("not_resolved") or 0)
+                active += int(live_stats.get("active") or 0)
+                continue
+
+        managers.append(
+            {
+                "id": f"missing:{name}:{date_from.isoformat()}:{date_to.isoformat()}",
+                "manager_name": name,
+                "report_date": date_to.isoformat(),
+                "report_status": "missing",
+                "region_label": region_label,
+                "days_with_reports": 0,
+                "stats": _empty_shift_completion_stats(),
+                "tasks": [],
+                "incomplete_tasks": [],
+                "email_sent_to": "",
+                "email_sent_at": None,
+            }
+        )
+
+    days_in_period = (date_to - date_from).days + 1
+    expected_shift_days = len(roster) * days_in_period
+    submitted_count = len({report.manager_name for report in in_range})
+    missing_count = max(expected_shift_days - submitted_shift_days - in_progress_count, 0)
+
+    return {
+        "total": total,
+        "resolved": resolved,
+        "incomplete": incomplete,
+        "partial": partial,
+        "not_resolved": not_resolved,
+        "active": active,
+        "resolved_percent": round((resolved / total) * 100) if total else 0,
+        "roster_total": len(roster),
+        "submitted_count": submitted_count,
+        "in_progress_count": in_progress_count,
+        "missing_count": missing_count,
+        "live_mode": date_to.isoformat() == today_msk_iso() and in_progress_count > 0,
+        "managers": managers,
+        "days_in_period": days_in_period,
+        "submitted_shift_days": submitted_shift_days,
+        "expected_shift_days": expected_shift_days,
+        "daily_breakdown": _build_shift_daily_breakdown(
+            reports_by_manager_date,
+            date_from=date_from,
+            date_to=date_to,
+        ),
+    }
+
+
+def _completion_dashboard_payload(
+    summary: dict[str, Any],
+    *,
+    report_date: date,
+    period_mode: str,
+    period_label: str,
+    date_from: date,
+    date_to: date,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": True,
+        "report_date": report_date.isoformat(),
+        "period_mode": period_mode,
+        "period_label": period_label,
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "live_mode": summary.get("live_mode", False),
+        "summary": {
+            key: value
+            for key, value in summary.items()
+            if key
+            not in {
+                "managers",
+                "roster_total",
+                "submitted_count",
+                "in_progress_count",
+                "missing_count",
+                "live_mode",
+                "days_in_period",
+                "submitted_shift_days",
+                "expected_shift_days",
+                "daily_breakdown",
+            }
+        },
+        "roster": {
+            "total": summary["roster_total"],
+            "submitted": summary["submitted_count"],
+            "in_progress": summary["in_progress_count"],
+            "missing": summary["missing_count"],
+        },
+        "managers": summary["managers"],
+    }
+    if period_mode != "day":
+        payload["days_in_period"] = summary.get("days_in_period")
+        payload["submitted_shift_days"] = summary.get("submitted_shift_days")
+        payload["expected_shift_days"] = summary.get("expected_shift_days")
+        payload["daily_breakdown"] = summary.get("daily_breakdown") or []
+    return payload
+
+
+def _executive_report_filename(
+    *,
+    period_mode: str,
+    target_date: date,
+    date_from: date,
+    date_to: date,
+) -> str:
+    if period_mode == "day":
+        return f"aveon_executive_procurement_report_{target_date.isoformat()}.xlsx"
+    if period_mode == "all":
+        return f"aveon_executive_procurement_report_all_{date_from.isoformat()}_{date_to.isoformat()}.xlsx"
+    return f"aveon_executive_procurement_report_{date_from.isoformat()}_{date_to.isoformat()}.xlsx"
+
+
 @router.get("/document-analysis/shift-assignment/completion-dates")
 async def get_shift_completion_dates(
     _user: DocumentAnalysisUser,
@@ -2267,6 +2646,181 @@ async def get_shift_completion_dashboard(
         },
         "managers": summary["managers"],
     }
+
+
+def _leader_dashboard_snapshot(user_id: uuid.UUID | str | None) -> dict[str, Any] | None:
+    snapshot = load_dashboard_snapshot(user_id)
+    if isinstance(snapshot, dict):
+        if not snapshot.get("dashboard_date_msk"):
+            snapshot["dashboard_date_msk"] = derive_dashboard_date_msk(snapshot)
+        return snapshot
+
+    shared_coverage = load_latest_coverage_dashboard()
+    shared_shift_snapshots = sorted(
+        iter_valid_shift_snapshots(),
+        key=_snapshot_sort_key,
+        reverse=True,
+    )
+    shared_base = shared_shift_snapshots[0] if shared_shift_snapshots else None
+    if not shared_coverage and not shared_base:
+        return None
+
+    return {
+        "version": 2,
+        "user_id": str(user_id) if user_id is not None else None,
+        "analyzed_at": (
+            str(shared_base.get("analyzed_at"))
+            if shared_base and shared_base.get("analyzed_at")
+            else datetime.now().astimezone().isoformat(timespec="seconds")
+        ),
+        "logistics_risks": (
+            shared_base.get("logistics_risks")
+            if shared_base and isinstance(shared_base.get("logistics_risks"), dict)
+            else {"as_of": None, "stages": []}
+        ),
+        "task_dashboard": (
+            shared_base.get("task_dashboard")
+            if shared_base and isinstance(shared_base.get("task_dashboard"), dict)
+            else None
+        ),
+        "shift_assignment": None,
+        "coverage_dashboard": shared_coverage,
+        "dashboard_date_msk": derive_dashboard_date_msk({"coverage_dashboard": shared_coverage}),
+        "meta": {"source": "shared"},
+    }
+
+
+@router.get("/document-analysis/executive-procurement-report")
+async def download_executive_procurement_report(
+    _user: DocumentAnalysisUser,
+    db: DbSession,
+    report_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    period_mode: str = "day",
+):
+    """Excel-сводка руководителя по текущему состоянию закупок."""
+    manager_name = resolve_shift_manager_name(
+        email=getattr(_user, "email", None) if _user is not None else None,
+        full_name=getattr(_user, "full_name", None) if _user is not None else None,
+    )
+    if manager_name:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Сводный отчёт руководителя доступен только руководителю.",
+        )
+
+    normalized_mode = (period_mode or "day").strip().lower()
+    if normalized_mode not in {"day", "range", "all"}:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "period_mode должен быть day, range или all.",
+        )
+
+    await ensure_shift_completion_tables()
+    today = date.fromisoformat(today_msk_iso())
+    manager_user_ids = await _shift_manager_user_ids(db)
+
+    if normalized_mode == "day":
+        target_date = report_date or today
+        range_from = target_date
+        range_to = target_date
+        result = await db.execute(
+            select(ShiftCompletionReport)
+            .where(ShiftCompletionReport.report_date == target_date)
+            .order_by(
+                ShiftCompletionReport.manager_name.asc(),
+                ShiftCompletionReport.email_sent_at.desc(),
+            )
+        )
+        reports = list(result.scalars().all())
+        summary = _shift_completion_read_stats(
+            reports,
+            report_date=target_date,
+            manager_user_ids=manager_user_ids,
+        )
+        period_label = target_date.isoformat()
+    else:
+        if normalized_mode == "all":
+            min_result = await db.execute(select(func.min(ShiftCompletionReport.report_date)))
+            min_date = min_result.scalar_one_or_none()
+            range_from = min_date or today
+            range_to = today
+        else:
+            if date_from is None or date_to is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Для period_mode=range нужны date_from и date_to.",
+                )
+            if date_from > date_to:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "date_from не может быть позже date_to.",
+                )
+            if (date_to - date_from).days > 365:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Максимальная длина периода — 365 дней.",
+                )
+            range_from = date_from
+            range_to = date_to
+
+        result = await db.execute(
+            select(ShiftCompletionReport)
+            .where(
+                ShiftCompletionReport.report_date >= range_from,
+                ShiftCompletionReport.report_date <= range_to,
+            )
+            .order_by(
+                ShiftCompletionReport.report_date.asc(),
+                ShiftCompletionReport.manager_name.asc(),
+                ShiftCompletionReport.email_sent_at.desc(),
+            )
+        )
+        reports = list(result.scalars().all())
+        summary = _shift_completion_aggregate_period(
+            reports,
+            date_from=range_from,
+            date_to=range_to,
+            manager_user_ids=manager_user_ids,
+        )
+        if normalized_mode == "all":
+            period_label = f"всё время ({range_from.isoformat()} — {range_to.isoformat()})"
+        else:
+            period_label = f"{range_from.isoformat()} — {range_to.isoformat()}"
+        target_date = range_to
+
+    completion_dashboard = _completion_dashboard_payload(
+        summary,
+        report_date=target_date,
+        period_mode=normalized_mode,
+        period_label=period_label,
+        date_from=range_from,
+        date_to=range_to,
+    )
+    snapshot = _leader_dashboard_snapshot(getattr(_user, "id", None) if _user is not None else None)
+    xlsx = await asyncio.to_thread(
+        build_executive_procurement_report,
+        snapshot=snapshot,
+        completion_dashboard=completion_dashboard,
+        report_date=target_date.isoformat(),
+        period_mode=normalized_mode,
+        period_label=period_label,
+        date_from=range_from.isoformat(),
+        date_to=range_to.isoformat(),
+    )
+    filename = _executive_report_filename(
+        period_mode=normalized_mode,
+        target_date=target_date,
+        date_from=range_from,
+        date_to=range_to,
+    )
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
 
 
 @router.post("/document-analysis/shift-assignment/complete")

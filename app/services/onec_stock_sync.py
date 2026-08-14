@@ -76,10 +76,29 @@ def fetch_stock_items_from_onec() -> dict:
         raw_rows = _fetch_all_balances(http)
         nom_keys = [str(r.get("Номенклатура_Key") or "") for r in raw_rows]
         wh_keys = [str(r.get("Склад_Key") or "") for r in raw_rows]
-        nom_map = _batch_lookup(
-            http, "Catalog_Номенклатура", nom_keys, "Ref_Key,Code,Description"
-        )
-        wh_map = _batch_lookup(http, "Catalog_Склады", wh_keys, "Ref_Key,Description")
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _lookup_nom() -> dict[str, dict]:
+            session = create_session()
+            try:
+                return _batch_lookup(
+                    session, "Catalog_Номенклатура", nom_keys, "Ref_Key,Code,Description"
+                )
+            finally:
+                session.close()
+
+        def _lookup_wh() -> dict[str, dict]:
+            session = create_session()
+            try:
+                return _batch_lookup(session, "Catalog_Склады", wh_keys, "Ref_Key,Description")
+            finally:
+                session.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            nom_future = pool.submit(_lookup_nom)
+            wh_future = pool.submit(_lookup_wh)
+            nom_map = nom_future.result()
+            wh_map = wh_future.result()
 
         items: list[dict] = []
         for row in raw_rows:

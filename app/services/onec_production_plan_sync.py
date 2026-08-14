@@ -73,6 +73,24 @@ def _nomenclature_key(item: dict[str, Any]) -> str:
     return ""
 
 
+def _is_daily_plan_header(header: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(header.get(key) or "")
+        for key in (
+            "scenario_name",
+            "plan_type_name",
+            "scenario_key",
+            "plan_type_key",
+            "number",
+        )
+    ).casefold().replace("ё", "е")
+    if "день" in text:
+        return True
+    # В текущей выгрузке 1С дневные планы часто отдают дату только в заголовке.
+    # Если строка без даты, используем дату документа как день плана.
+    return False
+
+
 async def ensure_onec_production_plan_tables(db: AsyncSession | None = None) -> None:
     from app.services.onec_db_schema import ensure_onec_agent_tables
 
@@ -87,17 +105,21 @@ def _document_items(document: dict[str, Any], plan_ref_key: str) -> list[OnecPro
         if not isinstance(item, dict):
             continue
         raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
-        product_date = _parse_datetime(item.get("date"))
+        row_date = _parse_datetime(item.get("date"))
+        header_date = _parse_datetime(header.get("date"))
+        product_date = row_date or (header_date if _is_daily_plan_header(header) else None)
         result.append(
             OnecProductionPlanItem(
                 id=uuid.uuid4(),
                 plan_ref_key=plan_ref_key,
                 line_number=_to_int(item.get("line")),
                 product_date=product_date,
-                month_key=_month_key(item.get("date"), header.get("date")),
+                month_key=_month_key(product_date, item.get("date"), header.get("date")),
                 nomenclature_key=_nomenclature_key(item),
                 nomenclature_code=str(item.get("code") or ""),
                 nomenclature_name=str(item.get("name") or "").strip(),
+                specification_key=str(item.get("spec_key") or ""),
+                specification_name=str(item.get("spec_name") or "").strip(),
                 qty=_to_float(item.get("quantity")),
                 unit=str(item.get("unit") or ""),
                 department=str(item.get("department") or ""),
@@ -353,9 +375,32 @@ async def list_latest_production_plan_from_db(
             "table_entities": [],
         }
 
-    resolved = resolve_year_production_plan(headers, rows, year=target_year)
+    today = date.today()
+    current_month = f"{today.year:04d}-{today.month:02d}"
+    resolved = resolve_year_production_plan(
+        headers,
+        rows,
+        year=target_year,
+        merge_month_keys={current_month},
+    )
     primary_header = max(headers, key=lambda header: header.plan_date or datetime.min.replace(tzinfo=timezone.utc))
-    matrix_view = build_production_plan_matrices(resolved.rows)
+    headers_by_ref = {header.ref_key: header for header in headers}
+    current_rows = [
+        row
+        for row in resolved.rows
+        if (row.month_key or "").strip() == current_month
+    ]
+    matrix_view = build_production_plan_matrices(current_rows)
+    current_qty_sum = sum(float(row.qty or 0.0) for row in current_rows)
+    if current_rows and current_qty_sum <= 0:
+        matrix = (matrix_view.get("matrices") or {}).get(current_month)
+        if isinstance(matrix, dict):
+            matrix["note"] = (
+                "Объединённый план за месяц загружен из 1С, но OData вернула "
+                "нулевые значения в полях «Количество»/«КоличествоУпаковок». "
+                "Данные из файлов пользователя здесь не подмешиваются."
+            )
+    current_source = resolved.month_sources.get(current_month)
     values = [
         ["Строка", "Месяц", "Код", "Номенклатура", "Количество", "Ед.", "Подразделение", "Документ"],
         *[
@@ -367,22 +412,29 @@ async def list_latest_production_plan_from_db(
                 f"{row.qty:g}",
                 row.unit,
                 row.department,
-                resolved.month_sources.get(row.month_key, MonthPlanSource("", "", None, None, None)).number
-                if row.month_key in resolved.month_sources
-                else "",
+                headers_by_ref.get(row.plan_ref_key).number
+                if row.plan_ref_key in headers_by_ref
+                else (
+                    resolved.month_sources.get(
+                        row.month_key,
+                        MonthPlanSource("", "", None, None, None),
+                    ).number
+                    if row.month_key in resolved.month_sources
+                    else ""
+                ),
             ]
-            for row in resolved.rows
+            for row in current_rows
         ],
     ]
     return {
         "ok": True,
         "year": target_year,
         "message": (
-            f"Актуальный план производства за {target_year} год: "
-            f"{len(resolved.month_sources)} мес. с данными, документов в БД: {len(headers)}"
+            f"Актуальный план производства за {current_month}: "
+            f"{len(current_rows)} строк, документов в БД: {len(headers)}"
         ),
         "source": primary_header.source_entity or "onec_production_plan_items",
-        "count": len(resolved.rows),
+        "count": len(current_rows),
         "documents_count": len(headers),
         "header": {
             "ref_key": primary_header.ref_key,
@@ -395,7 +447,9 @@ async def list_latest_production_plan_from_db(
         },
         "values": values,
         "matrix_view": matrix_view,
-        "month_sources": resolved.to_meta()["month_sources"],
+        "month_sources": {
+            current_month: current_source.to_dict()
+        } if current_source is not None else {},
         "gaps": resolved.gaps,
         "table_entities": sorted({header.source_entity for header in headers if header.source_entity}),
     }

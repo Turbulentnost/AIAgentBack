@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from threading import Lock
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
@@ -12,6 +14,24 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 _LOCK_KEY = "onec:aveon:daily_sync:lock"
+_PROGRESS_LOCK = Lock()
+_STEP_TITLES = {
+    "stock": "Остатки",
+    "resource_specs": "Спецификации",
+    "production_plan": "План производства",
+    "save_stock": "Запись остатков",
+    "save_specs": "Запись спецификаций",
+    "save_plan": "Запись плана",
+}
+_SYNC_PROGRESS: dict[str, Any] = {
+    "running": False,
+    "owner": "",
+    "started_at": None,
+    "finished_at": None,
+    "step": "",
+    "label": "",
+    "steps": [],
+}
 
 
 def _sync_timezone() -> ZoneInfo:
@@ -81,6 +101,57 @@ def _release_sync_lock(client: object | None) -> None:
         pass
 
 
+def _base_progress(owner: str) -> dict[str, Any]:
+    return {
+        "running": True,
+        "owner": owner,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": None,
+        "step": "connect",
+        "label": "Подключаемся к 1С и готовим выгрузку",
+        "steps": [
+            {"key": key, "title": title, "status": "pending", "message": ""}
+            for key, title in _STEP_TITLES.items()
+        ],
+    }
+
+
+def _set_sync_progress(payload: dict[str, Any]) -> None:
+    with _PROGRESS_LOCK:
+        _SYNC_PROGRESS.clear()
+        _SYNC_PROGRESS.update(payload)
+
+
+def _update_sync_progress(step: str, status: str, message: str | None = None) -> None:
+    with _PROGRESS_LOCK:
+        _SYNC_PROGRESS["running"] = True
+        _SYNC_PROGRESS["step"] = step
+        if message:
+            _SYNC_PROGRESS["label"] = message
+        for item in _SYNC_PROGRESS.get("steps", []):
+            if item.get("key") == step:
+                item["status"] = status
+                if message:
+                    item["message"] = message
+                break
+
+
+def _finish_sync_progress(status: str, message: str) -> None:
+    with _PROGRESS_LOCK:
+        _SYNC_PROGRESS["running"] = False
+        _SYNC_PROGRESS["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _SYNC_PROGRESS["step"] = status
+        _SYNC_PROGRESS["label"] = message
+
+
+def get_onec_sync_progress() -> dict[str, Any]:
+    with _PROGRESS_LOCK:
+        return {
+            **_SYNC_PROGRESS,
+            "steps": [dict(item) for item in _SYNC_PROGRESS.get("steps", [])],
+        }
+
+
 async def run_onec_sync_with_lock(*, owner: str) -> dict:
     from app.services.onec_daily_sync import run_onec_daily_sync
 
@@ -88,10 +159,18 @@ async def run_onec_sync_with_lock(*, owner: str) -> dict:
     if not acquired:
         return {"ok": False, "status": "skipped_locked", "owner": owner}
 
+    _set_sync_progress(_base_progress(owner))
     try:
-        result = await run_onec_daily_sync()
+        result = await run_onec_daily_sync(progress=_update_sync_progress)
         result["status"] = "completed" if result.get("ok") else "failed"
+        _finish_sync_progress(
+            result["status"],
+            "Выгрузка из 1С завершена" if result.get("ok") else "Выгрузка из 1С завершилась с ошибкой",
+        )
         return result
+    except Exception:
+        _finish_sync_progress("failed", "Выгрузка из 1С прервана из-за ошибки")
+        raise
     finally:
         await asyncio.to_thread(_release_sync_lock, client)
 

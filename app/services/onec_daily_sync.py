@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,19 @@ from app.services.onec_resource_spec_sync import (
 from app.services.onec_stock_sync import fetch_stock_items_from_onec, replace_stock_in_db
 
 logger = get_logger(__name__)
+
+_ONEC_FETCH_WORKERS = 3
+SyncProgressCallback = Callable[[str, str, str | None], None]
+
+
+def _emit_progress(
+    progress: SyncProgressCallback | None,
+    step: str,
+    status: str,
+    message: str | None = None,
+) -> None:
+    if progress is not None:
+        progress(step, status, message)
 
 
 async def sync_onec_stock_to_db(db: AsyncSession) -> dict[str, Any]:
@@ -96,7 +110,6 @@ async def sync_onec_resource_specs_to_db(db: AsyncSession) -> dict[str, Any]:
 
 
 async def sync_onec_production_plan_step(db: AsyncSession) -> dict[str, Any]:
-    # Keep the OData fetch off the event loop; DB writes stay on AsyncSession.
     from app.services.onec_production_plan_probe import fetch_production_plans_for_year
     from app.services.onec_production_plan_sync import upsert_production_plans_in_db
 
@@ -132,10 +145,44 @@ async def sync_onec_production_plan_step(db: AsyncSession) -> dict[str, Any]:
     return result
 
 
-async def run_onec_daily_sync() -> dict[str, Any]:
+def _fetch_onec_payloads_parallel(
+    progress: SyncProgressCallback | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Независимые OData-выгрузки параллельно (отдельная HTTP-сессия на поток)."""
+    from app.services.onec_production_plan_probe import fetch_production_plans_for_year
+
+    _emit_progress(progress, "stock", "running", "Читаем остатки по складам из 1С")
+    _emit_progress(progress, "resource_specs", "running", "Читаем ресурсные спецификации и материалы")
+    _emit_progress(progress, "production_plan", "running", "Читаем планы производства текущего месяца")
+    payloads: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=_ONEC_FETCH_WORKERS) as pool:
+        futures = {
+            pool.submit(fetch_stock_items_from_onec): ("stock", "Остатки получены из 1С"),
+            pool.submit(fetch_resource_specs_from_onec): (
+                "resource_specs",
+                "Спецификации получены из 1С",
+            ),
+            pool.submit(fetch_production_plans_for_year): (
+                "production_plan",
+                "Планы производства получены из 1С",
+            ),
+        }
+        for future in as_completed(futures):
+            step, done_message = futures[future]
+            payload = future.result()
+            payloads[step] = payload
+            _emit_progress(progress, step, "done" if payload.get("ok") else "error", done_message)
+    return payloads["stock"], payloads["resource_specs"], payloads["production_plan"]
+
+
+async def run_onec_daily_sync(progress: SyncProgressCallback | None = None) -> dict[str, Any]:
     from app.db.session import AsyncSessionLocal
 
-    stock_payload = await asyncio.to_thread(fetch_stock_items_from_onec)
+    stock_payload, specs_payload, plan_payload = await asyncio.to_thread(
+        _fetch_onec_payloads_parallel,
+        progress,
+    )
+
     if not stock_payload.get("ok"):
         stock_result: dict[str, Any] = {
             "step": "stock",
@@ -144,6 +191,7 @@ async def run_onec_daily_sync() -> dict[str, Any]:
             "count": stock_payload.get("count") or 0,
         }
     else:
+        _emit_progress(progress, "save_stock", "running", "Записываем остатки в БД")
         async with AsyncSessionLocal() as db:
             saved = await replace_stock_in_db(db, stock_payload.get("items") or [])
             await db.commit()
@@ -164,8 +212,8 @@ async def run_onec_daily_sync() -> dict[str, Any]:
             saved_count=stock_result["saved_count"],
             db_match=db_match,
         )
+        _emit_progress(progress, "save_stock", "done", "Остатки сохранены")
 
-    specs_payload = await asyncio.to_thread(fetch_resource_specs_from_onec)
     if not specs_payload.get("ok"):
         specs_result: dict[str, Any] = {
             "step": "resource_specs",
@@ -174,6 +222,7 @@ async def run_onec_daily_sync() -> dict[str, Any]:
             "count": specs_payload.get("count") or 0,
         }
     else:
+        _emit_progress(progress, "save_specs", "running", "Записываем спецификации и материалы в БД")
         specs = specs_payload.pop("specs", [])
         nomenclature_items = specs_payload.pop("nomenclature_items", [])
         async with AsyncSessionLocal() as db:
@@ -210,10 +259,43 @@ async def run_onec_daily_sync() -> dict[str, Any]:
             outputs=specs_result["db_outputs"],
             db_match=db_match,
         )
+        _emit_progress(progress, "save_specs", "done", "Спецификации сохранены")
 
-    async with AsyncSessionLocal() as db:
-        production_plan_result = await sync_onec_production_plan_step(db)
-        await db.commit()
+    if not plan_payload.get("ok"):
+        production_plan_result = {
+            "step": "production_plan",
+            "ok": False,
+            "message": plan_payload.get("message"),
+            "count": plan_payload.get("count") or 0,
+        }
+    else:
+        from app.services.onec_production_plan_sync import upsert_production_plans_in_db
+
+        _emit_progress(progress, "save_plan", "running", "Объединяем и сохраняем план производства")
+        async with AsyncSessionLocal() as db:
+            saved = await upsert_production_plans_in_db(db, plan_payload)
+            await db.commit()
+        db_match = saved["db_count"] == plan_payload["count"]
+        production_plan_result = {
+            "step": "production_plan",
+            "ok": True,
+            "message": plan_payload.get("message"),
+            "count": plan_payload.get("count") or 0,
+            "saved_count": saved["saved_count"],
+            "db_count": saved["db_count"],
+            "sync_run_id": saved["sync_run_id"],
+            "db_match": db_match,
+            "plan_number": saved["plan_number"],
+            "plan_date": saved["plan_date"],
+        }
+        logger.info(
+            "onec_daily_sync.production_plan.completed",
+            count=production_plan_result["count"],
+            saved_count=production_plan_result["saved_count"],
+            db_match=db_match,
+            plan_number=production_plan_result["plan_number"],
+        )
+        _emit_progress(progress, "save_plan", "done", "План производства сохранён")
 
     ok = (
         bool(stock_result.get("ok"))

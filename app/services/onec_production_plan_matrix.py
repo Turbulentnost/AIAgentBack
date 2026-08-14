@@ -35,6 +35,7 @@ _MONTH_NAMES_RU = (
     "Ноябрь",
     "Декабрь",
 )
+EMPTY_GUID = "00000000-0000-0000-0000-000000000000"
 
 
 def format_month_label(month_key: str) -> str:
@@ -82,6 +83,26 @@ def _day_label(date_key: str, *, granularity: str) -> str:
         except ValueError:
             pass
     return date_key
+
+
+def _clean_ref(value: str | None) -> str:
+    text = (value or "").strip()
+    return "" if not text or text == EMPTY_GUID else text
+
+
+def _product_group_key(row: _PlanRowLike) -> str:
+    # В 1С пустой GUID может приходить как обычное значение. Для UI и агрегации
+    # надёжнее группировать по реальному имени, как это делает расчёт daily-плана.
+    name = (row.nomenclature_name or "").strip()
+    code = (row.nomenclature_code or "").strip()
+    ref_key = _clean_ref(row.nomenclature_key)
+    if name:
+        return f"name:{name.casefold().replace('ё', 'е')}"
+    if code:
+        return f"code:{code.casefold()}"
+    if ref_key:
+        return f"ref:{ref_key}"
+    return f"line:{row.line_number}"
 
 
 @dataclass(frozen=True)
@@ -136,15 +157,13 @@ def build_month_matrix(month_key: str, rows: list[_PlanRowLike]) -> ProductionPl
     has_any_day = False
 
     for row in rows:
-        product_key = (row.nomenclature_key or row.nomenclature_name or "").strip()
-        if not product_key:
-            product_key = f"line-{row.line_number}"
+        product_key = _product_group_key(row)
         if product_key not in products_map:
             products_map[product_key] = {
                 "product_key": product_key,
                 "name": (row.nomenclature_name or product_key).strip(),
                 "code": (row.nomenclature_code or "").strip(),
-                "unit": (row.unit or "").strip(),
+                "unit": _clean_ref(row.unit),
                 "qty_by_date": {},
                 "month_only_qty": 0.0,
             }

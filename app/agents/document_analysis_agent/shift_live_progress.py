@@ -10,7 +10,9 @@ from uuid import UUID
 
 from app.agents.document_analysis_agent.dashboard_snapshot import (
     _SNAPSHOT_DIR,
+    coverage_dashboard_has_data,
     is_shift_assignment_valid,
+    load_latest_coverage_dashboard,
     today_msk_iso,
 )
 from app.agents.document_analysis_agent.shift_assignment import (
@@ -342,3 +344,60 @@ def has_any_live_shift_for_today() -> bool:
         if resolve_manager_live_report(manager_name, today) is not None:
             return True
     return False
+
+
+def _task_dashboard_has_rows(task_dashboard: object) -> bool:
+    if not isinstance(task_dashboard, dict):
+        return False
+    values = task_dashboard.get("values")
+    return isinstance(values, list) and len(values) > 1
+
+
+def enrich_manager_dashboard_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    manager_name: str,
+    manager_user_id: UUID | str | None = None,
+) -> dict[str, Any]:
+    """Дополняет снимок менеджера общим coverage и сменным заданием из последнего анализа."""
+    enriched = dict(snapshot)
+    own_task_overlay: dict[str, Any] | None = None
+    if manager_user_id is not None and str(enriched.get("user_id") or "") == str(manager_user_id):
+        task_dashboard = enriched.get("task_dashboard")
+        if isinstance(task_dashboard, dict) and (
+            task_dashboard.get("result_evals") or task_dashboard.get("result_texts")
+        ):
+            own_task_overlay = task_dashboard
+
+    if not coverage_dashboard_has_data(enriched.get("coverage_dashboard")):
+        shared_coverage = load_latest_coverage_dashboard()
+        if shared_coverage:
+            enriched["coverage_dashboard"] = shared_coverage
+            enriched["coverage_dashboard_shared"] = True
+
+    task_dashboard = enriched.get("task_dashboard")
+    if not _task_dashboard_has_rows(task_dashboard):
+        snapshots = sorted(iter_valid_shift_snapshots(), key=_snapshot_sort_key, reverse=True)
+        for candidate in snapshots:
+            shared_tasks = candidate.get("task_dashboard")
+            if not _task_dashboard_has_rows(shared_tasks):
+                continue
+            merged_tasks = _merge_evals(
+                shared_tasks if isinstance(shared_tasks, dict) else {},
+                own_task_overlay,
+            )
+            enriched["task_dashboard"] = merged_tasks
+            shift_assignment = candidate.get("shift_assignment")
+            if isinstance(shift_assignment, dict) and not enriched.get("shift_assignment"):
+                enriched["shift_assignment"] = shift_assignment
+            break
+    elif isinstance(task_dashboard, dict):
+        enriched["task_dashboard"] = _merge_evals(task_dashboard, own_task_overlay)
+
+    current_tasks = enriched.get("task_dashboard")
+    if _task_dashboard_has_rows(current_tasks) and isinstance(current_tasks, dict):
+        filtered = _filter_task_dashboard_for_manager(current_tasks, manager_name)
+        if filtered is not None:
+            enriched["task_dashboard"] = filtered
+
+    return enriched

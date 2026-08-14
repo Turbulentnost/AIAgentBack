@@ -56,6 +56,10 @@ def test_coverage_periods_recalculate_plan_and_tiles():
     assert day["fact_total"] == 5
     assert week["fact_total"] == 5
     assert day["plan_total"] != week["plan_total"]
+    assert day["yellow_plan_total"] == 10
+    assert day["yellow_covered_total"] == 10
+    assert week["yellow_plan_total"] == 60
+    assert week["yellow_covered_total"] == 15
 
 
 def test_nomenclature_period_uses_rolling_stock():
@@ -86,6 +90,9 @@ def test_nomenclature_period_uses_rolling_stock():
     assert week_tiles["plan_total"] == 20
     assert day_tiles["covered_total"] == 10
     assert week_tiles["covered_total"] == 15
+    assert day_tiles["green_plan_total"] == 10
+    assert week_tiles["yellow_plan_total"] == 20
+    assert week_tiles["yellow_covered_total"] == 15
 
 
 def test_product_shortages_attached_for_unprovided():

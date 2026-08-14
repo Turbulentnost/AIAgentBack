@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from urllib.parse import quote
 
@@ -35,6 +36,11 @@ UNITS_CATALOG = "Catalog_УпаковкиЕдиницыИзмерения"
 
 # TEMP: ветка 1С (Производство → Ресурсные спецификации)
 SPEC_FOLDER_PATH = ("АВИОН", "Производство №2")
+SPEC_ALLOWED_SUBFOLDERS = (
+    "Катапульта",
+    "НСУ действующие",
+    "Сокол действующие",
+)
 SPEC_EXCLUDED_DESCRIPTIONS = frozenset({"колесо под подшипник_kat_v1"})
 ACTIVE_SPEC_STATUS = "действует"
 
@@ -162,13 +168,12 @@ def _resolve_folder_path(http: requests.Session, path: tuple[str, ...]) -> dict:
     return current
 
 
-def _collect_specs_under_folder(http: requests.Session, folder_key: str) -> tuple[set[str], list[dict]]:
-    """Все листовые спецификации в папке и подпапках + множество GUID папок ветки."""
+def _collect_spec_keys_in_folder_tree(http: requests.Session, folder_key: str) -> set[str]:
+    """Все листовые спецификации внутри одной разрешённой подпапки (рекурсивно)."""
     from collections import deque
 
-    folder_keys: set[str] = {folder_key}
-    queue: deque[str] = deque([folder_key])
     spec_keys: set[str] = set()
+    queue: deque[str] = deque([folder_key])
 
     while queue:
         current = queue.popleft()
@@ -176,21 +181,23 @@ def _collect_specs_under_folder(http: requests.Session, folder_key: str) -> tupl
             http,
             SPEC_CATALOG,
             f"$filter=Parent_Key eq guid'{current}'"
-            f"&$select=Ref_Key,Code,Description,Parent_Key,IsFolder,DeletionMark",
+            f"&$select=Ref_Key,Description,IsFolder",
         )
         for row in rows:
             ref = str(row.get("Ref_Key") or "")
             if not ref:
                 continue
             if row.get("IsFolder"):
-                if ref not in folder_keys:
-                    folder_keys.add(ref)
-                    queue.append(ref)
+                queue.append(ref)
             else:
                 spec_keys.add(ref)
 
+    return spec_keys
+
+
+def _fetch_spec_headers(http: requests.Session, spec_keys: set[str]) -> list[dict]:
     if not spec_keys:
-        return folder_keys, []
+        return []
 
     headers: list[dict] = []
     unique = list(spec_keys)
@@ -204,9 +211,75 @@ def _collect_specs_under_folder(http: requests.Session, folder_key: str) -> tupl
         )
         headers.extend(get_json(http, url).get("value") or [])
 
-    # только не-папки (на всякий случай)
-    headers = [h for h in headers if not h.get("IsFolder")]
-    return folder_keys, headers
+    return [header for header in headers if not header.get("IsFolder")]
+
+
+def _allowed_subfolder_names() -> set[str]:
+    return {_normalize_spec_label(name) for name in SPEC_ALLOWED_SUBFOLDERS}
+
+
+def _collect_specs_from_allowed_subfolders(
+    http: requests.Session,
+    production_folder_key: str,
+) -> tuple[list[dict], list[str], list[str]]:
+    """Спеки только из разрешённых подпапок «Производство №2»."""
+    allowed = _allowed_subfolder_names()
+    children = _fetch_all(
+        http,
+        SPEC_CATALOG,
+        f"$filter=Parent_Key eq guid'{production_folder_key}'"
+        f"&$select=Ref_Key,Description,IsFolder",
+    )
+
+    available_folders = [
+        str(child.get("Description") or "").strip()
+        for child in children
+        if child.get("IsFolder")
+    ]
+    matched_folders: list[str] = []
+    folder_keys: list[str] = []
+    for child in children:
+        if not child.get("IsFolder"):
+            continue
+        folder_name = str(child.get("Description") or "").strip()
+        if _normalize_spec_label(folder_name) not in allowed:
+            continue
+        folder_key = str(child.get("Ref_Key") or "")
+        if not folder_key:
+            continue
+        matched_folders.append(folder_name)
+        folder_keys.append(folder_key)
+
+    spec_keys: set[str] = set()
+    if folder_keys:
+        def _collect_branch(branch_key: str) -> set[str]:
+            session = create_session()
+            try:
+                return _collect_spec_keys_in_folder_tree(session, branch_key)
+            finally:
+                session.close()
+
+        with ThreadPoolExecutor(max_workers=min(3, len(folder_keys))) as pool:
+            for branch_keys in pool.map(_collect_branch, folder_keys):
+                spec_keys.update(branch_keys)
+
+    return _fetch_spec_headers(http, spec_keys), matched_folders, available_folders
+
+
+def _collect_specs_in_folder(http: requests.Session, folder_key: str) -> list[dict]:
+    """Обратная совместимость: прямые дочерние спецификации одной папки."""
+    rows = _fetch_all(
+        http,
+        SPEC_CATALOG,
+        f"$filter=Parent_Key eq guid'{folder_key}'"
+        f"&$select=Ref_Key,Code,Description,Parent_Key,IsFolder,DeletionMark",
+    )
+    spec_keys = {
+        str(row.get("Ref_Key") or "")
+        for row in rows
+        if row.get("Ref_Key") and not row.get("IsFolder")
+    }
+    return _fetch_spec_headers(http, spec_keys)
 
 
 def _fetch_tabular_for_specs(
@@ -238,6 +311,98 @@ def _fetch_tabular_for_specs(
     return rows
 
 
+def fetch_resource_spec_materials_by_ref_keys(ref_keys: list[str] | set[str]) -> dict[str, dict]:
+    """Точечно тянет материалы спецификаций по Ref_Key без ограничения папками."""
+    spec_keys = {
+        str(key or "").strip()
+        for key in ref_keys
+        if str(key or "").strip() and str(key or "").strip() != EMPTY_GUID
+    }
+    if not spec_keys:
+        return {}
+
+    http = create_session()
+    try:
+        headers = _fetch_spec_headers(http, spec_keys)
+        materials_raw = _fetch_tabular_for_specs(http, MATERIALS_ENTITY, spec_keys)
+        nom_keys: list[str] = []
+        for h in headers:
+            nom_keys.append(str(h.get("ОсновноеИзделиеНоменклатура_Key") or ""))
+        for row in materials_raw:
+            nom_keys.append(str(row.get("Номенклатура_Key") or ""))
+        nom_map = _batch_lookup(
+            http,
+            "Catalog_Номенклатура",
+            nom_keys,
+            "Ref_Key,Code,Description,ЕдиницаИзмерения_Key",
+        )
+        unit_keys: list[str] = []
+        for nom in nom_map.values():
+            unit_keys.append(str(nom.get("ЕдиницаИзмерения_Key") or ""))
+        for row in materials_raw:
+            unit_keys.append(str(row.get("Упаковка_Key") or ""))
+        unit_map = _batch_lookup(
+            http,
+            UNITS_CATALOG,
+            unit_keys,
+            "Ref_Key,Code,Description",
+        )
+
+        def _unit_name(unit_key: object) -> str:
+            key = str(unit_key or "")
+            if not key or key == EMPTY_GUID:
+                return ""
+            return str((unit_map.get(key) or {}).get("Description") or "").strip()
+
+        def _material_unit(material_row: dict, nom: dict) -> tuple[str, str]:
+            packaging_key = str(material_row.get("Упаковка_Key") or "")
+            unit = _unit_name(packaging_key)
+            if unit:
+                return unit, packaging_key
+            nom_unit_key = str(nom.get("ЕдиницаИзмерения_Key") or "")
+            return _unit_name(nom_unit_key), nom_unit_key
+
+        materials_by_spec: dict[str, list[dict]] = {}
+        for row in materials_raw:
+            spec_key = str(row.get("Ref_Key") or "").strip()
+            nom_key = str(row.get("Номенклатура_Key") or "").strip()
+            nom = nom_map.get(nom_key) or {}
+            unit_name, unit_key = _material_unit(row, nom)
+            materials_by_spec.setdefault(spec_key, []).append(
+                {
+                    "line_number": _line_number(row.get("LineNumber")),
+                    "nomenclature_key": nom_key,
+                    "nomenclature_code": str(nom.get("Code") or ""),
+                    "nomenclature_name": str(nom.get("Description") or "").strip(),
+                    "unit_key": unit_key if unit_key != EMPTY_GUID else "",
+                    "unit": unit_name,
+                    "qty": float(
+                        row.get("КоличествоУпаковок")
+                        or row.get("Количество")
+                        or 0
+                    ),
+                }
+            )
+
+        headers_by_ref = {str(h.get("Ref_Key") or ""): h for h in headers}
+        result: dict[str, dict] = {}
+        for spec_key in spec_keys:
+            header = headers_by_ref.get(spec_key) or {}
+            materials = materials_by_spec.get(spec_key) or []
+            materials.sort(key=lambda item: int(item.get("line_number") or 0))
+            result[spec_key] = {
+                "ref_key": spec_key,
+                "code": str(header.get("Code") or ""),
+                "description": str(header.get("Description") or "").strip(),
+                "status": str(header.get("Статус") or ""),
+                "materials": materials,
+                "materials_count": len(materials),
+            }
+        return result
+    finally:
+        http.close()
+
+
 def fetch_resource_specs_from_onec(
     folder_path: tuple[str, ...] = SPEC_FOLDER_PATH,
 ) -> dict:
@@ -248,16 +413,41 @@ def fetch_resource_specs_from_onec(
         folder = _resolve_folder_path(http, folder_path)
         folder_key = str(folder.get("Ref_Key") or "")
         folder_path_label = " / ".join(folder_path)
-        _folder_keys, headers = _collect_specs_under_folder(http, folder_key)
+        headers, matched_subfolders, available_subfolders = _collect_specs_from_allowed_subfolders(
+            http, folder_key
+        )
         headers = _filter_importable_spec_headers(headers)
+        if matched_subfolders:
+            subfolders_label = ", ".join(matched_subfolders)
+        else:
+            expected = ", ".join(SPEC_ALLOWED_SUBFOLDERS)
+            available = ", ".join(available_subfolders) or "—"
+            subfolders_label = f"не найдены (ожидались: {expected}; в 1С: {available})"
         header_keys = {
             str(h.get("Ref_Key") or "")
             for h in headers
             if h.get("Ref_Key")
         }
 
-        materials_raw = _fetch_tabular_for_specs(http, MATERIALS_ENTITY, header_keys)
-        outputs_raw = _fetch_tabular_for_specs(http, OUTPUTS_ENTITY, header_keys)
+        def _fetch_materials() -> list[dict]:
+            session = create_session()
+            try:
+                return _fetch_tabular_for_specs(session, MATERIALS_ENTITY, header_keys)
+            finally:
+                session.close()
+
+        def _fetch_outputs() -> list[dict]:
+            session = create_session()
+            try:
+                return _fetch_tabular_for_specs(session, OUTPUTS_ENTITY, header_keys)
+            finally:
+                session.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            materials_future = pool.submit(_fetch_materials)
+            outputs_future = pool.submit(_fetch_outputs)
+            materials_raw = materials_future.result()
+            outputs_raw = outputs_future.result()
 
         nom_keys: list[str] = []
         for h in headers:
@@ -277,21 +467,38 @@ def fetch_resource_specs_from_onec(
             str(nom.get("СтранаПроисхождения_Key") or "")
             for nom in nom_map.values()
         ]
-        country_map = _batch_lookup(
-            http, "Catalog_СтраныМира", country_keys, "Ref_Key,Code,Description"
-        )
-
         unit_keys: list[str] = []
         for nom in nom_map.values():
             unit_keys.append(str(nom.get("ЕдиницаИзмерения_Key") or ""))
         for row in materials_raw:
             unit_keys.append(str(row.get("Упаковка_Key") or ""))
-        unit_map = _batch_lookup(
-            http,
-            UNITS_CATALOG,
-            unit_keys,
-            "Ref_Key,Code,Description",
-        )
+
+        def _lookup_countries() -> dict[str, dict]:
+            session = create_session()
+            try:
+                return _batch_lookup(
+                    session, "Catalog_СтраныМира", country_keys, "Ref_Key,Code,Description"
+                )
+            finally:
+                session.close()
+
+        def _lookup_units() -> dict[str, dict]:
+            session = create_session()
+            try:
+                return _batch_lookup(
+                    session,
+                    UNITS_CATALOG,
+                    unit_keys,
+                    "Ref_Key,Code,Description",
+                )
+            finally:
+                session.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            country_future = pool.submit(_lookup_countries)
+            unit_future = pool.submit(_lookup_units)
+            country_map = country_future.result()
+            unit_map = unit_future.result()
 
         def _unit_name(unit_key: object) -> str:
             key = str(unit_key or "")
@@ -454,7 +661,7 @@ def fetch_resource_specs_from_onec(
             "ok": True,
             "message": (
                 f"Ресурсные спецификации из «{folder_path_label}» "
-                f"(статус «{ACTIVE_SPEC_STATUS}», без исключений): {len(specs)} шт., "
+                f"(подпапки: {subfolders_label}; только статус «{ACTIVE_SPEC_STATUS}»): {len(specs)} шт., "
                 f"материалов {materials_total}, выходных изделий {outputs_total}"
             ),
             "status_code": 200,
@@ -463,6 +670,9 @@ def fetch_resource_specs_from_onec(
             "source": SPEC_CATALOG,
             "folder_path": list(folder_path),
             "folder_ref_key": folder_key,
+            "allowed_subfolders": list(SPEC_ALLOWED_SUBFOLDERS),
+            "matched_subfolders": matched_subfolders,
+            "available_subfolders": available_subfolders,
             "count": len(specs),
             "materials_count": materials_total,
             "outputs_count": outputs_total,

@@ -16,6 +16,7 @@ from typing import Any, TypeVar
 
 import httpx
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -25,6 +26,15 @@ TCatalogEntry = TypeVar("TCatalogEntry")
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.agents.document_analysis_agent.material_classification import (
+    MATERIAL_KIND_CONSUMABLE,
+    MATERIAL_KIND_LABELS,
+    MATERIAL_KIND_REQUIRED,
+    MATERIAL_KIND_WORKSHOP,
+    is_optional_material_kind,
+    load_material_classification_index,
+    material_classification_for,
+)
 from app.agents.document_analysis_agent.xls_compat import ensure_openpyxl_bytes
 
 logger = get_logger(__name__)
@@ -34,6 +44,9 @@ _MAPPING_FILE = _AVEON_DATA_DIR / "Сопоставление номенклат
 _SPECS_FILE = _AVEON_DATA_DIR / "Сокол Спецификация из 1с.xlsx"
 _HEADER_FILE = _AVEON_DATA_DIR / "Header.xlsx"
 _PRICES_FILE = _AVEON_DATA_DIR / "Цены закупки за 2026_0833.xlsx"
+_MATERIAL_CLASSIFICATION_FILE = (
+    _AVEON_DATA_DIR / "классификация_расходники_обеспеченность_изделий.xlsx"
+)
 _RESULT_DATA_START_ROW = 5  # дневной лист
 _MONTHLY_DATA_START_ROW = 6  # помесячный: шапка 1–5, данные с 6
 _RESULT_GRID_COLS = 23  # устаревший лимит Header.xlsx; помесячный строится динамически
@@ -212,6 +225,14 @@ class MergedNomenclatureRow:
     daily_forecast: dict[str, float] = field(default_factory=dict)
     # Имя номенклатуры в графике отгрузок (если сопоставлено при обогащении)
     shipment_nomenclature: str | None = None
+    coverage_material_kind: str = MATERIAL_KIND_REQUIRED
+    coverage_material_label: str = ""
+    coverage_material_confidence: str = ""
+    coverage_material_reason: str = ""
+    coverage_material_kinds_by_product: dict[str, str] = field(default_factory=dict)
+    coverage_material_labels_by_product: dict[str, str] = field(default_factory=dict)
+    coverage_material_confidences_by_product: dict[str, str] = field(default_factory=dict)
+    coverage_material_reasons_by_product: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -325,6 +346,8 @@ class ScheduleProductPlan:
 
     product: str
     monthly_qty: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)
+    spec_name: str = ""
+    spec_ref_key: str = ""
 
 
 @dataclass
@@ -413,6 +436,7 @@ class AveonAnalysisResult:
     detailed_baseline_saved: bool = False
     detailed_compared_with_saved: bool = False
     coverage_dashboard: dict[str, Any] | None = None
+    input_sources: dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class _MappingRow:
@@ -616,6 +640,208 @@ def _detailed_diff_message(
     )
 
 
+_ANALYSIS_SOURCE_LABELS: dict[str, str] = {
+    "upload": "Загруженный Excel",
+    "1c_db": "1С → БД",
+    "mixed": "Смешанный (загрузка + 1С)",
+    "upload_merged": "Пользовательский график + Google Sheets",
+    "server_merged": "Сервер: 1С (Россия) + Google Sheets (Китай)",
+    "none": "Не задано",
+}
+
+
+def _analysis_input_entry(
+    *,
+    source: str,
+    files: list[str],
+    detail: str = "",
+) -> dict[str, Any]:
+    return {
+        "source": source,
+        "source_label": _ANALYSIS_SOURCE_LABELS.get(source, source),
+        "files": files,
+        "detail": detail,
+    }
+
+
+def _build_analysis_input_sources(
+    *,
+    workbooks: list[UploadedWorkbook],
+    role_map: dict[str, WorkbookRole],
+    production_from_upload: bool,
+    production_files: list[str],
+    detailed_from_upload: bool,
+    detailed_files: list[str],
+    db_spec_catalog_nonempty: bool,
+    db_stock_index: dict[str, StockEntry] | None,
+    stock_files: list[str],
+    shipment_files: list[str],
+) -> dict[str, Any]:
+    """Источники данных для анализа: 1С БД, загруженные Excel или смешанный режим."""
+    uploaded_by_role: dict[str, list[str]] = {}
+    for uploaded in workbooks:
+        role = role_map.get(uploaded.filename, ROLE_OTHER)
+        if role == ROLE_OTHER or uploaded.filename.lower() in {
+            "merged_schedule.xlsx",
+            "merged_schedule_uploaded.xlsx",
+        }:
+            continue
+        uploaded_by_role.setdefault(role, []).append(uploaded.filename)
+
+    production_source = "none"
+    if production_from_upload:
+        production_source = "upload"
+    elif production_files:
+        production_source = "1c_db"
+
+    detailed_source = "none"
+    if detailed_from_upload:
+        detailed_source = "upload"
+    elif detailed_files:
+        detailed_source = "1c_db"
+
+    stock_upload_files = uploaded_by_role.get(ROLE_STOCK, [])
+    if db_stock_index:
+        stock_source = "1c_db"
+        stock_detail = f"{len(db_stock_index)} позиций в БД"
+    elif stock_upload_files:
+        stock_source = "upload"
+        stock_detail = ""
+    else:
+        stock_source = "none"
+        stock_detail = ""
+
+    specs_source = "1c_db" if db_spec_catalog_nonempty else "none"
+    specs_detail = "Ресурсные спецификации из PostgreSQL (onec_resource_specs)"
+
+    shipment_upload_files = [
+        name
+        for name in shipment_files
+        if name.lower() != "merged_schedule.xlsx" and "merged_schedule" not in name.lower()
+    ]
+    has_merged_shipment = any(
+        name.lower() == "merged_schedule.xlsx" or "merged_schedule" in name.lower()
+        for name in shipment_files
+    )
+    has_uploaded_merged_shipment = any(
+        "uploaded" in name.lower() and "merged_schedule" in name.lower()
+        for name in shipment_files
+    )
+    if has_uploaded_merged_shipment:
+        shipment_source = "upload_merged"
+        shipment_detail = (
+            "Россия — из пользовательского графика, сохранённого в БД после анализа; "
+            "Китай — актуальный Google Sheets"
+        )
+    elif has_merged_shipment and shipment_upload_files:
+        shipment_source = "mixed"
+        shipment_detail = (
+            "merged_schedule.xlsx собран на сервере (Россия — БД 1С, Китай — Google Sheets); "
+            f"дополнительно загружено: {', '.join(shipment_upload_files)}"
+        )
+    elif has_merged_shipment:
+        shipment_source = "server_merged"
+        shipment_detail = "merged_schedule.xlsx: Россия — БД 1С, Китай — Google Sheets"
+    elif shipment_upload_files:
+        shipment_source = "upload"
+        shipment_detail = ""
+    else:
+        shipment_source = "none"
+        shipment_detail = ""
+
+    entries = {
+        "production_schedule": _analysis_input_entry(
+            source=production_source,
+            files=production_files if production_files else uploaded_by_role.get(ROLE_PRODUCTION_SCHEDULE, []),
+            detail="Помесячный план производства",
+        ),
+        "detailed_production_schedule": _analysis_input_entry(
+            source=detailed_source,
+            files=detailed_files if detailed_files else uploaded_by_role.get(ROLE_DETAILED_PRODUCTION_SCHEDULE, []),
+            detail="Детальный план по дням",
+        ),
+        "specifications": _analysis_input_entry(
+            source=specs_source,
+            files=["1С → PostgreSQL (onec_resource_specs)"] if specs_source == "1c_db" else [],
+            detail=specs_detail,
+        ),
+        "stock": _analysis_input_entry(
+            source=stock_source,
+            files=stock_files if stock_files else stock_upload_files,
+            detail=stock_detail,
+        ),
+        "shipment_schedule": _analysis_input_entry(
+            source=shipment_source,
+            files=shipment_files,
+            detail=shipment_detail,
+        ),
+    }
+
+    core_sources = {
+        entries["production_schedule"]["source"],
+        entries["detailed_production_schedule"]["source"],
+        entries["stock"]["source"],
+    } - {"none"}
+    # Спецификации всегда из 1С при наличии каталога.
+    if specs_source == "1c_db":
+        core_sources.add("1c_db")
+    if shipment_source not in ("none",):
+        core_sources.add(shipment_source)
+
+    upload_like = {"upload", "upload_merged"}
+    db_like = {"1c_db", "server_merged"}
+    has_upload = bool(core_sources & upload_like)
+    has_db = bool(core_sources & db_like)
+    has_mixed_kind = "mixed" in core_sources or shipment_source == "mixed"
+
+    if not core_sources:
+        summary_mode = "empty"
+        summary_text = "Нет данных для расчёта — загрузите файлы или выполните синхронизацию 1С"
+    elif has_mixed_kind or (has_upload and has_db):
+        summary_mode = "mixed"
+        parts: list[str] = []
+        for key, label in (
+            ("production_schedule", "План производства"),
+            ("detailed_production_schedule", "Детальный план"),
+            ("specifications", "Спецификации"),
+            ("stock", "Остатки"),
+            ("shipment_schedule", "График отгрузок"),
+        ):
+            item = entries[key]
+            if item["source"] == "none":
+                continue
+            files_label = ", ".join(item["files"]) if item["files"] else "—"
+            parts.append(f"{label}: {item['source_label']} ({files_label})")
+        summary_text = "; ".join(parts)
+    elif has_upload and not has_db:
+        summary_mode = "all_upload"
+        summary_text = "Все ключевые данные — из загруженных Excel-файлов"
+    elif has_db and not has_upload:
+        summary_mode = "all_1c"
+        summary_text = "Все ключевые данные — из 1С (БД PostgreSQL) и серверных графиков"
+    else:
+        summary_mode = "partial"
+        summary_text = "Часть данных отсутствует — см. детализацию по блокам"
+
+    user_uploads = [
+        {"filename": uploaded.filename, "role": role_map.get(uploaded.filename, ROLE_OTHER)}
+        for uploaded in workbooks
+        if uploaded.filename.lower() != "merged_schedule.xlsx"
+    ]
+    server_injected = [
+        uploaded.filename
+        for uploaded in workbooks
+        if uploaded.filename.lower() == "merged_schedule.xlsx"
+    ]
+
+    return {
+        "summary": {"mode": summary_mode, "text": summary_text},
+        "uploaded_files": user_uploads,
+        "server_injected_files": server_injected,
+        **entries,
+    }
+
+
 async def analyze_aveon_excel_files(
     workbooks: list[UploadedWorkbook],
     db: "AsyncSession | None" = None,
@@ -626,10 +852,16 @@ async def analyze_aveon_excel_files(
         build_country_index_from_db,
         build_stock_index_from_db,
         build_unit_index_from_db,
+        build_product_spec_hints,
         load_latest_detailed_production_schedule_from_db,
+        load_plan_product_spec_links_from_db,
         load_latest_production_schedule_from_db,
         load_db_spec_catalog,
         preload_spec_materials_for_links,
+        repair_spec_links_without_materials,
+        finalize_onec_spec_links,
+        products_with_loaded_onec_specs,
+        expand_spec_eligible_product_names,
     )
 
     if db is None:
@@ -708,21 +940,71 @@ async def analyze_aveon_excel_files(
         asyncio.to_thread(_extract_production_schedule_products, workbooks, role_map),
         asyncio.to_thread(_extract_detailed_production_schedule, workbooks, role_map),
     )
+    production_from_upload = bool(schedule_plans)
+    db_schedule_plans_for_specs: list[ScheduleProductPlan] = []
     if not schedule_plans:
         db_schedule_files, db_schedule_plans = await load_latest_production_schedule_from_db(db)
         if db_schedule_plans:
             schedule_files = db_schedule_files
             schedule_plans = db_schedule_plans
+            db_schedule_plans_for_specs = db_schedule_plans
+    else:
+        _db_schedule_files, db_schedule_plans_for_specs = await load_latest_production_schedule_from_db(db)
+    detailed_from_upload = bool(detailed_extract.plans)
     if not detailed_extract.plans:
         db_detailed_extract = await load_latest_detailed_production_schedule_from_db(db)
         if db_detailed_extract.plans:
             detailed_extract = db_detailed_extract
-    products = [plan.product for plan in schedule_plans]
+    products = list(
+        dict.fromkeys(
+            [plan.product for plan in schedule_plans]
+            + [plan.product for plan in detailed_extract.plans]
+        )
+    )
+    product_spec_hints = build_product_spec_hints(
+        list(schedule_plans) + list(db_schedule_plans_for_specs)
+    )
     product_spec_links = await _resolve_schedule_products_to_specs(
         products,
         db_spec_catalog=db_spec_catalog,
+        product_spec_hints=product_spec_hints,
     )
+    plan_product_spec_links = await load_plan_product_spec_links_from_db(db)
+    seen_plan_specs = {
+        (
+            (link.schedule_product or "").strip().casefold(),
+            (link.spec_ref_key or "").strip().lower(),
+            (link.spec_sheet or "").strip().casefold(),
+        )
+        for link in product_spec_links
+    }
+    for link in plan_product_spec_links:
+        dedupe_key = (
+            (link.schedule_product or "").strip().casefold(),
+            (link.spec_ref_key or "").strip().lower(),
+            (link.spec_sheet or "").strip().casefold(),
+        )
+        if dedupe_key not in seen_plan_specs:
+            product_spec_links.append(link)
+            seen_plan_specs.add(dedupe_key)
     db_materials_by_ref = await preload_spec_materials_for_links(db, product_spec_links)
+    db_materials_by_ref = await repair_spec_links_without_materials(
+        db,
+        product_spec_links,
+        db_materials_by_ref,
+        db_spec_catalog,
+        product_spec_hints=product_spec_hints,
+    )
+    finalize_onec_spec_links(product_spec_links, db_materials_by_ref, db_spec_catalog)
+    spec_eligible_products = expand_spec_eligible_product_names(
+        products_with_loaded_onec_specs(
+            product_spec_links,
+            db_materials_by_ref,
+            db_spec_catalog,
+        ),
+        list(schedule_plans),
+        list(detailed_extract.plans),
+    )
     shipment_bundle = await asyncio.to_thread(
         _load_shipment_schedule_bundle, workbooks, role_map
     )
@@ -747,6 +1029,7 @@ async def analyze_aveon_excel_files(
         db_unit_index,
         user_id,
         shipment_bundle,
+        spec_eligible_products,
     )
     price_matched = sum(
         1 for row in merged_nomenclatures if row.price_match not in ("", "unmatched")
@@ -791,6 +1074,7 @@ async def analyze_aveon_excel_files(
     logger.info(
         "document_analysis_agent.product_spec_links",
         matched=sum(1 for item in product_spec_links if item.status == "matched"),
+        spec_eligible=len(spec_eligible_products),
         total=len(product_spec_links),
     )
     from app.agents.document_analysis_agent.shift_assignment import (
@@ -875,6 +1159,19 @@ async def analyze_aveon_excel_files(
             detailed_extract.month,
         )
 
+    input_sources = _build_analysis_input_sources(
+        workbooks=workbooks,
+        role_map=role_map,
+        production_from_upload=production_from_upload,
+        production_files=list(schedule_files),
+        detailed_from_upload=detailed_from_upload,
+        detailed_files=list(detailed_extract.files),
+        db_spec_catalog_nonempty=bool(db_spec_catalog),
+        db_stock_index=db_stock_index if db_stock_index else None,
+        stock_files=list(stock_files),
+        shipment_files=list(shipment_files),
+    )
+
     return AveonAnalysisResult(
         roles=role_map,
         source=source,
@@ -950,6 +1247,7 @@ async def analyze_aveon_excel_files(
         detailed_baseline_saved=detailed_baseline_saved,
         detailed_compared_with_saved=detailed_compared_with_saved,
         coverage_dashboard=coverage_dashboard,
+        input_sources=input_sources,
     )
 
 
@@ -2836,10 +3134,13 @@ async def _resolve_schedule_products_to_specs(
     products: list[str],
     *,
     db_spec_catalog: list | None = None,
+    product_spec_hints: dict[str, tuple[str, str]] | None = None,
 ) -> list[ProductSpecLink]:
     from app.agents.document_analysis_agent.onec_db_sources import (
         DbSpecCatalogEntry,
+        lookup_product_spec_hint,
         match_product_to_db_spec,
+        _valid_spec_ref_key,
     )
 
     mapping_rows = await asyncio.to_thread(_load_nomenclature_mapping)
@@ -2887,10 +3188,73 @@ async def _resolve_schedule_products_to_specs(
     )
 
     links: list[ProductSpecLink] = []
-    db_spec_pending: list[tuple[str, str, str]] = []
+    db_spec_pending: list[tuple[str, str, str, str, str]] = []
     legacy_spec_pending: list[tuple[str, str, str]] = []
+    catalog_by_ref: dict[str, DbSpecCatalogEntry] = {}
+    if use_db_specs:
+        for entry in catalog:
+            catalog_by_ref[entry.ref_key] = entry
+            lowered = entry.ref_key.strip().lower()
+            if lowered:
+                catalog_by_ref[lowered] = entry
+
+    def _catalog_entry_for_ref(ref_key: str) -> DbSpecCatalogEntry | None:
+        cleaned = (ref_key or "").strip()
+        if not cleaned:
+            return None
+        return catalog_by_ref.get(cleaned) or catalog_by_ref.get(cleaned.lower())
 
     for product in products:
+        spec_hint, spec_ref_key = lookup_product_spec_hint(product, product_spec_hints)
+        spec_hint = (spec_hint or "").strip()
+        spec_ref_key = _valid_spec_ref_key(spec_ref_key)
+
+        if use_db_specs and spec_ref_key:
+            entry = _catalog_entry_for_ref(spec_ref_key)
+            if entry is not None:
+                links.append(
+                    ProductSpecLink(
+                        schedule_product=product,
+                        nomenclature=entry.main_product_name or spec_hint or product,
+                        spec_sheet=entry.description or entry.label,
+                        spec_ref_key=entry.ref_key,
+                        status="matched",
+                        reason="спецификация из плана производства (Ref_Key)",
+                    )
+                )
+                continue
+            links.append(
+                ProductSpecLink(
+                    schedule_product=product,
+                    nomenclature=spec_hint or product,
+                    spec_sheet=spec_hint or product,
+                    spec_ref_key=spec_ref_key,
+                    status="unmatched",
+                    reason="спецификация из плана производства (Ref_Key) отсутствует в каталоге 1С",
+                )
+            )
+            continue
+
+        if use_db_specs and spec_hint:
+            entry, direct_reason = match_product_to_db_spec(
+                product,
+                spec_hint,
+                catalog,
+                spec_hint=spec_hint,
+            )
+            if entry is not None:
+                links.append(
+                    ProductSpecLink(
+                        schedule_product=product,
+                        nomenclature=entry.main_product_name or spec_hint,
+                        spec_sheet=entry.description or entry.label,
+                        spec_ref_key=entry.ref_key,
+                        status="matched",
+                        reason=f"спецификация из плана производства; {direct_reason}",
+                    )
+                )
+                continue
+
         nomenclature: str | None = None
         reason = ""
         local = local_nomenclature_map.get(product)
@@ -2905,7 +3269,12 @@ async def _resolve_schedule_products_to_specs(
             reason = f"слабый локальный матч номенклатуры ({score:.2f})"
 
         if not nomenclature and use_db_specs:
-            entry, direct_reason = match_product_to_db_spec(product, product, catalog)
+            entry, direct_reason = match_product_to_db_spec(
+                product,
+                product,
+                catalog,
+                spec_hint=spec_hint,
+            )
             if entry is not None:
                 links.append(
                     ProductSpecLink(
@@ -2936,7 +3305,12 @@ async def _resolve_schedule_products_to_specs(
                 reason = f"{reason}; нормализовано к mapping"
 
         if use_db_specs:
-            entry, db_reason = match_product_to_db_spec(product, nomenclature, catalog)
+            entry, db_reason = match_product_to_db_spec(
+                product,
+                nomenclature,
+                catalog,
+                spec_hint=spec_hint,
+            )
             if entry is not None:
                 links.append(
                     ProductSpecLink(
@@ -2949,7 +3323,7 @@ async def _resolve_schedule_products_to_specs(
                     )
                 )
                 continue
-            db_spec_pending.append((product, nomenclature, reason))
+            db_spec_pending.append((product, nomenclature, reason, spec_hint, spec_ref_key))
             continue
 
         if not legacy_sheet_names:
@@ -2979,15 +3353,42 @@ async def _resolve_schedule_products_to_specs(
 
     if use_db_specs and db_spec_pending:
         catalog_labels = [entry.label for entry in catalog]
-        lm_sheets = await _match_nomenclatures_to_sheets_with_lm(
-            [nomenclature for _, nomenclature, _ in db_spec_pending],
-            catalog_labels,
-        )
-        for product, nomenclature, reason in db_spec_pending:
-            sheet_name = lm_sheets.get(nomenclature)
+        lm_inputs = [
+            spec_hint or nomenclature
+            for _, nomenclature, _, spec_hint, _ in db_spec_pending
+        ]
+        lm_sheets = await _match_nomenclatures_to_sheets_with_lm(lm_inputs, catalog_labels)
+        for product, nomenclature, reason, spec_hint, spec_ref_key in db_spec_pending:
+            lm_key = spec_hint or nomenclature
+            sheet_name = lm_sheets.get(lm_key)
             entry = None
             db_reason = "спецификация не найдена в БД"
-            if sheet_name:
+            if spec_ref_key:
+                entry = _catalog_entry_for_ref(spec_ref_key)
+                if entry is not None:
+                    db_reason = "спецификация из плана производства (Ref_Key)"
+                else:
+                    links.append(
+                        ProductSpecLink(
+                            schedule_product=product,
+                            nomenclature=spec_hint or nomenclature,
+                            spec_sheet=spec_hint or nomenclature,
+                            spec_ref_key=spec_ref_key,
+                            status="unmatched",
+                            reason=f"{reason}; спецификация из плана (Ref_Key) отсутствует в каталоге 1С",
+                        )
+                    )
+                    continue
+            elif spec_hint:
+                entry, hint_reason = match_product_to_db_spec(
+                    product,
+                    spec_hint,
+                    catalog,
+                    spec_hint=spec_hint,
+                )
+                if entry is not None:
+                    db_reason = hint_reason
+            if entry is None and sheet_name:
                 for item in catalog:
                     if item.label == sheet_name or _normalize(item.label) == _normalize(sheet_name):
                         entry = item
@@ -3044,6 +3445,118 @@ async def _resolve_schedule_products_to_specs(
     return links
 
 
+def _restrict_merged_rows_to_spec_products(
+    rows: list[MergedNomenclatureRow],
+    spec_eligible_products: frozenset[str] | None,
+) -> None:
+    """Убирает из by_product изделия без загруженной ресурсной спецификации 1С."""
+    if not spec_eligible_products:
+        return
+
+    allowed_keys = {_normalize(product) for product in spec_eligible_products}
+    canonical_name = {_normalize(product): product for product in spec_eligible_products}
+    trimmed_rows = 0
+
+    for row in rows:
+        kept_by_product: dict[str, float | None] = {}
+        kept_products: list[str] = []
+        for product, qty in row.by_product.items():
+            key = _normalize(product)
+            if key not in allowed_keys:
+                continue
+            canonical = canonical_name[key]
+            kept_by_product[canonical] = qty
+            kept_products.append(canonical)
+
+        if len(kept_by_product) != len(row.by_product):
+            trimmed_rows += 1
+
+        row.by_product = kept_by_product
+        row.products = sorted(kept_products, key=_normalize)
+        known = [value for value in kept_by_product.values() if value is not None]
+        if not known:
+            row.quantity = None
+        elif all(abs(value - known[0]) < 1e-9 for value in known):
+            row.quantity = known[0]
+        else:
+            row.quantity = None
+
+    logger.info(
+        "document_analysis_agent.merged_rows_spec_filtered",
+        rows=len(rows),
+        trimmed_rows=trimmed_rows,
+        spec_products=len(spec_eligible_products),
+    )
+
+
+def _material_kind_priority(kind: str) -> int:
+    if kind == MATERIAL_KIND_CONSUMABLE:
+        return 2
+    if kind == MATERIAL_KIND_WORKSHOP:
+        return 1
+    return 0
+
+
+def _enrich_merged_with_coverage_material_classification(
+    rows: list[MergedNomenclatureRow],
+) -> None:
+    """Помечает строки спеки расходниками/возможными цеховыми остатками для условного расчёта."""
+    if not rows:
+        return
+    index = load_material_classification_index(str(_MATERIAL_CLASSIFICATION_FILE))
+    if not index.by_pair and not index.by_material:
+        logger.warning(
+            "document_analysis_agent.coverage_material_classification_empty",
+            path=str(_MATERIAL_CLASSIFICATION_FILE),
+        )
+        return
+
+    classified = 0
+    optional = 0
+    for row in rows:
+        row.coverage_material_kinds_by_product = {}
+        row.coverage_material_labels_by_product = {}
+        row.coverage_material_confidences_by_product = {}
+        row.coverage_material_reasons_by_product = {}
+
+        best_kind = MATERIAL_KIND_REQUIRED
+        best_label = MATERIAL_KIND_LABELS[MATERIAL_KIND_REQUIRED]
+        best_confidence = ""
+        best_reason = ""
+
+        products = list(row.by_product) or list(row.products)
+        for product in products:
+            item = material_classification_for(
+                index,
+                product=product,
+                material=row.nomenclature,
+            )
+            row.coverage_material_kinds_by_product[product] = item.kind
+            row.coverage_material_labels_by_product[product] = item.label
+            row.coverage_material_confidences_by_product[product] = item.confidence
+            row.coverage_material_reasons_by_product[product] = item.reason
+            if _material_kind_priority(item.kind) > _material_kind_priority(best_kind):
+                best_kind = item.kind
+                best_label = item.label
+                best_confidence = item.confidence
+                best_reason = item.reason
+
+        row.coverage_material_kind = best_kind
+        row.coverage_material_label = best_label
+        row.coverage_material_confidence = best_confidence
+        row.coverage_material_reason = best_reason
+        classified += 1
+        if is_optional_material_kind(best_kind):
+            optional += 1
+
+    logger.info(
+        "document_analysis_agent.coverage_material_classification_loaded",
+        rows=classified,
+        optional=optional,
+        path=str(_MATERIAL_CLASSIFICATION_FILE),
+    )
+
+
 def _collect_and_merge_spec_materials(
     links: list[ProductSpecLink],
     workbooks: list[UploadedWorkbook],
@@ -3056,6 +3569,7 @@ def _collect_and_merge_spec_materials(
     db_unit_index: dict[str, Any] | None = None,
     user_id: Any | None = None,
     shipment_bundle: ShipmentScheduleBundle | None = None,
+    spec_eligible_products: frozenset[str] | None = None,
 ) -> tuple[
     list[SpecMaterialItem],
     list[MergedNomenclatureRow],
@@ -3079,7 +3593,12 @@ def _collect_and_merge_spec_materials(
         shipment_bundle = _load_shipment_schedule_bundle(workbooks, role_map)
     usages = _extract_materials_from_matched_specs(links, db_materials_by_ref=db_materials_by_ref)
     merged = _merge_material_usages(usages)
-    _restrict_merged_rows_to_schedule_products(merged, schedule_plans)
+    _restrict_merged_rows_to_schedule_products(
+        merged,
+        list(schedule_plans) + list(detailed_extract.plans),
+    )
+    _restrict_merged_rows_to_spec_products(merged, spec_eligible_products)
+    _enrich_merged_with_coverage_material_classification(merged)
     _enrich_merged_with_purchase_prices(merged)
     _enrich_merged_with_country_of_origin(merged, db_country_index)
     _enrich_merged_with_units(merged, db_unit_index)
@@ -3105,11 +3624,43 @@ def _collect_and_merge_spec_materials(
     )
     _strip_excluded_suppliers_from_rows(merged)
     months = _months_for_coverage_sheet(merged, schedule_plans)
-    product_coverage = compute_product_coverage(schedule_plans, merged, months)
+    as_of_day = date.today()
+    if logistics_risks and logistics_risks.as_of:
+        try:
+            as_of_day = date.fromisoformat(str(logistics_risks.as_of))
+        except ValueError:
+            pass
+    schedule_month = (
+        f"{detailed_extract.year:04d}-{detailed_extract.month:02d}"
+        if detailed_extract.year and detailed_extract.month
+        else f"{as_of_day.year:04d}-{as_of_day.month:02d}"
+    )
+    from app.agents.document_analysis_agent.coverage_dashboard import (
+        resolve_coverage_target_month,
+        resolve_plan_month_keys,
+        _filter_day_keys_to_schedule_month,
+    )
+
+    _, coverage_month_label = resolve_coverage_target_month(
+        schedule_month=schedule_month,
+        as_of=as_of_day,
+        merged=merged,
+    )
+    coverage_months = resolve_plan_month_keys(
+        schedule_plans,
+        schedule_month=schedule_month,
+        month_label=coverage_month_label,
+    )
+    product_coverage_full = compute_product_coverage(schedule_plans, merged, months)
+    product_coverage = compute_product_coverage(schedule_plans, merged, coverage_months)
+    coverage_day_keys = _filter_day_keys_to_schedule_month(
+        list(detailed_extract.day_keys),
+        schedule_month,
+    )
     daily_plan_coverage = compute_daily_plan_coverage(
         detailed_extract.plans,
         merged,
-        detailed_extract.day_keys,
+        coverage_day_keys,
     )
     logistics_leads = _load_shipment_logistics_leads(
         workbooks, role_map, shipment_bundle=shipment_bundle
@@ -3119,30 +3670,26 @@ def _collect_and_merge_spec_materials(
     result_bytes = _build_result_xlsx(
         merged,
         detailed_extract,
-        product_coverage,
+        product_coverage_full,
         order_plan,
         daily_plan_coverage,
         user_id=user_id,
+        spec_eligible_products=spec_eligible_products,
     )
     schedule_month = (
         f"{detailed_extract.year:04d}-{detailed_extract.month:02d}"
         if detailed_extract.year and detailed_extract.month
-        else ""
+        else f"{as_of_day.year:04d}-{as_of_day.month:02d}"
     )
-    as_of_day = date.today()
-    if logistics_risks and logistics_risks.as_of:
-        try:
-            as_of_day = date.fromisoformat(str(logistics_risks.as_of))
-        except ValueError:
-            pass
     coverage_dashboard = build_coverage_dashboard(
         daily_plan_coverage=daily_plan_coverage,
         product_coverage=product_coverage,
         merged=merged,
-        day_keys=detailed_extract.day_keys,
+        day_keys=coverage_day_keys,
         detailed_plans=detailed_extract.plans,
         as_of=as_of_day,
         schedule_month=schedule_month,
+        spec_eligible_products=spec_eligible_products,
     )
     return usages, merged, result_bytes, stock_files, shipment_files, logistics_risks, coverage_dashboard
 
@@ -3171,9 +3718,12 @@ def _extract_materials_from_matched_specs(
     if db_materials_by_ref is not None:
         usages: list[SpecMaterialItem] = []
         for link in links:
-            if link.status != "matched" or not link.spec_ref_key:
+            if link.status != "matched":
                 continue
-            items = db_materials_by_ref.get(link.spec_ref_key, [])
+            ref_key = (link.spec_ref_key or "").strip()
+            items = db_materials_by_ref.get(ref_key, [])
+            if not items and ref_key:
+                items = db_materials_by_ref.get(ref_key.lower(), [])
             product_items = [
                 SpecMaterialItem(
                     nomenclature=item.nomenclature,
@@ -3414,9 +3964,9 @@ def _merge_material_usages(usages: list[SpecMaterialItem]) -> list[MergedNomencl
 
 def _restrict_merged_rows_to_schedule_products(
     rows: list[MergedNomenclatureRow],
-    schedule_plans: list[ScheduleProductPlan],
+    schedule_plans: list[Any],
 ) -> None:
-    """Оставляет в строке только изделия из графика производства (есть в schedule_plans)."""
+    """Оставляет в строке только изделия из месячного или детального графика производства."""
     if not schedule_plans:
         return
 
@@ -5136,6 +5686,7 @@ def _build_result_xlsx(
     order_plan: Any | None = None,
     daily_plan_coverage: Any | None = None,
     user_id: Any | None = None,
+    spec_eligible_products: frozenset[str] | None = None,
 ) -> bytes:
     """Собирает result.xlsx: произв. план (мес.) + дневные листы + по обеспеч. + обеспеченность + план заказов."""
     from app.agents.document_analysis_agent.daily_plan_snapshot import (
@@ -5213,7 +5764,11 @@ def _build_result_xlsx(
         priority_title = priority_ws.title
 
     coverage_ws = workbook.create_sheet(_SHEET_PRODUCT_COVERAGE)
-    _write_product_coverage_sheet(coverage_ws, product_coverage)
+    _write_product_coverage_sheet(
+        coverage_ws,
+        product_coverage,
+        spec_eligible_products=spec_eligible_products,
+    )
 
     order_ws = workbook.create_sheet(_SHEET_ORDER_PLAN)
     _write_order_plan_sheet(
@@ -5933,7 +6488,12 @@ def _write_detailed_schedule_priority_sheet(
     )
 
 
-def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) -> None:
+def _write_product_coverage_sheet(
+    worksheet: Worksheet,
+    coverage: Any | None,
+    *,
+    spec_eligible_products: frozenset[str] | None = None,
+) -> None:
     """Лист «обеспеченность»: изделия + раскрываемые номенклатуры спеки (outline)."""
     from openpyxl.worksheet.properties import Outline
 
@@ -5949,6 +6509,8 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
     warn_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     product_fill = PatternFill(start_color="FFF7FBFF", end_color="FFF7FBFF", fill_type="solid")
     detail_fill = PatternFill(start_color="FFF9F9F9", end_color="FFF9F9F9", fill_type="solid")
+    consumable_fill = PatternFill(start_color="FFEAF4FF", end_color="FFEAF4FF", fill_type="solid")
+    workshop_fill = PatternFill(start_color="FFF2E9FF", end_color="FFF2E9FF", fill_type="solid")
     product_font = Font(bold=True, size=11, color="FF1F1F1F")
     detail_font = Font(bold=False, size=10, color="FF333333")
 
@@ -5957,6 +6519,13 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
 
     months = list(coverage.months)
     products = list(coverage.products_in_order)
+    if spec_eligible_products:
+        allowed = {_normalize(product) for product in spec_eligible_products}
+        products = [
+            product
+            for product in products
+            if _normalize(product) in allowed
+        ]
     last_col = max(1, 1 + len(months) * 3)
 
     if worksheet.sheet_properties.outlinePr is None:
@@ -5993,7 +6562,8 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
         "Раскройте «+» слева — номенклатуры спеки: "
         "Обеспеченность = остаток на начало + поступления месяца; "
         "План = план изделия × qty; Факт = факт изделия × qty. "
-        "Общие комплектующие — пропорционально планам, остаток квот сверху вниз.",
+        "Расходники и позиции «возможно в цехе» не блокируют условную обеспеченность, "
+        "но остаются в раскрытии и подсвечиваются.",
     )
     _style_header_cell(
         subtitle, fill=_HEADER_SUBTITLE_FILL, font=_HEADER_SUBTITLE_FONT, alignment=left
@@ -6041,7 +6611,12 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
         for month_index, month in enumerate(months):
             base = 2 + month_index * 3
             cell_data = coverage.cell(product, month)
-            covered_cell = worksheet.cell(product_row, base, cell_data.covered)
+            strict_covered = float(cell_data.covered or 0.0)
+            conditional_covered = max(
+                strict_covered,
+                float(getattr(cell_data, "conditional_covered", 0.0) or 0.0),
+            )
+            covered_cell = worksheet.cell(product_row, base, conditional_covered)
             plan_cell = worksheet.cell(product_row, base + 1, cell_data.plan)
             fact_cell = worksheet.cell(product_row, base + 2, cell_data.fact)
             covered_cell.alignment = center
@@ -6056,7 +6631,18 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
             covered_cell.fill = product_fill
             plan_cell.fill = product_fill
             fact_cell.fill = product_fill
-            if cell_data.plan > 0 and cell_data.covered + 1e-9 < cell_data.plan:
+            if (
+                cell_data.plan > 0
+                and strict_covered + 1e-9 < cell_data.plan
+                and conditional_covered + 1e-9 >= cell_data.plan
+            ):
+                covered_cell.fill = warn_fill
+                covered_cell.comment = Comment(
+                    "Условная обеспеченность без расходников и позиций «возможно в цехе». "
+                    f"Строго по всем строкам спеки: {strict_covered:g}.",
+                    "AI Platform",
+                )
+            elif cell_data.plan > 0 and conditional_covered + 1e-9 < cell_data.plan:
                 covered_cell.fill = warn_fill
 
         bom = coverage.boms.get(product)
@@ -6065,11 +6651,33 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
         for line in lines:
             detail_row = excel_row
             detail_rows += 1
+            line_kind = getattr(line, "material_kind", MATERIAL_KIND_REQUIRED)
+            if line_kind == MATERIAL_KIND_CONSUMABLE:
+                row_fill = consumable_fill
+            elif line_kind == MATERIAL_KIND_WORKSHOP:
+                row_fill = workshop_fill
+            else:
+                row_fill = detail_fill
             mat_cell = worksheet.cell(detail_row, 1, line.nomenclature)
             mat_cell.alignment = detail_left
             mat_cell.border = data_border
             mat_cell.font = detail_font
-            mat_cell.fill = detail_fill
+            mat_cell.fill = row_fill
+            if is_optional_material_kind(line_kind):
+                note = getattr(line, "material_kind_label", "") or MATERIAL_KIND_LABELS.get(
+                    line_kind, ""
+                )
+                confidence = getattr(line, "material_kind_confidence", "")
+                reason = getattr(line, "material_kind_reason", "")
+                comment_parts = [note]
+                if confidence:
+                    comment_parts.append(f"уверенность: {confidence}")
+                if reason:
+                    comment_parts.append(reason)
+                mat_cell.comment = Comment(
+                    "; ".join(part for part in comment_parts if part),
+                    "AI Platform",
+                )
             for month_index, month in enumerate(months):
                 base = 2 + month_index * 3
                 available = coverage.material_available(month, line.norm_key)
@@ -6087,10 +6695,14 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
                 avail_cell.font = detail_font
                 plan_cell.font = detail_font
                 fact_cell.font = detail_font
-                avail_cell.fill = detail_fill
-                plan_cell.fill = detail_fill
-                fact_cell.fill = detail_fill
-                if plan_need > 0 and available + 1e-9 < plan_need:
+                avail_cell.fill = row_fill
+                plan_cell.fill = row_fill
+                fact_cell.fill = row_fill
+                if (
+                    plan_need > 0
+                    and available + 1e-9 < plan_need
+                    and not is_optional_material_kind(line_kind)
+                ):
                     avail_cell.fill = warn_fill
             dim = worksheet.row_dimensions[detail_row]
             dim.outline_level = 1
@@ -6105,6 +6717,34 @@ def _write_product_coverage_sheet(worksheet: Worksheet, coverage: Any | None) ->
     worksheet.row_dimensions[3].height = 18
     worksheet.row_dimensions[4].height = 30
     worksheet.freeze_panes = "B5"
+
+    legend_row = excel_row + 1
+    legend_title = worksheet.cell(legend_row, 1, "Легенда условной обеспеченности")
+    legend_title.font = product_font
+    legend_title.border = data_border
+
+    legend_items = (
+        (
+            legend_row + 1,
+            consumable_fill,
+            "Голубой",
+            "Возможно расходник: показан в раскрытии, но не блокирует условную обеспеченность изделия.",
+        ),
+        (
+            legend_row + 2,
+            workshop_fill,
+            "Сиреневый",
+            "Возможно в цехе: показан в раскрытии, но не блокирует условную обеспеченность изделия.",
+        ),
+    )
+    for row_idx, fill, color_name, label in legend_items:
+        color_cell = worksheet.cell(row_idx, 1, color_name)
+        color_cell.fill = fill
+        color_cell.border = data_border
+        color_cell.alignment = center
+        label_cell = worksheet.cell(row_idx, 2, label)
+        label_cell.border = data_border
+        label_cell.alignment = left
 
     logger.info(
         "document_analysis_agent.product_coverage_sheet_written",

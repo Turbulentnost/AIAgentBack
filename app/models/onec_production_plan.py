@@ -42,7 +42,7 @@ class OnecProductionPlanItem(UUIDPrimaryKeyMixin, Base):
             "plan_ref_key",
             "line_number",
             "nomenclature_key",
-            "month_key",
+            "product_date",
             name="uq_onec_prod_plan_line",
         ),
         Index("ix_onec_production_plan_items_plan", "plan_ref_key"),
@@ -61,6 +61,8 @@ class OnecProductionPlanItem(UUIDPrimaryKeyMixin, Base):
     nomenclature_key: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     nomenclature_code: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     nomenclature_name: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    specification_key: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    specification_name: Mapped[str] = mapped_column(Text, default="", nullable=False)
     qty: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     unit: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     department: Mapped[str] = mapped_column(Text, default="", nullable=False)
