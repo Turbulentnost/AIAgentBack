@@ -420,18 +420,7 @@ async def _auto_refresh_dashboard_snapshot(
     snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     today = today_msk_iso()
-    restored = _restore_dashboard_refresh_inputs(snapshot, user_id)
-    if not restored:
-        snapshot = update_dashboard_refresh_state(
-            user_id,
-            refresh_status="missing_inputs",
-            refresh_error="Нет сохранённых входных файлов для автопересчёта.",
-            refresh_attempted_date_msk=today,
-        ) or snapshot
-        snapshot["shift_today_msk"] = today
-        if not snapshot.get("dashboard_date_msk"):
-            snapshot["dashboard_date_msk"] = derive_dashboard_date_msk(snapshot)
-        return snapshot
+    restored = _restore_dashboard_refresh_inputs(snapshot, user_id) or []
 
     inputs_error = await _auto_refresh_inputs_error(restored, db)
     if inputs_error:
@@ -455,7 +444,8 @@ async def _auto_refresh_dashboard_snapshot(
             if _coverage_day_plan_count(current.get("coverage_dashboard")) > 0:
                 return current
         if isinstance(current, dict) and current.get("refresh_attempted_date_msk") == today:
-            if (
+            dashboard_is_current = derive_dashboard_date_msk(current) == today
+            if dashboard_is_current and (
                 not _refresh_status_allows_retry(current.get("refresh_status"))
                 and not _dashboard_auto_refresh_incomplete(current)
             ):
@@ -517,6 +507,7 @@ async def _auto_refresh_dashboard_snapshot(
             shift_assignment=shift_assignment_payload,
             merged_shipment_schedule=_build_merged_shipment_payload(uploaded, shipment_merge),
             coverage_dashboard=result.coverage_dashboard,
+            coverage_rebuild=result.coverage_rebuild,
             meta={
                 "source": result.source,
                 "stock_files": result.stock_files,
@@ -598,6 +589,29 @@ async def reveal_document_analysis_file_in_explorer(
     except OSError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return {"ok": True, "path": path}
+
+
+@router.post("/document-analysis/workbook/preview")
+async def preview_workbook_for_tab(
+    _user: DocumentAnalysisUser,
+    file: Annotated[UploadFile, File(...)],
+):
+    """Все листы Excel для просмотра в новой вкладке."""
+    from app.agents.document_analysis_agent.workbook_preview import build_workbook_tab_preview
+
+    filename = file.filename or "workbook.xlsx"
+    content = await file.read()
+    if not content:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Файл пуст")
+    try:
+        return await asyncio.to_thread(build_workbook_tab_preview, filename, content)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Не удалось открыть книгу: {exc}",
+        ) from exc
 
 
 def _require_feedback_user(user: User | None) -> User:
@@ -870,7 +884,11 @@ async def classify_document_excel_files(
 
 
 @router.get("/document-analysis/dashboard-latest")
-async def get_document_analysis_dashboard_latest(_user: DocumentAnalysisUser, db: DbSession):
+async def get_document_analysis_dashboard_latest(
+    _user: DocumentAnalysisUser,
+    db: DbSession,
+    skip_refresh: bool = False,
+):
     """Последний сохранённый дашборд (контрольные точки) после анализа Авион."""
     user_id = getattr(_user, "id", None) if _user is not None else None
     manager_name = resolve_shift_manager_name(
@@ -907,8 +925,8 @@ async def get_document_analysis_dashboard_latest(_user: DocumentAnalysisUser, db
             }
     if snapshot is None:
         return {"ok": False, "snapshot": None}
-    needs_refresh = is_dashboard_stale_for_today(snapshot) or _dashboard_auto_refresh_incomplete(
-        snapshot
+    needs_refresh = (not skip_refresh) and (
+        is_dashboard_stale_for_today(snapshot) or _dashboard_auto_refresh_incomplete(snapshot)
     )
     if needs_refresh:
         attempted_today = snapshot.get("refresh_attempted_date_msk") == today_msk_iso()
@@ -932,6 +950,57 @@ async def get_document_analysis_dashboard_latest(_user: DocumentAnalysisUser, db
             manager_user_id=user_id,
         )
     return {"ok": True, "snapshot": snapshot}
+
+
+@router.get("/document-analysis/coverage-dashboard/period")
+async def get_coverage_dashboard_period(
+    _user: DocumentAnalysisUser,
+    db: DbSession,
+    date_from: date,
+    date_to: date,
+):
+    """Пересчёт дашборда обеспеченности для произвольного диапазона дат."""
+    if date_from > date_to:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "date_from не может быть позже date_to.",
+        )
+    if (date_to - date_from).days > 365:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Максимальная длина периода — 365 дней.",
+        )
+
+    user_id = getattr(_user, "id", None) if _user is not None else None
+    snapshot = load_dashboard_snapshot(user_id)
+    if snapshot is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Нет сохранённого дашборда. Сначала выполните анализ или дождитесь автозагрузки.",
+        )
+
+    from app.agents.document_analysis_agent.coverage_dashboard import coverage_period_from_snapshot
+
+    try:
+        period_payload = coverage_period_from_snapshot(snapshot, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Не удалось пересчитать период: {exc}",
+        ) from exc
+
+    if period_payload is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "В выбранном диапазоне нет рабочих дней графика производства.",
+        )
+
+    return {
+        "ok": True,
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "period": period_payload,
+    }
 
 
 @router.delete("/document-analysis/dashboard-latest")
@@ -1887,6 +1956,7 @@ async def analyze_document_excel_files(
             shift_assignment=shift_assignment_payload,
             merged_shipment_schedule=merged_shipment_payload,
             coverage_dashboard=coverage_payload,
+            coverage_rebuild=result.coverage_rebuild,
             meta={
                 "source": result.source,
                 "stock_files": result.stock_files,

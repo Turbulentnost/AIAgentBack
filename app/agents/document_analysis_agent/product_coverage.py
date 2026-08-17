@@ -319,6 +319,45 @@ def _consume(bom: ProductBom, pool: dict[str, float], units: float) -> None:
         pool[mat] = pool.get(mat, 0.0) - units * qty
 
 
+def _pass_consumption(
+    products: list[str],
+    boms: dict[str, ProductBom],
+) -> dict[str, float]:
+    consumption: dict[str, float] = {}
+    for product in products:
+        for mat, qty in _bom_mats(boms[product]).items():
+            consumption[mat] = consumption.get(mat, 0.0) + qty
+    return consumption
+
+
+def _max_repeated_successful_passes(
+    products: list[str],
+    plan_m: dict[str, float],
+    boms: dict[str, ProductBom],
+    covered: dict[str, float],
+    pool: dict[str, float],
+) -> int:
+    """How many additional identical round-robin passes can run after one pass.
+
+    The greedy top-up is intentionally order-dependent. We keep that behavior,
+    but when a whole pass succeeds for the same set of products we can apply
+    the repeated passes in bulk instead of looping one unit at a time.
+    """
+    if not products:
+        return 0
+    repeat_limit = math.inf
+    for product in products:
+        remaining = math.floor(plan_m[product] - covered.get(product, 0.0) + 1e-9)
+        repeat_limit = min(repeat_limit, remaining)
+    for mat, qty in _pass_consumption(products, boms).items():
+        if qty <= 1e-12:
+            continue
+        repeat_limit = min(repeat_limit, math.floor(pool.get(mat, 0.0) / qty + 1e-9))
+    if math.isinf(repeat_limit):
+        return 0
+    return max(0, int(repeat_limit))
+
+
 def _limiting_materials(
     bom: ProductBom,
     pool: dict[str, float],
@@ -427,6 +466,7 @@ def _compute_covered_for_candidates(
     while changed and safety < max_iters:
         changed = False
         safety += 1
+        pass_products: list[str] = []
         for product in candidates:
             current = covered.get(product, 0.0)
             if current + 1 <= plan_m[product] + 1e-9 and _can_build_one(
@@ -434,7 +474,24 @@ def _compute_covered_for_candidates(
             ):
                 covered[product] = current + 1
                 _consume(boms[product], pool, 1)
+                pass_products.append(product)
                 changed = True
+        if not pass_products:
+            continue
+        repeated = _max_repeated_successful_passes(
+            pass_products,
+            plan_m,
+            boms,
+            covered,
+            pool,
+        )
+        if repeated <= 0:
+            continue
+        pass_usage = _pass_consumption(pass_products, boms)
+        for product in pass_products:
+            covered[product] = covered.get(product, 0.0) + repeated
+        for mat, qty in pass_usage.items():
+            pool[mat] = pool.get(mat, 0.0) - repeated * qty
 
     return covered, pool
 

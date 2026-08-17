@@ -177,10 +177,18 @@ async def test_auto_refresh_missing_inputs_marks_fallback(monkeypatch: pytest.Mo
         "logistics_risks": {"as_of": None, "stages": []},
     }
 
+    async def fake_inputs_error(uploaded, db):
+        assert uploaded == []
+        return (
+            "Для автопересчёта дашборда «За день» нужен план производства по дням "
+            "(Excel или синхронизация из 1С в БД)."
+        )
+
     def fake_update(user_id, **kwargs):
         return {**snapshot, **kwargs}
 
     monkeypatch.setattr(agents, "_restore_dashboard_refresh_inputs", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agents, "_auto_refresh_inputs_error", fake_inputs_error)
     monkeypatch.setattr(agents, "update_dashboard_refresh_state", fake_update)
 
     refreshed = await agents._auto_refresh_dashboard_snapshot(
@@ -189,8 +197,8 @@ async def test_auto_refresh_missing_inputs_marks_fallback(monkeypatch: pytest.Mo
         snapshot=snapshot,
     )
 
-    assert refreshed["refresh_status"] == "missing_inputs"
-    assert "входных файлов" in refreshed["refresh_error"]
+    assert refreshed["refresh_status"] == "missing_detailed_schedule"
+    assert "план производства по дням" in refreshed["refresh_error"]
 
 
 @pytest.mark.asyncio

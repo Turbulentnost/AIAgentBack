@@ -15,7 +15,10 @@ from app.models.onec_production_plan import (
     OnecProductionPlanItem,
     OnecProductionPlanSyncRun,
 )
-from app.services.onec_production_plan_matrix import build_production_plan_matrices
+from app.services.onec_production_plan_matrix import (
+    build_production_plan_matrices,
+    build_year_schedule_view,
+)
 from app.services.onec_production_plan_probe import fetch_production_plans_for_year
 from app.services.onec_production_plan_resolver import MonthPlanSource, resolve_year_production_plan
 
@@ -369,6 +372,13 @@ async def list_latest_production_plan_from_db(
                 "default_month": "",
                 "matrices": {},
             },
+            "year_schedule_view": {
+                "year": target_year,
+                "month_keys": [],
+                "month_labels": [],
+                "products": [],
+                "products_count": 0,
+            },
             "month_sources": {},
             "gaps": [],
             "documents_count": 0,
@@ -385,12 +395,20 @@ async def list_latest_production_plan_from_db(
     )
     primary_header = max(headers, key=lambda header: header.plan_date or datetime.min.replace(tzinfo=timezone.utc))
     headers_by_ref = {header.ref_key: header for header in headers}
-    current_rows = [
+    year_rows = [
         row
         for row in resolved.rows
+        if (row.month_key or "").strip().startswith(f"{target_year}-")
+    ]
+    current_rows = [
+        row
+        for row in year_rows
         if (row.month_key or "").strip() == current_month
     ]
-    matrix_view = build_production_plan_matrices(current_rows)
+    matrix_view = build_production_plan_matrices(year_rows)
+    if current_month in (matrix_view.get("month_keys") or []):
+        matrix_view["default_month"] = current_month
+    year_schedule_view = build_year_schedule_view(year_rows, year=target_year)
     current_qty_sum = sum(float(row.qty or 0.0) for row in current_rows)
     if current_rows and current_qty_sum <= 0:
         matrix = (matrix_view.get("matrices") or {}).get(current_month)
@@ -447,6 +465,7 @@ async def list_latest_production_plan_from_db(
         },
         "values": values,
         "matrix_view": matrix_view,
+        "year_schedule_view": year_schedule_view,
         "month_sources": {
             current_month: current_source.to_dict()
         } if current_source is not None else {},

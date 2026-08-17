@@ -252,3 +252,56 @@ def build_production_plan_matrices(rows: list[_PlanRowLike]) -> dict[str, Any]:
         "default_month": default_month,
         "matrices": matrices,
     }
+
+
+def build_year_schedule_view(rows: list[_PlanRowLike], *, year: int) -> dict[str, Any]:
+    """Годовой график: изделия × месяцы (сумма плана)."""
+    month_totals: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    product_meta: dict[str, dict[str, str]] = {}
+
+    for row in rows:
+        month_key = (row.month_key or "").strip()
+        if not month_key.startswith(f"{year}-"):
+            continue
+        name = (row.nomenclature_name or "").strip()
+        code = (row.nomenclature_code or "").strip()
+        if not name and not code:
+            continue
+        product_key = code or name
+        product_meta[product_key] = {
+            "name": name or code,
+            "code": code,
+            "unit": (row.unit or "").strip(),
+        }
+        month_totals[product_key][month_key] += float(row.qty or 0.0)
+
+    month_keys = [f"{year}-{month:02d}" for month in range(1, 13)]
+    month_labels = [
+        _MONTH_NAMES_RU[month] if 1 <= month <= 12 else str(month) for month in range(1, 13)
+    ]
+
+    products: list[dict[str, Any]] = []
+    for product_key in sorted(product_meta.keys(), key=lambda key: product_meta[key]["name"].casefold()):
+        meta = product_meta[product_key]
+        qty_by_month = {month_key: month_totals[product_key].get(month_key, 0.0) for month_key in month_keys}
+        total = sum(qty_by_month.values())
+        if total <= 0:
+            continue
+        products.append(
+            {
+                "product_key": product_key,
+                "name": meta["name"],
+                "code": meta["code"],
+                "unit": meta["unit"],
+                "qty_by_month": qty_by_month,
+                "total": total,
+            }
+        )
+
+    return {
+        "year": year,
+        "month_keys": month_keys,
+        "month_labels": month_labels,
+        "products": products,
+        "products_count": len(products),
+    }

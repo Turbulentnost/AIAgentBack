@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from difflib import SequenceMatcher
@@ -18,6 +20,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 _META_HEADERS = (
     "Номенклатура",
@@ -705,7 +709,7 @@ class SheetLayout:
 
 
 _COPY_ONLY_SHEETS = frozenset({"ТАМОЖНЯ", "Реестр Заказов", "Источник", "Проверки"})
-_NOM_KW = ("номенклатур", "наименован", "позици", "изделие", "наимен")
+_NOM_KW = ("номенклатур", "наименован", "позици", "наимен")
 _ORDER_KW = ("заказано", "кол-во", "количество", "qty", "заказ")
 _REMAINDER_KW = ("остаток", "недопол", "remainder")
 _META_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -773,9 +777,42 @@ def _find_remainder_col(header: list[str], row0: list[str] | None = None) -> int
 
 def _find_name_col(header: list[str]) -> int:
     for idx, raw in enumerate(header):
-        if any(kw in raw.lower() for kw in _NOM_KW):
+        h = raw.lower()
+        if "номенклатур" in h or "наименован" in h:
+            return idx
+    for idx, raw in enumerate(header):
+        h = raw.lower()
+        if "наимен" in h or "позици" in h:
+            return idx
+    for idx, raw in enumerate(header):
+        h = raw.lower()
+        if "изделие" in h or h.strip() == "product":
             return idx
     return 0
+
+
+def _finalize_schedule_layout(rows: list[tuple], layout: SheetLayout) -> SheetLayout:
+    """Фиксирует колонки для стандартного шаблона merged_schedule / графика отгрузок."""
+    if layout.kind != "schedule":
+        return layout
+    header_row = layout.header_row
+    if header_row < 0 or header_row >= len(rows):
+        return layout
+    header = [_cell_text(cell) for cell in rows[header_row]]
+    expected = list(_META_HEADERS)
+    if len(header) < len(expected):
+        return layout
+    if header[: len(expected)] != expected:
+        return layout
+    layout.name_col = 0
+    layout.ordered_col = 3
+    layout.remainder_col = 4
+    layout.meta_cols = {
+        label: idx for idx, label in enumerate(_META_HEADERS) if label != "Номенклатура"
+    }
+    layout.confidence = max(layout.confidence, 0.98)
+    layout.reason = (layout.reason or "schedule") + "; standard shipment headers"
+    return layout
 
 
 def _find_ordered_col(header: list[str], name_col: int) -> int | None:
@@ -816,7 +853,7 @@ def _count_schedule_data_rows(rows: list[tuple], layout: SheetLayout) -> int:
 
 
 def _heuristic_schedule_layout(rows: list[tuple], sheet_title: str) -> SheetLayout | None:
-    if len(rows) < 3:
+    if len(rows) < 2:
         return None
     best: SheetLayout | None = None
     best_score = 0
@@ -926,7 +963,7 @@ def _heuristic_itc_layout(rows: list[tuple]) -> SheetLayout | None:
         data_start_row=2,
         itc_left=left,
         itc_batch=batch if "name" in batch else None,
-        confidence=0.7 if data_left >= 2 else 0.5,
+        confidence=0.82 if data_left >= 2 else 0.55,
         reason=f"heuristic itc: {data_left} spec rows",
     )
 
@@ -1018,16 +1055,21 @@ async def _lm_detect_layout(sheet_title: str, preview: list[list[str]], filename
     return layout
 
 
-async def detect_sheet_layout(ws, sheet_title: str, filename: str) -> SheetLayout:
-    rows = list(ws.iter_rows(values_only=True))
+def detect_sheet_layout_from_rows(
+    rows: list[tuple],
+    sheet_title: str,
+    filename: str = "",
+) -> SheetLayout:
+    """Локальная раскладка листа: заголовки + даты. Без LM."""
+    del filename
     title_lower = sheet_title.strip().lower()
+    if sheet_title.strip() in _COPY_ONLY_SHEETS:
+        return SheetLayout(kind="skip", reason="copy-only sheet")
     skip = _heuristic_skip_layout(rows, sheet_title)
-    if skip and skip.kind == "skip" and sheet_title.strip() in _COPY_ONLY_SHEETS:
-        return skip
     sched = _heuristic_schedule_layout(rows, sheet_title)
     itc = _heuristic_itc_layout(rows)
     if title_lower == "график" and sched:
-        return sched
+        return _finalize_schedule_layout(rows, sched)
     if itc and ("итц" in title_lower or itc.confidence >= 0.65):
         if not sched or len(sched.date_cols) < 3:
             return itc
@@ -1037,32 +1079,31 @@ async def detect_sheet_layout(ws, sheet_title: str, filename: str) -> SheetLayou
     if skip and skip.kind == "skip" and not candidates:
         return skip
     best = max(candidates, key=lambda c: c.confidence, default=None)
-    if best and best.confidence >= 0.75:
-        return best
-    lm = await _lm_detect_layout(sheet_title, _sheet_preview(rows), filename)
-    if lm and lm.kind != "skip":
-        if lm.kind == "schedule" and not lm.date_cols and sched:
-            lm.date_cols = sched.date_cols
-            lm.meta_cols = sched.meta_cols or lm.meta_cols
-            if lm.remainder_col is None:
-                lm.remainder_col = sched.remainder_col
-        if lm.kind == "schedule" and _count_schedule_data_rows(rows, lm) == 0 and sched:
-            return sched
-        return lm
     if best:
+        if best.kind == "schedule":
+            return _finalize_schedule_layout(rows, best)
         return best
     return skip or SheetLayout(kind="skip", reason="no pattern")
+
+
+async def detect_sheet_layout(ws, sheet_title: str, filename: str) -> SheetLayout:
+    if sheet_title.strip() in _COPY_ONLY_SHEETS:
+        return SheetLayout(kind="skip", reason="copy-only sheet")
+    rows = list(ws.iter_rows(values_only=True))
+    return detect_sheet_layout_from_rows(rows, sheet_title, filename)
 
 
 def _parse_schedule_layout(
     ws,
     layout: SheetLayout,
     nd: NameDict,
+    rows: list[tuple] | None = None,
 ) -> tuple[list[NomRow], set[date]]:
-    rows = list(ws.iter_rows(values_only=True))
+    if rows is None:
+        rows = list(ws.iter_rows(values_only=True))
     all_dates: set[date] = set(d for _, d in layout.date_cols)
     result: list[NomRow] = []
-    product = layout.product or ws.title.strip()
+    default_product = layout.product or (ws.title.strip() if ws is not None else "")
     for row in rows[layout.data_start_row :]:
         if not row or layout.name_col >= len(row) or _is_junk_name(row[layout.name_col]):
             continue
@@ -1071,10 +1112,12 @@ def _parse_schedule_layout(
         ordered = 0.0
         if layout.ordered_col is not None and layout.ordered_col < len(row):
             ordered = _parse_number(row[layout.ordered_col]) or 0.0
-        meta: dict[str, str] = {"Изделие": product}
+        meta: dict[str, str] = {}
         for label, col_idx in layout.meta_cols.items():
             if col_idx < len(row):
                 meta[label] = _cell_text(row[col_idx])
+        if not meta.get("Изделие") and default_product:
+            meta["Изделие"] = default_product
         rem = None
         if layout.remainder_col is not None and layout.remainder_col < len(row):
             rem = _parse_number(row[layout.remainder_col])
@@ -1249,10 +1292,13 @@ def _collapse_duplicates(by_key: dict[str, NomRow], pairs: list[tuple[str, str]]
 
 
 def _copy_sheet_values(src_ws, dst_ws) -> None:
-    for r_idx, row in enumerate(src_ws.iter_rows(values_only=True), start=1):
-        for c_idx, value in enumerate(row, start=1):
-            if value is not None and str(value).strip() != "":
-                dst_ws.cell(r_idx, c_idx, value)
+    for row in src_ws.iter_rows(values_only=True):
+        dst_ws.append(list(row))
+
+
+def _append_rows(dst_ws, rows: list[tuple]) -> None:
+    for row in rows:
+        dst_ws.append(list(row))
 
 
 def _build_workbook(
@@ -1260,7 +1306,8 @@ def _build_workbook(
     customs_wb: openpyxl.Workbook | None,
     stats: dict[str, Any],
     all_dates: set[date],
-) -> bytes:
+    cached_sheets: dict[str, list[tuple]] | None = None,
+) -> tuple[bytes, list[list[str]]]:
     dates = sorted(all_dates | {d for row in by_key.values() for d in row.schedule})
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -1316,15 +1363,20 @@ def _build_workbook(
             [key, json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else value]
         )
 
+    cached_sheets = cached_sheets or {}
     if customs_wb is not None:
         for title in ("ТАМОЖНЯ", "ИТЦ В РАБОТЕ", "Реестр Заказов"):
-            if title in customs_wb.sheetnames:
+            if title in cached_sheets:
+                dst = wb.create_sheet(title[:31])
+                _append_rows(dst, cached_sheets[title])
+            elif title in customs_wb.sheetnames:
                 dst = wb.create_sheet(title[:31])
                 _copy_sheet_values(customs_wb[title], dst)
 
+    preview = _worksheet_preview_values(ws)
     buf = io.BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    return buf.getvalue(), preview
 
 
 def _cell_preview_value(value: Any) -> str:
@@ -1339,6 +1391,16 @@ def _cell_preview_value(value: Any) -> str:
     return str(value).strip()
 
 
+def _worksheet_preview_values(ws) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for row in ws.iter_rows(values_only=True):
+        if not any(cell is not None and str(cell).strip() for cell in row):
+            if rows:
+                continue
+        rows.append([_cell_preview_value(cell) for cell in row])
+    return rows
+
+
 def build_merged_schedule_preview_values(
     raw: bytes,
     *,
@@ -1349,13 +1411,7 @@ def build_merged_schedule_preview_values(
     if sheet_name not in wb.sheetnames:
         wb.close()
         return []
-    ws = wb[sheet_name]
-    rows: list[list[str]] = []
-    for row in ws.iter_rows(values_only=True):
-        if not any(cell is not None and str(cell).strip() for cell in row):
-            if rows:
-                continue
-        rows.append([_cell_preview_value(cell) for cell in row])
+    rows = _worksheet_preview_values(wb[sheet_name])
     wb.close()
     return rows
 
@@ -2149,12 +2205,37 @@ async def apply_manager_date_change_to_schedule(
     }
 
 
+def _load_workbook_bytes(raw: bytes) -> openpyxl.Workbook:
+    try:
+        return openpyxl.load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+    except Exception:
+        return openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+
+
+def _resolve_matches_local(queries: list[str], by_key: dict[str, NomRow]) -> dict[str, str | None]:
+    resolved: dict[str, str | None] = {}
+    for query in queries:
+        local_key = _find_existing_key(query, by_key)
+        resolved[query] = by_key[local_key].name if local_key else None
+    return resolved
+
+
+def _close_workbooks(workbooks: list[tuple[str, openpyxl.Workbook]]) -> None:
+    for _, workbook in workbooks:
+        try:
+            workbook.close()
+        except Exception:
+            pass
+
+
 async def merge_schedule_files(
     files: list[tuple[str, bytes]],
     *,
     include_google_sheets: bool = True,
     include_merged_inputs: bool = False,
+    use_lm: bool = False,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     google_sheets_meta: dict[str, Any] = {"included": False}
     if include_google_sheets:
         try:
@@ -2182,6 +2263,7 @@ async def merge_schedule_files(
     itc_layout: SheetLayout | None = None
     ingested: list[str] = []
     layouts_log: list[dict[str, Any]] = []
+    sheet_rows: dict[tuple[str, str], list[tuple]] = {}
 
     workbooks: list[tuple[str, openpyxl.Workbook]] = []
     for filename, raw in files:
@@ -2190,189 +2272,242 @@ async def merge_schedule_files(
         ):
             continue
         try:
-            wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+            wb = _load_workbook_bytes(raw)
         except Exception as exc:
+            _close_workbooks(workbooks)
             return {"ok": False, "message": f"Не читается {filename}: {exc}", "files": []}
         if not include_merged_inputs and "График" in wb.sheetnames and "Источник" in wb.sheetnames:
+            wb.close()
             continue
         workbooks.append((filename, wb))
 
-    sheet_plans: list[tuple[str, str, openpyxl.Workbook, SheetLayout]] = []
-    for filename, wb in workbooks:
-        for sn in wb.sheetnames:
-            layout = await detect_sheet_layout(wb[sn], sn, filename)
-            sheet_plans.append((filename, sn, wb, layout))
-            layouts_log.append(
-                {
-                    "file": filename,
-                    "sheet": sn,
-                    "kind": layout.kind,
-                    "confidence": layout.confidence,
-                    "reason": layout.reason,
-                    "dates": len(layout.date_cols),
-                }
+    try:
+        sheet_plans: list[tuple[str, str, openpyxl.Workbook, SheetLayout]] = []
+        for filename, wb in workbooks:
+            for sn in wb.sheetnames:
+                title = sn.strip()
+                if title in _COPY_ONLY_SHEETS:
+                    layout = SheetLayout(kind="skip", reason="copy-only sheet")
+                    sheet_plans.append((filename, sn, wb, layout))
+                    layouts_log.append(
+                        {
+                            "file": filename,
+                            "sheet": sn,
+                            "kind": layout.kind,
+                            "confidence": layout.confidence,
+                            "reason": layout.reason,
+                            "dates": 0,
+                        }
+                    )
+                    customs_wb = wb
+                    continue
+                rows = list(wb[sn].iter_rows(values_only=True))
+                sheet_rows[(filename, sn)] = rows
+                layout = detect_sheet_layout_from_rows(rows, sn, filename)
+                sheet_plans.append((filename, sn, wb, layout))
+                layouts_log.append(
+                    {
+                        "file": filename,
+                        "sheet": sn,
+                        "kind": layout.kind,
+                        "confidence": layout.confidence,
+                        "reason": layout.reason,
+                        "dates": len(layout.date_cols),
+                    }
+                )
+                if layout.kind == "itc":
+                    customs_wb = wb
+                    itc_rows = rows
+                    itc_layout = layout
+                elif title == "ИТЦ В РАБОТЕ":
+                    customs_wb = wb
+                    if itc_rows is None:
+                        itc_rows = rows
+                        if itc_layout is None:
+                            itc_layout = layout if layout.kind == "itc" else _heuristic_itc_layout(itc_rows)
+
+        nd = _build_name_dict(itc_rows or [])
+
+        for filename, sn, wb, layout in sheet_plans:
+            if layout.kind != "schedule":
+                continue
+            # График отгрузок: номенклатура только из строк файла, без подмены словарём ИТЦ.
+            items, dates = _parse_schedule_layout(
+                wb[sn],
+                layout,
+                NameDict(),
+                rows=sheet_rows.get((filename, sn)),
             )
-            if layout.kind == "itc":
-                customs_wb = wb
-                itc_rows = list(wb[sn].iter_rows(values_only=True))
-                itc_layout = layout
-            elif sn.strip() in ("ТАМОЖНЯ", "ИТЦ В РАБОТЕ", "Реестр Заказов"):
-                customs_wb = wb
-                if sn.strip() == "ИТЦ В РАБОТЕ" and itc_rows is None:
-                    itc_rows = list(wb[sn].iter_rows(values_only=True))
-                    if itc_layout is None:
-                        itc_layout = layout if layout.kind == "itc" else _heuristic_itc_layout(itc_rows)
+            grafik_items.extend(items)
+            all_dates |= dates
+            if filename not in ingested:
+                ingested.append(filename)
 
-    nd = _build_name_dict(itc_rows or [])
+        if not grafik_items and not itc_rows:
+            return {
+                "ok": False,
+                "message": "Нет данных графика/ИТЦ в загруженных файлах",
+                "files": [{"name": n} for n, _ in files],
+                "layouts": layouts_log,
+            }
 
-    for filename, sn, wb, layout in sheet_plans:
-        if layout.kind != "schedule":
-            continue
-        items, dates = _parse_schedule_layout(wb[sn], layout, nd)
-        grafik_items.extend(items)
-        all_dates |= dates
-        if filename not in ingested:
-            ingested.append(filename)
+        by_key = _merge_rows(grafik_items)
+        before = len(by_key)
 
-    if not grafik_items and not itc_rows:
-        return {
-            "ok": False,
-            "message": "Нет данных графика/ИТЦ в загруженных файлах",
-            "files": [{"name": n} for n, _ in files],
-            "layouts": layouts_log,
-        }
+        left_items: list[NomRow] = []
+        batches: list[tuple[str, float, date | None, str]] = []
+        if itc_rows and itc_layout and itc_layout.kind == "itc":
+            left_items, batches = _parse_itc_with_layout(itc_rows, itc_layout, nd)
+        elif itc_rows:
+            fallback = _heuristic_itc_layout(itc_rows)
+            if fallback:
+                left_items, batches = _parse_itc_with_layout(itc_rows, fallback, nd)
 
-    by_key = _merge_rows(grafik_items)
-    before = len(by_key)
-
-    left_items: list[NomRow] = []
-    batches: list[tuple[str, float, date | None, str]] = []
-    if itc_rows and itc_layout and itc_layout.kind == "itc":
-        left_items, batches = _parse_itc_with_layout(itc_rows, itc_layout, nd)
-    elif itc_rows:
-        fallback = _heuristic_itc_layout(itc_rows)
-        if fallback:
-            left_items, batches = _parse_itc_with_layout(itc_rows, fallback, nd)
-
-    left_merged = 0
-    left_new = 0
-    for item in left_items:
-        existing = _find_existing_key(item.name, by_key)
-        if existing:
-            row = by_key[existing]
-            row.name = _prefer_name(row.name, item.name)
-            if item.remainder is not None and row.remainder is None:
-                row.remainder = item.remainder
-            for k in _TEXT_META:
-                if item.meta.get(k):
-                    row.meta[k] = _merge_text(row.meta.get(k, ""), item.meta.get(k, ""))
-            for day, qty in item.schedule.items():
-                if row.schedule.get(day, 0) == 0:
-                    row.add_qty(day, qty)
-                    all_dates.add(day)
-            if "итц:спецификация" not in row.sources:
-                row.sources.append("итц:спецификация")
-            left_merged += 1
-        else:
-            by_key[_norm_name(item.name)] = item
-            all_dates |= set(item.schedule)
-            left_new += 1
-
-    queries: list[str] = []
-    seen_q: set[str] = set()
-    for name, _, _, _ in batches:
-        if name not in seen_q:
-            seen_q.add(name)
-            queries.append(name)
-    matches = await _resolve_matches(queries, by_key) if queries else {}
-
-    matched_batches = 0
-    new_batches = 0
-    for name, qty, day, note in batches:
-        target = matches.get(name)
-        if target:
-            key = _find_existing_key(target, by_key) or _norm_name(target)
-            if key in by_key:
-                row = by_key[key]
-                if "итц:партия" not in row.sources:
-                    row.sources.append("итц:партия")
-                if note:
-                    row.meta["Дата заказа"] = _merge_text(row.meta.get("Дата заказа", ""), note)
-                if day is not None:
-                    # партия: не задваивать, если дата уже заполнена из графика
+        left_merged = 0
+        left_new = 0
+        for item in left_items:
+            existing = _find_existing_key(item.name, by_key)
+            if existing:
+                row = by_key[existing]
+                row.name = _prefer_name(row.name, item.name)
+                if item.remainder is not None and row.remainder is None:
+                    row.remainder = item.remainder
+                for k in _TEXT_META:
+                    if item.meta.get(k):
+                        row.meta[k] = _merge_text(row.meta.get(k, ""), item.meta.get(k, ""))
+                for day, qty in item.schedule.items():
                     if row.schedule.get(day, 0) == 0:
                         row.add_qty(day, qty)
-                    all_dates.add(day)
-                matched_batches += 1
-                continue
-        # новая строка только если нет безопасного совпадения
-        existing = _find_existing_key(name, by_key)
-        if existing:
-            row = by_key[existing]
-            if day is not None and row.schedule.get(day, 0) == 0:
-                row.add_qty(day, qty)
-                all_dates.add(day)
-            if "итц:партия" not in row.sources:
-                row.sources.append("итц:партия")
-            matched_batches += 1
+                        all_dates.add(day)
+                if "итц:спецификация" not in row.sources:
+                    row.sources.append("итц:спецификация")
+                left_merged += 1
+            else:
+                by_key[_norm_name(item.name)] = item
+                all_dates |= set(item.schedule)
+                left_new += 1
+
+        queries: list[str] = []
+        seen_q: set[str] = set()
+        for name, _, _, _ in batches:
+            if name not in seen_q:
+                seen_q.add(name)
+                queries.append(name)
+        if use_lm:
+            matches = await _resolve_matches(queries, by_key) if queries else {}
+            pairs = await _lm_find_duplicates([r.name for r in by_key.values()])
         else:
-            row = NomRow(name=name, ordered=qty, sources=["итц:партия"])
-            row.meta[COUNTRY_META_KEY] = SUPPLIER_COUNTRY_CHINA
-            if note:
-                row.meta["Дата заказа"] = note
-            row.add_qty(day, qty)
-            if day:
-                all_dates.add(day)
-            by_key[_norm_name(name)] = row
-            new_batches += 1
+            matches = _resolve_matches_local(queries, by_key) if queries else {}
+            pairs = []
 
-    # LM + локальная склейка дублей
-    pairs = await _lm_find_duplicates([r.name for r in by_key.values()])
-    by_key = _collapse_duplicates(by_key, pairs)
+        matched_batches = 0
+        new_batches = 0
+        for name, qty, day, note in batches:
+            target = matches.get(name)
+            if target:
+                key = _find_existing_key(target, by_key) or _norm_name(target)
+                if key in by_key:
+                    row = by_key[key]
+                    if "итц:партия" not in row.sources:
+                        row.sources.append("итц:партия")
+                    if note:
+                        row.meta["Дата заказа"] = _merge_text(row.meta.get("Дата заказа", ""), note)
+                    if day is not None:
+                        # партия: не задваивать, если дата уже заполнена из графика
+                        if row.schedule.get(day, 0) == 0:
+                            row.add_qty(day, qty)
+                        all_dates.add(day)
+                    matched_batches += 1
+                    continue
+            # новая строка только если нет безопасного совпадения
+            existing = _find_existing_key(name, by_key)
+            if existing:
+                row = by_key[existing]
+                if day is not None and row.schedule.get(day, 0) == 0:
+                    row.add_qty(day, qty)
+                    all_dates.add(day)
+                if "итц:партия" not in row.sources:
+                    row.sources.append("итц:партия")
+                matched_batches += 1
+            else:
+                row = NomRow(name=name, ordered=qty, sources=["итц:партия"])
+                row.meta[COUNTRY_META_KEY] = SUPPLIER_COUNTRY_CHINA
+                if note:
+                    row.meta["Дата заказа"] = note
+                row.add_qty(day, qty)
+                if day:
+                    all_dates.add(day)
+                by_key[_norm_name(name)] = row
+                new_batches += 1
 
-    for row in by_key.values():
-        uniq: list[str] = []
-        for s in row.sources:
-            if s not in uniq:
-                uniq.append(s)
-        row.sources = uniq
-        _apply_supplier_country(row)
+        by_key = _collapse_duplicates(by_key, pairs)
 
-    # контроль: все исходные имена графика должны находиться
-    missing_check: list[str] = []
-    for item in grafik_items:
-        if _find_existing_key(item.name, by_key) is None:
-            # восстановить пропуск
-            by_key[_norm_name(item.name)] = item
-            missing_check.append(item.name)
-            all_dates |= set(item.schedule)
+        for row in by_key.values():
+            uniq: list[str] = []
+            for s in row.sources:
+                if s not in uniq:
+                    uniq.append(s)
+            row.sources = uniq
+            _apply_supplier_country(row)
 
-    stats = {
-        "ingested_files": ingested,
-        "grafik_rows_raw": len(grafik_items),
-        "grafik_rows_merged": before,
-        "nomenclature_total": len(by_key),
-        "itc_left_merged": left_merged,
-        "itc_left_new": left_new,
-        "itc_batches": len(batches),
-        "itc_batches_matched": matched_batches,
-        "itc_batches_new": new_batches,
-        "lm_duplicate_pairs": len(pairs),
-        "restored_if_missing": missing_check,
-        "date_columns": len(all_dates),
-        "lm_used": bool(_lm_settings()),
-        "layouts_detected": layouts_log,
-        "google_sheets": google_sheets_meta,
-    }
+        # контроль: все исходные имена графика должны находиться
+        missing_check: list[str] = []
+        for item in grafik_items:
+            if _find_existing_key(item.name, by_key) is None:
+                # восстановить пропуск
+                by_key[_norm_name(item.name)] = item
+                missing_check.append(item.name)
+                all_dates |= set(item.schedule)
 
-    raw_out = _build_workbook(by_key, customs_wb, stats, all_dates)
-    preview_values = build_merged_schedule_preview_values(raw_out)
-    return {
-        "ok": True,
-        "message": f"Объединено номенклатур: {len(by_key)}",
-        "files": [{"name": n, "size": len(b)} for n, b in files if not n.startswith("~$")],
-        "file_name": "merged_schedule.xlsx",
-        "file_base64": base64.b64encode(raw_out).decode("ascii"),
-        "preview_values": preview_values,
-        "stats": stats,
-    }
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        stats = {
+            "ingested_files": ingested,
+            "grafik_rows_raw": len(grafik_items),
+            "grafik_rows_merged": before,
+            "nomenclature_total": len(by_key),
+            "itc_left_merged": left_merged,
+            "itc_left_new": left_new,
+            "itc_batches": len(batches),
+            "itc_batches_matched": matched_batches,
+            "itc_batches_new": new_batches,
+            "lm_duplicate_pairs": len(pairs),
+            "restored_if_missing": missing_check,
+            "date_columns": len(all_dates),
+            "lm_used": bool(use_lm and _lm_settings()),
+            "elapsed_ms": elapsed_ms,
+            "layouts_detected": layouts_log,
+            "google_sheets": google_sheets_meta,
+        }
+
+        cached_copy_sheets: dict[str, list[tuple]] = {}
+        for filename, sn, _wb, layout in sheet_plans:
+            rows = sheet_rows.get((filename, sn))
+            if not rows:
+                continue
+            if layout.kind == "itc" or sn.strip() in {"ТАМОЖНЯ", "ИТЦ В РАБОТЕ", "Реестр Заказов"}:
+                cached_copy_sheets[sn] = rows
+        raw_out, preview_values = _build_workbook(
+            by_key,
+            customs_wb,
+            stats,
+            all_dates,
+            cached_sheets=cached_copy_sheets,
+        )
+        logger.info(
+            "schedule merge done in %.1f ms, files=%s, rows=%s, lm=%s",
+            elapsed_ms,
+            len(ingested),
+            len(by_key),
+            stats["lm_used"],
+        )
+        return {
+            "ok": True,
+            "message": f"Объединено номенклатур: {len(by_key)}",
+            "files": [{"name": n, "size": len(b)} for n, b in files if not n.startswith("~$")],
+            "file_name": "merged_schedule.xlsx",
+            "file_base64": base64.b64encode(raw_out).decode("ascii"),
+            "preview_values": preview_values,
+            "stats": stats,
+        }
+    finally:
+        _close_workbooks(workbooks)

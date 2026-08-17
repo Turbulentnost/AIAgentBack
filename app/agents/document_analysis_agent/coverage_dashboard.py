@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 from typing import Any, Iterable
 
@@ -249,11 +250,11 @@ def _daily_result_for_period(
     if daily is not None and list(daily.day_keys) == sim_days:
         return daily
 
-    if detailed_plans:
-        return compute_daily_plan_coverage(detailed_plans, merged, sim_days)
-
     if daily is not None and set(sim_days).issubset(set(daily.day_keys)):
         return daily
+
+    if detailed_plans:
+        return compute_daily_plan_coverage(detailed_plans, merged, sim_days)
 
     return daily
 
@@ -308,21 +309,20 @@ def _matching_product_coverage_month(
     return None
 
 
-def _product_material_shortages(
+def _product_bom_material_lines(
     *,
     daily: DailyPlanCoverageResult | None,
     product_coverage: ProductCoverageResult | None,
     merged: list[Any],
     product: str,
     plan: float,
-    status: str,
     period_days: list[str],
     all_day_keys: list[str],
     month_label: str | None,
     schedule_month: str = "",
 ) -> list[dict[str, Any]]:
-    """Номенклатуры, которых не хватает для обеспечения плана изделия за период."""
-    if status not in ("red", "yellow") or plan <= 1e-12:
+    """Все номенклатуры спецификации изделия с планом, остатком и дефицитом за период."""
+    if plan <= 1e-12:
         return []
 
     bom = daily.boms.get(product) if daily is not None else None
@@ -333,7 +333,7 @@ def _product_material_shortages(
 
     merged_by_key = _merged_by_norm_key(merged)
     has_daily_demand = any(getattr(row, "daily_demand", None) for row in merged)
-    shortages: list[dict[str, Any]] = []
+    lines: list[dict[str, Any]] = []
 
     for line in bom.lines():
         if period_days and has_daily_demand:
@@ -370,10 +370,8 @@ def _product_material_shortages(
             expected = 0.0
 
         shortage = max(0.0, mat_plan - stock - expected)
-        if shortage <= 1e-9:
-            continue
         material_kind = getattr(line, "material_kind", MATERIAL_KIND_REQUIRED)
-        shortages.append(
+        lines.append(
             {
                 "name": line.nomenclature,
                 "plan": round(mat_plan, 2),
@@ -388,8 +386,97 @@ def _product_material_shortages(
             }
         )
 
-    shortages.sort(key=lambda item: (-float(item["shortage"]), str(item["name"])))
-    return shortages
+    lines.sort(
+        key=lambda item: (
+            -float(item["shortage"]),
+            -float(item["stock"]) - float(item["expected"]),
+            str(item["name"]),
+        )
+    )
+    return lines
+
+
+def _product_material_shortages(
+    *,
+    daily: DailyPlanCoverageResult | None,
+    product_coverage: ProductCoverageResult | None,
+    merged: list[Any],
+    product: str,
+    plan: float,
+    period_days: list[str],
+    all_day_keys: list[str],
+    month_label: str | None,
+    schedule_month: str = "",
+) -> list[dict[str, Any]]:
+    """Только номенклатуры с дефицитом (для сводки «проблемные номенклатуры»)."""
+    return [
+        line
+        for line in _product_bom_material_lines(
+            daily=daily,
+            product_coverage=product_coverage,
+            merged=merged,
+            product=product,
+            plan=plan,
+            period_days=period_days,
+            all_day_keys=all_day_keys,
+            month_label=month_label,
+            schedule_month=schedule_month,
+        )
+        if float(line.get("shortage") or 0.0) > 1e-9
+    ]
+
+
+def _product_has_any_material_supply(materials: list[dict[str, Any]]) -> bool:
+    return any(
+        float(item.get("stock") or 0.0) + float(item.get("expected") or 0.0) > 1e-12
+        for item in materials
+    )
+
+
+def _product_assemblable_from_material_lines(
+    materials: list[dict[str, Any]],
+    plan: float,
+    *,
+    ignore_optional: bool = False,
+) -> float:
+    """Сколько полных П/ф можно собрать из доступных номенклатур (узкое место по спеке).
+
+    Считаем по каждому изделию отдельно: floor(остаток+поступление / норма на единицу),
+    без перераспределения материалов между изделиями (в отличие от fair-share covered).
+    """
+    if plan <= 1e-12:
+        return 0.0
+    lines = [
+        line
+        for line in materials
+        if not (ignore_optional and line.get("optional"))
+    ]
+    if not lines:
+        return 0.0
+    buildable = float(plan)
+    for line in lines:
+        mat_plan = float(line.get("plan") or 0.0)
+        if mat_plan <= 1e-12:
+            continue
+        supply = float(line.get("stock") or 0.0) + float(line.get("expected") or 0.0)
+        units_from_line = math.floor(supply * plan / mat_plan + 1e-9)
+        buildable = min(buildable, float(units_from_line))
+    return max(0.0, min(buildable, plan))
+
+
+def _product_assemblable_fields(
+    *,
+    plan: float,
+    strict_covered: float,
+    materials: list[dict[str, Any]],
+) -> dict[str, float]:
+    if materials:
+        assemblable = _product_assemblable_from_material_lines(materials, plan)
+    else:
+        assemblable = min(plan, max(0.0, strict_covered))
+    return {
+        "assemblableQty": round(assemblable, 2),
+    }
 
 
 def _product_status_for_period(
@@ -397,24 +484,42 @@ def _product_status_for_period(
     product: str,
     period_days: list[str],
     plan: float,
+    *,
+    materials: list[dict[str, Any]] | None = None,
+    assemblable_qty: float = 0.0,
 ) -> str:
     if plan <= 1e-12:
         return "none"
     bom = daily.boms.get(product)
     matched = bool(bom and bom.matched)
-    covered = float(daily.covered_for_days(product, period_days))
-    conditional = float(daily.conditional_covered_for_days(product, period_days))
+    if assemblable_qty + 1e-9 >= plan:
+        return "green"
+    if materials:
+        return "yellow" if _product_has_any_material_supply(materials) else "red"
     if not matched:
         return "red"
-    if covered + 1e-9 >= plan:
+    covered = float(daily.covered_for_days(product, period_days))
+    if covered > 1e-12:
+        return "yellow"
+    return "red"
+
+
+def _product_status_for_monthly(
+    *,
+    plan: float,
+    strict_covered: float,
+    materials: list[dict[str, Any]],
+    assemblable_qty: float = 0.0,
+) -> str:
+    if plan <= 1e-12:
+        return "none"
+    if assemblable_qty + 1e-9 >= plan:
         return "green"
-    if conditional > 1e-12:
+    if materials:
+        return "yellow" if _product_has_any_material_supply(materials) else "red"
+    if strict_covered > 1e-12:
         return "yellow"
-    if covered <= 1e-12:
-        return "red"
-    if covered + 1e-9 < plan:
-        return "yellow"
-    return "green"
+    return "red"
 
 
 def _product_in_spec_scope(product: str, spec_eligible_products: frozenset[str] | None) -> bool:
@@ -441,37 +546,49 @@ def _serialize_product_rows(
         plan = sum(float(daily.cell(product, day).plan) for day in period_days)
         fact = sum(float(daily.cell(product, day).fact) for day in period_days)
         strict_covered = float(daily.covered_for_days(product, period_days))
-        conditional_covered = max(
-            strict_covered,
-            float(daily.conditional_covered_for_days(product, period_days)),
-        )
-        if plan <= 1e-12 and fact <= 1e-12 and conditional_covered <= 1e-12:
-            continue
-        status = _product_status_for_period(daily, product, period_days, plan)
-        row: dict[str, Any] = {
-            "name": product,
-            "plan": round(plan, 2),
-            "fact": round(fact, 2),
-            "covered": round(conditional_covered, 2),
-            "strictCovered": round(strict_covered, 2),
-            "conditionalCovered": round(conditional_covered, 2),
-            "conditional": conditional_covered > strict_covered + 1e-9,
-            "status": status,
-        }
-        shortages = _product_material_shortages(
+        materials = _product_bom_material_lines(
             daily=daily,
             product_coverage=product_coverage,
             merged=merged,
             product=product,
             plan=plan,
-            status=status,
             period_days=period_days,
             all_day_keys=all_day_keys,
             month_label=month_label,
             schedule_month=schedule_month,
+        ) if plan > 1e-12 else []
+        assemblable_fields = _product_assemblable_fields(
+            plan=plan,
+            strict_covered=strict_covered,
+            materials=materials,
         )
-        if shortages:
-            row["shortages"] = shortages
+        assemblable_qty = float(assemblable_fields["assemblableQty"])
+        covered = assemblable_qty if materials else strict_covered
+        if plan <= 1e-12 and fact <= 1e-12 and covered <= 1e-12:
+            continue
+        status = _product_status_for_period(
+            daily,
+            product,
+            period_days,
+            plan,
+            materials=materials,
+            assemblable_qty=assemblable_qty,
+        )
+        row: dict[str, Any] = {
+            "name": product,
+            "plan": round(plan, 2),
+            "fact": round(fact, 2),
+            "covered": round(covered, 2),
+            "status": status,
+            **assemblable_fields,
+        }
+        if materials:
+            row["materials"] = materials
+            shortages = [
+                item for item in materials if float(item.get("shortage") or 0.0) > 1e-9
+            ]
+            if shortages:
+                row["shortages"] = shortages
         rows.append(row)
     rows.sort(key=lambda row: (-float(row["plan"]), str(row["name"])))
     return rows
@@ -502,42 +619,47 @@ def _serialize_product_rows_monthly(
         plan = float(cell.plan or 0.0)
         fact = float(cell.fact or 0.0)
         strict_covered = float(cell.covered or 0.0)
-        conditional_covered = max(
-            strict_covered,
-            float(getattr(cell, "conditional_covered", 0.0) or 0.0),
-        )
-        if plan <= 1e-12 and fact <= 1e-12 and conditional_covered <= 1e-12:
-            continue
-        if strict_covered + 1e-9 >= plan:
-            status = "green"
-        elif conditional_covered > 1e-12:
-            status = "yellow"
-        else:
-            status = "red"
-        row: dict[str, Any] = {
-            "name": product,
-            "plan": round(plan, 2),
-            "fact": round(fact, 2),
-            "covered": round(conditional_covered, 2),
-            "strictCovered": round(strict_covered, 2),
-            "conditionalCovered": round(conditional_covered, 2),
-            "conditional": conditional_covered > strict_covered + 1e-9,
-            "status": status,
-        }
-        shortages = _product_material_shortages(
+        materials = _product_bom_material_lines(
             daily=None,
             product_coverage=product_coverage,
             merged=merged,
             product=product,
             plan=plan,
-            status=status,
             period_days=[],
             all_day_keys=[],
             month_label=month_label,
             schedule_month=schedule_month,
+        ) if plan > 1e-12 else []
+        assemblable_fields = _product_assemblable_fields(
+            plan=plan,
+            strict_covered=strict_covered,
+            materials=materials,
         )
-        if shortages:
-            row["shortages"] = shortages
+        assemblable_qty = float(assemblable_fields["assemblableQty"])
+        covered = assemblable_qty if materials else strict_covered
+        if plan <= 1e-12 and fact <= 1e-12 and covered <= 1e-12:
+            continue
+        status = _product_status_for_monthly(
+            plan=plan,
+            strict_covered=strict_covered,
+            materials=materials,
+            assemblable_qty=assemblable_qty,
+        )
+        row: dict[str, Any] = {
+            "name": product,
+            "plan": round(plan, 2),
+            "fact": round(fact, 2),
+            "covered": round(covered, 2),
+            "status": status,
+            **assemblable_fields,
+        }
+        if materials:
+            row["materials"] = materials
+            shortages = [
+                item for item in materials if float(item.get("shortage") or 0.0) > 1e-9
+            ]
+            if shortages:
+                row["shortages"] = shortages
         rows.append(row)
     rows.sort(key=lambda row: (-float(row["plan"]), str(row["name"])))
     return rows
@@ -796,7 +918,12 @@ def _serialize_period(
 
     return {
         "key": period,
-        "label": {"day": "За день", "week": "За неделю", "month": "За месяц"}.get(period, period),
+        "label": {
+            "day": "За день",
+            "week": "За неделю",
+            "month": "За месяц",
+            "custom": "Период",
+        }.get(period, period),
         "days": scoped_period_days,
         "products": {
             "rows": product_rows[:250],
@@ -804,7 +931,7 @@ def _serialize_period(
         },
         "nomenclatures": {
             "rows": nomenclature_rows[:250],
-            "tiles": _tile_stats(nomenclature_rows, ignore_optional=True),
+            "tiles": _tile_stats(nomenclature_rows),
         },
     }
 
@@ -862,3 +989,206 @@ def build_coverage_dashboard(
         "default_period": "week",
         "periods": periods,
     }
+
+
+def period_day_keys_for_range(
+    all_day_keys: list[str],
+    date_from: date,
+    date_to: date,
+) -> list[str]:
+    """Дни детального графика в произвольном диапазоне дат."""
+    start_iso = date_from.isoformat()
+    end_iso = date_to.isoformat()
+    if start_iso > end_iso:
+        return []
+    return [day for day in all_day_keys if start_iso <= day <= end_iso]
+
+
+def build_coverage_period_for_range(
+    *,
+    daily_plan_coverage: DailyPlanCoverageResult | None,
+    product_coverage: ProductCoverageResult | None,
+    merged: list[Any],
+    day_keys: list[str],
+    detailed_plans: list[Any] | None = None,
+    as_of: date | None = None,
+    schedule_month: str = "",
+    spec_eligible_products: frozenset[str] | None = None,
+    date_from: date,
+    date_to: date,
+) -> dict[str, Any] | None:
+    """Один период обеспеченности для произвольного диапазона дат."""
+    as_of_day = as_of or date.today()
+    keys = list(day_keys or [])
+    if daily_plan_coverage is not None and daily_plan_coverage.day_keys:
+        keys = list(daily_plan_coverage.day_keys)
+    if not keys and not merged and product_coverage is None:
+        return None
+
+    resolved_schedule_month, month_label = resolve_coverage_target_month(
+        schedule_month=schedule_month,
+        as_of=as_of_day,
+        product_coverage=product_coverage,
+        merged=merged,
+    )
+    keys = _filter_day_keys_to_schedule_month(keys, resolved_schedule_month)
+    period_days = period_day_keys_for_range(keys, date_from, date_to)
+    if not period_days:
+        return None
+
+    return _serialize_period(
+        period="custom",
+        period_days=period_days,
+        all_day_keys=keys,
+        daily=daily_plan_coverage,
+        detailed_plans=detailed_plans,
+        merged=merged,
+        product_coverage=product_coverage,
+        month_label=month_label,
+        schedule_month=resolved_schedule_month,
+        spec_eligible_products=spec_eligible_products,
+    )
+
+
+def dump_coverage_rebuild(
+    *,
+    merged: list[Any],
+    detailed_plans: list[Any] | None,
+    day_keys: list[str],
+    as_of: date,
+    schedule_month: str,
+    spec_eligible_products: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Компактный снимок данных для быстрого пересчёта периода без повторного анализа."""
+    return {
+        "version": 1,
+        "as_of": as_of.isoformat(),
+        "schedule_month": schedule_month,
+        "day_keys": list(day_keys),
+        "spec_eligible_products": sorted(spec_eligible_products or ()),
+        "plans": [
+            {
+                "product": str(getattr(plan, "product", "") or ""),
+                "daily_qty": dict(getattr(plan, "daily_qty", None) or {}),
+                "daily_fact": dict(getattr(plan, "daily_fact", None) or {}),
+            }
+            for plan in (detailed_plans or [])
+            if str(getattr(plan, "product", "") or "").strip()
+        ],
+        "merged": [
+            {
+                "nomenclature": str(getattr(row, "nomenclature", "") or ""),
+                "by_product": {
+                    str(key): float(value or 0.0)
+                    for key, value in dict(getattr(row, "by_product", None) or {}).items()
+                },
+                "stock": float(getattr(row, "stock", 0.0) or 0.0),
+                "daily_demand": dict(getattr(row, "daily_demand", None) or {}),
+                "daily_demand_fact": dict(getattr(row, "daily_demand_fact", None) or {}),
+                "daily_receipts": dict(getattr(row, "daily_receipts", None) or {}),
+                "monthly_demand": dict(getattr(row, "monthly_demand", None) or {}),
+                "monthly_receipts": dict(getattr(row, "monthly_receipts", None) or {}),
+                "coverage_material_kind": str(getattr(row, "coverage_material_kind", "") or ""),
+                "coverage_material_label": str(getattr(row, "coverage_material_label", "") or ""),
+                "coverage_material_confidence": str(
+                    getattr(row, "coverage_material_confidence", "") or ""
+                ),
+                "coverage_material_reason": str(getattr(row, "coverage_material_reason", "") or ""),
+            }
+            for row in merged
+            if str(getattr(row, "nomenclature", "") or "").strip()
+        ],
+    }
+
+
+def coverage_period_from_snapshot(
+    snapshot: dict[str, Any] | None,
+    date_from: date,
+    date_to: date,
+) -> dict[str, Any] | None:
+    """Пересчёт периода: кэш анализа, иначе готовый day/week/month из снимка."""
+    if not isinstance(snapshot, dict):
+        return None
+    cache = snapshot.get("coverage_rebuild")
+    if isinstance(cache, dict):
+        rebuilt = rebuild_coverage_period_from_cache(cache, date_from, date_to)
+        if rebuilt is not None:
+            return rebuilt
+    coverage = snapshot.get("coverage_dashboard")
+    if not isinstance(coverage, dict):
+        return None
+    periods = coverage.get("periods")
+    if not isinstance(periods, dict):
+        return None
+    start_iso = date_from.isoformat()
+    end_iso = date_to.isoformat()
+    for key in ("day", "week", "month"):
+        period = periods.get(key)
+        if not isinstance(period, dict):
+            continue
+        days = [str(day) for day in (period.get("days") or []) if day]
+        if days and days[0] == start_iso and days[-1] == end_iso:
+            return {**period, "key": "custom", "label": "Период"}
+    return None
+
+
+def rebuild_coverage_period_from_cache(
+    cache: dict[str, Any] | None,
+    date_from: date,
+    date_to: date,
+) -> dict[str, Any] | None:
+    """Пересчёт одного периода из снимка анализа — без Excel, 1С и result.xlsx."""
+    if not isinstance(cache, dict):
+        return None
+
+    from types import SimpleNamespace
+
+    as_of_raw = str(cache.get("as_of") or "")
+    try:
+        as_of_day = date.fromisoformat(as_of_raw) if as_of_raw else date.today()
+    except ValueError:
+        as_of_day = date.today()
+
+    day_keys = [str(day) for day in (cache.get("day_keys") or []) if day]
+    plans = [
+        SimpleNamespace(
+            product=str(item.get("product") or ""),
+            daily_qty=dict(item.get("daily_qty") or {}),
+            daily_fact=dict(item.get("daily_fact") or {}),
+        )
+        for item in (cache.get("plans") or [])
+        if isinstance(item, dict) and item.get("product")
+    ]
+    merged = [
+        SimpleNamespace(
+            nomenclature=str(item.get("nomenclature") or ""),
+            by_product=dict(item.get("by_product") or {}),
+            stock=float(item.get("stock") or 0.0),
+            daily_demand=dict(item.get("daily_demand") or {}),
+            daily_demand_fact=dict(item.get("daily_demand_fact") or {}),
+            daily_receipts=dict(item.get("daily_receipts") or {}),
+            monthly_demand=dict(item.get("monthly_demand") or {}),
+            monthly_receipts=dict(item.get("monthly_receipts") or {}),
+            coverage_material_kind=str(item.get("coverage_material_kind") or ""),
+            coverage_material_label=str(item.get("coverage_material_label") or ""),
+            coverage_material_confidence=str(item.get("coverage_material_confidence") or ""),
+            coverage_material_reason=str(item.get("coverage_material_reason") or ""),
+        )
+        for item in (cache.get("merged") or [])
+        if isinstance(item, dict) and item.get("nomenclature")
+    ]
+    eligible_raw = cache.get("spec_eligible_products") or []
+    spec_eligible = frozenset(str(name) for name in eligible_raw if name) or None
+    daily = compute_daily_plan_coverage(plans, merged, day_keys) if plans and day_keys else None
+    return build_coverage_period_for_range(
+        daily_plan_coverage=daily,
+        product_coverage=None,
+        merged=merged,
+        day_keys=day_keys,
+        detailed_plans=plans,
+        as_of=as_of_day,
+        schedule_month=str(cache.get("schedule_month") or ""),
+        spec_eligible_products=spec_eligible,
+        date_from=date_from,
+        date_to=date_to,
+    )

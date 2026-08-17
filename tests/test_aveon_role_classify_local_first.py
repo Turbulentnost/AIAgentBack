@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -30,6 +31,69 @@ def _preview(filename: str, *sheet_snippets: str) -> dict[str, Any]:
         "filename": filename,
         "sheets": [{"sheet": "Лист1", "max_row": 10, "max_column": 5, "sample_rows": rows}],
     }
+
+
+def test_filename_alone_does_not_set_role():
+    from app.agents.document_analysis_agent.excel_service import _classify_filename_locally
+
+    assert _classify_filename_locally("ТАМОЖНЯ.xlsx") == ROLE_OTHER
+    assert _classify_filename_locally("График производства.xlsx") == ROLE_OTHER
+    assert _classify_filename_locally("остатки.xlsx") == ROLE_OTHER
+
+
+def test_classify_reads_workbook_content_not_filename():
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "ТАМОЖНЯ"
+    sheet["A1"] = "Тип операции"
+    sheet["B1"] = "Основание"
+    buffer = BytesIO()
+    workbook.save(buffer)
+    _role_cache.clear()
+    uploaded = UploadedWorkbook(filename="random-name.xlsx", content=buffer.getvalue())
+
+    started = time.perf_counter()
+    roles, source = asyncio.run(classify_aveon_excel_files([uploaded]))
+    elapsed = time.perf_counter() - started
+
+    assert roles["random-name.xlsx"] == ROLE_SHIPMENT_SCHEDULE
+    assert source == "content_preview"
+    assert elapsed < 2.0
+
+
+def test_preview_does_not_scan_max_row_on_large_sheet():
+    from io import BytesIO
+    from time import perf_counter
+
+    from openpyxl import Workbook
+
+    from app.agents.document_analysis_agent.excel_service import (
+        UploadedWorkbook,
+        _build_one_workbook_preview,
+    )
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "Номенклатура"
+    sheet["B1"] = "Остаток на складе"
+    for row in range(2, 8001):
+        sheet.cell(row, 1, f"Позиция {row}")
+        sheet.cell(row, 2, row)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    uploaded = UploadedWorkbook(filename="остатки-тест.xlsx", content=buffer.getvalue())
+
+    started = perf_counter()
+    preview = _build_one_workbook_preview(uploaded)
+    elapsed = perf_counter() - started
+
+    assert elapsed < 3.0
+    assert preview["sheets"][0]["sample_rows"][0][0] == "Номенклатура"
+    assert _classify_preview_locally(preview) == ROLE_STOCK
 
 
 def test_local_preview_stock_and_shipment():

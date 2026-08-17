@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import re
+import time
 from collections import OrderedDict
 from copy import copy
 from dataclasses import dataclass, field
@@ -436,6 +437,7 @@ class AveonAnalysisResult:
     detailed_baseline_saved: bool = False
     detailed_compared_with_saved: bool = False
     coverage_dashboard: dict[str, Any] | None = None
+    coverage_rebuild: dict[str, Any] | None = None
     input_sources: dict[str, Any] = field(default_factory=dict)
 
 @dataclass
@@ -542,42 +544,8 @@ _LOGISTICS_RANGE_RE = re.compile(r"(\d+)\s*[-–—]\s*(\d+)")
 async def _resolve_role_map_for_analysis(
     workbooks: list[UploadedWorkbook],
 ) -> tuple[dict[str, WorkbookRole], str]:
-    """Роли для analyze: кэш по содержимому + LM только для файлов без кэша."""
-    role_map: dict[str, WorkbookRole] = {}
-    uncached: list[UploadedWorkbook] = []
-    key_by_filename: dict[str, str] = {}
-    for workbook in workbooks:
-        content_key = _workbook_content_key(workbook.content)
-        key_by_filename[workbook.filename] = content_key
-        cached = _role_cache_get(content_key)
-        if cached is not None:
-            role_map[workbook.filename] = cached
-        else:
-            uncached.append(workbook)
-
-    if not uncached:
-        logger.info(
-            "document_analysis_agent.roles_classified",
-            source="cache",
-            count=len(role_map),
-        )
-        return role_map, "cache"
-
-    previews = await _build_workbook_previews_async(uncached)
-    fresh_roles, source = await _classify_workbooks_with_lm(
-        previews,
-        lm_timeout_seconds=_CLASSIFY_LM_TIMEOUT_SECONDS,
-    )
-    for filename, role in fresh_roles.items():
-        role_map[filename] = role
-        content_key = key_by_filename.get(filename)
-        if content_key is not None and role in UPLOAD_FILE_ROLES:
-            _role_cache_put(content_key, role)
-
-    if len(role_map) > len(fresh_roles):
-        source = f"cache+{source}"
-
-    return role_map, source
+    """Роли для analyze: то же быстрое определение, что и при загрузке файлов."""
+    return await classify_aveon_excel_files(workbooks, use_lm=False)
 
 
 def _schedule_diff_message(
@@ -1016,6 +984,7 @@ async def analyze_aveon_excel_files(
         shipment_files,
         logistics_risks,
         coverage_dashboard,
+        coverage_rebuild,
     ) = await asyncio.to_thread(
         _collect_and_merge_spec_materials,
         product_spec_links,
@@ -1247,12 +1216,15 @@ async def analyze_aveon_excel_files(
         detailed_baseline_saved=detailed_baseline_saved,
         detailed_compared_with_saved=detailed_compared_with_saved,
         coverage_dashboard=coverage_dashboard,
+        coverage_rebuild=coverage_rebuild,
         input_sources=input_sources,
     )
 
 
-# Классификация ролей на UI: LM Studio, короткий таймаут — иначе axios обрывает запрос.
-_CLASSIFY_LM_TIMEOUT_SECONDS = 45
+# Классификация ролей: LM только как последний шанс и не дольше пары секунд.
+_CLASSIFY_LM_TIMEOUT_SECONDS = 3
+_PREVIEW_MAX_ROWS = 12
+_PREVIEW_MAX_COLS = 14
 # Кэш ролей по содержимому файла (повторная загрузка / debounce на UI).
 _ROLE_CACHE_MAX = 64
 _role_cache: OrderedDict[str, WorkbookRole] = OrderedDict()
@@ -1279,57 +1251,62 @@ def _role_cache_put(content_key: str, role: WorkbookRole) -> None:
 
 async def classify_aveon_excel_files(
     workbooks: list[UploadedWorkbook],
+    *,
+    use_lm: bool = False,
 ) -> tuple[dict[str, WorkbookRole], str]:
-    """Только определение ролей файлов (без полного пайплайна анализа)."""
-    workbooks = _normalize_uploaded_workbooks(workbooks)
-
+    """Роль по содержимому файла: первые строки листов, без полного скана и без LM."""
+    started = time.perf_counter()
     role_map: dict[str, WorkbookRole] = {}
-    uncached: list[UploadedWorkbook] = []
+    need_preview: list[UploadedWorkbook] = []
     key_by_filename: dict[str, str] = {}
+
     for wb in workbooks:
         key = _workbook_content_key(wb.content)
         key_by_filename[wb.filename] = key
         cached = _role_cache_get(key)
         if cached is not None:
             role_map[wb.filename] = cached
-        else:
-            uncached.append(wb)
+            continue
+        need_preview.append(wb)
 
-    if not uncached:
+    if not need_preview:
         logger.info(
             "document_analysis_agent.roles_classified_only",
             source="cache",
             roles=role_map,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
         )
         return role_map, "cache"
 
     try:
-        previews = await _build_workbook_previews_async(uncached)
+        normalized = _normalize_uploaded_workbooks(need_preview)
+        previews = await _build_workbook_previews_async(normalized)
     except OSError as exc:
-        # Windows: битый cwd / tempfile у uvicorn --reload → Errno 22; fallback по именам.
         logger.warning(
             "document_analysis_agent.preview_build_failed",
             error=str(exc),
         )
-        for wb in uncached:
+        for wb in need_preview:
             role_map[wb.filename] = ROLE_OTHER
-        return role_map, "filename_fallback"
+        return role_map, "preview_failed"
 
-    try:
-        fresh_roles, source = await _classify_workbooks_with_lm(
-            previews,
-            lm_timeout_seconds=_CLASSIFY_LM_TIMEOUT_SECONDS,
-        )
-    except Exception as exc:
-        logger.warning(
-            "document_analysis_agent.classify_failed_fallback_local",
-            error=str(exc),
-        )
-        fresh_roles = {
-            str(preview["filename"]): _classify_preview_locally(preview)
-            for preview in previews
-        }
-        source = "local_parser_fallback"
+    fresh_roles = {
+        str(preview["filename"]): _classify_preview_locally(preview)
+        for preview in previews
+    }
+    source = "content_preview"
+    if use_lm:
+        try:
+            fresh_roles, source = await _classify_workbooks_with_lm(
+                previews,
+                lm_timeout_seconds=_CLASSIFY_LM_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning(
+                "document_analysis_agent.classify_failed_fallback_local",
+                error=str(exc),
+            )
+            source = "content_preview"
 
     for filename, role in fresh_roles.items():
         role_map[filename] = role
@@ -1344,6 +1321,7 @@ async def classify_aveon_excel_files(
         "document_analysis_agent.roles_classified_only",
         source=source,
         roles=role_map,
+        elapsed_ms=int((time.perf_counter() - started) * 1000),
     )
     return role_map, source
 
@@ -1368,8 +1346,8 @@ def _normalize_uploaded_workbooks(workbooks: list[UploadedWorkbook]) -> list[Upl
 
 
 def _classify_filename_locally(filename: str) -> WorkbookRole:
-    """Fallback только при полном отсутствии превью — без эвристик по имени."""
-    _ = _normalize(filename)
+    """Имя файла само по себе роль не задаёт — нужен разбор содержимого."""
+    _ = filename
     return ROLE_OTHER
 
 
@@ -1379,60 +1357,74 @@ def _coerce_upload_role(role: WorkbookRole | None) -> WorkbookRole | None:
     return None
 
 
-def _load_workbook_for_preview(content: bytes):
-    """read_only быстрее, но на части файлов (ТАМОЖНЯ.xlsx) max_row/max_column = 1 — fallback."""
+def _sample_sheet_rows(sheet: Any) -> list[list[str | None]]:
+    """Первые строки листа без sheet.max_row — иначе openpyxl сканирует весь файл."""
+    rows: list[list[str | None]] = []
+    for index, row in enumerate(
+        sheet.iter_rows(
+            min_row=1,
+            max_row=_PREVIEW_MAX_ROWS,
+            max_col=_PREVIEW_MAX_COLS,
+            values_only=True,
+        )
+    ):
+        rows.append(
+            [_short(_clean_text(value), 120) if value is not None else None for value in row]
+        )
+        if index + 1 >= _PREVIEW_MAX_ROWS:
+            break
+    return rows
+
+
+def _sheet_sample_has_text(rows: list[list[str | None]]) -> bool:
+    return any(cell for row in rows for cell in row)
+
+
+def _load_workbook_for_preview(content: bytes, *, read_only: bool):
     try:
-        workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
+        return load_workbook(BytesIO(content), data_only=True, read_only=read_only)
     except OSError:
         return load_workbook(BytesIO(content), data_only=True, read_only=False)
-    try:
-        suspicious = True
-        for sheet in workbook.worksheets[:4]:
-            max_row = sheet.max_row or 0
-            max_col = sheet.max_column or 0
-            if max_row > 3 or max_col > 3:
-                suspicious = False
-                break
-        if suspicious and len(content) > 12_000:
-            workbook.close()
-            return load_workbook(BytesIO(content), data_only=True, read_only=False)
-    except Exception:
-        workbook.close()
-        return load_workbook(BytesIO(content), data_only=True, read_only=False)
-    return workbook
 
 
 def _build_one_workbook_preview(uploaded: UploadedWorkbook) -> dict[str, Any]:
-    workbook = _load_workbook_for_preview(uploaded.content)
+    workbook = _load_workbook_for_preview(uploaded.content, read_only=True)
     try:
         sheet_previews: list[dict[str, Any]] = []
+        empty_samples = True
         for sheet in workbook.worksheets[:8]:
-            max_row = sheet.max_row or 1
-            max_col = sheet.max_column or 1
-            rows: list[list[str | None]] = []
-            for row in sheet.iter_rows(
-                min_row=1,
-                max_row=min(max_row, 12),
-                max_col=min(max_col, 14),
-                values_only=True,
-            ):
-                rows.append(
-                    [
-                        _short(_clean_text(value), 120) if value is not None else None
-                        for value in row
-                    ]
-                )
+            rows = _sample_sheet_rows(sheet)
+            if _sheet_sample_has_text(rows):
+                empty_samples = False
             sheet_previews.append(
                 {
                     "sheet": sheet.title,
-                    "max_row": max_row,
-                    "max_column": max_col,
+                    "max_row": len(rows),
+                    "max_column": _PREVIEW_MAX_COLS,
                     "sample_rows": rows,
                 }
             )
-        return {"filename": uploaded.filename, "sheets": sheet_previews}
     finally:
         workbook.close()
+
+    if empty_samples and len(uploaded.content) > 12_000:
+        workbook = _load_workbook_for_preview(uploaded.content, read_only=False)
+        try:
+            sheet_previews = []
+            for sheet in workbook.worksheets[:8]:
+                rows = _sample_sheet_rows(sheet)
+                sheet_previews.append(
+                    {
+                        "sheet": sheet.title,
+                        "max_row": len(rows),
+                        "max_column": _PREVIEW_MAX_COLS,
+                        "sample_rows": rows,
+                    }
+                )
+        finally:
+            workbook.close()
+
+    return {"filename": uploaded.filename, "sheets": sheet_previews}
 
 
 def _build_workbook_previews(workbooks: list[UploadedWorkbook]) -> list[dict[str, Any]]:
@@ -1475,7 +1467,7 @@ async def _classify_workbooks_with_lm(
             pending.append(preview)
 
     lm_role_map: dict[str, WorkbookRole] = {}
-    if pending:
+    if pending and lm_timeout_seconds and float(lm_timeout_seconds) > 0:
         lm_role_map = (
             await _try_lm_classify_workbooks(pending, timeout=lm_timeout_seconds) or {}
         )
@@ -1513,15 +1505,13 @@ async def _classify_workbooks_with_lm(
 
 
 def _preview_text(preview: dict[str, Any]) -> str:
-    return _normalize(json.dumps(preview, ensure_ascii=False))
+    """Только листы и строки — имя файла в разбор роли не входит."""
+    return _normalize(json.dumps(preview.get("sheets") or [], ensure_ascii=False))
 
 
 def _preview_looks_like_shipment_schedule(preview: dict[str, Any]) -> bool:
     text = _preview_text(preview)
     if "график отгрузок" in text or "график отгрузки" in text:
-        return True
-    filename = _normalize(preview.get("filename"))
-    if "отгруз" in filename:
         return True
     sheet_names = _preview_sheet_names(preview)
     if any("тамож" in name for name in sheet_names):
@@ -1575,16 +1565,8 @@ def _preview_looks_like_detailed_production_schedule(preview: dict[str, Any]) ->
         return False
 
     text = _preview_text(preview)
-    filename = _normalize(preview.get("filename"))
 
     if "детальный график" in text or "детальный план" in text:
-        return True
-    if "недел" in filename or "по дням" in filename:
-        return True
-    # «Отчет 07_2026…» / отчёт план-факт по стадиям П/ф·ОТК·Склад
-    if ("отчет" in filename or "отчёт" in filename) and (
-        "факт" in text or "п/ф" in text or "модель" in text
-    ):
         return True
     if "п/ф" in text and ("факт" in text or "модель" in text):
         return True
@@ -1648,14 +1630,9 @@ def _preview_looks_like_stock(preview: dict[str, Any]) -> bool:
         return False
     # Сильный детальный график (выпуск/план-факт) важнее слабого слова «остаток» в шапке
     text = _preview_text(preview)
-    filename = _normalize(preview.get("filename"))
     if "график выпуска" in text or (("модель" in text and "изделие" in text) and "факт" in text):
         return False
-    if "недел" in filename:
-        return False
     if _preview_has_material_stock_table(preview):
-        return True
-    if "остат" in filename and "производ" not in text and "график выпуска" not in text:
         return True
     return False
 
@@ -3578,6 +3555,7 @@ def _collect_and_merge_spec_materials(
     list[str],
     LogisticsRiskBoard,
     dict[str, Any] | None,
+    dict[str, Any] | None,
 ]:
     """Разбор листов → merge → цены → остатки → потребность → поступления → риски → result.xlsx."""
     from app.agents.document_analysis_agent.coverage_dashboard import build_coverage_dashboard
@@ -3652,7 +3630,11 @@ def _collect_and_merge_spec_materials(
         month_label=coverage_month_label,
     )
     product_coverage_full = compute_product_coverage(schedule_plans, merged, months)
-    product_coverage = compute_product_coverage(schedule_plans, merged, coverage_months)
+    product_coverage = (
+        product_coverage_full
+        if list(coverage_months) == list(months)
+        else compute_product_coverage(schedule_plans, merged, coverage_months)
+    )
     coverage_day_keys = _filter_day_keys_to_schedule_month(
         list(detailed_extract.day_keys),
         schedule_month,
@@ -3667,20 +3649,13 @@ def _collect_and_merge_spec_materials(
     )
     order_year = detailed_extract.year if detailed_extract.year > 0 else date.today().year
     order_plan = compute_order_plan(merged, months, order_year, logistics_leads)
-    result_bytes = _build_result_xlsx(
-        merged,
-        detailed_extract,
-        product_coverage_full,
-        order_plan,
-        daily_plan_coverage,
-        user_id=user_id,
-        spec_eligible_products=spec_eligible_products,
-    )
     schedule_month = (
         f"{detailed_extract.year:04d}-{detailed_extract.month:02d}"
         if detailed_extract.year and detailed_extract.month
         else f"{as_of_day.year:04d}-{as_of_day.month:02d}"
     )
+    from app.agents.document_analysis_agent.coverage_dashboard import dump_coverage_rebuild
+
     coverage_dashboard = build_coverage_dashboard(
         daily_plan_coverage=daily_plan_coverage,
         product_coverage=product_coverage,
@@ -3691,7 +3666,33 @@ def _collect_and_merge_spec_materials(
         schedule_month=schedule_month,
         spec_eligible_products=spec_eligible_products,
     )
-    return usages, merged, result_bytes, stock_files, shipment_files, logistics_risks, coverage_dashboard
+    coverage_rebuild = dump_coverage_rebuild(
+        merged=merged,
+        detailed_plans=detailed_extract.plans,
+        day_keys=coverage_day_keys,
+        as_of=as_of_day,
+        schedule_month=schedule_month,
+        spec_eligible_products=spec_eligible_products,
+    )
+    result_bytes = _build_result_xlsx(
+        merged,
+        detailed_extract,
+        product_coverage_full,
+        order_plan,
+        daily_plan_coverage,
+        user_id=user_id,
+        spec_eligible_products=spec_eligible_products,
+    )
+    return (
+        usages,
+        merged,
+        result_bytes,
+        stock_files,
+        shipment_files,
+        logistics_risks,
+        coverage_dashboard,
+        coverage_rebuild,
+    )
 
 
 def _months_for_coverage_sheet(
@@ -6561,9 +6562,7 @@ def _write_product_coverage_sheet(
         "Факт = Σ(Заказ+Опытные+Склад)·Факт из графика производства. "
         "Раскройте «+» слева — номенклатуры спеки: "
         "Обеспеченность = остаток на начало + поступления месяца; "
-        "План = план изделия × qty; Факт = факт изделия × qty. "
-        "Расходники и позиции «возможно в цехе» не блокируют условную обеспеченность, "
-        "но остаются в раскрытии и подсвечиваются.",
+        "План = план изделия × qty; Факт = факт изделия × qty.",
     )
     _style_header_cell(
         subtitle, fill=_HEADER_SUBTITLE_FILL, font=_HEADER_SUBTITLE_FONT, alignment=left
@@ -6612,11 +6611,7 @@ def _write_product_coverage_sheet(
             base = 2 + month_index * 3
             cell_data = coverage.cell(product, month)
             strict_covered = float(cell_data.covered or 0.0)
-            conditional_covered = max(
-                strict_covered,
-                float(getattr(cell_data, "conditional_covered", 0.0) or 0.0),
-            )
-            covered_cell = worksheet.cell(product_row, base, conditional_covered)
+            covered_cell = worksheet.cell(product_row, base, strict_covered)
             plan_cell = worksheet.cell(product_row, base + 1, cell_data.plan)
             fact_cell = worksheet.cell(product_row, base + 2, cell_data.fact)
             covered_cell.alignment = center
@@ -6631,18 +6626,7 @@ def _write_product_coverage_sheet(
             covered_cell.fill = product_fill
             plan_cell.fill = product_fill
             fact_cell.fill = product_fill
-            if (
-                cell_data.plan > 0
-                and strict_covered + 1e-9 < cell_data.plan
-                and conditional_covered + 1e-9 >= cell_data.plan
-            ):
-                covered_cell.fill = warn_fill
-                covered_cell.comment = Comment(
-                    "Условная обеспеченность без расходников и позиций «возможно в цехе». "
-                    f"Строго по всем строкам спеки: {strict_covered:g}.",
-                    "AI Platform",
-                )
-            elif cell_data.plan > 0 and conditional_covered + 1e-9 < cell_data.plan:
+            if cell_data.plan > 0 and strict_covered + 1e-9 < cell_data.plan:
                 covered_cell.fill = warn_fill
 
         bom = coverage.boms.get(product)
