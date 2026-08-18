@@ -8,6 +8,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 import app.tools as _tools  # noqa: F401
 from app.api.v1.router import api_router
@@ -97,14 +99,36 @@ def create_app(app_settings: Settings = settings) -> FastAPI:
     setup_monitoring(app)
     app.include_router(api_router, prefix=app_settings.API_V1_PREFIX)
 
-    @app.get("/", tags=["root"])
-    async def root() -> dict[str, str]:
-        return {
-            "name": app_settings.PROJECT_NAME,
-            "version": app_settings.APP_VERSION,
-            "docs": app_settings.DOCS_URL,
-            "api": app_settings.API_V1_PREFIX,
-        }
+    static_path = app_settings.desktop_static_path
+    if static_path is not None:
+        assets_dir = static_path / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="desktop-assets")
+
+        @app.get("/", tags=["root"], include_in_schema=False)
+        async def desktop_root() -> FileResponse:
+            return FileResponse(static_path / "index.html")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def desktop_spa(full_path: str) -> FileResponse:
+            if full_path.startswith("api/"):
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=404)
+            candidate = static_path / full_path
+            if candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(static_path / "index.html")
+    else:
+
+        @app.get("/", tags=["root"])
+        async def root() -> dict[str, str]:
+            return {
+                "name": app_settings.PROJECT_NAME,
+                "version": app_settings.APP_VERSION,
+                "docs": app_settings.DOCS_URL,
+                "api": app_settings.API_V1_PREFIX,
+            }
 
     return app
 

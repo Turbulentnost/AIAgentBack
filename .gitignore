@@ -25,6 +25,8 @@ alembic/versions/*.py
 !alembic/versions/0057_onec_production_plan_sync.py
 !alembic/versions/0058_onec_production_plan_year.py
 access-info-aveon.txt
+access-info-aveon-desktop-users.txt
+data/aveon/feedback/
 data/aveon/dashboard_snapshots/*.json
 data/aveon/schedule_snapshots/
 data/aveon/daily_plan_snapshots/

@@ -156,3 +156,29 @@ def material_classification_for(
 
 def is_optional_material_kind(kind: str | None) -> bool:
     return (kind or MATERIAL_KIND_REQUIRED) in OPTIONAL_MATERIAL_KINDS
+
+
+def is_zero_supply_optional_material(
+    kind: str | None,
+    *,
+    available: float,
+) -> bool:
+    """Исключение из условной обеспеченности: спорная классификация и нет остатка+поступлений."""
+    if not is_optional_material_kind(kind):
+        return False
+    return float(available) <= 1e-9
+
+
+COVERAGE_ANALYSIS_STRICT = "strict"
+COVERAGE_ANALYSIS_CONDITIONAL = "conditional"
+
+
+def normalize_coverage_analysis_mode(
+    value: str | None,
+    *,
+    default: str = COVERAGE_ANALYSIS_CONDITIONAL,
+) -> str:
+    mode = (value or default).strip().lower()
+    if mode in (COVERAGE_ANALYSIS_STRICT, COVERAGE_ANALYSIS_CONDITIONAL):
+        return mode
+    return default

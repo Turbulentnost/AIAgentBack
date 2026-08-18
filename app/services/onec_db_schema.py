@@ -9,9 +9,12 @@ from sqlalchemy import text
 _tables_ready = False
 _tables_lock = asyncio.Lock()
 
+# Кросс-процессная сериализация bootstrap DDL (uvicorn workers / celery).
+_ONEC_SCHEMA_ADVISORY_LOCK_KEY = 865_000_001
+
 
 async def ensure_onec_agent_tables() -> None:
-    """Создаёт/мигрирует таблицы 1С один раз, без повторного захвата пула на каждый запрос."""
+    """Создаёт таблицы 1С один раз; схема колонок — через Alembic, без runtime ALTER."""
     global _tables_ready
     if _tables_ready:
         return
@@ -51,29 +54,11 @@ async def ensure_onec_agent_tables() -> None:
                 ],
                 checkfirst=True,
             )
-            for stmt in (
-                "ALTER TABLE onec_resource_spec_materials "
-                "ADD COLUMN IF NOT EXISTS unit VARCHAR(64) NOT NULL DEFAULT ''",
-                "ALTER TABLE onec_nomenclature "
-                "ADD COLUMN IF NOT EXISTS unit_key VARCHAR(64) NOT NULL DEFAULT ''",
-                "ALTER TABLE onec_nomenclature "
-                "ADD COLUMN IF NOT EXISTS unit VARCHAR(64) NOT NULL DEFAULT ''",
-                "ALTER TABLE onec_production_plan_headers "
-                "ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ",
-                "ALTER TABLE onec_production_plan_headers "
-                "ADD COLUMN IF NOT EXISTS period_end TIMESTAMPTZ",
-                "ALTER TABLE onec_production_plan_items "
-                "ADD COLUMN IF NOT EXISTS specification_key VARCHAR(64) NOT NULL DEFAULT ''",
-                "ALTER TABLE onec_production_plan_items "
-                "ADD COLUMN IF NOT EXISTS specification_name TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE onec_production_plan_items "
-                "DROP CONSTRAINT IF EXISTS uq_onec_prod_plan_line",
-                "ALTER TABLE onec_production_plan_items "
-                "ADD CONSTRAINT uq_onec_prod_plan_line "
-                "UNIQUE (plan_ref_key, line_number, nomenclature_key, product_date)",
-            ):
-                sync_conn.execute(text(stmt))
 
         async with engine.begin() as conn:
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {"key": _ONEC_SCHEMA_ADVISORY_LOCK_KEY},
+            )
             await conn.run_sync(_create)
         _tables_ready = True

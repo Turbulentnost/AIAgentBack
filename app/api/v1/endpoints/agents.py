@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession, DocumentAnalysisUser
+from app.agents.document_analysis_agent.cursor_cloud import pack_aveon_cursor_job
 from app.agents.document_analysis_agent.excel_service import (
     UploadedWorkbook,
     analyze_aveon_excel_files,
@@ -883,6 +884,47 @@ async def classify_document_excel_files(
     }
 
 
+@router.post("/document-analysis/cursor-job-pack")
+async def pack_document_analysis_cursor_job(
+    _user: DocumentAnalysisUser,
+    db: DbSession,
+    files: Annotated[list[UploadFile], File(...)],
+):
+    """Складывает upload + выгрузки 1С в пакет задания Cursor (input/ + manifest.json)."""
+    if not files:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Загрузите хотя бы один Excel-файл")
+
+    uploaded: list[UploadedWorkbook] = []
+    for file in files:
+        filename = file.filename or "workbook.xlsx"
+        if not filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Файл {filename} должен быть в формате .xlsx, .xlsm или .xls",
+            )
+        uploaded.append(UploadedWorkbook(filename=filename, content=await file.read()))
+
+    user_id = getattr(_user, "id", None) if _user is not None else None
+    try:
+        pack = await pack_aveon_cursor_job(uploaded, db=db, user_id=user_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Не удалось собрать пакет Cursor: {exc}",
+        ) from exc
+
+    return {
+        "ok": True,
+        "job_id": pack.job_id,
+        "as_of": pack.as_of,
+        "job_dir": str(pack.job_dir),
+        "manifest": pack.manifest,
+        "warnings": pack.warnings,
+    }
+
+
 @router.get("/document-analysis/dashboard-latest")
 async def get_document_analysis_dashboard_latest(
     _user: DocumentAnalysisUser,
@@ -1009,6 +1051,15 @@ async def delete_document_analysis_dashboard_latest(_user: DocumentAnalysisUser)
     user_id = getattr(_user, "id", None) if _user is not None else None
     removed = clear_dashboard_snapshot(user_id)
     return {"ok": True, "removed": removed}
+
+
+# TEMP(Aveon WeChat utility test) — удалить вместе с кнопкой test на фронте
+@router.post("/document-analysis/wechat-utility-test")
+async def temp_wechat_utility_test(_user: DocumentAnalysisUser):
+    """TEMP: проверка JWT + WebSocket к WeChat-утилите (CONNECT.md)."""
+    from app.services.wechat_utility_connect import test_wechat_utility_connection
+
+    return await test_wechat_utility_connection()
 
 
 # TEMP(Aveon OData ping) — удалить целиком без последствий
@@ -1293,16 +1344,16 @@ async def fetch_aveon_google_sheets(_user: DocumentAnalysisUser):
     """Чтение листа «ИТЦ В РАБОТЕ» через Service Account (полная таблица)."""
     from app.services.google_sheets_client import (
         DEFAULT_SHEET_TITLE,
-        fetch_sheet_via_api,
+        fetch_spreadsheet_all_sheets,
         get_default_spreadsheet_target,
     )
 
     spreadsheet_id, sheet_gid = get_default_spreadsheet_target()
     result = await asyncio.to_thread(
-        fetch_sheet_via_api,
+        fetch_spreadsheet_all_sheets,
         spreadsheet_id,
-        sheet_gid or None,
-        sheet_title=DEFAULT_SHEET_TITLE,
+        sheet_gid=sheet_gid or None,
+        preferred_sheet_title=DEFAULT_SHEET_TITLE,
         include_values=True,
     )
     if not result.get("ok"):

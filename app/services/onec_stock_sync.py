@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from urllib.parse import quote
 
 import requests
@@ -35,6 +35,26 @@ def _fetch_all_balances(http: requests.Session) -> list[dict]:
     while True:
         url = (
             f"{base}/AccumulationRegister_ТоварыНаСкладах/Balance"
+            f"?$top={PAGE_SIZE}&$skip={skip}&$format=json"
+        )
+        batch = get_json(http, url).get("value") or []
+        rows.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            break
+        skip += len(batch)
+    return rows
+
+
+def _fetch_balances_at_date(http: requests.Session, as_of: date) -> list[dict]:
+    """Срез регистра ТоварыНаСкладах на начало указанной даты."""
+    base = _onec_base()
+    period = datetime.combine(as_of, time.min).strftime("%Y-%m-%dT%H:%M:%S")
+    rows: list[dict] = []
+    skip = 0
+    while True:
+        url = (
+            f"{base}/AccumulationRegister_ТоварыНаСкладах"
+            f"/Balance(Period=datetime'{period}')"
             f"?$top={PAGE_SIZE}&$skip={skip}&$format=json"
         )
         batch = get_json(http, url).get("value") or []
@@ -157,6 +177,96 @@ def fetch_stock_items_from_onec() -> dict:
             "positive_count": 0,
             "negative_count": 0,
             "items": [],
+        }
+    finally:
+        http.close()
+
+
+def fetch_stock_snapshots_from_onec(dates: list[date]) -> dict:
+    """Тянет срезы остатков на начало дат из 1С без записи в БД."""
+    base = _onec_base()
+    unique_dates = sorted({item for item in dates if isinstance(item, date)})
+    if not unique_dates:
+        return {
+            "ok": True,
+            "source": "AccumulationRegister_ТоварыНаСкладах/Balance",
+            "dates": {},
+            "count": 0,
+        }
+
+    http = create_session()
+    try:
+        raw_by_date: dict[str, list[dict]] = {}
+        nom_keys: list[str] = []
+        wh_keys: list[str] = []
+        for as_of in unique_dates:
+            raw_rows = _fetch_balances_at_date(http, as_of)
+            raw_by_date[as_of.isoformat()] = raw_rows
+            nom_keys.extend(str(r.get("Номенклатура_Key") or "") for r in raw_rows)
+            wh_keys.extend(str(r.get("Склад_Key") or "") for r in raw_rows)
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _lookup_nom() -> dict[str, dict]:
+            session = create_session()
+            try:
+                return _batch_lookup(
+                    session, "Catalog_Номенклатура", nom_keys, "Ref_Key,Code,Description"
+                )
+            finally:
+                session.close()
+
+        def _lookup_wh() -> dict[str, dict]:
+            session = create_session()
+            try:
+                return _batch_lookup(session, "Catalog_Склады", wh_keys, "Ref_Key,Description")
+            finally:
+                session.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            nom_future = pool.submit(_lookup_nom)
+            wh_future = pool.submit(_lookup_wh)
+            nom_map = nom_future.result()
+            wh_map = wh_future.result()
+
+        snapshots: dict[str, list[dict]] = {}
+        for day_key, raw_rows in raw_by_date.items():
+            items: list[dict] = []
+            for row in raw_rows:
+                in_stock = float(row.get("ВНаличииBalance") or 0)
+                to_ship = float(row.get("КОтгрузкеBalance") or 0)
+                nom_key = str(row.get("Номенклатура_Key") or "")
+                wh_key = str(row.get("Склад_Key") or "")
+                nom = nom_map.get(nom_key) or {}
+                wh = wh_map.get(wh_key) or {}
+                items.append(
+                    {
+                        "code": str(nom.get("Code") or ""),
+                        "name": str(nom.get("Description") or "").strip(),
+                        "warehouse": str(wh.get("Description") or "").strip(),
+                        "in_stock": in_stock,
+                        "to_ship": to_ship,
+                        "available": in_stock - to_ship,
+                        "nomenclature_key": nom_key,
+                        "warehouse_key": wh_key,
+                    }
+                )
+            snapshots[day_key] = items
+
+        return {
+            "ok": True,
+            "source": "AccumulationRegister_ТоварыНаСкладах/Balance",
+            "dates": snapshots,
+            "count": sum(len(items) for items in snapshots.values()),
+        }
+    except (requests.RequestException, RuntimeError, ValueError, TypeError) as exc:
+        detail = format_onec_request_error(exc, base_url=base)
+        return {
+            "ok": False,
+            "message": f"Не удалось получить срезы остатков из 1С: {detail}",
+            "source": "AccumulationRegister_ТоварыНаСкладах/Balance",
+            "dates": {},
+            "count": 0,
         }
     finally:
         http.close()

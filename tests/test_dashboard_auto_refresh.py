@@ -120,6 +120,56 @@ async def test_dashboard_latest_does_not_refresh_current_day(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
+async def test_dashboard_latest_does_not_retry_incomplete_after_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    incomplete_after_error = {
+        "dashboard_date_msk": agents.today_msk_iso(),
+        "refresh_attempted_date_msk": agents.today_msk_iso(),
+        "refresh_status": "error",
+        "refresh_error": "1C unavailable",
+        "logistics_risks": {"as_of": None, "stages": []},
+        "coverage_dashboard": {"periods": {"day": {"products": {"tiles": {"all": 0}}}}},
+    }
+
+    async def fail_refresh(**kwargs):
+        raise AssertionError("incomplete snapshot should not retry after error")
+
+    monkeypatch.setattr(agents, "load_dashboard_snapshot", lambda user_id: incomplete_after_error)
+    monkeypatch.setattr(agents, "_auto_refresh_dashboard_snapshot", fail_refresh)
+    monkeypatch.setattr(agents.asyncio, "create_task", lambda coro: coro.close())
+
+    response = await agents.get_document_analysis_dashboard_latest(None, None)
+
+    assert response == {"ok": True, "snapshot": incomplete_after_error}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_latest_schedules_background_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale_snapshot = {
+        "dashboard_date_msk": "2026-08-11",
+        "logistics_risks": {"as_of": None, "stages": []},
+        "coverage_dashboard": {"periods": {"day": {"products": {"tiles": {"all": 3}}}}},
+    }
+    scheduled: list[dict[str, object]] = []
+
+    def fake_create_task(coro):
+        scheduled.append({"scheduled": True})
+        coro.close()
+        return None
+
+    monkeypatch.setattr(agents, "load_dashboard_snapshot", lambda user_id: stale_snapshot)
+    monkeypatch.setattr(agents.asyncio, "create_task", fake_create_task)
+
+    response = await agents.get_document_analysis_dashboard_latest(None, None)
+
+    assert response == {"ok": True, "snapshot": stale_snapshot}
+    assert scheduled
+
+
+@pytest.mark.asyncio
 async def test_dashboard_latest_does_not_retry_failed_refresh_same_day(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -162,12 +212,21 @@ async def test_dashboard_latest_retries_missing_inputs_same_day(
     async def fake_refresh(**kwargs):
         return refreshed
 
+    scheduled: list[object] = []
+
+    def fake_create_task(coro):
+        scheduled.append(True)
+        coro.close()
+        return None
+
     monkeypatch.setattr(agents, "load_dashboard_snapshot", lambda user_id: stale_missing_inputs)
     monkeypatch.setattr(agents, "_auto_refresh_dashboard_snapshot", fake_refresh)
+    monkeypatch.setattr(agents.asyncio, "create_task", fake_create_task)
 
     response = await agents.get_document_analysis_dashboard_latest(None, None)
 
-    assert response["snapshot"]["dashboard_date_msk"] == agents.today_msk_iso()
+    assert response["snapshot"] == stale_missing_inputs
+    assert scheduled
 
 
 @pytest.mark.asyncio

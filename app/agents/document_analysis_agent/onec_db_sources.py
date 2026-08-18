@@ -14,10 +14,7 @@ from app.models.onec_resource_spec import OnecResourceSpec, OnecResourceSpecMate
 from app.models.onec_nomenclature import OnecNomenclature
 from app.models.onec_production_plan import OnecProductionPlanHeader, OnecProductionPlanItem
 from app.models.onec_stock import OnecStockBalance
-from app.services.onec_production_plan_sync import ensure_onec_production_plan_tables
 from app.services.onec_production_plan_resolver import resolve_year_production_plan
-from app.services.onec_resource_spec_sync import ensure_onec_resource_spec_tables
-from app.services.onec_stock_sync import ensure_onec_stock_tables
 from app.services.spec_nomenclature_match import EMPTY_GUID
 
 logger = get_logger(__name__)
@@ -141,7 +138,6 @@ async def build_stock_index_from_db(db: AsyncSession) -> dict[str, "StockEntry"]
     """Агрегирует остатки по номенклатуре (сумма available по складам)."""
     from app.agents.document_analysis_agent.excel_service import StockEntry, _normalize
 
-    await ensure_onec_stock_tables(db)
     rows = (await db.execute(select(OnecStockBalance))).scalars().all()
     index: dict[str, StockEntry] = {}
     for row in rows:
@@ -162,13 +158,15 @@ async def build_stock_index_from_db(db: AsyncSession) -> dict[str, "StockEntry"]
     return index
 
 
-async def build_country_index_from_db(db: AsyncSession) -> dict[str, DbNomenclatureCountryEntry]:
-    """Индекс страна происхождения по нормализованному имени номенклатуры."""
+async def build_nomenclature_indexes_from_db(
+    db: AsyncSession,
+) -> tuple[dict[str, DbNomenclatureCountryEntry], dict[str, DbNomenclatureUnitEntry]]:
+    """Один SELECT по onec_nomenclature для стран и единиц измерения."""
     from app.agents.document_analysis_agent.excel_service import _normalize
 
-    await ensure_onec_resource_spec_tables()
     rows = (await db.execute(select(OnecNomenclature))).scalars().all()
-    index: dict[str, DbNomenclatureCountryEntry] = {}
+    country_index: dict[str, DbNomenclatureCountryEntry] = {}
+    unit_index: dict[str, DbNomenclatureUnitEntry] = {}
     for row in rows:
         name = (row.name or "").strip()
         if not name:
@@ -176,50 +174,41 @@ async def build_country_index_from_db(db: AsyncSession) -> dict[str, DbNomenclat
         key = _normalize(name)
         if not key:
             continue
-        index[key] = DbNomenclatureCountryEntry(
+        code = (row.code or "").strip()
+        country_index[key] = DbNomenclatureCountryEntry(
             nomenclature=name,
             country_of_origin=(row.country_of_origin or "").strip(),
-            code=(row.code or "").strip(),
+            code=code,
+            ref_key=row.ref_key,
+        )
+        unit_index[key] = DbNomenclatureUnitEntry(
+            nomenclature=name,
+            unit=(row.unit or "").strip(),
+            code=code,
             ref_key=row.ref_key,
         )
     logger.info(
-        "document_analysis_agent.db_country_loaded",
-        unique=len(index),
-        with_country=sum(1 for item in index.values() if item.country_of_origin),
+        "document_analysis_agent.db_nomenclature_loaded",
+        unique=len(country_index),
+        with_country=sum(1 for item in country_index.values() if item.country_of_origin),
+        with_unit=sum(1 for item in unit_index.values() if item.unit),
     )
-    return index
+    return country_index, unit_index
+
+
+async def build_country_index_from_db(db: AsyncSession) -> dict[str, DbNomenclatureCountryEntry]:
+    """Индекс страна происхождения по нормализованному имени номенклатуры."""
+    country_index, _ = await build_nomenclature_indexes_from_db(db)
+    return country_index
 
 
 async def build_unit_index_from_db(db: AsyncSession) -> dict[str, DbNomenclatureUnitEntry]:
     """Индекс единицы измерения по нормализованному имени номенклатуры."""
-    from app.agents.document_analysis_agent.excel_service import _normalize
-
-    await ensure_onec_resource_spec_tables()
-    rows = (await db.execute(select(OnecNomenclature))).scalars().all()
-    index: dict[str, DbNomenclatureUnitEntry] = {}
-    for row in rows:
-        name = (row.name or "").strip()
-        if not name:
-            continue
-        key = _normalize(name)
-        if not key:
-            continue
-        index[key] = DbNomenclatureUnitEntry(
-            nomenclature=name,
-            unit=(row.unit or "").strip(),
-            code=(row.code or "").strip(),
-            ref_key=row.ref_key,
-        )
-    logger.info(
-        "document_analysis_agent.db_unit_loaded",
-        unique=len(index),
-        with_unit=sum(1 for item in index.values() if item.unit),
-    )
-    return index
+    _, unit_index = await build_nomenclature_indexes_from_db(db)
+    return unit_index
 
 
 async def load_db_spec_catalog(db: AsyncSession) -> list[DbSpecCatalogEntry]:
-    await ensure_onec_resource_spec_tables()
     specs = (
         await db.execute(
             select(OnecResourceSpec)
@@ -254,7 +243,6 @@ async def _load_resolved_production_plan_rows(
 
     from app.services.onec_production_plan_resolver import ResolvedYearProductionPlan
 
-    await ensure_onec_production_plan_tables(db)
     target_year = year or date.today().year
     headers = (
         await db.execute(

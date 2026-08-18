@@ -25,14 +25,26 @@ def _row(
     stock: float = 0.0,
     receipts: dict | None = None,
     stock_match: str = "exact",
+    *,
+    kind: str = "required",
+    kind_by_product: dict[str, str] | None = None,
 ):
-    return SimpleNamespace(
+    row = SimpleNamespace(
         nomenclature=name,
         by_product=by_product,
         stock=stock,
         monthly_receipts=receipts or {},
         stock_match=stock_match,
+        coverage_material_kind=kind,
+        coverage_material_label="",
+        coverage_material_confidence="",
+        coverage_material_reason="",
+        coverage_material_kinds_by_product=kind_by_product or {},
+        coverage_material_labels_by_product={},
+        coverage_material_confidences_by_product={},
+        coverage_material_reasons_by_product={},
     )
+    return row
 
 
 def test_proportional_split_on_shared_material():
@@ -115,6 +127,61 @@ def test_zero_stock_without_receipts_blocks_full_bom():
     ]
     result = compute_product_coverage(plans, merged, ["Июль"])
     assert result.cell("A", "Июль").covered == 0
+
+
+def test_zero_supply_optional_does_not_block_conditional_coverage():
+    plans = [_plan("A", {"Июль": 10})]
+    merged = [
+        _row("KIT", {"A": 1}, stock=10),
+        _row(
+            "Винт M3",
+            {"A": 2},
+            stock=0.0,
+            kind="consumable",
+            kind_by_product={"A": "consumable"},
+        ),
+    ]
+    result = compute_product_coverage(plans, merged, ["Июль"])
+    cell = result.cell("A", "Июль")
+    assert cell.covered == 0
+    assert cell.conditional_covered == 10
+
+
+def test_stocked_optional_still_blocks_conditional_coverage():
+    plans = [_plan("A", {"Июль": 10})]
+    merged = [
+        _row("KIT", {"A": 1}, stock=10),
+        _row(
+            "Винт M3",
+            {"A": 20},
+            stock=5.0,
+            kind="consumable",
+            kind_by_product={"A": "consumable"},
+        ),
+    ]
+    result = compute_product_coverage(plans, merged, ["Июль"])
+    cell = result.cell("A", "Июль")
+    assert cell.covered == 0
+    assert cell.conditional_covered == 0
+
+
+def test_expected_receipts_keep_optional_material_blocking():
+    plans = [_plan("A", {"Июль": 10})]
+    merged = [
+        _row("KIT", {"A": 1}, stock=10),
+        _row(
+            "Кабель",
+            {"A": 1},
+            stock=0.0,
+            receipts={"Июль": 5},
+            kind="workshop",
+            kind_by_product={"A": "workshop"},
+        ),
+    ]
+    result = compute_product_coverage(plans, merged, ["Июль"])
+    cell = result.cell("A", "Июль")
+    assert cell.covered == 5
+    assert cell.conditional_covered == 5
 
 
 def test_full_bom_covered_when_all_materials_available():

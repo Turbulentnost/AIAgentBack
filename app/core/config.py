@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import PostgresDsn, computed_field
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str = "Корпоративная платформа ИИ-агентов"
     APP_VERSION: str = "0.1.0"
+    DESKTOP_STATIC_DIR: str = ""
     API_V1_PREFIX: str = "/api/v1"
     DOCS_URL: str = "/docs"
     REDOC_URL: str = "/redoc"
@@ -94,6 +96,8 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "ai-documents"
     MINIO_USER_FILES_BUCKET: str = "ai-user-files"
     MINIO_SECURE: bool = False
+    MINIO_CONNECT_TIMEOUT: float = 3.0
+    MINIO_READ_TIMEOUT: float = 10.0
     AVATAR_MAX_UPLOAD_SIZE_BYTES: int = 5 * 1024 * 1024
     AVATAR_ALLOWED_CONTENT_TYPES: str = "image/jpeg,image/png,image/webp"
     DOCUMENT_MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024
@@ -221,6 +225,14 @@ class Settings(BaseSettings):
     SHIFT_REPORT_RECIPIENT_EMAIL: str = "sktb_razvitie5@turbo-don.ru"
     SHIFT_COMPLETION_RECIPIENT_EMAIL: str = "sktb_razvitie5@turbo-don.ru"
 
+    # WeChat-утилита (CONNECT.md): WebSocket :8790 + JWT HS256
+    WECHAT_WS_URL: str = "ws://127.0.0.1:8790"
+    WECHAT_JWT_SECRET: str = ""
+    WECHAT_JWT_AUDIENCE: str = "wechat-ws"
+    WECHAT_JWT_SCOPE: str = "wechat:read"
+    WECHAT_JWT_SUB: str = "avion-backend-test"
+    WECHAT_CONNECT_TIMEOUT_SEC: float = 10.0
+
     @property
     def cors_origins(self) -> list[str]:
         return self._parse_csv(self.BACKEND_CORS_ORIGINS)
@@ -308,6 +320,15 @@ class Settings(BaseSettings):
 
     def celery_backend(self) -> str:
         return self.CELERY_RESULT_BACKEND or f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/2"
+
+    @computed_field
+    @property
+    def desktop_static_path(self) -> Path | None:
+        raw = (self.DESKTOP_STATIC_DIR or "").strip()
+        if not raw:
+            return None
+        path = Path(raw)
+        return path if path.is_dir() else None
 
 
 @lru_cache

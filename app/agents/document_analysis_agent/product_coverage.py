@@ -12,6 +12,7 @@ import structlog
 from app.agents.document_analysis_agent.material_classification import (
     MATERIAL_KIND_REQUIRED,
     is_optional_material_kind,
+    is_zero_supply_optional_material,
 )
 
 logger = structlog.get_logger(__name__)
@@ -227,15 +228,20 @@ def _row_material_meta(row: Any, product_name: str, canonical: str, suffix: str)
     return str(getattr(row, f"coverage_material_{suffix}", "") or "")
 
 
-def _relaxed_boms_without_optional_materials(
+def _relaxed_boms_for_period(
     boms: dict[str, ProductBom],
+    available: dict[str, float],
 ) -> dict[str, ProductBom]:
+    """BOM для условной обеспеченности: без спорных позиций с нулевым остатком+поступлением."""
     relaxed: dict[str, ProductBom] = {}
     for product, bom in boms.items():
         kept = {
             mat: qty
             for mat, qty in bom.materials.items()
-            if not is_optional_material_kind(bom.material_kinds.get(mat))
+            if not is_zero_supply_optional_material(
+                bom.material_kinds.get(mat),
+                available=float(available.get(mat, 0.0) or 0.0),
+            )
         }
         relaxed[product] = ProductBom(
             product=bom.product,
@@ -262,6 +268,18 @@ def _relaxed_boms_without_optional_materials(
             matched=bom.matched,
         )
     return relaxed
+
+
+def _relaxed_boms_without_optional_materials(
+    boms: dict[str, ProductBom],
+) -> dict[str, ProductBom]:
+    """Legacy alias: все спорные позиции считаются без остатка."""
+    zero_available = {
+        mat: 0.0 for bom in boms.values() for mat in bom.materials if is_optional_material_kind(
+            bom.material_kinds.get(mat)
+        )
+    }
+    return _relaxed_boms_for_period(boms, zero_available)
 
 
 def _material_supply_maps(
@@ -509,21 +527,13 @@ def compute_product_coverage(
     products_in_order = [plan.product for plan in schedule_plans]
     plans_by_product = {plan.product: plan for plan in schedule_plans}
     boms = build_boms_from_merged(products_in_order, merged)
-    relaxed_boms = _relaxed_boms_without_optional_materials(boms)
     stock0, receipts_map = _material_supply_maps(merged)
 
     bom_keys = {key for bom in boms.values() for key in bom.materials}
-    relaxed_bom_keys = {key for bom in relaxed_boms.values() for key in bom.materials}
     opening: dict[str, float] = {key: float(stock0.get(key, 0.0)) for key in bom_keys}
-    relaxed_opening: dict[str, float] = {
-        key: float(stock0.get(key, 0.0)) for key in relaxed_bom_keys
-    }
     if months:
         opening = _seed_opening_with_pre_horizon_receipts(
             opening, receipts_map, bom_keys, months[0]
-        )
-        relaxed_opening = _seed_opening_with_pre_horizon_receipts(
-            relaxed_opening, receipts_map, relaxed_bom_keys, months[0]
         )
 
     cells: dict[tuple[str, str], ProductMonthCoverage] = {}
@@ -544,11 +554,7 @@ def compute_product_coverage(
             + max(0.0, float((receipts_map.get(key) or {}).get(month, 0.0)))
             for key in bom_keys
         }
-        relaxed_available: dict[str, float] = {
-            key: max(0.0, float(relaxed_opening.get(key, 0.0)))
-            + max(0.0, float((receipts_map.get(key) or {}).get(month, 0.0)))
-            for key in relaxed_bom_keys
-        }
+        relaxed_available: dict[str, float] = dict(available)
         month_available[month] = dict(available)
 
         plan_m: dict[str, float] = {
@@ -567,7 +573,8 @@ def compute_product_coverage(
             if plan_m.get(product, 0.0) > 0 and boms.get(product, ProductBom(product)).matched
         ]
         covered, pool = _compute_covered_for_candidates(candidates, plan_m, boms, available)
-        conditional_covered, relaxed_pool = _compute_covered_for_candidates(
+        relaxed_boms = _relaxed_boms_for_period(boms, available)
+        conditional_covered, _relaxed_pool = _compute_covered_for_candidates(
             candidates,
             plan_m,
             relaxed_boms,
@@ -598,9 +605,6 @@ def compute_product_coverage(
             )
 
         opening = {key: max(0.0, float(pool.get(key, 0.0))) for key in bom_keys}
-        relaxed_opening = {
-            key: max(0.0, float(relaxed_pool.get(key, 0.0))) for key in relaxed_bom_keys
-        }
 
     fully_covered = sum(
         1
@@ -865,21 +869,13 @@ def compute_daily_plan_coverage(
         str(getattr(plan, "product", "") or ""): plan for plan in detailed_plans
     }
     boms = build_boms_for_detailed_products(products_in_order, merged)
-    relaxed_boms = _relaxed_boms_without_optional_materials(boms)
     stock0, receipts_map = _material_daily_supply_maps(merged)
 
     bom_keys = {key for bom in boms.values() for key in bom.materials}
-    relaxed_bom_keys = {key for bom in relaxed_boms.values() for key in bom.materials}
     opening: dict[str, float] = {key: float(stock0.get(key, 0.0)) for key in bom_keys}
-    relaxed_opening: dict[str, float] = {
-        key: float(stock0.get(key, 0.0)) for key in relaxed_bom_keys
-    }
     if day_keys:
         opening = _seed_opening_with_pre_horizon_daily_receipts(
             opening, receipts_map, bom_keys, day_keys[0]
-        )
-        relaxed_opening = _seed_opening_with_pre_horizon_daily_receipts(
-            relaxed_opening, receipts_map, relaxed_bom_keys, day_keys[0]
         )
 
     cells: dict[tuple[str, str], ProductDayCoverage] = {}
@@ -897,11 +893,7 @@ def compute_daily_plan_coverage(
             + max(0.0, float((receipts_map.get(key) or {}).get(day, 0.0)))
             for key in bom_keys
         }
-        relaxed_available: dict[str, float] = {
-            key: max(0.0, float(relaxed_opening.get(key, 0.0)))
-            + max(0.0, float((receipts_map.get(key) or {}).get(day, 0.0)))
-            for key in relaxed_bom_keys
-        }
+        relaxed_available: dict[str, float] = dict(available)
 
         plan_d: dict[str, float] = {}
         fact_d: dict[str, float] = {}
@@ -918,7 +910,8 @@ def compute_daily_plan_coverage(
             if plan_d.get(product, 0.0) > 0 and boms.get(product, ProductBom(product)).matched
         ]
         covered, pool = _compute_covered_for_candidates(candidates, plan_d, boms, available)
-        conditional_covered, relaxed_pool = _compute_covered_for_candidates(
+        relaxed_boms = _relaxed_boms_for_period(boms, available)
+        conditional_covered, _relaxed_pool = _compute_covered_for_candidates(
             candidates,
             plan_d,
             relaxed_boms,
@@ -945,9 +938,6 @@ def compute_daily_plan_coverage(
             )
 
         opening = {key: max(0.0, float(pool.get(key, 0.0))) for key in bom_keys}
-        relaxed_opening = {
-            key: max(0.0, float(relaxed_pool.get(key, 0.0))) for key in relaxed_bom_keys
-        }
 
     logger.info(
         "document_analysis_agent.daily_plan_coverage_computed",

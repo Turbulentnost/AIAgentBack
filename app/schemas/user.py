@@ -151,6 +151,6 @@ class Token(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=1, max_length=320)
     password: str
     new_password: str | None = None

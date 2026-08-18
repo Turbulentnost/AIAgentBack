@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aveon.cursor.analysis_result.v1",
+  "title": "Aveon Cursor analysis_result",
+  "description": "Контракт output/analysis_result.json. Поля дашбордов = snapshot Авиона (dashboard-latest), без user_id/saved_at/refresh_*.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "as_of", "logistics_risks"],
+  "properties": {
+    "schema_id": { "const": "aveon.cursor.analysis_result.v1" },
+    "schema_version": { "const": 1 },
+    "as_of": { "type": "string", "format": "date" },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["filename", "role"],
+        "properties": {
+          "filename": { "type": "string" },
+          "role": {
+            "enum": [
+              "specification",
+              "stock",
+              "production_schedule",
+              "detailed_production_schedule",
+              "shipment_schedule",
+              "other"
+            ]
+          },
+          "source": { "type": "string", "default": "upload" }
+        }
+      }
+    },
+    "logistics_risks": {
+      "type": "object",
+      "properties": {
+        "as_of": { "type": ["string", "null"] },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "label"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "loading_dispatch | msk_arrival | customs_clearance | rostov_arrival"
+              },
+              "label": { "type": "string" },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["nomenclature"],
+                  "properties": {
+                    "nomenclature": { "type": "string" },
+                    "supplier": { "type": ["string", "null"] },
+                    "quantity": { "type": "number" },
+                    "moscow_date": { "type": "string" },
+                    "milestone_date": { "type": "string" },
+                    "sheet": { "type": "string" },
+                    "window_start": { "type": "string" },
+                    "window_end": { "type": "string" },
+                    "days_remaining": { "type": "integer" },
+                    "risk_ratio": { "type": "number" },
+                    "risk_level": { "enum": ["low", "medium", "high", "critical"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "coverage_dashboard": {
+      "type": ["object", "null"],
+      "required": ["as_of", "periods"],
+      "properties": {
+        "as_of": { "type": "string", "format": "date" },
+        "schedule_month": { "type": "string", "description": "YYYY-MM" },
+        "default_period": { "enum": ["day", "week", "month"] },
+        "default_analysis_mode": { "type": "string" },
+        "periods": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["key", "label", "products", "nomenclatures"],
+            "properties": {
+              "key": { "enum": ["day", "week", "month", "custom"] },
+              "label": { "type": "string" },
+              "days": { "type": "array", "items": { "type": "string" } },
+              "products": { "$ref": "#/$defs/coverageSide" },
+              "nomenclatures": { "$ref": "#/$defs/coverageSide" }
+            }
+          }
+        }
+      }
+    },
+    "coverage_rebuild": { "type": ["object", "null"] },
+    "task_dashboard": {
+      "type": ["object", "null"],
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": { "type": "array", "items": { "type": "string" } }
+        },
+        "row_priorities": {
+          "type": "array",
+          "items": { "enum": ["urgent", "today", "week", null] }
+        },
+        "row_kinds": {
+          "type": "array",
+          "items": { "enum": ["header", "group", "task", "empty"] }
+        },
+        "meta": {
+          "type": "object",
+          "properties": {
+            "as_of": { "type": "string" },
+            "week_period": { "type": "string" },
+            "week_in_period": { "type": "boolean" },
+            "task_count": { "type": "integer" },
+            "urgent_count": { "type": "integer" },
+            "today_count": { "type": "integer" },
+            "week_count": { "type": "integer" }
+          }
+        },
+        "result_texts": { "type": "object" },
+        "result_evals": { "type": "object" }
+      }
+    },
+    "shift_assignment": {
+      "type": ["object", "null"],
+      "description": "xlsx необязателен; Авион может собрать файл сам из task_dashboard",
+      "properties": {
+        "valid_date": { "type": "string" },
+        "file_name": { "type": "string" },
+        "file_base64": { "type": ["string", "null"] }
+      }
+    },
+    "errors": { "type": "array", "items": { "$ref": "#/$defs/issue" } },
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/issue" } }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "filename": { "type": ["string", "null"] },
+        "role": { "type": ["string", "null"] }
+      }
+    },
+    "coverageTiles": {
+      "type": "object",
+      "properties": {
+        "all": { "type": "integer" },
+        "green": { "type": "integer" },
+        "yellow": { "type": "integer" },
+        "red": { "type": "integer" }
+      }
+    },
+    "coverageSide": {
+      "type": "object",
+      "required": ["rows", "tiles"],
+      "properties": {
+        "rows": { "type": "array" },
+        "tiles": { "$ref": "#/$defs/coverageTiles" }
+      }
+    }
+  }
+}

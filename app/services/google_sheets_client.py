@@ -17,6 +17,71 @@ SCOPES = (
 
 DEFAULT_SHEET_TITLE = "ИТЦ В РАБОТЕ"
 
+CHINA_WORKSHEET_ALIASES = (
+    "ИТЦ В РАБОТЕ",
+    "Гонконг В РАБОТЕ",
+    "ГОНКОНГ В РАБОТЕ",
+    "ITC В РАБОТЕ",
+)
+
+
+def _normalize_sheet_title(value: str) -> str:
+    return str(value or "").strip().casefold()
+
+
+def is_china_worksheet_title(title: str) -> bool:
+    normalized = _normalize_sheet_title(title)
+    if not normalized:
+        return False
+    if normalized in {_normalize_sheet_title(item) for item in CHINA_WORKSHEET_ALIASES}:
+        return True
+    return "в работе" in normalized
+
+
+def _sheet_props_list(spreadsheet: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for sheet in spreadsheet.get("sheets") or []:
+        props = sheet.get("properties") or {}
+        title = str(props.get("title") or "").strip()
+        if not title:
+            continue
+        items.append(
+            {
+                "title": title,
+                "gid": props.get("sheetId"),
+                "index": props.get("index"),
+            }
+        )
+    return items
+
+
+def _resolve_preferred_sheet(
+    sheets: list[dict[str, Any]],
+    *,
+    sheet_gid: str | None = None,
+    sheet_title: str | None = None,
+) -> dict[str, Any] | None:
+    if not sheets:
+        return None
+    if sheet_gid:
+        for item in sheets:
+            if str(item.get("gid")) == str(sheet_gid):
+                return item
+    if sheet_title:
+        target = _normalize_sheet_title(sheet_title)
+        for item in sheets:
+            if _normalize_sheet_title(str(item.get("title") or "")) == target:
+                return item
+    for alias in CHINA_WORKSHEET_ALIASES:
+        target = _normalize_sheet_title(alias)
+        for item in sheets:
+            if _normalize_sheet_title(str(item.get("title") or "")) == target:
+                return item
+    for item in sheets:
+        if is_china_worksheet_title(str(item.get("title") or "")):
+            return item
+    return sheets[0]
+
 
 class GoogleSheetsConfigError(Exception):
     """Service Account is not configured or JSON is invalid."""
@@ -127,6 +192,149 @@ def _normalize_matrix(values: list[list[Any]]) -> list[list[str]]:
             cells.extend([""] * (width - len(cells)))
         matrix.append(cells)
     return matrix
+
+
+def fetch_spreadsheet_all_sheets(
+    spreadsheet_id: str,
+    *,
+    sheet_gid: str | None = None,
+    preferred_sheet_title: str | None = None,
+    include_values: bool = True,
+    preview_rows: int = 5,
+) -> dict[str, Any]:
+    """Читает все листы таблицы через Google Sheets API v4."""
+    started = time.perf_counter()
+    record: dict[str, Any] = {
+        "name": "service_account_api_all_sheets",
+        "ok": False,
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_gid": sheet_gid,
+        "sheet_title": preferred_sheet_title or DEFAULT_SHEET_TITLE,
+        "service_account_email": get_service_account_email(),
+        "elapsed_ms": None,
+        "error": None,
+        "hint": None,
+        "parsed": None,
+    }
+
+    if not is_configured():
+        record["error"] = "Service Account is not configured on backend"
+        record["hint"] = (
+            "Set GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE or GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON in .env"
+        )
+        return record
+
+    try:
+        service = _sheets_service()
+        meta = (
+            service.spreadsheets()
+            .get(spreadsheetId=spreadsheet_id, includeGridData=False)
+            .execute()
+        )
+        sheet_items = _sheet_props_list(meta)
+        if not sheet_items:
+            record["error"] = "Spreadsheet has no worksheets"
+            record["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+            return record
+
+        spreadsheet_title = (meta.get("properties") or {}).get("title")
+        loaded_sheets: list[dict[str, Any]] = []
+        for item in sheet_items:
+            title = str(item["title"])
+            sheet_record: dict[str, Any] = {
+                "title": title,
+                "gid": item.get("gid"),
+                "index": item.get("index"),
+                "ok": False,
+                "row_count": 0,
+                "column_count": 0,
+                "values": [],
+                "preview_rows": [],
+                "error": None,
+            }
+            try:
+                values_result = (
+                    service.spreadsheets()
+                    .values()
+                    .get(spreadsheetId=spreadsheet_id, range=f"'{title}'")
+                    .execute()
+                )
+                values = values_result.get("values") or []
+                matrix = _normalize_matrix(values)
+                sheet_record.update(
+                    {
+                        "ok": True,
+                        "row_count": len(matrix),
+                        "column_count": max((len(row) for row in matrix), default=0),
+                        "preview_rows": _preview_values(matrix, max_rows=preview_rows),
+                    }
+                )
+                if include_values:
+                    sheet_record["values"] = matrix
+            except Exception as exc:
+                sheet_record["error"] = f"{type(exc).__name__}: {exc}"
+            loaded_sheets.append(sheet_record)
+
+        preferred = _resolve_preferred_sheet(
+            sheet_items,
+            sheet_gid=sheet_gid,
+            sheet_title=preferred_sheet_title or DEFAULT_SHEET_TITLE,
+        )
+        preferred_title = str((preferred or {}).get("title") or DEFAULT_SHEET_TITLE)
+        preferred_payload = next(
+            (item for item in loaded_sheets if item.get("title") == preferred_title),
+            loaded_sheets[0],
+        )
+        any_ok = any(item.get("ok") for item in loaded_sheets)
+        record["ok"] = any_ok
+        record["sheet_gid"] = (
+            str(preferred_payload.get("gid"))
+            if preferred_payload.get("gid") is not None
+            else sheet_gid
+        )
+        record["sheet_title"] = preferred_title
+        record["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+        record["hint"] = "Access via Google Sheets API v4 (Service Account)"
+        record["parsed"] = {
+            "format": "sheets_api_v4_all",
+            "spreadsheet_title": spreadsheet_title,
+            "sheet_title": preferred_title,
+            "sheet_gid": preferred_payload.get("gid"),
+            "row_count": preferred_payload.get("row_count", 0),
+            "column_count": preferred_payload.get("column_count", 0),
+            "preview_rows": preferred_payload.get("preview_rows") or [],
+            "values": preferred_payload.get("values") or [],
+            "sheets": loaded_sheets,
+            "preferred_sheet_title": preferred_title,
+            "available_sheets": [
+                {"gid": item.get("gid"), "title": item.get("title")} for item in sheet_items
+            ],
+        }
+        if not any_ok:
+            record["error"] = "Failed to read all worksheets"
+        return record
+    except GoogleSheetsConfigError as exc:
+        record["error"] = str(exc)
+        record["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+        return record
+    except ImportError as exc:
+        record["error"] = f"Google API libraries not installed: {exc}"
+        record["hint"] = "pip install google-auth google-api-python-client"
+        record["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+        return record
+    except Exception as exc:
+        message = str(exc)
+        record["error"] = f"{type(exc).__name__}: {message}"
+        record["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+        lowered = message.lower()
+        if "403" in message or "permission" in lowered or "forbidden" in lowered:
+            email = get_service_account_email() or "<service-account-email>"
+            record["hint"] = f"Share the spreadsheet with {email} (Viewer access)"
+        elif "404" in message or "not found" in lowered:
+            record["hint"] = "Check GOOGLE_SHEETS_SPREADSHEET_ID"
+        elif "invalid_grant" in lowered:
+            record["hint"] = "Check Service Account JSON and that Sheets API is enabled"
+        return record
 
 
 def fetch_sheet_via_api(
@@ -268,8 +476,47 @@ def _values_matrix_to_xlsx_bytes(sheet_title: str, values: list[list[str]]) -> b
     return buffer.getvalue()
 
 
+def _multi_sheet_values_to_xlsx_bytes(
+    spreadsheet_title: str,
+    sheets: list[dict[str, Any]],
+) -> bytes:
+    import io
+
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    default_ws = workbook.active
+    workbook.remove(default_ws)
+    used_titles: set[str] = set()
+    for sheet in sheets:
+        if not sheet.get("ok"):
+            continue
+        values = sheet.get("values") or []
+        if not values:
+            continue
+        raw_title = str(sheet.get("title") or "Sheet")[:31]
+        title = raw_title
+        suffix = 2
+        while title in used_titles:
+            tail = f" ({suffix})"
+            title = f"{raw_title[: max(1, 31 - len(tail))]}{tail}"
+            suffix += 1
+        used_titles.add(title)
+        worksheet = workbook.create_sheet(title=title)
+        for row_index, row in enumerate(values, start=1):
+            for col_index, cell in enumerate(row, start=1):
+                if cell != "":
+                    worksheet.cell(row_index, col_index, cell)
+    if not workbook.sheetnames:
+        worksheet = workbook.create_sheet(title="Sheet1")
+        worksheet.cell(1, 1, spreadsheet_title or "")
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 def fetch_itc_sheet_workbook_payload() -> tuple[str, bytes] | None:
-    """Скачивает лист «ИТЦ В РАБОТЕ» из Google Sheets как .xlsx для merge."""
+    """Скачивает все листы Google Sheets (Китай) как .xlsx для merge."""
     if not is_configured():
         return None
 
@@ -278,20 +525,21 @@ def fetch_itc_sheet_workbook_payload() -> tuple[str, bytes] | None:
     except GoogleSheetsConfigError:
         return None
 
-    result = fetch_sheet_via_api(
+    result = fetch_spreadsheet_all_sheets(
         spreadsheet_id,
-        sheet_gid or None,
-        sheet_title=DEFAULT_SHEET_TITLE,
+        sheet_gid=sheet_gid or None,
+        preferred_sheet_title=DEFAULT_SHEET_TITLE,
         include_values=True,
     )
     if not result.get("ok"):
         return None
 
     parsed = result.get("parsed") or {}
-    values = parsed.get("values") or []
-    if not values:
+    sheets = [item for item in (parsed.get("sheets") or []) if item.get("ok")]
+    if not sheets:
         return None
 
-    sheet_title = str(parsed.get("sheet_title") or DEFAULT_SHEET_TITLE)
-    filename = f"google_sheets_{sheet_title.replace('/', '-')}.xlsx"
-    return filename, _values_matrix_to_xlsx_bytes(sheet_title, values)
+    spreadsheet_title = str(parsed.get("spreadsheet_title") or "google_sheets")
+    safe_name = spreadsheet_title.replace("/", "-").strip() or "google_sheets"
+    filename = f"google_sheets_{safe_name}.xlsx"
+    return filename, _multi_sheet_values_to_xlsx_bytes(spreadsheet_title, sheets)

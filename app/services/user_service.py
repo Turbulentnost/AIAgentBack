@@ -40,6 +40,20 @@ class UserService:
         result = await self.db.execute(select(User).where(User.email == email.lower()))
         return result.scalar_one_or_none()
 
+    async def get_by_login(self, login: str) -> User | None:
+        value = login.strip()
+        if not value:
+            return None
+        if "@" in value:
+            return await self.get_by_email(value)
+        from sqlalchemy import func
+
+        normalized = value.lower()
+        result = await self.db.execute(
+            select(User).where(func.lower(User.username) == normalized, User.deleted_at.is_(None))
+        )
+        return result.scalar_one_or_none()
+
     async def list_platform_access_users(self, *, limit: int = 2000) -> list[User]:
         """Users who can sign in: registered locally or activated via 1C (excludes sync stubs)."""
         onec_never_activated = and_(

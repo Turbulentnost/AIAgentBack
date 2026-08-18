@@ -5,12 +5,15 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.agent import Agent
 from app.models.enums import AgentStatus
 from app.models.user import User, UserAgent
+from app.services.aveon_desktop_users import (
+    AVEON_DESKTOP_USERS,
+    avion_platform_user_emails,
+    avion_platform_user_full_names,
+    is_registered_avion_platform_user,
+)
 
 DOCUMENT_ANALYSIS_AGENT_SLUG = "document_analysis_agent"
 DOCUMENT_ANALYSIS_AGENT_NAME = "Агент закупок (Авион)"
@@ -19,21 +22,8 @@ DOCUMENT_ANALYSIS_AGENT_PURPOSE = (
     "и формирует выводы для дальнейшей обработки."
 )
 
-AVION_ONLY_USER_EMAILS: frozenset[str] = frozenset(
-    {
-        "rodionov.pavel@local.dev",
-        "tishchenko.nadezhda@local.dev",
-        "aksinin.leonid@local.dev",
-    }
-)
-
-AVION_ONLY_USER_FULL_NAMES: frozenset[str] = frozenset(
-    {
-        "Родионов Павел",
-        "Тищенко Надежда",
-        "Аксинин Леонид",
-    }
-)
+AVION_ONLY_USER_EMAILS = avion_platform_user_emails()
+AVION_ONLY_USER_FULL_NAMES = avion_platform_user_full_names()
 
 
 @dataclass(frozen=True)
@@ -42,23 +32,15 @@ class AvionOnlyUserSpec:
     full_name: str
 
 
-AVION_ONLY_PLATFORM_USERS: tuple[AvionOnlyUserSpec, ...] = (
-    AvionOnlyUserSpec(email="rodionov.pavel@local.dev", full_name="Родионов Павел"),
-    AvionOnlyUserSpec(email="tishchenko.nadezhda@local.dev", full_name="Тищенко Надежда"),
-    AvionOnlyUserSpec(email="aksinin.leonid@local.dev", full_name="Аксинин Леонид"),
+AVION_ONLY_PLATFORM_USERS: tuple[AvionOnlyUserSpec, ...] = tuple(
+    AvionOnlyUserSpec(email=spec.email, full_name=spec.full_name)
+    for spec in AVEON_DESKTOP_USERS
+    if not spec.is_superuser
 )
 
 
 def is_avion_only_platform_user(user: User | None) -> bool:
-    if user is None or user.is_superuser:
-        return False
-
-    normalized_email = (user.email or "").strip().casefold()
-    if normalized_email and normalized_email in AVION_ONLY_USER_EMAILS:
-        return True
-
-    normalized_name = (user.full_name or "").strip()
-    return normalized_name in AVION_ONLY_USER_FULL_NAMES
+    return is_registered_avion_platform_user(user)
 
 
 async def get_document_analysis_agent(db: AsyncSession) -> Agent | None:

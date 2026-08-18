@@ -9,6 +9,8 @@ from typing import Any, Iterable
 from app.agents.document_analysis_agent.material_classification import (
     MATERIAL_KIND_REQUIRED,
     is_optional_material_kind,
+    is_zero_supply_optional_material,
+    normalize_coverage_analysis_mode,
 )
 from app.agents.document_analysis_agent.product_coverage import (
     DailyPlanCoverageResult,
@@ -382,7 +384,10 @@ def _product_bom_material_lines(
                 "materialKindLabel": getattr(line, "material_kind_label", "") or "",
                 "materialKindConfidence": getattr(line, "material_kind_confidence", "") or "",
                 "materialKindReason": getattr(line, "material_kind_reason", "") or "",
-                "optional": is_optional_material_kind(material_kind),
+                "optional": is_zero_supply_optional_material(
+                    material_kind,
+                    available=stock + expected,
+                ),
             }
         )
 
@@ -675,8 +680,13 @@ def _nomenclature_status(plan: float, covered: float) -> str:
     return "red"
 
 
-def _material_meta_from_row(row: Any) -> dict[str, Any]:
+def _material_meta_from_row(row: Any, *, available: float | None = None) -> dict[str, Any]:
     kind = str(getattr(row, "coverage_material_kind", "") or MATERIAL_KIND_REQUIRED)
+    if available is None:
+        stock = float(getattr(row, "stock", 0.0) or 0.0)
+        receipts = getattr(row, "monthly_receipts", None) or {}
+        expected = sum(float(value or 0.0) for value in receipts.values())
+        available = stock + expected
     return {
         "materialKind": kind,
         "materialKindLabel": str(getattr(row, "coverage_material_label", "") or ""),
@@ -684,7 +694,7 @@ def _material_meta_from_row(row: Any) -> dict[str, Any]:
             getattr(row, "coverage_material_confidence", "") or ""
         ),
         "materialKindReason": str(getattr(row, "coverage_material_reason", "") or ""),
-        "optional": is_optional_material_kind(kind),
+        "optional": is_zero_supply_optional_material(kind, available=available),
     }
 
 
@@ -714,6 +724,10 @@ def _serialize_nomenclature_rows(
             opening -= float(daily_demand.get(day, 0.0) or 0.0)
             opening = max(0.0, opening)
 
+        supply_for_optional = opening + sum(
+            float(daily_receipts.get(day, 0.0) or 0.0) for day in period_days
+        )
+
         plan_total = 0.0
         fact_total = 0.0
         covered_total = 0.0
@@ -741,7 +755,7 @@ def _serialize_nomenclature_rows(
                 "covered": round(covered_total, 2),
                 "available": round(max(0.0, available_end), 2),
                 "status": _nomenclature_status(plan_total, covered_total),
-                **_material_meta_from_row(row),
+                **_material_meta_from_row(row, available=supply_for_optional),
             }
         )
     rows.sort(key=lambda item: (-float(item["plan"]), str(item["name"])))
@@ -809,7 +823,7 @@ def _serialize_nomenclature_rows_monthly(
                 "covered": round(covered, 2),
                 "available": round(available, 2),
                 "status": _nomenclature_status(plan, covered),
-                **_material_meta_from_row(row),
+                **_material_meta_from_row(row, available=available),
             }
         )
     rows.sort(key=lambda item: (-float(item["plan"]), str(item["name"])))
@@ -833,6 +847,15 @@ def _tile_stats(rows: list[dict[str, Any]], *, ignore_optional: bool = False) ->
     green_covered_total = sum(float(row.get("covered") or 0.0) for row in green_rows)
     yellow_covered_total = sum(float(row.get("covered") or 0.0) for row in yellow_rows)
     red_covered_total = sum(float(row.get("covered") or 0.0) for row in red_rows)
+    shortfall_total = sum(
+        max(0.0, float(row.get("plan") or 0.0) - float(row.get("covered") or 0.0))
+        for row in with_plan
+    )
+    shortfall_rows = [
+        row
+        for row in with_plan
+        if float(row.get("plan") or 0.0) - float(row.get("covered") or 0.0) > 1e-9
+    ]
     return {
         "all": len(with_plan),
         "green": len(green_rows),
@@ -847,6 +870,8 @@ def _tile_stats(rows: list[dict[str, Any]], *, ignore_optional: bool = False) ->
         "green_covered_total": round(green_covered_total, 2),
         "yellow_covered_total": round(yellow_covered_total, 2),
         "red_covered_total": round(red_covered_total, 2),
+        "shortfall_total": round(shortfall_total, 2),
+        "shortfall_count": len(shortfall_rows),
         "optional": len(optional_rows),
         "optional_plan_total": round(
             sum(float(row.get("plan") or 0.0) for row in optional_rows), 2
@@ -946,6 +971,7 @@ def build_coverage_dashboard(
     as_of: date | None = None,
     schedule_month: str = "",
     spec_eligible_products: frozenset[str] | None = None,
+    default_analysis_mode: str = "conditional",
 ) -> dict[str, Any] | None:
     """Payload для дашборда обеспеченности (изделия / номенклатуры × день/неделя/месяц)."""
     as_of_day = as_of or date.today()
@@ -986,7 +1012,8 @@ def build_coverage_dashboard(
     return {
         "as_of": as_of_day.isoformat(),
         "schedule_month": resolved_schedule_month,
-        "default_period": "week",
+        "default_period": "day",
+        "default_analysis_mode": normalize_coverage_analysis_mode(default_analysis_mode),
         "periods": periods,
     }
 

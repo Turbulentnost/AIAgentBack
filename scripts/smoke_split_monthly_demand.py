@@ -78,7 +78,7 @@ async def main() -> None:
     forecast_col = None
     for col in range(1, monthly.max_column + 1):
         val = str(monthly.cell(4, col).value or "")
-        if val.startswith("Ожидаемое поступление"):
+        if val.startswith("В пути"):
             receipt_col = col
         if val.startswith("Прогнозируемый остаток"):
             forecast_col = col

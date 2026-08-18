@@ -37,7 +37,7 @@ class AuthService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> tuple[User | None, Token | None]:
-        user = await UserService(self.db).get_by_email(email)
+        user = await UserService(self.db).get_by_login(email)
         if user is None or not user.is_active or not verify_password(password, user.hashed_password):
             await AuditService(self.db).log(
                 action="auth.login_failed",
