@@ -3669,6 +3669,7 @@ def _collect_and_merge_spec_materials(
     coverage_rebuild = dump_coverage_rebuild(
         merged=merged,
         detailed_plans=detailed_extract.plans,
+        schedule_plans=schedule_plans,
         day_keys=coverage_day_keys,
         as_of=as_of_day,
         schedule_month=schedule_month,

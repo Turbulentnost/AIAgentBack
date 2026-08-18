@@ -599,6 +599,333 @@ def _serialize_product_rows(
     return rows
 
 
+def iter_calendar_months(date_from: date, date_to: date) -> list[tuple[int, int]]:
+    """Каждый (год, месяц), пересекающийся с [date_from, date_to]."""
+    if date_from > date_to:
+        return []
+    months: list[tuple[int, int]] = []
+    year, month = date_from.year, date_from.month
+    end_year, end_month = date_to.year, date_to.month
+    while (year, month) <= (end_year, end_month):
+        months.append((year, month))
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return months
+
+
+def _range_spans_multiple_months(date_from: date, date_to: date) -> bool:
+    return (date_from.year, date_from.month) != (date_to.year, date_to.month)
+
+
+def resolve_plan_month_keys_for_range(
+    schedule_plans: Iterable[Any],
+    merged: Iterable[Any],
+    date_from: date,
+    date_to: date,
+) -> list[str]:
+    """Ключи месяцев плана производства для каждого месяца в диапазоне."""
+    keys_ordered: list[str] = []
+    seen: set[str] = set()
+    for year, month in iter_calendar_months(date_from, date_to):
+        schedule_month = _schedule_month_from_parts(year, month)
+        month_label = _MONTH_ORDER[month - 1]
+        resolved = resolve_plan_month_keys(
+            schedule_plans,
+            schedule_month=schedule_month,
+            month_label=month_label,
+        )
+        for key in resolved:
+            if key not in seen:
+                seen.add(key)
+                keys_ordered.append(key)
+    if keys_ordered:
+        return keys_ordered
+    for year, month in iter_calendar_months(date_from, date_to):
+        month_label = _MONTH_ORDER[month - 1]
+        if month_label not in seen:
+            seen.add(month_label)
+            keys_ordered.append(month_label)
+    return keys_ordered
+
+
+def _schedule_months_by_plan_key(
+    month_keys: list[str],
+    date_from: date,
+    date_to: date,
+    schedule_plans: Iterable[Any],
+) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for year, month in iter_calendar_months(date_from, date_to):
+        schedule_month = _schedule_month_from_parts(year, month)
+        month_label = _MONTH_ORDER[month - 1]
+        for key in resolve_plan_month_keys(
+            schedule_plans,
+            schedule_month=schedule_month,
+            month_label=month_label,
+        ):
+            mapping.setdefault(key, schedule_month)
+        mapping.setdefault(month_label, schedule_month)
+    for key in month_keys:
+        if key not in mapping and "-" in key and len(key) == 7:
+            mapping[key] = key
+    return mapping
+
+
+def _product_bom_material_lines_for_months(
+    *,
+    product_coverage: ProductCoverageResult,
+    merged: list[Any],
+    product: str,
+    month_keys: list[str],
+    schedule_months_by_key: dict[str, str],
+) -> list[dict[str, Any]]:
+    bom = product_coverage.boms.get(product)
+    if bom is None or not bom.matched:
+        return []
+
+    merged_by_key = _merged_by_norm_key(merged)
+    lines: list[dict[str, Any]] = []
+    for line in bom.lines():
+        mat_plan_total = 0.0
+        expected_total = 0.0
+        initial_stock = 0.0
+        row = merged_by_key.get(line.norm_key)
+        if row:
+            initial_stock = float(getattr(row, "stock", 0.0) or 0.0)
+        pool = initial_stock
+        remaining_shortage = 0.0
+
+        for month_key in month_keys:
+            schedule_month = schedule_months_by_key.get(month_key, "")
+            coverage_month = _matching_product_coverage_month(
+                product_coverage,
+                schedule_month=schedule_month,
+                month_label=month_key,
+            )
+            if coverage_month is None:
+                continue
+            mat_plan_month = product_coverage.material_plan(
+                product, coverage_month, line.norm_key
+            )
+            mat_plan_total += mat_plan_month
+            receipts = 0.0
+            if row:
+                receipts = _monthly_scalar(
+                    getattr(row, "monthly_receipts", None) or {},
+                    schedule_month=schedule_month,
+                    month_label=month_key,
+                )
+            expected_total += receipts
+            pool += receipts
+            taken = min(mat_plan_month, pool) if mat_plan_month > 1e-12 else 0.0
+            remaining_shortage += max(0.0, mat_plan_month - taken)
+            pool = max(0.0, pool - mat_plan_month)
+
+        if mat_plan_total <= 1e-12:
+            continue
+        material_kind = getattr(line, "material_kind", MATERIAL_KIND_REQUIRED)
+        available = initial_stock + expected_total
+        lines.append(
+            {
+                "name": line.nomenclature,
+                "plan": round(mat_plan_total, 2),
+                "stock": round(initial_stock, 2),
+                "expected": round(expected_total, 2),
+                "shortage": round(remaining_shortage, 2),
+                "materialKind": material_kind,
+                "materialKindLabel": getattr(line, "material_kind_label", "") or "",
+                "materialKindConfidence": getattr(line, "material_kind_confidence", "") or "",
+                "materialKindReason": getattr(line, "material_kind_reason", "") or "",
+                "optional": is_zero_supply_optional_material(
+                    material_kind,
+                    available=available,
+                ),
+            }
+        )
+    lines.sort(key=lambda item: (-float(item.get("shortage") or 0.0), str(item.get("name") or "")))
+    return lines
+
+
+def _serialize_product_rows_for_months(
+    product_coverage: ProductCoverageResult | None,
+    month_keys: list[str],
+    *,
+    schedule_months_by_key: dict[str, str],
+    merged: list[Any],
+    spec_eligible_products: frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    if product_coverage is None or not month_keys:
+        return []
+    rows: list[dict[str, Any]] = []
+    for product in product_coverage.products_in_order:
+        if not _product_in_spec_scope(product, spec_eligible_products):
+            continue
+        plan = 0.0
+        fact = 0.0
+        strict_covered = 0.0
+        for month_key in month_keys:
+            schedule_month = schedule_months_by_key.get(month_key, "")
+            coverage_month = _matching_product_coverage_month(
+                product_coverage,
+                schedule_month=schedule_month,
+                month_label=month_key,
+            )
+            if coverage_month is None:
+                continue
+            cell = product_coverage.cell(product, coverage_month)
+            plan += float(cell.plan or 0.0)
+            fact += float(cell.fact or 0.0)
+            strict_covered += float(cell.covered or 0.0)
+        if plan <= 1e-12 and fact <= 1e-12 and strict_covered <= 1e-12:
+            continue
+        materials = (
+            _product_bom_material_lines_for_months(
+                product_coverage=product_coverage,
+                merged=merged,
+                product=product,
+                month_keys=month_keys,
+                schedule_months_by_key=schedule_months_by_key,
+            )
+            if plan > 1e-12
+            else []
+        )
+        assemblable_fields = _product_assemblable_fields(
+            plan=plan,
+            strict_covered=strict_covered,
+            materials=materials,
+        )
+        assemblable_qty = float(assemblable_fields["assemblableQty"])
+        covered = assemblable_qty if materials else strict_covered
+        status = _product_status_for_monthly(
+            plan=plan,
+            strict_covered=strict_covered,
+            materials=materials,
+            assemblable_qty=assemblable_qty,
+        )
+        row: dict[str, Any] = {
+            "name": product,
+            "plan": round(plan, 2),
+            "fact": round(fact, 2),
+            "covered": round(covered, 2),
+            "status": status,
+            **assemblable_fields,
+        }
+        if materials:
+            row["materials"] = materials
+            shortages = [
+                item for item in materials if float(item.get("shortage") or 0.0) > 1e-9
+            ]
+            if shortages:
+                row["shortages"] = shortages
+        rows.append(row)
+    rows.sort(key=lambda row: (-float(row["plan"]), str(row["name"])))
+    return rows
+
+
+def _serialize_nomenclature_rows_for_months(
+    merged: Iterable[Any],
+    month_keys: list[str],
+    *,
+    schedule_months_by_key: dict[str, str],
+) -> list[dict[str, Any]]:
+    if not month_keys:
+        return []
+    rows: list[dict[str, Any]] = []
+    for row in merged:
+        name = str(getattr(row, "nomenclature", "") or "").strip()
+        if not name:
+            continue
+        opening = float(getattr(row, "stock", 0.0) or 0.0)
+        plan_total = 0.0
+        fact_total = 0.0
+        covered_total = 0.0
+        expected_total = 0.0
+        available_end = opening
+
+        for month_key in month_keys:
+            schedule_month = schedule_months_by_key.get(month_key, "")
+            monthly_demand = getattr(row, "monthly_demand", None) or {}
+            bucket = _monthly_bucket(
+                monthly_demand,
+                schedule_month=schedule_month,
+                month_label=month_key,
+            )
+            plan = 0.0
+            fact = 0.0
+            for category in ("заказ", "опытные", "склад"):
+                part = bucket.get(category) or {}
+                plan += float(part.get("план", 0.0) or 0.0)
+                fact += float(part.get("факт", 0.0) or 0.0)
+            receipts = _monthly_scalar(
+                getattr(row, "monthly_receipts", None) or {},
+                schedule_month=schedule_month,
+                month_label=month_key,
+            )
+            expected_total += receipts
+            opening += receipts
+            covered = min(plan, opening) if plan > 1e-12 else 0.0
+            plan_total += plan
+            fact_total += fact
+            covered_total += covered
+            opening = max(0.0, opening - plan)
+            available_end = opening
+
+        if plan_total <= 1e-12 and fact_total <= 1e-12:
+            continue
+        supply_for_optional = float(getattr(row, "stock", 0.0) or 0.0) + expected_total
+        rows.append(
+            {
+                "name": name,
+                "plan": round(plan_total, 2),
+                "fact": round(fact_total, 2),
+                "covered": round(covered_total, 2),
+                "available": round(max(0.0, available_end), 2),
+                "status": _nomenclature_status(plan_total, covered_total),
+                **_material_meta_from_row(row, available=supply_for_optional),
+            }
+        )
+    rows.sort(key=lambda item: (-float(item["plan"]), str(item["name"])))
+    return rows
+
+
+def _serialize_period_multi_month(
+    *,
+    period_days: list[str],
+    month_keys: list[str],
+    schedule_months_by_key: dict[str, str],
+    product_coverage: ProductCoverageResult | None,
+    merged: list[Any],
+    spec_eligible_products: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    product_rows = _serialize_product_rows_for_months(
+        product_coverage,
+        month_keys,
+        schedule_months_by_key=schedule_months_by_key,
+        merged=merged,
+        spec_eligible_products=spec_eligible_products,
+    )
+    nomenclature_rows = _serialize_nomenclature_rows_for_months(
+        merged,
+        month_keys,
+        schedule_months_by_key=schedule_months_by_key,
+    )
+    return {
+        "key": "custom",
+        "label": "Период",
+        "days": period_days,
+        "products": {
+            "rows": product_rows[:250],
+            "tiles": _tile_stats(product_rows),
+        },
+        "nomenclatures": {
+            "rows": nomenclature_rows[:250],
+            "tiles": _tile_stats(nomenclature_rows),
+        },
+    }
+
+
 def _serialize_product_rows_monthly(
     product_coverage: ProductCoverageResult | None,
     month_label: str | None,
@@ -1038,6 +1365,7 @@ def build_coverage_period_for_range(
     merged: list[Any],
     day_keys: list[str],
     detailed_plans: list[Any] | None = None,
+    schedule_plans: list[Any] | None = None,
     as_of: date | None = None,
     schedule_month: str = "",
     spec_eligible_products: frozenset[str] | None = None,
@@ -1049,8 +1377,43 @@ def build_coverage_period_for_range(
     keys = list(day_keys or [])
     if daily_plan_coverage is not None and daily_plan_coverage.day_keys:
         keys = list(daily_plan_coverage.day_keys)
-    if not keys and not merged and product_coverage is None:
+    if not keys and not merged and product_coverage is None and not schedule_plans:
         return None
+
+    period_days_all = period_day_keys_for_range(keys, date_from, date_to)
+    use_monthly = _range_spans_multiple_months(date_from, date_to) or not period_days_all
+
+    if use_monthly:
+        month_keys = resolve_plan_month_keys_for_range(
+            schedule_plans or [],
+            merged,
+            date_from,
+            date_to,
+        )
+        if not month_keys and not merged:
+            return None
+        coverage = product_coverage
+        if schedule_plans and month_keys:
+            from app.agents.document_analysis_agent.product_coverage import (
+                compute_product_coverage,
+            )
+
+            coverage = compute_product_coverage(schedule_plans, merged, month_keys)
+        schedule_months_by_key = _schedule_months_by_plan_key(
+            month_keys,
+            date_from,
+            date_to,
+            schedule_plans or [],
+        )
+        display_days = [date_from.isoformat(), date_to.isoformat()]
+        return _serialize_period_multi_month(
+            period_days=display_days,
+            month_keys=month_keys,
+            schedule_months_by_key=schedule_months_by_key,
+            product_coverage=coverage,
+            merged=merged,
+            spec_eligible_products=spec_eligible_products,
+        )
 
     resolved_schedule_month, month_label = resolve_coverage_target_month(
         schedule_month=schedule_month,
@@ -1081,6 +1444,7 @@ def dump_coverage_rebuild(
     *,
     merged: list[Any],
     detailed_plans: list[Any] | None,
+    schedule_plans: list[Any] | None = None,
     day_keys: list[str],
     as_of: date,
     schedule_month: str,
@@ -1088,11 +1452,19 @@ def dump_coverage_rebuild(
 ) -> dict[str, Any]:
     """Компактный снимок данных для быстрого пересчёта периода без повторного анализа."""
     return {
-        "version": 1,
+        "version": 2,
         "as_of": as_of.isoformat(),
         "schedule_month": schedule_month,
         "day_keys": list(day_keys),
         "spec_eligible_products": sorted(spec_eligible_products or ()),
+        "schedule_plans": [
+            {
+                "product": str(getattr(plan, "product", "") or ""),
+                "monthly_qty": dict(getattr(plan, "monthly_qty", None) or {}),
+            }
+            for plan in (schedule_plans or [])
+            if str(getattr(plan, "product", "") or "").strip()
+        ],
         "plans": [
             {
                 "product": str(getattr(plan, "product", "") or ""),
@@ -1206,6 +1578,14 @@ def rebuild_coverage_period_from_cache(
     ]
     eligible_raw = cache.get("spec_eligible_products") or []
     spec_eligible = frozenset(str(name) for name in eligible_raw if name) or None
+    schedule_plans = [
+        SimpleNamespace(
+            product=str(item.get("product") or ""),
+            monthly_qty=dict(item.get("monthly_qty") or {}),
+        )
+        for item in (cache.get("schedule_plans") or [])
+        if isinstance(item, dict) and item.get("product")
+    ]
     daily = compute_daily_plan_coverage(plans, merged, day_keys) if plans and day_keys else None
     return build_coverage_period_for_range(
         daily_plan_coverage=daily,
@@ -1213,6 +1593,7 @@ def rebuild_coverage_period_from_cache(
         merged=merged,
         day_keys=day_keys,
         detailed_plans=plans,
+        schedule_plans=schedule_plans or None,
         as_of=as_of_day,
         schedule_month=str(cache.get("schedule_month") or ""),
         spec_eligible_products=spec_eligible,

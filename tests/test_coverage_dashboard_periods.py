@@ -167,6 +167,97 @@ def test_nomenclature_period_uses_rolling_stock():
     assert week_tiles["yellow_covered_total"] == 15
 
 
+def test_coverage_period_multi_month_uses_monthly_production_plan():
+    schedule_plans = [
+        SimpleNamespace(
+            product="A",
+            monthly_qty={
+                "Август": {"заказ": {"план": 100.0, "факт": 0.0}},
+                "Сентябрь": {"заказ": {"план": 200.0, "факт": 0.0}},
+                "Октябрь": {"заказ": {"план": 300.0, "факт": 0.0}},
+            },
+        )
+    ]
+    merged = [
+        SimpleNamespace(
+            nomenclature="M",
+            by_product={"A": 1.0},
+            stock=1000.0,
+            daily_demand={},
+            daily_demand_fact={},
+            daily_receipts={},
+            monthly_demand={
+                "Август": {"заказ": {"план": 100.0, "факт": 0.0}},
+                "Сентябрь": {"заказ": {"план": 200.0, "факт": 0.0}},
+                "Октябрь": {"заказ": {"план": 300.0, "факт": 0.0}},
+            },
+            monthly_receipts={},
+        )
+    ]
+    day_keys = [f"2026-08-{day:02d}" for day in range(1, 32)]
+
+    payload = build_coverage_period_for_range(
+        daily_plan_coverage=None,
+        product_coverage=None,
+        merged=merged,
+        day_keys=day_keys,
+        schedule_plans=schedule_plans,
+        as_of=date(2026, 8, 10),
+        schedule_month="2026-08",
+        date_from=date(2026, 8, 1),
+        date_to=date(2026, 10, 31),
+    )
+    assert payload is not None
+    assert payload["days"] == ["2026-08-01", "2026-10-31"]
+    assert payload["products"]["tiles"]["plan_total"] == 600.0
+    assert payload["nomenclatures"]["tiles"]["plan_total"] == 600.0
+
+
+def test_coverage_period_rebuilds_multi_month_from_cache():
+    schedule_plans = [
+        SimpleNamespace(
+            product="A",
+            monthly_qty={
+                "Август": {"заказ": {"план": 50.0, "факт": 0.0}},
+                "Сентябрь": {"заказ": {"план": 70.0, "факт": 0.0}},
+            },
+        )
+    ]
+    merged = [
+        SimpleNamespace(
+            nomenclature="M",
+            by_product={"A": 1.0},
+            stock=500.0,
+            daily_demand={},
+            daily_demand_fact={},
+            daily_receipts={},
+            monthly_demand={
+                "Август": {"заказ": {"план": 50.0, "факт": 0.0}},
+                "Сентябрь": {"заказ": {"план": 70.0, "факт": 0.0}},
+            },
+            monthly_receipts={},
+        )
+    ]
+    day_keys = [f"2026-08-{day:02d}" for day in range(1, 32)]
+    cache = dump_coverage_rebuild(
+        merged=merged,
+        detailed_plans=[],
+        schedule_plans=schedule_plans,
+        day_keys=day_keys,
+        as_of=date(2026, 8, 10),
+        schedule_month="2026-08",
+    )
+    payload = rebuild_coverage_period_from_cache(
+        cache,
+        date(2026, 8, 1),
+        date(2026, 9, 30),
+    )
+    assert payload is not None
+    assert payload["days"] == ["2026-08-01", "2026-09-30"]
+    assert payload["products"]["tiles"]["plan_total"] == 120.0
+    assert payload["nomenclatures"]["tiles"]["plan_total"] == 120.0
+
+
 def test_product_shortages_attached_for_unprovided():
     day_keys = ["2026-08-10", "2026-08-11"]
     plans = [_plan("A", {"2026-08-10": 10, "2026-08-11": 10})]
