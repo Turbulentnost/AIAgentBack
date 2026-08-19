@@ -6,17 +6,31 @@ from io import BytesIO
 
 from openpyxl import Workbook
 
+# xlsx/xlsm — ZIP (PK); настоящий .xls — OLE compound (D0 CF 11 E0).
+_XLSX_MAGIC = b"PK"
+_XLS_OLE_MAGIC = b"\xd0\xcf\x11\xe0"
+
 
 def is_legacy_xls_filename(filename: str) -> bool:
     lower = filename.lower()
     return lower.endswith(".xls") and not lower.endswith((".xlsx", ".xlsm"))
 
 
+def looks_like_xlsx(content: bytes) -> bool:
+    return bool(content) and content.startswith(_XLSX_MAGIC)
+
+
+def looks_like_ole_xls(content: bytes) -> bool:
+    return bool(content) and content.startswith(_XLS_OLE_MAGIC)
+
+
 def ensure_openpyxl_bytes(filename: str, content: bytes) -> bytes:
     """Вернуть содержимое, которое умеет читать openpyxl (.xlsx/.xlsm как есть, .xls → конверсия)."""
-    if not is_legacy_xls_filename(filename):
+    if looks_like_xlsx(content):
         return content
-    return xls_bytes_to_xlsx_bytes(content)
+    if is_legacy_xls_filename(filename) or looks_like_ole_xls(content):
+        return xls_bytes_to_xlsx_bytes(content)
+    return content
 
 
 def xls_bytes_to_xlsx_bytes(content: bytes) -> bytes:

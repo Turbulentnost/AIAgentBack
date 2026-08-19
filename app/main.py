@@ -35,6 +35,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         logger.warning("app.onec_tables.ensure_failed", error=str(exc))
 
+    try:
+        from app.services.wechat_message_store import ensure_wechat_tables
+
+        await ensure_wechat_tables()
+    except Exception as exc:
+        logger.warning("app.wechat_tables.ensure_failed", error=str(exc))
+
     stop_onec_sync = asyncio.Event()
     onec_sync_task: asyncio.Task | None = None
     if settings.ONEC_DAILY_SYNC_ENABLED and settings.ONEC_INPROCESS_SYNC_ENABLED:
@@ -42,13 +49,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         onec_sync_task = asyncio.create_task(onec_sync_scheduler_loop(stop_onec_sync))
 
+    stop_wechat_listener = asyncio.Event()
+    from app.services.wechat_utility_connect import wechat_history_listener_loop
+
+    wechat_listener_task = asyncio.create_task(wechat_history_listener_loop(stop_wechat_listener))
+    logger.info("app.wechat_listener.scheduled")
+
     yield
 
     stop_onec_sync.set()
+    stop_wechat_listener.set()
     if onec_sync_task is not None:
         onec_sync_task.cancel()
         try:
             await onec_sync_task
+        except asyncio.CancelledError:
+            pass
+    if wechat_listener_task is not None:
+        wechat_listener_task.cancel()
+        try:
+            await wechat_listener_task
         except asyncio.CancelledError:
             pass
     logger.info("app.shutdown")

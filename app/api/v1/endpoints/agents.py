@@ -12,8 +12,8 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import Response
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
@@ -1060,6 +1060,96 @@ async def temp_wechat_utility_test(_user: DocumentAnalysisUser):
     from app.services.wechat_utility_connect import test_wechat_utility_connection
 
     return await test_wechat_utility_connection()
+
+
+@router.post("/document-analysis/wechat-utility-session")
+async def temp_wechat_utility_session(_user: DocumentAnalysisUser):
+    """TEMP: JWT + URL утилиты для живого WebSocket в браузере."""
+    from app.services.wechat_utility_connect import create_wechat_session
+
+    return await create_wechat_session()
+
+
+@router.websocket("/document-analysis/wechat-utility-stream")
+async def temp_wechat_utility_stream(websocket: WebSocket, token: str = Query(...)):
+    """TEMP: проксирует сообщения утилиты, если браузер не достучится до :8790."""
+    from app.api.deps import authenticate_access_token
+    from app.db.session import AsyncSessionLocal
+    from app.services.wechat_utility_connect import stream_wechat_utility_messages
+
+    await websocket.accept()
+    async with AsyncSessionLocal() as db:
+        try:
+            await authenticate_access_token(db, token)
+        except Exception:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+    try:
+        async for raw in stream_wechat_utility_messages():
+            await websocket.send_text(raw)
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        await websocket.send_json({"event": "error", "error": str(exc)})
+        await websocket.close()
+
+
+@router.get("/document-analysis/wechat-utility-history")
+async def temp_wechat_utility_history(_user: DocumentAnalysisUser):
+    """TEMP: вся сохранённая переписка WeChat из БД."""
+    from app.services.wechat_message_store import list_wechat_messages
+
+    items = await list_wechat_messages()
+    return {"ok": True, "count": len(items), "items": items}
+
+
+@router.get("/document-analysis/wechat-utility-listener")
+async def temp_wechat_utility_listener(_user: DocumentAnalysisUser):
+    """TEMP: статус постоянного слушателя утилиты."""
+    from app.services.wechat_utility_connect import wechat_listener_status
+
+    return {"ok": True, **wechat_listener_status()}
+
+
+@router.get("/document-analysis/wechat-utility-groups")
+async def temp_wechat_utility_groups(_user: DocumentAnalysisUser):
+    """TEMP: список WeChat-групп из сохранённой истории."""
+    from app.services.wechat_message_store import list_wechat_groups
+
+    groups = await list_wechat_groups()
+    return {"ok": True, "count": len(groups), "groups": groups}
+
+
+@router.get("/document-analysis/wechat-utility-groups/messages")
+async def temp_wechat_utility_group_messages(
+    _user: DocumentAnalysisUser,
+    group_id: str | None = Query(default=None),
+    group_name: str | None = Query(default=None),
+):
+    """TEMP: история конкретной WeChat-группы."""
+    from app.services.wechat_message_store import list_wechat_group_messages
+
+    items = await list_wechat_group_messages(group_id=group_id, group_name=group_name)
+    return {"ok": True, "count": len(items), "items": items}
+
+
+@router.get("/document-analysis/wechat-utility-files/{message_id}")
+async def temp_wechat_utility_file(message_id: str, _user: DocumentAnalysisUser):
+    """TEMP: файл из истории WeChat (изображение / голос / видео)."""
+    from app.services.wechat_message_store import list_wechat_messages, resolve_wechat_file_path
+
+    items = await list_wechat_messages(limit=2000)
+    item = next((row for row in items if row.get("id") == message_id), None)
+    file_meta = (item or {}).get("file") or {}
+    path = resolve_wechat_file_path(file_meta.get("path"))
+    if path is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Файл не найден")
+    return FileResponse(
+        path,
+        media_type=file_meta.get("mimeType") or "application/octet-stream",
+        filename=file_meta.get("name") or path.name,
+    )
 
 
 # TEMP(Aveon OData ping) — удалить целиком без последствий

@@ -226,12 +226,13 @@ class Settings(BaseSettings):
     SHIFT_COMPLETION_RECIPIENT_EMAIL: str = "sktb_razvitie5@turbo-don.ru"
 
     # WeChat-утилита (CONNECT.md): WebSocket :8790 + JWT HS256
-    WECHAT_WS_URL: str = "ws://127.0.0.1:8790"
+    WECHAT_WS_URL: str = "ws://192.168.5.80:8790"
     WECHAT_JWT_SECRET: str = ""
     WECHAT_JWT_AUDIENCE: str = "wechat-ws"
     WECHAT_JWT_SCOPE: str = "wechat:read"
     WECHAT_JWT_SUB: str = "avion-backend-test"
     WECHAT_CONNECT_TIMEOUT_SEC: float = 10.0
+    WECHAT_MEDIA_DIR: str = "data/aveon/wechat_media"
 
     @property
     def cors_origins(self) -> list[str]:
