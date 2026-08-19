@@ -1306,6 +1306,72 @@ async def get_aveon_resource_spec(
     return {"ok": True, "spec": spec}
 
 
+class MaterialCalculatorItemIn(BaseModel):
+    spec_ref_key: str = Field(min_length=1)
+    quantity: float = Field(gt=0)
+
+
+class MaterialCalculatorRequestIn(BaseModel):
+    items: list[MaterialCalculatorItemIn] = Field(min_length=1)
+
+
+class MaterialCalculatorExportLineIn(BaseModel):
+    nomenclature_key: str = ""
+    code: str = ""
+    name: str = Field(min_length=1)
+    unit: str = ""
+    total_qty: float = Field(ge=0)
+
+
+class MaterialCalculatorExportIn(BaseModel):
+    lines: list[MaterialCalculatorExportLineIn] = Field(min_length=1)
+
+
+@router.post("/document-analysis/material-calculator")
+async def calculate_aveon_materials(
+    body: MaterialCalculatorRequestIn,
+    _user: DocumentAnalysisUser,
+    db: DbSession,
+):
+    """Потребность в материалах по выбранным спецификациям и количествам изделий."""
+    from app.services.material_calculator import (
+        MaterialCalculatorInputItem,
+        calculate_material_requirements,
+        material_calculator_to_dict,
+    )
+
+    items = [
+        MaterialCalculatorInputItem(spec_ref_key=item.spec_ref_key, quantity=item.quantity)
+        for item in body.items
+    ]
+    result = await calculate_material_requirements(db, items)
+    return material_calculator_to_dict(result)
+
+
+@router.post("/document-analysis/material-calculator/export")
+async def export_aveon_materials(
+    body: MaterialCalculatorExportIn,
+    _user: DocumentAnalysisUser,
+):
+    """Выгрузка итоговой потребности в материалах в Excel."""
+    from app.services.material_calculator import (
+        MATERIAL_CALCULATOR_XLSX_FILENAME,
+        build_material_calculator_xlsx,
+        material_calculator_lines_to_result,
+    )
+
+    result = material_calculator_lines_to_result([line.model_dump() for line in body.lines])
+    if not result.lines:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нет строк для выгрузки")
+    xlsx = build_material_calculator_xlsx(result)
+    filename = quote(MATERIAL_CALCULATOR_XLSX_FILENAME)
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
 @router.get("/document-analysis/schedule-snapshot-status")
 async def get_aveon_schedule_snapshot_status(_user: DocumentAnalysisUser):
     """Сохранённые базовые версии графиков производства для сравнения при анализе."""
@@ -2336,6 +2402,7 @@ class ShiftCompletionTaskPayload(BaseModel):
     priority: str = ""
     deadline: str = ""
     deficit: str = ""
+    unit: str = ""
     status: str = ""
     result_text: str = ""
     eval_comment: str | None = None
@@ -2802,61 +2869,164 @@ async def get_shift_completion_dates(
     }
 
 
+async def _load_shift_completion_summary_for_period(
+    db: DbSession,
+    *,
+    period_mode: str,
+    report_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    manager_name: str | None = None,
+    manager_user_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    normalized_mode = (period_mode or "day").strip().lower()
+    if normalized_mode not in {"day", "range", "all"}:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "period_mode должен быть day, range или all.",
+        )
+
+    today = date.fromisoformat(today_msk_iso())
+    manager_user_ids = await _shift_manager_user_ids(db)
+
+    def _apply_manager_filters(stmt):
+        if manager_name:
+            stmt = stmt.where(ShiftCompletionReport.manager_name == manager_name.strip())
+        if manager_user_id:
+            stmt = stmt.where(ShiftCompletionReport.manager_user_id == manager_user_id)
+        return stmt
+
+    if normalized_mode == "day":
+        target_date = report_date or date_from or date_to or today
+        range_from = target_date
+        range_to = target_date
+        result = await db.execute(
+            _apply_manager_filters(
+                select(ShiftCompletionReport).where(ShiftCompletionReport.report_date == target_date)
+            ).order_by(
+                ShiftCompletionReport.manager_name.asc(),
+                ShiftCompletionReport.email_sent_at.desc(),
+            )
+        )
+        reports = list(result.scalars().all())
+        summary = _shift_completion_read_stats(
+            reports,
+            report_date=target_date,
+            manager_user_ids=manager_user_ids,
+        )
+        period_label = target_date.isoformat()
+        effective_mode = "day"
+    else:
+        if normalized_mode == "all":
+            min_result = await db.execute(select(func.min(ShiftCompletionReport.report_date)))
+            min_date = min_result.scalar_one_or_none()
+            range_from = min_date or today
+            range_to = today
+        else:
+            if date_from is None or date_to is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Для period_mode=range нужны date_from и date_to.",
+                )
+            if date_from > date_to:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "date_from не может быть позже date_to.",
+                )
+            if (date_to - date_from).days > 365:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Максимальная длина периода — 365 дней.",
+                )
+            range_from = date_from
+            range_to = date_to
+
+        if normalized_mode == "range" and range_from == range_to:
+            target_date = range_from
+            result = await db.execute(
+                _apply_manager_filters(
+                    select(ShiftCompletionReport).where(ShiftCompletionReport.report_date == target_date)
+                ).order_by(
+                    ShiftCompletionReport.manager_name.asc(),
+                    ShiftCompletionReport.email_sent_at.desc(),
+                )
+            )
+            reports = list(result.scalars().all())
+            summary = _shift_completion_read_stats(
+                reports,
+                report_date=target_date,
+                manager_user_ids=manager_user_ids,
+            )
+            period_label = target_date.isoformat()
+            effective_mode = "day"
+        else:
+            target_date = range_to
+            result = await db.execute(
+                _apply_manager_filters(
+                    select(ShiftCompletionReport).where(
+                        ShiftCompletionReport.report_date >= range_from,
+                        ShiftCompletionReport.report_date <= range_to,
+                    )
+                ).order_by(
+                    ShiftCompletionReport.report_date.asc(),
+                    ShiftCompletionReport.manager_name.asc(),
+                    ShiftCompletionReport.email_sent_at.desc(),
+                )
+            )
+            reports = list(result.scalars().all())
+            summary = _shift_completion_aggregate_period(
+                reports,
+                date_from=range_from,
+                date_to=range_to,
+                manager_user_ids=manager_user_ids,
+            )
+            if normalized_mode == "all":
+                period_label = f"всё время ({range_from.isoformat()} — {range_to.isoformat()})"
+            else:
+                period_label = f"{range_from.isoformat()} — {range_to.isoformat()}"
+            effective_mode = normalized_mode
+
+    return {
+        "summary": summary,
+        "target_date": target_date,
+        "range_from": range_from,
+        "range_to": range_to,
+        "period_mode": effective_mode,
+        "period_label": period_label,
+    }
+
+
 @router.get("/document-analysis/shift-assignment/completion-reports")
 @router.get("/document-analysis/shift-assignment/completion-dashboard")
 async def get_shift_completion_dashboard(
     _user: DocumentAnalysisUser,
     db: DbSession,
     report_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    period_mode: str = "day",
     manager_name: str | None = None,
     manager_user_id: uuid.UUID | None = None,
 ):
     """Сводка руководителя по завершённым сменам менеджеров."""
     await ensure_shift_completion_tables()
-    target_date = report_date or date.fromisoformat(today_msk_iso())
-    stmt = select(ShiftCompletionReport).where(ShiftCompletionReport.report_date == target_date)
-    if manager_name:
-        stmt = stmt.where(ShiftCompletionReport.manager_name == manager_name.strip())
-    if manager_user_id:
-        stmt = stmt.where(ShiftCompletionReport.manager_user_id == manager_user_id)
-    result = await db.execute(
-        stmt.order_by(
-            ShiftCompletionReport.manager_name.asc(),
-            ShiftCompletionReport.email_sent_at.desc(),
-        )
+    period = await _load_shift_completion_summary_for_period(
+        db,
+        period_mode=period_mode,
+        report_date=report_date,
+        date_from=date_from,
+        date_to=date_to,
+        manager_name=manager_name,
+        manager_user_id=manager_user_id,
     )
-    reports = list(result.scalars().all())
-    manager_user_ids = await _shift_manager_user_ids(db)
-    summary = _shift_completion_read_stats(
-        reports,
-        report_date=target_date,
-        manager_user_ids=manager_user_ids,
+    return _completion_dashboard_payload(
+        period["summary"],
+        report_date=period["target_date"],
+        period_mode=period["period_mode"],
+        period_label=period["period_label"],
+        date_from=period["range_from"],
+        date_to=period["range_to"],
     )
-    return {
-        "ok": True,
-        "report_date": target_date.isoformat(),
-        "live_mode": summary.get("live_mode", False),
-        "summary": {
-            key: value
-            for key, value in summary.items()
-            if key
-            not in {
-                "managers",
-                "roster_total",
-                "submitted_count",
-                "in_progress_count",
-                "missing_count",
-                "live_mode",
-            }
-        },
-        "roster": {
-            "total": summary["roster_total"],
-            "submitted": summary["submitted_count"],
-            "in_progress": summary["in_progress_count"],
-            "missing": summary["missing_count"],
-        },
-        "managers": summary["managers"],
-    }
 
 
 def _leader_dashboard_snapshot(user_id: uuid.UUID | str | None) -> dict[str, Any] | None:
@@ -2929,80 +3099,21 @@ async def download_executive_procurement_report(
         )
 
     await ensure_shift_completion_tables()
-    today = date.fromisoformat(today_msk_iso())
-    manager_user_ids = await _shift_manager_user_ids(db)
-
-    if normalized_mode == "day":
-        target_date = report_date or today
-        range_from = target_date
-        range_to = target_date
-        result = await db.execute(
-            select(ShiftCompletionReport)
-            .where(ShiftCompletionReport.report_date == target_date)
-            .order_by(
-                ShiftCompletionReport.manager_name.asc(),
-                ShiftCompletionReport.email_sent_at.desc(),
-            )
-        )
-        reports = list(result.scalars().all())
-        summary = _shift_completion_read_stats(
-            reports,
-            report_date=target_date,
-            manager_user_ids=manager_user_ids,
-        )
-        period_label = target_date.isoformat()
-    else:
-        if normalized_mode == "all":
-            min_result = await db.execute(select(func.min(ShiftCompletionReport.report_date)))
-            min_date = min_result.scalar_one_or_none()
-            range_from = min_date or today
-            range_to = today
-        else:
-            if date_from is None or date_to is None:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "Для period_mode=range нужны date_from и date_to.",
-                )
-            if date_from > date_to:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "date_from не может быть позже date_to.",
-                )
-            if (date_to - date_from).days > 365:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "Максимальная длина периода — 365 дней.",
-                )
-            range_from = date_from
-            range_to = date_to
-
-        result = await db.execute(
-            select(ShiftCompletionReport)
-            .where(
-                ShiftCompletionReport.report_date >= range_from,
-                ShiftCompletionReport.report_date <= range_to,
-            )
-            .order_by(
-                ShiftCompletionReport.report_date.asc(),
-                ShiftCompletionReport.manager_name.asc(),
-                ShiftCompletionReport.email_sent_at.desc(),
-            )
-        )
-        reports = list(result.scalars().all())
-        summary = _shift_completion_aggregate_period(
-            reports,
-            date_from=range_from,
-            date_to=range_to,
-            manager_user_ids=manager_user_ids,
-        )
-        if normalized_mode == "all":
-            period_label = f"всё время ({range_from.isoformat()} — {range_to.isoformat()})"
-        else:
-            period_label = f"{range_from.isoformat()} — {range_to.isoformat()}"
-        target_date = range_to
+    period = await _load_shift_completion_summary_for_period(
+        db,
+        period_mode=normalized_mode,
+        report_date=report_date,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    target_date = period["target_date"]
+    range_from = period["range_from"]
+    range_to = period["range_to"]
+    period_label = period["period_label"]
+    normalized_mode = period["period_mode"]
 
     completion_dashboard = _completion_dashboard_payload(
-        summary,
+        period["summary"],
         report_date=target_date,
         period_mode=normalized_mode,
         period_label=period_label,
@@ -3103,6 +3214,7 @@ async def complete_shift_assignment(
             "priority": task.priority,
             "deadline": task.deadline,
             "deficit": task.deficit,
+            "unit": task.unit,
             "status": task.status,
             "result_text": task.result_text,
             "eval_comment": task.eval_comment,

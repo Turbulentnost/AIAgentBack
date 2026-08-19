@@ -199,6 +199,14 @@ def _fmt_qty(value: float) -> str:
     return f"{value:g}"
 
 
+def _fmt_deficit_label(qty: float, unit: str | None = None) -> str:
+    qty_text = _fmt_qty(qty)
+    unit_text = " ".join((unit or "").strip().split())
+    if not unit_text:
+        return qty_text
+    return f"{qty_text} {unit_text}"
+
+
 def _fmt_date(iso: str) -> str:
     if not iso:
         return "—"
@@ -531,7 +539,10 @@ def collect_logistics_tasks(
                         priority=priority,
                     ),
                     nomenclature=display_name,
-                    deficit_label=_fmt_qty(float(item.quantity)),
+                    deficit_label=_fmt_deficit_label(
+                        float(item.quantity),
+                        canonical_row.unit if canonical_row is not None else None,
+                    ),
                     country=country,
                     supplier=supplier,
                     due_label=due,
@@ -622,7 +633,7 @@ def _collect_daily_purchase_task(
         problem=problem,
         solution=solution,
         nomenclature=nomenclature,
-        deficit_label=_fmt_qty(need),
+        deficit_label=_fmt_deficit_label(need, row.unit),
         country=country,
         supplier=supplier,
         due_label=due_label,
@@ -705,7 +716,7 @@ def collect_result_purchase_tasks(
                 problem=problem,
                 solution=solution,
                 nomenclature=nomenclature,
-                deficit_label=_fmt_qty(need),
+                deficit_label=_fmt_deficit_label(need, row.unit),
                 country=country,
                 supplier=supplier,
                 due_label=due_label,

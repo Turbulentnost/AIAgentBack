@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -23,8 +24,23 @@ from app.services.profile_image_service import ProfileImageService
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _is_desktop_mode() -> bool:
+    return os.environ.get("DESKTOP_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @router.post("/login", response_model=Token)
 async def login(db: DbSession, credentials: LoginRequest, request: Request) -> Token:
+    # Desktop: перед входом синхронизируем bootstrap-пользователей @local.dev,
+    # чтобы на чужой/старой БД пароли совпадали со спецификацией.
+    if _is_desktop_mode():
+        try:
+            from app.services.aveon_desktop_users import ensure_aveon_desktop_users
+
+            await ensure_aveon_desktop_users(db)
+        except Exception:
+            # Не блокируем login — authenticate сам вернёт 401/500.
+            pass
+
     try:
         user, token = await AuthService(db).authenticate(
             email=credentials.email,

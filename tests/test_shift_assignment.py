@@ -13,6 +13,7 @@ def _row(
     daily_forecast: dict[str, float] | None = None,
     monthly_forecast: dict[str, float] | None = None,
     stock: float = 0.0,
+    unit: str | None = None,
 ):
     return SimpleNamespace(
         nomenclature=name,
@@ -21,6 +22,7 @@ def _row(
         stock=stock,
         supplier="Поставщик",
         country_of_origin="Китай",
+        unit=unit,
     )
 
 
@@ -87,3 +89,26 @@ def test_purchase_tasks_fallback_to_monthly_without_detailed_plan() -> None:
     assert [task.nomenclature for task in tasks] == ["Месячный дефицит"]
     assert tasks[0].deficit_label == "500"
     assert tasks[0].due_label == "31.08.2026"
+
+
+def test_purchase_tasks_deficit_includes_unit_from_spec() -> None:
+    detailed = DetailedScheduleExtract(
+        files=[],
+        plans=[],
+        year=2026,
+        month=8,
+        day_keys=["2026-08-07", "2026-08-08"],
+    )
+    rows = [
+        _row(
+            "Болт М6",
+            unit="шт",
+            daily_forecast={"2026-08-07": 0, "2026-08-08": -12},
+            stock=0,
+        )
+    ]
+
+    tasks = collect_result_purchase_tasks(rows, detailed, as_of=date(2026, 8, 7))
+
+    assert len(tasks) == 1
+    assert tasks[0].deficit_label == "12 шт"

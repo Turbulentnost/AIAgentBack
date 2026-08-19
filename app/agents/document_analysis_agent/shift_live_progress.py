@@ -228,6 +228,7 @@ def build_manager_live_payload(
             "priority": priority,
             "deadline": str(row[col_index.get("Крайний срок", -1)] if col_index.get("Крайний срок", -1) >= 0 else ""),
             "deficit": str(row[col_index.get("Дефицит", -1)] if col_index.get("Дефицит", -1) >= 0 else ""),
+            "unit": str(row[col_index.get("Ед. изм.", -1)] if col_index.get("Ед. изм.", -1) >= 0 else ""),
             "status": status,
             "result_text": result_text,
             "eval_comment": str(eval_state.get("comment") or ""),

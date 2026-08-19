@@ -7,7 +7,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.models.user import User
 
 DesktopRoleKind = Literal[
@@ -148,17 +148,32 @@ def is_registered_avion_platform_user(user: User | None) -> bool:
     return normalized_name in avion_platform_user_full_names()
 
 
+def _password_matches(user: User, password: str) -> bool:
+    hashed = user.hashed_password or ""
+    if not hashed:
+        return False
+    try:
+        return verify_password(password, hashed)
+    except Exception:
+        return False
+
+
 async def ensure_aveon_desktop_users(db: AsyncSession) -> list[str]:
-    """Создаёт/обновляет пользователей desktop и выдаёт доступ к агенту Авион."""
+    """Создаёт/обновляет пользователей desktop и выдаёт доступ к агенту Авион.
+
+    Для bootstrap-аккаунтов @local.dev пароль всегда синхронизируется со спецификацией —
+    иначе на чужой БД остаётся чужой hash и вход «верным» паролем даёт 401.
+    """
     from app.services.document_analysis_permission import ensure_avion_only_user_agent_grant
 
-    created: list[str] = []
+    touched: list[str] = []
 
     for spec in AVEON_DESKTOP_USERS:
-        user = await db.scalar(select(User).where(User.email == spec.email))
+        email = spec.email.strip().lower()
+        user = await db.scalar(select(User).where(User.email == email))
         if user is None:
             user = User(
-                email=spec.email,
+                email=email,
                 full_name=spec.full_name,
                 first_name=spec.first_name,
                 last_name=spec.last_name,
@@ -167,24 +182,33 @@ async def ensure_aveon_desktop_users(db: AsyncSession) -> list[str]:
                 is_verified=True,
                 is_superuser=spec.is_superuser,
                 must_change_password=False,
+                deleted_at=None,
             )
             db.add(user)
             await db.flush()
-            created.append(spec.email)
+            touched.append(f"{email}:created")
         else:
+            user.email = email
             user.full_name = spec.full_name
             user.first_name = spec.first_name
             user.last_name = spec.last_name
             user.is_active = True
             user.is_verified = True
+            user.must_change_password = False
+            user.deleted_at = None
             if spec.is_superuser:
                 user.is_superuser = True
+            if not _password_matches(user, spec.password):
+                user.hashed_password = hash_password(spec.password)
+                touched.append(f"{email}:password_synced")
+            else:
+                touched.append(f"{email}:ok")
 
         if await ensure_avion_only_user_agent_grant(db, user):
-            created.append(f"{spec.email} (grant)")
+            touched.append(f"{email}:grant")
 
     await db.commit()
-    return created
+    return touched
 
 
 __all__ = [

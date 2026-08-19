@@ -24,15 +24,16 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    logger.info("app_desktop.startup", environment=settings.ENVIRONMENT)
+    logger.info(
+        "app_desktop.startup",
+        environment=settings.ENVIRONMENT,
+        postgres_host=settings.POSTGRES_HOST,
+        postgres_db=settings.POSTGRES_DB,
+    )
     try:
-        from app.db.session import AsyncSessionLocal
-        from app.services.aveon_desktop_users import ensure_aveon_desktop_users
+        from app_desktop.bootstrap_auth import bootstrap_desktop_auth_store
 
-        async with AsyncSessionLocal() as session:
-            ensured = await ensure_aveon_desktop_users(session)
-            if ensured:
-                logger.info("app_desktop.users_ensured", count=len(ensured))
+        await bootstrap_desktop_auth_store()
     except Exception as exc:
         logger.warning("app_desktop.users.ensure_failed", error=str(exc))
 
