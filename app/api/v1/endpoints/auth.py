@@ -156,9 +156,16 @@ async def current_user(db: DbSession, current_user: CurrentUser) -> UserRead:
 
 
 async def _user_read(db: DbSession, user: User) -> UserRead:
-    await db.refresh(user)
+    try:
+        await db.refresh(user)
+    except Exception:
+        # SQLite/desktop: объект уже в сессии после login.
+        pass
     data = UserRead.model_validate(user).model_dump()
-    data["avatar_url"] = ProfileImageService(db).build_avatar_url(user)
+    try:
+        data["avatar_url"] = ProfileImageService(db).build_avatar_url(user)
+    except Exception:
+        data["avatar_url"] = None
     data["has_onec_credentials"] = user.onec_hashed_password is not None
     data["has_onec_session"] = user.onec_access_token is not None
     return UserRead(**data)

@@ -27,8 +27,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "app_desktop.startup",
         environment=settings.ENVIRONMENT,
-        postgres_host=settings.POSTGRES_HOST,
-        postgres_db=settings.POSTGRES_DB,
+        sqlite=settings.is_sqlite,
+        database=settings.DESKTOP_SQLITE_PATH or f"{settings.POSTGRES_HOST}/{settings.POSTGRES_DB}",
     )
     try:
         from app_desktop.bootstrap_auth import bootstrap_desktop_auth_store
@@ -43,6 +43,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await ensure_onec_agent_tables()
     except Exception as exc:
         logger.warning("app_desktop.onec_tables.ensure_failed", error=str(exc))
+
+    try:
+        from app_desktop.bootstrap_auth import bootstrap_desktop_catalog
+
+        catalog = await bootstrap_desktop_catalog()
+        logger.info("app_desktop.catalog_ready", **{k: catalog.get(k) for k in ("ok", "skipped", "saved_specs", "db_specs") if k in catalog})
+    except Exception as exc:
+        logger.warning("app_desktop.catalog.ensure_failed", error=str(exc))
 
     stop_onec_sync = asyncio.Event()
     onec_sync_task: asyncio.Task | None = None

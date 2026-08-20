@@ -21,6 +21,7 @@ async def ensure_onec_agent_tables() -> None:
     async with _tables_lock:
         if _tables_ready:
             return
+        from app.core.config import settings
         from app.db.base import Base
         from app.db.session import engine
         from app.models.onec_nomenclature import OnecNomenclature
@@ -56,9 +57,10 @@ async def ensure_onec_agent_tables() -> None:
             )
 
         async with engine.begin() as conn:
-            await conn.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"),
-                {"key": _ONEC_SCHEMA_ADVISORY_LOCK_KEY},
-            )
+            if not settings.is_sqlite:
+                await conn.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)"),
+                    {"key": _ONEC_SCHEMA_ADVISORY_LOCK_KEY},
+                )
             await conn.run_sync(_create)
         _tables_ready = True

@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "1234"
     POSTGRES_DB: str = "ai_agents"
+    # Desktop installer-only: путь к SQLite (без установки PostgreSQL на клиенте).
+    DESKTOP_SQLITE_PATH: str = ""
 
     REDIS_HOST: str = "192.168.1.157"
     REDIS_PORT: int = 16379
@@ -268,6 +270,11 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def DATABASE_URL(self) -> str:
+        sqlite_path = (self.DESKTOP_SQLITE_PATH or "").strip()
+        if sqlite_path:
+            normalized = sqlite_path.replace("\\", "/")
+            # Windows absolute path needs four slashes: sqlite+aiosqlite:///C:/...
+            return f"sqlite+aiosqlite:///{normalized}"
         return str(
             PostgresDsn.build(
                 scheme="postgresql+asyncpg",
@@ -282,6 +289,10 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def DATABASE_URL_SYNC(self) -> str:
+        sqlite_path = (self.DESKTOP_SQLITE_PATH or "").strip()
+        if sqlite_path:
+            normalized = sqlite_path.replace("\\", "/")
+            return f"sqlite:///{normalized}"
         return str(
             PostgresDsn.build(
                 scheme="postgresql+psycopg",
@@ -292,6 +303,10 @@ class Settings(BaseSettings):
                 path=self.POSTGRES_DB,
             )
         )
+
+    @property
+    def is_sqlite(self) -> bool:
+        return bool((self.DESKTOP_SQLITE_PATH or "").strip())
 
     @computed_field
     @property

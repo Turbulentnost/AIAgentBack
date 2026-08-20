@@ -8,27 +8,24 @@ DEFAULT_DESKTOP_ENV: dict[str, str] = {
     "DESKTOP_MODE": "1",
     "HOST": "0.0.0.0",
     "BACKEND_BIND_HOST": "0.0.0.0",
-    "POSTGRES_HOST": "127.0.0.1",
-    "POSTGRES_PORT": "5432",
-    "POSTGRES_USER": "postgres",
-    "POSTGRES_PASSWORD": "postgres",
-    "POSTGRES_DB": "ai_agents",
+    # Без PostgreSQL на клиентских ПК: встроенный SQLite.
+    "ONEC_DAILY_SYNC_ENABLED": "false",
+    "ONEC_INPROCESS_SYNC_ENABLED": "false",
     "DOCUMENT_ANALYSIS_REQUIRE_AUTH": "true",
+    # SQLite может отдавать naive datetime — не валим /auth/me из-за сессии.
+    "AUTH_ALLOW_JWT_WITHOUT_SESSION": "true",
 }
 
-# Эти ключи всегда берутся из desktop config/default, а не из чужого process env /
-# дефолтов Settings (192.168.1.157 / 1234), иначе на другом ПК логин ломается.
 DESKTOP_FORCE_ENV_KEYS: frozenset[str] = frozenset(
     {
         "DESKTOP_MODE",
         "HOST",
         "BACKEND_BIND_HOST",
-        "POSTGRES_HOST",
-        "POSTGRES_PORT",
-        "POSTGRES_USER",
-        "POSTGRES_PASSWORD",
-        "POSTGRES_DB",
+        "DESKTOP_SQLITE_PATH",
+        "ONEC_DAILY_SYNC_ENABLED",
+        "ONEC_INPROCESS_SYNC_ENABLED",
         "DOCUMENT_ANALYSIS_REQUIRE_AUTH",
+        "AUTH_ALLOW_JWT_WITHOUT_SESSION",
     }
 )
 
@@ -40,6 +37,10 @@ def desktop_config_dir() -> Path:
 
 def desktop_config_path() -> Path:
     return desktop_config_dir() / "config.env"
+
+
+def desktop_sqlite_path() -> Path:
+    return desktop_config_dir() / "aveon_desktop.db"
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -62,31 +63,52 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 def ensure_desktop_config_file() -> Path:
     path = desktop_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    sqlite_path = desktop_sqlite_path()
     if not path.is_file():
         lines = [
             "# Конфиг desktop backend (Агент закупок Авион)",
-            "# При необходимости измените параметры PostgreSQL ниже.",
+            "# Авторизация работает из коробки — PostgreSQL на клиенте НЕ нужен.",
+            "",
+            "DESKTOP_MODE=1",
+            f"DESKTOP_SQLITE_PATH={sqlite_path}",
+            "HOST=0.0.0.0",
+            "BACKEND_BIND_HOST=0.0.0.0",
+            "ONEC_DAILY_SYNC_ENABLED=false",
+            "ONEC_INPROCESS_SYNC_ENABLED=false",
+            "DOCUMENT_ANALYSIS_REQUIRE_AUTH=true",
+            "AUTH_ALLOW_JWT_WITHOUT_SESSION=true",
+            "USE_REMOTE_API=0",
             "",
         ]
-        lines.extend(f"{key}={value}" for key, value in DEFAULT_DESKTOP_ENV.items())
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
 def load_desktop_env() -> Path:
-    """Применяет config.env и дефолты desktop до импорта Settings.
-
-    Для PostgreSQL и DESKTOP_MODE значения из config.env/defaults перезаписывают
-    process env — иначе на машине с чужими POSTGRES_* вход идёт в другую БД.
-    """
+    """Применяет config.env и дефолты desktop до импорта Settings."""
     config_path = ensure_desktop_config_file()
-    merged = {**DEFAULT_DESKTOP_ENV, **_parse_env_file(config_path)}
+    sqlite_path = desktop_sqlite_path()
+    sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+
+    merged = {
+        **DEFAULT_DESKTOP_ENV,
+        "DESKTOP_SQLITE_PATH": str(sqlite_path),
+        **_parse_env_file(config_path),
+    }
+    # Всегда гарантируем SQLite-путь для installer-only режима.
+    if not (merged.get("DESKTOP_SQLITE_PATH") or "").strip():
+        merged["DESKTOP_SQLITE_PATH"] = str(sqlite_path)
+
     for key, value in merged.items():
         if key in DESKTOP_FORCE_ENV_KEYS:
             os.environ[key] = value
         else:
             os.environ.setdefault(key, value)
+
     os.environ["DESKTOP_MODE"] = "1"
+    os.environ["DESKTOP_SQLITE_PATH"] = merged["DESKTOP_SQLITE_PATH"]
+    # JWT без жёсткой проверки naive/aware datetime сессий в SQLite.
+    os.environ["AUTH_ALLOW_JWT_WITHOUT_SESSION"] = "true"
     return config_path
 
 
@@ -94,6 +116,7 @@ __all__ = [
     "DEFAULT_DESKTOP_ENV",
     "DESKTOP_FORCE_ENV_KEYS",
     "desktop_config_path",
+    "desktop_sqlite_path",
     "ensure_desktop_config_file",
     "load_desktop_env",
 ]

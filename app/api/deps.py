@@ -14,6 +14,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/lo
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    """SQLite часто возвращает naive datetime — нормализуем к UTC перед сравнением."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 async def authenticate_access_token(
     db: AsyncSession,
     token: str,
@@ -35,9 +44,16 @@ async def authenticate_access_token(
         else allow_without_session
     )
     session = await db.scalar(select(UserSession).where(UserSession.token_jti == token_id))
-    if session is None or session.revoked_at is not None or session.expires_at <= datetime.now(timezone.utc):
-        if not skip_session:
-            raise exc
+    expires_at = _as_utc(session.expires_at) if session is not None else None
+    now = datetime.now(timezone.utc)
+    session_invalid = (
+        session is None
+        or session.revoked_at is not None
+        or expires_at is None
+        or expires_at <= now
+    )
+    if session_invalid and not skip_session:
+        raise exc
     try:
         user_id = uuid.UUID(str(payload["sub"]))
     except ValueError as err:
